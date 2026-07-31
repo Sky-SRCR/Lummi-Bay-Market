@@ -125,11 +125,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $rawExist  = $_POST['existing_logo'] ?? '';
         $logoPath  = preg_match('/^uploads\/brand_logo\.[a-z]{2,4}$/', $rawExist) ? $rawExist : $curLogo;
         if (!empty($_FILES['logo_file']['name'])) {
+            // SVG is intentionally excluded: an SVG can carry <script> and would
+            // be stored XSS when served from our own origin.
             $allowed = ['image/png'=>'png','image/jpeg'=>'jpg','image/gif'=>'gif',
-                        'image/webp'=>'webp','image/svg+xml'=>'svg'];
+                        'image/webp'=>'webp'];
             $mime = mime_content_type($_FILES['logo_file']['tmp_name']);
-            if (!isset($allowed[$mime])) {
-                $msg = 'Logo must be PNG, JPG, GIF, WEBP, or SVG.'; $msgType = 'error';
+            if ($_FILES['logo_file']['error'] !== UPLOAD_ERR_OK) {
+                $msg = 'Logo upload failed. Please try again.'; $msgType = 'error';
+            } elseif ($_FILES['logo_file']['size'] > 2 * 1024 * 1024) {
+                $msg = 'Logo must be 2 MB or smaller.'; $msgType = 'error';
+            } elseif (!isset($allowed[$mime])) {
+                $msg = 'Logo must be a PNG, JPG, GIF, or WEBP image.'; $msgType = 'error';
             } else {
                 $dest = __DIR__ . '/uploads/brand_logo.' . $allowed[$mime];
                 if (!move_uploaded_file($_FILES['logo_file']['tmp_name'], $dest)) {
@@ -558,7 +564,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             <?php endif; ?>
             <div class="form-group">
                 <label>Upload Logo (PNG, JPG, SVG)</label>
-                <input type="file" name="logo_file" accept="image/*" onchange="previewBrandLogo(this)">
+                <input type="file" name="logo_file" accept="image/png,image/jpeg,image/gif,image/webp" onchange="previewBrandLogo(this)">
             </div>
             <p style="font-size:12px; color:#7f8c8d; margin-top:6px;">Max 2 MB. Leave blank to keep existing logo.</p>
             <div id="brand-logo-preview" style="margin-top:10px;display:none;">
@@ -668,6 +674,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 
 <script>
     var _tabs = ['users','brand','branding','settings','workarea'];
+    var CSRF_TOKEN = <?= json_encode(csrfToken()) ?>;
     function showTab(name) {
         _tabs.forEach(function(t) {
             document.getElementById('tab-' + t).style.display = t === name ? 'block' : 'none';
@@ -760,6 +767,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         fd.append('action', 'set_element_hidden');
         fd.append('element_id', id);
         fd.append('hidden', hidden);
+        fd.append('csrf_token', CSRF_TOKEN);
         fetch('api.php', { method:'POST', body:fd })
             .then(function(r) { return r.json(); })
             .then(function(res) {
@@ -776,6 +784,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         var fd = new FormData();
         fd.append('action', 'delete_canvas_element');
         fd.append('element_id', id);
+        fd.append('csrf_token', CSRF_TOKEN);
         fetch('api.php', { method:'POST', body:fd })
             .then(function(r) { return r.json(); })
             .then(function(res) {

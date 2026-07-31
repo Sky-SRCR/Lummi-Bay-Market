@@ -640,7 +640,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <div class="admin-only"><strong>Admin only.</strong></div>
     <p>Store Branding (<a href="setup_branding.php" style="color:#3498db;">Branding</a> in the nav) controls the visual theme of the builder itself — the nav bar colours and the store logo shown in the top-left.</p>
     <ul>
-        <li><strong>Logo</strong> — PNG, JPG, GIF, WEBP, or SVG. Displayed in the nav bar.</li>
+        <li><strong>Logo</strong> — PNG, JPG, GIF, or WEBP (max 2 MB). Displayed in the nav bar.</li>
         <li><strong>Nav Background</strong> — colour of the top navigation bar</li>
         <li><strong>Nav Border</strong> — the thin line below the nav bar</li>
         <li><strong>Accent Color</strong> — used for the Publish button and other highlights</li>

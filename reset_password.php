@@ -4,6 +4,8 @@ require_once 'db_connect.php';
 
 if (isLoggedIn()) { header('Location: builder.php'); exit; }
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST') { verifyCsrf(); }
+
 $step    = intval($_SESSION['reset_step'] ?? 1);
 $message = '';
 $msgType = 'info';
@@ -171,6 +173,7 @@ if (isset($_GET['restart'])) {
             <div class="msg <?= $msgType ?>"><?= htmlspecialchars($message) ?></div>
         <?php endif; ?>
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
             <label>Username or Email Address</label>
             <input type="text" name="identifier" autofocus required>
             <button type="submit" name="find_user" class="btn">Send Reset Code</button>
@@ -183,6 +186,7 @@ if (isset($_GET['restart'])) {
             <div class="msg <?= $msgType ?>"><?= htmlspecialchars($message) ?></div>
         <?php endif; ?>
         <form method="POST">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
             <label>6-Digit Code</label>
             <input type="text" name="passcode" class="passcode-input" maxlength="6"
                    inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" autofocus required>

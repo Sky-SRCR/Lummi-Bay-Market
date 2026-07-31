@@ -682,6 +682,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 // ============================================================
 var IS_ADMIN  = <?= $isAdmin ? 'true' : 'false' ?>;
 var SITE_NAME = <?= json_encode(SITE_NAME) ?>;
+var CSRF_TOKEN = <?= json_encode(csrfToken()) ?>;
 
 // Block default sizes
 var BLOCK_DEFAULTS = {
@@ -745,6 +746,18 @@ function loadAssets() {
                 sel.innerHTML += '<option value="'+a.id+'">['+a.type.toUpperCase()+'] '+escHtml(a.label||a.content.substr(0,20))+'</option>';
             });
         });
+}
+
+// Populate the asset-link dropdown with only assets whose type matches the
+// selected block, so e.g. a text asset can't be linked into an image block.
+function populateAssetLinkOptions(blockType) {
+    var sel = document.getElementById('asset-link');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— None (manual content) —</option>';
+    assetsCache.forEach(function(a) {
+        if (a.type !== blockType) return;
+        sel.innerHTML += '<option value="'+a.id+'">['+a.type.toUpperCase()+'] '+escHtml(a.label||a.content.substr(0,20))+'</option>';
+    });
 }
 
 function loadLayout() {
@@ -1181,6 +1194,7 @@ function showInspector(block) {
     // Asset link – non-section, non-carousel, non-marquee, non-table
     var hideAsset = isSection || type === 'carousel' || type === 'marquee' || type === 'table';
     document.getElementById('insp-asset').style.display = hideAsset ? 'none' : 'block';
+    if (!hideAsset) populateAssetLinkOptions(type);
     document.getElementById('asset-link').value = block.dataset.assetId || '';
 
     // Z-index / layer order
@@ -1511,6 +1525,7 @@ function uploadSectionBg(input) {
     if (!IS_ADMIN || !activeBlock || !input.files[0]) return;
     var fd = new FormData();
     fd.append('file', input.files[0]);
+    fd.append('csrf_token', CSRF_TOKEN);
     fetch('api.php?action=upload_file', {method:'POST', body:fd})
         .then(function(r){ return r.json(); })
         .then(function(res) {
@@ -1542,6 +1557,7 @@ function uploadBlockImage(input) {
     if (!input.files[0] || !activeBlock) return;
     var fd = new FormData();
     fd.append('file', input.files[0]);
+    fd.append('csrf_token', CSRF_TOKEN);
     fetch('api.php?action=upload_file', {method:'POST', body:fd})
         .then(function(r){ return r.json(); })
         .then(function(res) {
@@ -1560,6 +1576,7 @@ function uploadBlockVideo(input) {
     showToast('Uploading video…');
     var fd = new FormData();
     fd.append('file', input.files[0]);
+    fd.append('csrf_token', CSRF_TOKEN);
     fetch('api.php?action=upload_video', {method:'POST', body:fd})
         .then(function(r){ return r.json(); })
         .then(function(res) {
@@ -1700,6 +1717,7 @@ function publishCanvas() {
 
     var fd = new FormData();
     fd.append('layout_data', JSON.stringify(elements));
+    fd.append('csrf_token', CSRF_TOKEN);
 
     if (IS_ADMIN) {
         fd.append('bg_type', document.getElementById('bg-type').value);
@@ -2113,6 +2131,7 @@ function uploadSlideImage(input) {
     var row = input.closest('.slide-row');
     var fd  = new FormData();
     fd.append('file', input.files[0]);
+    fd.append('csrf_token', CSRF_TOKEN);
     fetch('api.php?action=upload_file', {method:'POST', body:fd})
         .then(function(r){ return r.json(); })
         .then(function(res) {

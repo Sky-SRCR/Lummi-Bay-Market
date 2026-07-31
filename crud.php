@@ -4,6 +4,8 @@ require_once 'db_connect.php';
 requireLogin();   // all roles can access; delete is admin-only below
 $me = currentUser();
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST') { verifyCsrf(); }
+
 // ---- File upload validation ----
 $allowedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
 $allowedMimeTypes  = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -253,6 +255,7 @@ if (isset($_GET['edit_id'])) {
         <!-- EDIT FORM -->
         <form method="POST" action="crud.php" enctype="multipart/form-data">
             <input type="hidden" name="action_update" value="1">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
             <input type="hidden" name="edit_id"   value="<?= intval($editAsset['id']) ?>">
             <input type="hidden" name="edit_type"  value="<?= htmlspecialchars($editAsset['type']) ?>">
 
@@ -296,6 +299,7 @@ if (isset($_GET['edit_id'])) {
         <!-- ADD FORM -->
         <form method="POST" action="crud.php" enctype="multipart/form-data">
             <input type="hidden" name="action_create" value="1">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
 
             <div class="form-group">
                 <label>Type</label>
@@ -375,6 +379,7 @@ if (isset($_GET['edit_id'])) {
                             <form method="POST" action="crud.php" style="display:inline;"
                                   onsubmit="return confirm('Delete this asset? This cannot be undone.')">
                                 <input type="hidden" name="action_delete" value="1">
+                                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
                                 <input type="hidden" name="delete_id" value="<?= $row['id'] ?>">
                                 <button type="submit" class="btn btn-red" style="font-size:12px; padding:6px 12px;">Delete</button>
                             </form>

@@ -13,6 +13,16 @@ if ($action !== 'get_layout') {
 header('Content-Type: application/json');
 $isAdmin = isAdmin();
 
+// CSRF protection: every state-changing (POST) request must carry a valid token.
+// GET endpoints are read-only, and get_layout is intentionally public so the
+// kiosk viewer can poll it without a session.
+if ($_SERVER['REQUEST_METHOD'] === 'POST'
+    && !hash_equals($_SESSION['csrf_token'] ?? '', $_POST['csrf_token'] ?? '')) {
+    http_response_code(403);
+    echo json_encode(['status' => 'error', 'message' => 'Security token mismatch. Please reload the page and try again.']);
+    exit;
+}
+
 // Auto-migrations only run on authenticated requests. The public get_layout
 // endpoint is polled every 30s by every display, so running (and silently
 // failing) these DDL statements there would spam the DB continuously.
