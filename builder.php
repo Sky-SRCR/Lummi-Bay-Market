@@ -759,6 +759,8 @@ function loadLayout() {
                 document.getElementById('bg-type') && (document.getElementById('bg-type').value = s.bg_type);
                 if (s.bg_type === 'color') {
                     document.getElementById('bg-color') && (document.getElementById('bg-color').value = s.bg_val);
+                    canvas.style.backgroundColor = s.bg_val;
+                    canvas.style.backgroundImage = 'none';
                     applyBg();
                 } else {
                     canvas.style.backgroundImage = "url('"+s.bg_val+"')";
@@ -823,7 +825,7 @@ function createSection() {
 function renderSection(el) {
     var s = document.createElement('div');
     s.className = 'editable-block section-block';
-    if (!el.locked) s.classList.add('draggable-block');
+    if (!el.locked && IS_ADMIN) s.classList.add('draggable-block');
     s.dataset.type    = 'section';
     s.dataset.tempId  = el.temp_id || tmpId();
     s.dataset.dbId    = el.id      || '';
@@ -990,6 +992,7 @@ function renderBlock(el, parent) {
         block.appendChild(img);
         applyImageFit(block, _fit);
     } else if (el.type === 'video') {
+        if (content) block.dataset.manualPath = content;
         var vid = document.createElement('video');
         vid.autoplay = true; vid.loop = true; vid.muted = true; vid.playsInline = true;
         if (content) { var src = document.createElement('source'); src.src = content; vid.appendChild(src); }
@@ -1587,6 +1590,7 @@ function linkAsset(assetId) {
         activeBlock.querySelector('.text-inner').innerHTML = match.content;
     } else if (activeBlock.dataset.type === 'image') {
         activeBlock.querySelector('img').src = match.content;
+        activeBlock.dataset.imgSrc = match.content;
     } else if (activeBlock.dataset.type === 'video') {
         var vid = activeBlock.querySelector('video');
         vid.innerHTML = '';
@@ -1631,6 +1635,7 @@ function publishCanvas() {
             locked:     s.dataset.locked === '1' ? 1 : 0,
             sort_order: 0,
             z_index:    Math.max(1, parseInt(s.dataset.zIndex) || 1),
+            hidden:     s.dataset.hidden === '1' ? 1 : 0,
         });
     });
 
@@ -1689,6 +1694,7 @@ function publishCanvas() {
             locked:         block.dataset.locked === '1' ? 1 : 0,
             sort_order:     i,
             z_index:        Math.max(1, parseInt(block.dataset.zIndex) || 1),
+            hidden:         block.dataset.hidden === '1' ? 1 : 0,
         });
     });
 
@@ -1842,8 +1848,8 @@ function applyPos(which, val) {
     var y   = parseFloat(activeBlock.getAttribute('data-y')) || 0;
     // Clamp to parent bounds for child blocks; canvas bounds for root/section blocks
     var isChild = activeBlock.classList.contains('child-block');
-    if (which === 'x') x = isChild ? Math.max(0, Math.min(val, pb.w - bw)) : val;
-    else               y = isChild ? Math.max(0, Math.min(val, pb.h - bh)) : val;
+    if (which === 'x') x = isChild ? Math.max(0, Math.min(val, pb.w - bw)) : Math.max(0, Math.min(val, 1920 - bw));
+    else               y = isChild ? Math.max(0, Math.min(val, pb.h - bh)) : Math.max(0, Math.min(val, 1080 - bh));
     activeBlock.style.transform = 'translate('+x+'px,'+y+'px)';
     activeBlock.setAttribute('data-x', x);
     activeBlock.setAttribute('data-y', y);
@@ -1941,7 +1947,7 @@ function showToast(msg, isErr) {
 // ============================================================
 function buildCarouselPreview(block, data) {
     Array.from(block.children).forEach(function(child) {
-        if (!child.classList.contains('rh') && !child.classList.contains('lock-icon')) child.remove();
+        if (!child.classList.contains('rh') && !child.classList.contains('lock-icon') && !child.classList.contains('hidden-badge')) child.remove();
     });
     var slides   = (data && data.slides) || [];
     var preview  = document.createElement('div');
@@ -2162,7 +2168,7 @@ function updateCarouselInterval(val) {
 // ============================================================
 function buildTablePreview(block, data) {
     Array.from(block.children).forEach(function(child) {
-        if (!child.classList.contains('rh') && !child.classList.contains('lock-icon')) child.remove();
+        if (!child.classList.contains('rh') && !child.classList.contains('lock-icon') && !child.classList.contains('hidden-badge')) child.remove();
     });
     var headers = (data && data.headers) || [];
     var rows    = (data && data.rows)    || [];
@@ -2330,7 +2336,7 @@ function saveTable() {
 // ============================================================
 function buildMarqueePreview(block, data) {
     Array.from(block.children).forEach(function(child) {
-        if (!child.classList.contains('rh') && !child.classList.contains('lock-icon')) child.remove();
+        if (!child.classList.contains('rh') && !child.classList.contains('lock-icon') && !child.classList.contains('hidden-badge')) child.remove();
     });
     var d      = data || {};
     var text   = d.text   || 'Marquee text — click to edit in inspector';

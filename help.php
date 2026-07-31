@@ -257,7 +257,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <ol class="steps">
         <li><span>Click <strong>Forgot password?</strong> on the login page.</span></li>
         <li><span>Enter your username. A 6-digit passcode is emailed to the address on file.</span></li>
-        <li><span>Enter the passcode within 15 minutes (5 wrong attempts cancels the reset).</span></li>
+        <li><span>Enter the passcode within 30 minutes (5 wrong attempts cancels the reset).</span></li>
         <li><span>Choose a new password (minimum 8 characters).</span></li>
     </ol>
 

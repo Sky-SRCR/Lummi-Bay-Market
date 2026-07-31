@@ -74,14 +74,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $role   = in_array($_POST['edit_role'] ?? '', ['admin','basic']) ? $_POST['edit_role'] : 'basic';
         $active = isset($_POST['edit_active']) ? 1 : 0;
         $email  = trim($_POST['edit_email'] ?? '');
-        if ($uid === $user['id'] && $role !== 'admin') {
-            $msg = 'You cannot demote your own account.'; $msgType = 'error';
+        if ($uid === $user['id'] && ($role !== 'admin' || !$active)) {
+            $msg = 'You cannot demote or deactivate your own account.'; $msgType = 'error';
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $msg = 'Invalid email address.'; $msgType = 'error';
         } else {
-            $pdo->prepare("UPDATE users SET role = ?, is_active = ?, email = ? WHERE id = ?")
-                ->execute([$role, $active, $email, $uid]);
-            $msg = 'User updated.';
+            try {
+                $pdo->prepare("UPDATE users SET role = ?, is_active = ?, email = ? WHERE id = ?")
+                    ->execute([$role, $active, $email, $uid]);
+                $msg = 'User updated.';
+            } catch (PDOException $e) {
+                $msg = 'That email is already in use.'; $msgType = 'error';
+            }
         }
         $tab = 'users';
     }
@@ -373,7 +377,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     <td><span class="badge badge-<?= $u['is_active']?'active':'inactive' ?>">
                         <?= $u['is_active'] ? 'Active' : 'Inactive' ?>
                     </span></td>
-                    <td><?= date('M j, Y', strtotime($u['created_at'])) ?></td>
+                    <td><?= !empty($u['created_at']) ? date('M j, Y', strtotime($u['created_at'])) : '—' ?></td>
                     <td>
                         <button class="btn btn-blue" style="font-size:11px; padding:5px 10px;"
                                 onclick="toggleEdit(<?= $u['id'] ?>)">Edit</button>

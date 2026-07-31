@@ -13,16 +13,21 @@ if ($action !== 'get_layout') {
 header('Content-Type: application/json');
 $isAdmin = isAdmin();
 
-// Auto-migrate: add text_align column if not yet present
-try { $pdo->exec("ALTER TABLE canvas_elements ADD COLUMN text_align VARCHAR(16) NOT NULL DEFAULT ''"); } catch(Exception $e) {}
-// Auto-migrate: add 'table' to type ENUM if not already present
-try { $pdo->exec("ALTER TABLE canvas_elements MODIFY COLUMN type ENUM('section','text','image','video','carousel','marquee','table') NOT NULL"); } catch(Exception $e) {}
-// Auto-migrate: seed item_title_2 and price_2 block styles
-try { $pdo->exec("INSERT IGNORE INTO block_styles (block_type,font_family,font_size,font_color,font_weight,font_style,line_height) VALUES ('item_title_2','Arial',24,'#27ae60','bold','normal',1.30),('price_2','Arial',30,'#e74c3c','bold','normal',1.20)"); } catch(Exception $e) {}
-// Auto-migrate: add z_index column for layer ordering
-try { $pdo->exec("ALTER TABLE canvas_elements ADD COLUMN z_index INT NOT NULL DEFAULT 1"); } catch(Exception $e) {}
-// Auto-migrate: add hidden column for admin visibility control
-try { $pdo->exec("ALTER TABLE canvas_elements ADD COLUMN hidden TINYINT(1) NOT NULL DEFAULT 0"); } catch(Exception $e) {}
+// Auto-migrations only run on authenticated requests. The public get_layout
+// endpoint is polled every 30s by every display, so running (and silently
+// failing) these DDL statements there would spam the DB continuously.
+if ($action !== 'get_layout') {
+    // Auto-migrate: add text_align column if not yet present
+    try { $pdo->exec("ALTER TABLE canvas_elements ADD COLUMN text_align VARCHAR(16) NOT NULL DEFAULT ''"); } catch(Exception $e) {}
+    // Auto-migrate: add 'table' to type ENUM if not already present
+    try { $pdo->exec("ALTER TABLE canvas_elements MODIFY COLUMN type ENUM('section','text','image','video','carousel','marquee','table') NOT NULL"); } catch(Exception $e) {}
+    // Auto-migrate: seed item_title_2 and price_2 block styles
+    try { $pdo->exec("INSERT IGNORE INTO block_styles (block_type,font_family,font_size,font_color,font_weight,font_style,line_height) VALUES ('item_title_2','Arial',24,'#27ae60','bold','normal',1.30),('price_2','Arial',30,'#e74c3c','bold','normal',1.20)"); } catch(Exception $e) {}
+    // Auto-migrate: add z_index column for layer ordering
+    try { $pdo->exec("ALTER TABLE canvas_elements ADD COLUMN z_index INT NOT NULL DEFAULT 1"); } catch(Exception $e) {}
+    // Auto-migrate: add hidden column for admin visibility control
+    try { $pdo->exec("ALTER TABLE canvas_elements ADD COLUMN hidden TINYINT(1) NOT NULL DEFAULT 0"); } catch(Exception $e) {}
+}
 
 // ---- Upload whitelists ----
 define('IMG_EXT',  ['jpg','jpeg','png','gif','webp']);
@@ -162,8 +167,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
 
                 $pdo->prepare(
                     "INSERT INTO canvas_elements
-                     (type, x_pos, y_pos, width, height, section_bg, locked, sort_order, z_index)
-                     VALUES ('section', ?, ?, ?, ?, ?, ?, ?, ?)"
+                     (type, x_pos, y_pos, width, height, section_bg, locked, sort_order, z_index, hidden)
+                     VALUES ('section', ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 )->execute([
                     intval($el['x_pos'] ?? 0),
                     intval($el['y_pos'] ?? 0),
@@ -173,6 +178,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
                     intval($el['locked'] ?? 0),
                     intval($el['sort_order'] ?? 0),
                     max(1, intval($el['z_index'] ?? 1)),
+                    intval($el['hidden'] ?? 0) ? 1 : 0,
                 ]);
                 $realId = $pdo->lastInsertId();
                 if (!empty($el['temp_id'])) {
@@ -225,8 +231,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
                  (section_id, type, block_subtype, x_pos, y_pos, width, height,
                   manual_content, asset_id,
                   font_family, font_size, font_color, font_weight, font_style, line_height,
-                  text_align, locked, sort_order, z_index)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                  text_align, locked, sort_order, z_index, hidden)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             )->execute([
                 $sectionId,
                 $type,
@@ -247,6 +253,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
                 intval($el['locked'] ?? 0),
                 $order++,
                 max(1, intval($el['z_index'] ?? 1)),
+                intval($el['hidden'] ?? 0) ? 1 : 0,
             ]);
         }
 
