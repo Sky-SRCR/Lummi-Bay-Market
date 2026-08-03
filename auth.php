@@ -51,4 +51,28 @@ function verifyCsrf(): void {
         die('Security token mismatch. Please go back and try again.');
     }
 }
+
+// ── Login-lockout helpers (account-keyed brute-force protection) ──
+// Failed-login state lives in three columns on `users`. A single window
+// governs BOTH how long failures stay "recent" (age-out) and how long a
+// tripped lockout lasts. See docs/adr/0001-account-keyed-login-lockout.md.
+const LOGIN_LOCKOUT_MAX    = 5;    // failed attempts before lockout
+const LOGIN_LOCKOUT_WINDOW = 900;  // 15 minutes, in seconds
+
+// Idempotently add the lockout columns. Called only from the pre-auth
+// pages (login / reset) — deliberately NOT from db_connect.php, so the
+// public viewer poll never runs migrations.
+function ensureLockoutColumns(PDO $pdo): void {
+    try { $pdo->exec("ALTER TABLE users ADD COLUMN failed_attempts INT NOT NULL DEFAULT 0"); } catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE users ADD COLUMN last_failed_at DATETIME NULL"); }            catch (Exception $e) {}
+    try { $pdo->exec("ALTER TABLE users ADD COLUMN locked_until DATETIME NULL"); }              catch (Exception $e) {}
+}
+
+// Wipe all lockout state for one account. Called on a successful login
+// and on a completed password reset (the two recovery paths).
+function clearLockout(PDO $pdo, int $userId): void {
+    $pdo->prepare(
+        "UPDATE users SET failed_attempts = 0, last_failed_at = NULL, locked_until = NULL WHERE id = ?"
+    )->execute([$userId]);
+}
 ?>

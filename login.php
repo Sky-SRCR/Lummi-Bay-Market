@@ -20,46 +20,69 @@ if (!defined('BRAND_TEXT'))       define('BRAND_TEXT',       '#ffffff');
 
 $error = '';
 
-// Rate limiting: 5 failed attempts → 5-minute lockout
-$_SESSION['login_attempts'] = $_SESSION['login_attempts'] ?? 0;
-$_SESSION['login_last_fail'] = $_SESSION['login_last_fail'] ?? 0;
-
-$lockoutDuration = 300; // 5 minutes in seconds
-$maxAttempts     = 5;
-$lockedOut       = ($_SESSION['login_attempts'] >= $maxAttempts)
-                   && (time() - $_SESSION['login_last_fail'] < $lockoutDuration);
+// Rate limiting: account-keyed brute-force lockout, backed by the `users`
+// table (a session counter was bypassable by dropping the cookie). A single
+// window governs both the age-out of stale failures and the lockout length.
+$maxAttempts   = LOGIN_LOCKOUT_MAX;     // 5 failures
+$lockoutWindow = LOGIN_LOCKOUT_WINDOW;  // 900s = 15 min
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if ($lockedOut) {
-        $remaining = $lockoutDuration - (time() - $_SESSION['login_last_fail']);
-        $error = 'Too many failed attempts. Please wait ' . ceil($remaining / 60) . ' minute(s) before trying again.';
+    ensureLockoutColumns($pdo); // idempotent; kept off the public viewer path
+
+    $username = trim($_POST['username'] ?? '');
+    $password = $_POST['password'] ?? '';
+
+    if ($username === '' || $password === '') {
+        $error = 'Please enter both your username and password.';
     } else {
-        $username = trim($_POST['username'] ?? '');
-        $password = $_POST['password'] ?? '';
+        $stmt = $pdo->prepare(
+            "SELECT id, username, password_hash, role, is_active,
+                    failed_attempts, last_failed_at, locked_until
+             FROM users WHERE username = ? LIMIT 1"
+        );
+        $stmt->execute([$username]);
+        $user = $stmt->fetch();
+        $now  = time();
 
-        if ($username === '' || $password === '') {
-            $error = 'Please enter both your username and password.';
-        } else {
-            $stmt = $pdo->prepare("SELECT id, username, password_hash, role, is_active FROM users WHERE username = ? LIMIT 1");
-            $stmt->execute([$username]);
-            $user = $stmt->fetch();
+        if ($user && $user['locked_until'] !== null && strtotime($user['locked_until']) > $now) {
+            // Lockout is absolute: a correct password still waits it out.
+            $remaining = strtotime($user['locked_until']) - $now;
+            $error = 'Too many failed attempts. Please wait ' . ceil($remaining / 60) . ' minute(s) before trying again.';
+        } elseif (!$user || !password_verify($password, $user['password_hash'])) {
+            // One generic message for both unknown user and wrong password.
+            $error = 'Incorrect username or password.';
 
-            if (!$user || !password_verify($password, $user['password_hash'])) {
-                $_SESSION['login_attempts']++;
-                $_SESSION['login_last_fail'] = time();
-                $error = 'Incorrect username or password.';
-            } elseif (!$user['is_active']) {
-                $error = 'Your account has been deactivated. Please contact your manager.';
-            } else {
-                // Successful login — clear rate limit state
-                unset($_SESSION['login_attempts'], $_SESSION['login_last_fail']);
-                session_regenerate_id(true);
-                $_SESSION['user_id']  = $user['id'];
-                $_SESSION['username'] = $user['username'];
-                $_SESSION['role']     = $user['role'];
-                header('Location: builder.php');
-                exit;
+            // Only real accounts accrue failed-attempt state.
+            if ($user) {
+                // Fresh 5 if the previous lockout has expired, or if it has
+                // been longer than the window since the last failure.
+                $lockoutExpired = $user['locked_until'] !== null && strtotime($user['locked_until']) <= $now;
+                $agedOut        = $user['last_failed_at'] !== null && ($now - strtotime($user['last_failed_at'])) > $lockoutWindow;
+                $attempts       = (($lockoutExpired || $agedOut) ? 0 : (int)$user['failed_attempts']) + 1;
+
+                if ($attempts >= $maxAttempts) {
+                    $lockedUntil = date('Y-m-d H:i:s', $now + $lockoutWindow);
+                    $pdo->prepare(
+                        "UPDATE users SET failed_attempts = ?, last_failed_at = ?, locked_until = ? WHERE id = ?"
+                    )->execute([$attempts, date('Y-m-d H:i:s', $now), $lockedUntil, $user['id']]);
+                    $error = 'Too many failed attempts. Please wait ' . ceil($lockoutWindow / 60) . ' minute(s) before trying again.';
+                } else {
+                    $pdo->prepare(
+                        "UPDATE users SET failed_attempts = ?, last_failed_at = ?, locked_until = NULL WHERE id = ?"
+                    )->execute([$attempts, date('Y-m-d H:i:s', $now), $user['id']]);
+                }
             }
+        } elseif (!$user['is_active']) {
+            $error = 'Your account has been deactivated. Please contact your manager.';
+        } else {
+            // Successful login — clear lockout state and start the session.
+            clearLockout($pdo, (int)$user['id']);
+            session_regenerate_id(true);
+            $_SESSION['user_id']  = $user['id'];
+            $_SESSION['username'] = $user['username'];
+            $_SESSION['role']     = $user['role'];
+            header('Location: builder.php');
+            exit;
         }
     }
 }

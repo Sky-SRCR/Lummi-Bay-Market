@@ -89,9 +89,10 @@ Roles: `admin` (full) and `basic` (adds content inside existing sections only).
 
 ## 7. Open items (nothing in progress — safe to stop)
 
-- **L8 — login lockout is bypassable.** `login.php` stores `login_attempts` in
-  `$_SESSION`, so clearing the cookie resets the counter. Real fix needs IP- or
-  DB-backed attempt tracking. Not yet done (needs a small design decision).
+- ~~**L8 — login lockout is bypassable.**~~ **Resolved.** Rebuilt as an
+  account-keyed, DB-backed lockout (5 failures / 15-min window) on three new
+  `users` columns; clears on successful login or password reset. See
+  `docs/adr/0001-account-keyed-login-lockout.md` and `CONTEXT.md`.
 - **Repo housekeeping (never started):**
   - `.gitignore` for `uploads/` and any local credentials
   - `schema.sql` (CREATE TABLE for all 6 tables) for version control / rebuilds

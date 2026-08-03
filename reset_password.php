@@ -126,6 +126,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_reset'])) {
             $pdo->prepare("UPDATE users SET password_hash = ? WHERE id = ?")
                 ->execute([password_hash($newPass, PASSWORD_DEFAULT), $userId]);
 
+            // A completed reset is a recovery path — release any login lockout.
+            ensureLockoutColumns($pdo);
+            clearLockout($pdo, $userId);
+
             unset($_SESSION['reset_user_id'], $_SESSION['reset_step'], $_SESSION['reset_attempts']);
             session_regenerate_id(true);
             header('Location: login.php?reset=1');
