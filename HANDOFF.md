@@ -93,10 +93,10 @@ Roles: `admin` (full) and `basic` (adds content inside existing sections only).
   account-keyed, DB-backed lockout (5 failures / 15-min window) on three new
   `users` columns; clears on successful login or password reset. See
   `docs/adr/0001-account-keyed-login-lockout.md` and `CONTEXT.md`.
-- **Repo housekeeping (never started):**
-  - `.gitignore` for `uploads/` and any local credentials
-  - `schema.sql` (CREATE TABLE for all 6 tables) for version control / rebuilds
-  - `README.md` (setup, roles, builder/viewer overview)
+- ~~**Repo housekeeping (never started):**~~ **Done.**
+  - `.gitignore` (uploads/, local credentials, editor/OS cruft) — added
+  - `schema.sql` (all 6 tables, reconstructed from app queries) — added
+  - `README.md` (setup, roles, builder/viewer overview, security) — added
 - CSRF end-to-end sanity check worth doing live: log in → edit an asset → publish;
   all should succeed, while a stale/forged POST gets "Security token mismatch."
 

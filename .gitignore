@@ -1,0 +1,25 @@
+# Runtime-uploaded media (images, videos, background files) — server-only,
+# never committed. See README.
+uploads/
+
+# Private DB credentials. Production keeps these OUTSIDE the webroot at
+# ../../private/db_credentials.php; this guards against an accidental copy
+# landing in the repo.
+db_credentials.php
+private/
+
+# First-run bootstrap — delete on the server once an admin exists.
+# (Kept in the repo intentionally; this line only ignores local copies
+#  named with a backup suffix.)
+setup.php.bak
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Logs
+*.log
