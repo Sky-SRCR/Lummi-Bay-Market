@@ -345,6 +345,7 @@ if (isset($_GET['edit_id'])) {
                 <div class="form-group">
                     <label>Upload Image File</label>
                     <input type="file" name="image_file" accept="image/jpeg,image/png,image/gif,image/webp">
+                    <small style="display:block; margin-top:4px; color:#7f8c8d; font-size:11px;">Accepted types: JPG, PNG, GIF, WEBP</small>
                 </div>
                 <div class="form-group">
                     <label>Or Paste Image URL / Path</label>
@@ -352,7 +353,7 @@ if (isset($_GET['edit_id'])) {
                 </div>
             </div>
 
-            <button type="submit" class="btn btn-green">Save to Database</button>
+            <button type="submit" class="btn btn-green">Save Library Asset</button>
         </form>
         <?php endif; ?>
     </div>
