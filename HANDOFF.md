@@ -99,6 +99,18 @@ Roles: `admin` (full) and `basic` (adds content inside existing sections only).
   - `README.md` (setup, roles, builder/viewer overview, security) — added
 - CSRF end-to-end sanity check worth doing live: log in → edit an asset → publish;
   all should succeed, while a stale/forged POST gets "Security token mismatch."
+- ~~**Security hardening pass**~~ **Done** (audited whole codebase; verified
+  against the live dump in a real browser):
+  - *Stored XSS (high):* text blocks are now plain text — rendered with
+    `textContent` in viewer + builder, stripped server-side on save
+    (`toPlainText()` in `auth.php`). Removed the rich-text toolbar. See
+    `docs/adr/0002-plain-text-signage-content.md`.
+  - *Session cookies:* `HttpOnly + Secure + SameSite=Lax` set in `auth.php`.
+  - *Password-reset enumeration:* `reset_password.php` now advances every
+    request to the code screen with identical messaging.
+  - *Low:* `SITE_NAME` escaped in `builder.php` inline JS.
+  - Audit verified SAFE: SQLi (all parameterized), per-endpoint authz,
+    CSRF coverage, upload handling (no runnable files / path traversal).
 
 ## 8. Conventions / gotchas for the next session
 

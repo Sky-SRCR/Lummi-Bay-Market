@@ -44,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create'])) {
     $content = '';
 
     if ($type === 'text') {
-        $content = trim($_POST['text_content'] ?? '');
+        $content = toPlainText($_POST['text_content'] ?? '');   // plain text only
     } elseif ($type === 'image') {
         if (!empty($_FILES['image_file']['name'])) {
             $check = validateImageFile($_FILES['image_file'], $allowedExtensions, $allowedMimeTypes);
@@ -87,7 +87,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_update'])) {
     $id      = intval($_POST['edit_id'] ?? 0);
     $type    = $_POST['edit_type']  ?? '';
     $label   = trim($_POST['edit_label']  ?? '');
-    $content = trim($_POST['edit_content'] ?? '');
+    $content = ($type === 'text')
+        ? toPlainText($_POST['edit_content'] ?? '')   // plain text only
+        : trim($_POST['edit_content'] ?? '');
 
     if (!empty($_FILES['edit_image_file']['name'])) {
         $check = validateImageFile($_FILES['edit_image_file'], $allowedExtensions, $allowedMimeTypes);

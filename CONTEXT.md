@@ -29,3 +29,17 @@ The state of an account frozen from signing in after 5 failed attempts inside
 one attempt window. Absolute while active — even a correct password is
 refused — and cleared by a successful login or a completed password reset.
 _Avoid_: ban, block, suspension
+
+### Canvas & content
+
+**Text block**:
+A canvas element that displays words. Its content is **plain text** — styling
+(font, size, colour, weight, alignment) comes from Brand Standards and the
+block's own properties, never from markup inside the text. See
+docs/adr/0002.
+_Avoid_: label, caption, rich text
+
+**Asset**:
+A reusable library entry — a text snippet or an uploaded/referenced image or
+video — that a canvas element can point to instead of carrying its own content.
+_Avoid_: media, resource, file

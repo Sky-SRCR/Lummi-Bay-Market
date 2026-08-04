@@ -1,6 +1,13 @@
 <?php
 // Session authentication helpers — include at the top of every protected page.
 if (session_status() === PHP_SESSION_NONE) {
+    // Harden the session cookie: unreadable to page scripts (HttpOnly),
+    // HTTPS-only (Secure), and not sent on cross-site requests (SameSite=Lax).
+    session_set_cookie_params([
+        'httponly' => true,
+        'secure'   => true,
+        'samesite' => 'Lax',
+    ]);
     session_start();
 }
 require_once __DIR__ . '/config.php';
@@ -74,5 +81,20 @@ function clearLockout(PDO $pdo, int $userId): void {
     $pdo->prepare(
         "UPDATE users SET failed_attempts = 0, last_failed_at = NULL, locked_until = NULL WHERE id = ?"
     )->execute([$userId]);
+}
+
+// ── Signage text sanitiser ──────────────────────────────────
+// Text-block content is plain text only (see docs/adr/0002). This strips
+// any markup a browser could execute before it is stored, while keeping
+// intended line breaks. Rendering then uses textContent, so stored text is
+// always shown literally — belt and suspenders against stored XSS.
+function toPlainText(string $s): string {
+    $s = preg_replace('#<\s*br\s*/?>#i', "\n", $s);
+    $s = preg_replace('#</\s*(div|p|li|h[1-6])\s*>#i', "\n", $s);
+    $s = strip_tags($s);
+    $s = html_entity_decode($s, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $s = preg_replace("/[ \t]+\n/", "\n", $s);   // trailing spaces per line
+    $s = preg_replace("/\n{3,}/", "\n\n", $s);   // collapse blank-line runs
+    return trim($s);
 }
 ?>

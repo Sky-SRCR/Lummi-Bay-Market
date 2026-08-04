@@ -257,7 +257,10 @@
                             block.style.lineHeight  = el.line_height || 1.4;
                         }
                         if (el.text_align) block.style.textAlign = el.text_align;
-                        block.innerHTML = content || '';
+                        // Plain text only — textContent never executes markup.
+                        // pre-wrap preserves author line breaks.
+                        block.style.whiteSpace = 'pre-wrap';
+                        block.textContent = content || '';
 
                     } else if (el.type === 'image') {
                         var _p   = (content || '').split('|');

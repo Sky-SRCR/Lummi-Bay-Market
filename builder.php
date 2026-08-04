@@ -454,20 +454,6 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                 onclick="clearSectionBg()">Remove Background</button>
     </div>
 
-    <!-- WYSIWYG (admin only, free text) -->
-    <div id="insp-wysiwyg" class="insp-section" style="display:none;">
-        <label>Formatting</label>
-        <div id="wysiwyg-bar">
-            <button class="fmt-btn" title="Bold"      onmousedown="fmtCmd(event,'bold')"><b>B</b></button>
-            <button class="fmt-btn" title="Italic"    onmousedown="fmtCmd(event,'italic')"><i>I</i></button>
-            <button class="fmt-btn" title="Underline" onmousedown="fmtCmd(event,'underline')"><u>U</u></button>
-            <button class="fmt-btn" title="Strike"    onmousedown="fmtCmd(event,'strikeThrough')"><s>S</s></button>
-            <button class="fmt-btn" title="Align Left"   onmousedown="fmtCmd(event,'justifyLeft')">&#8676;</button>
-            <button class="fmt-btn" title="Center"       onmousedown="fmtCmd(event,'justifyCenter')">&#8660;</button>
-            <button class="fmt-btn" title="Align Right"  onmousedown="fmtCmd(event,'justifyRight')">&#8677;</button>
-        </div>
-    </div>
-
     <!-- Font controls (admin only, free text) -->
     <div id="insp-font" class="insp-section" style="display:none;">
         <label>Font</label>
@@ -681,8 +667,8 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 // CONSTANTS (injected by PHP)
 // ============================================================
 var IS_ADMIN  = <?= $isAdmin ? 'true' : 'false' ?>;
-var SITE_NAME = <?= json_encode(SITE_NAME) ?>;
-var CSRF_TOKEN = <?= json_encode(csrfToken()) ?>;
+var SITE_NAME = <?= json_encode(SITE_NAME, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var CSRF_TOKEN = <?= json_encode(csrfToken(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 
 // Block default sizes
 var BLOCK_DEFAULTS = {
@@ -971,7 +957,8 @@ function renderBlock(el, parent) {
         inner.className = 'text-inner';
         inner.contentEditable = 'true';
         inner.style.pointerEvents = 'none'; // disabled until dblclick; lets drag/shift+click reach block div
-        inner.innerHTML = content || (el.block_subtype !== 'free' ? 'Enter text here' : 'Double-click to edit');
+        inner.style.whiteSpace = 'pre-wrap'; // preserve line breaks in plain text
+        inner.textContent = content || (el.block_subtype !== 'free' ? 'Enter text here' : 'Double-click to edit');
         inner.addEventListener('focus', function() {
             if (_shiftDown || multiSel.length > 0) { inner.blur(); return; }
             if (block !== activeBlock) selectBlock(block);
@@ -1112,10 +1099,6 @@ function showInspector(block) {
         document.getElementById('section-bg-preview').textContent = bg || 'No background set';
         document.getElementById('section-bg-fit').value = block.dataset.bgFit || 'cover';
     }
-
-    // WYSIWYG – admin + free text only
-    var showWysiwyg = IS_ADMIN && type==='text' && subtype==='free';
-    document.getElementById('insp-wysiwyg').style.display = showWysiwyg ? 'block' : 'none';
 
     // Font controls – admin + free text only
     document.getElementById('insp-font').style.display = (IS_ADMIN && type==='text' && subtype==='free') ? 'block' : 'none';
@@ -1604,7 +1587,7 @@ function linkAsset(assetId) {
     var match = assetsCache.find(function(a){ return a.id == assetId; });
     if (!match) return;
     if (activeBlock.dataset.type === 'text') {
-        activeBlock.querySelector('.text-inner').innerHTML = match.content;
+        activeBlock.querySelector('.text-inner').textContent = match.content;
     } else if (activeBlock.dataset.type === 'image') {
         activeBlock.querySelector('img').src = match.content;
         activeBlock.dataset.imgSrc = match.content;
@@ -1668,7 +1651,9 @@ function publishCanvas() {
         if (!assetId) {
             if (type === 'text') {
                 var _inner = block.querySelector('.text-inner');
-                manual   = _inner ? _inner.innerHTML : '';
+                // Plain text only — innerText yields visible text with line
+                // breaks; the server strips any markup on save as well.
+                manual   = _inner ? _inner.innerText : '';
                 savePool = true;
             } else if (type === 'carousel') {
                 manual   = block.dataset.carouselData || '{}';

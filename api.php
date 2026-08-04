@@ -220,6 +220,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
             $assetId    = !empty($el['asset_id']) ? intval($el['asset_id']) : null;
             $manual     = $el['manual_content'] ?? '';
 
+            // Text blocks are plain text only — strip any markup so nothing a
+            // browser would execute can be stored. Non-text types carry JSON
+            // (carousel/table/marquee) or file paths and must NOT be stripped.
+            if ($type === 'text') {
+                $manual = toPlainText($manual);
+            }
+
             // Auto-save new standalone text/image content to asset pool
             if (!$assetId && !empty($manual) && !empty($el['save_to_db_pool'])) {
                 $dup = $pdo->prepare("SELECT id FROM assets WHERE type=? AND content=? LIMIT 1");
