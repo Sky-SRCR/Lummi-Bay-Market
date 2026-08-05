@@ -5,12 +5,22 @@
 <title>Display</title>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    /* Kiosk / embedded display: never scroll. Lock the viewport, kill
-       scrollbars, overscroll rubber-banding, and touch-drag scrolling. */
-    html, body {
-        width: 100%; height: 100%; background: #111;
+    /* Kiosk / embedded display: never scroll in either direction. Lock the
+       body to the viewport and kill scrollbars, overscroll rubber-banding,
+       and touch-drag scrolling on both axes. */
+    html {
+        width: 100%; height: 100%;
         overflow: hidden;
-        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        background: #111;
+    }
+    body {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        width: 100%; height: 100%;
+        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: hidden;
+        background: #111;
         overscroll-behavior: none;
         touch-action: none;
         -ms-touch-action: none;
