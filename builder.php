@@ -133,6 +133,29 @@ $display = $resolution->display();
 $canvasW = $display->canvasWidth();
 $canvasH = $display->canvasHeight();
 
+// The edit lock (ADR-0007). Claimed here, on the request that opens the Display,
+// because the answer decides how this page is *built*: an account that cannot have
+// the lock gets a Builder with no editing controls in the HTML at all, rather than a
+// whole editor that script disables afterwards. Read-only is therefore a mode of
+// this page rather than a state to keep in sync, and it never changes while the page
+// is open.
+//
+// It is a GET that writes, which is normally worth avoiding. The alternative is to
+// render the editor and let script claim a moment later — which means either a
+// flicker or, worse, somebody starting to drag a block that is about to turn
+// read-only. Claiming during the render is also what makes two people opening the
+// same sign in the same second resolve to one holder. What a crafted link could
+// achieve is making this account hold a Display it may already edit, for at most one
+// idle window; see BUILD-REFERENCE §4e.
+$claimed = $displayStore->claimLock($display, $me['id']);
+if ($claimed) { $display = $claimed; }
+
+$lock     = $display->lockState();
+$readOnly = $lock->heldByOther($me['id']);
+// "Someone else" rather than an empty name: the account could have been deleted
+// between taking the lock and this page load.
+$lockHolder = $lock->holderName() !== '' ? $lock->holderName() : 'Someone else';
+
 // Where a `basic` account comes back to next time it opens the Builder without
 // naming a display. Read only by the entry rule above.
 $_SESSION['last_display'] = $display->tag();
@@ -194,6 +217,28 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     display: none; background: #7b3f3f; color: #fff; font-size: 13px; padding: 8px 14px;
     flex-shrink: 0; border-bottom: 1px solid #9b5252;
 }
+
+/* Somebody else is editing this Display (ADR-0007). One editor at a time, so this
+   page is read-only — and the bar has to be the first thing read, because every
+   control that would have changed something is simply not on the page. */
+#lock-banner {
+    background: #4b3869; color: #fff; font-size: 13px; padding: 9px 14px; flex-shrink: 0;
+    border-bottom: 1px solid #6b5291; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+#lock-banner .who { font-weight: 700; }
+#lock-banner .btn { padding: 4px 10px; }
+
+/* The holder's own bars: idle warning, lapsed, and lost-to-somebody-else. Each is
+   an offer or a fact, never a modal — interrupting an editor is the thing the idle
+   window exists to avoid. */
+#lock-idle-bar, #lock-lapsed-bar, #lock-lost-bar {
+    display: none; font-size: 13px; padding: 8px 14px; flex-shrink: 0;
+    align-items: center; gap: 10px; flex-wrap: wrap;
+}
+#lock-idle-bar   { background: #7d6608; border-bottom: 1px solid #9e8109; }
+#lock-lapsed-bar { background: #4b3869; border-bottom: 1px solid #6b5291; }
+#lock-lost-bar   { background: #7b3f3f; border-bottom: 1px solid #9b5252; }
+#lock-idle-bar .btn { padding: 4px 10px; }
 
 /* ── Control bar ── */
 #control-bar {
@@ -498,9 +543,48 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <a href="logout.php">Sign Out</a>
 </div>
 
+<!-- ── Edit lock (ADR-0007) ── -->
+<?php if ($readOnly): ?>
+<div id="lock-banner">
+    <span>
+        <span class="who"><?= htmlspecialchars($lockHolder) ?></span> is editing this display<?php
+            if ($lock->takenAtLabel() !== ''): ?> (since <?= htmlspecialchars($lock->takenAtLabel()) ?>)<?php
+            endif; ?>. You are looking at it read-only — one person edits a display at a time, so
+        nothing here can be moved, changed or published. It frees up on its own
+        <?= intval(LockState::IDLE_LAPSE_SECONDS / 60) ?> minutes after they stop working.
+        <span id="lock-free-hint" style="display:none;"><strong>It is free now</strong> —
+            <a href="builder.php?display=<?= urlencode($display->tag()) ?>" style="color:#d6c9f5;">reload to edit it</a>.</span>
+    </span>
+    <?php if ($isAdmin): ?>
+        <button class="btn danger" onclick="takeOverEditing()"
+                title="Take the edit lock from <?= htmlspecialchars($lockHolder) ?>">Take over editing</button>
+    <?php endif; ?>
+</div>
+<?php else: ?>
+<!-- Filled in by script from the idle age it is already tracking. Written out as
+     markup rather than built in JavaScript so the wording is reviewable and no
+     holder's name is ever assembled into HTML. -->
+<div id="lock-idle-bar">
+    <span><strong>Still working?</strong> Nothing has been touched here for a while, so this display
+        will be released for other people to edit in about <span id="lock-idle-mins">2</span> minutes.</span>
+    <button class="btn green" onclick="keepEditing()">Keep editing</button>
+</div>
+<div id="lock-lapsed-bar">
+    <span><strong>The edit lock was released</strong> after
+        <?= intval(LockState::IDLE_LAPSE_SECONDS / 60) ?> minutes with nothing happening, so somebody
+        else can take this display. Carry on — changing anything takes it straight back, unless
+        somebody has started in the meantime.</span>
+</div>
+<div id="lock-lost-bar">
+    <span><strong><span id="lock-lost-who">Someone else</span> is editing this display now.</strong>
+        Everything you have done is still on screen, but publishing is refused while they have it.
+        Publish once they are finished, or reload to start again from what is on the screen.</span>
+</div>
+<?php endif; ?>
+
 <!-- ── Control bar ── -->
 <div id="control-bar">
-    <?php if ($isAdmin): ?>
+    <?php if ($isAdmin && !$readOnly): ?>
         <button class="btn purple" onclick="createSection()">+ Section</button>
         <button class="btn"        onclick="createBlock('image',null)">+ Image</button>
         <button class="btn"        onclick="createBlock('carousel',null)">+ Carousel</button>
@@ -510,12 +594,16 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <div class="sep"></div>
     <?php endif; ?>
 
+    <?php if (!$readOnly): ?>
     <button class="btn orange" onclick="createBlock('text','section_header')">+ Section Header</button>
     <button class="btn orange" onclick="createBlock('text','item_title')">+ Item Title</button>
     <button class="btn orange" onclick="createBlock('text','price')">+ Price</button>
     <button class="btn orange" onclick="createBlock('text','description')">+ Description</button>
+    <?php else: ?>
+    <span style="font-size:12px; color:#bdc3c7;">Read-only — <?= htmlspecialchars($lockHolder) ?> has this display open.</span>
+    <?php endif; ?>
 
-    <?php if ($isAdmin): ?>
+    <?php if ($isAdmin && !$readOnly): ?>
     <div class="sep"></div>
     <label style="font-size:11px; color:#bdc3c7;">Background:</label>
     <select id="bg-type" onchange="toggleBgInputs()" style="padding:5px 7px; border-radius:3px; border:1px solid #34495e; background:#2c3e50; color:#fff; font-size:12px;">
@@ -536,7 +624,9 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <button class="btn gray" onclick="nudgeZoom(1)" title="Zoom in">+</button>
     <span id="zoom-readout" style="font-size:11px; color:#bdc3c7; min-width:34px; text-align:right;">100%</span>
 
+    <?php if (!$readOnly): ?>
     <button class="btn publish-btn" style="margin-left:12px;" onclick="publishCanvas()">&#10003; Publish</button>
+    <?php endif; ?>
 </div>
 
 <!-- ── Align bar (shown on multi-select OR single select) ── -->
@@ -575,7 +665,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 <?php endif; ?>
 
 <!-- ── Section banner for basic users ── -->
-<?php if (!$isAdmin): ?>
+<?php if (!$isAdmin && !$readOnly): ?>
 <div id="section-banner">
     Click on a <strong>section</strong> (purple border) to target it, then add your blocks.
 </div>
@@ -872,6 +962,19 @@ var DISPLAY_TITLE = <?= json_encode($display->title(), JSON_HEX_TAG | JSON_HEX_A
 var CANVAS_W      = <?= $canvasW ?>;
 var CANVAS_H      = <?= $canvasH ?>;
 
+// Whether somebody else holds this Display's edit lock (ADR-0007). Decided by the
+// server before this page was built, and constant for its life: every control that
+// would change something is absent from the HTML rather than disabled here, and the
+// guards below are the belt to that braces — for the keyboard, and for anything
+// reachable without a button.
+var READ_ONLY   = <?= $readOnly ? 'true' : 'false' ?>;
+var LOCK_HOLDER = <?= json_encode($lockHolder, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+
+// The idle window and its warning, from the one place they are defined
+// (LockState) rather than a second copy that could drift away from it.
+var LOCK_LAPSE_SECONDS = <?= LockState::IDLE_LAPSE_SECONDS ?>;
+var LOCK_WARN_SECONDS  = <?= LockState::WARN_AFTER_SECONDS ?>;
+
 // Editor zoom. The canvas is CSS-scaled, so interact.js deltas — which arrive in
 // screen pixels — are divided by ZOOM before becoming canvas coordinates. Miss one
 // of those divisions and dragging drifts at any zoom but 100%.
@@ -927,11 +1030,12 @@ document.addEventListener('DOMContentLoaded', function() {
         showToast('Failed to load layout.', true);
     });
     setupCanvas();
-    if (!IS_ADMIN) {
+    if (!IS_ADMIN && !READ_ONLY) {
         document.getElementById('section-banner').style.display = 'block';
     }
     // After the banner, so the fit measures the frame at its final height.
     zoomToFit();
+    setupLockWatch();
 });
 
 // ============================================================
@@ -1054,20 +1158,24 @@ function loadLayout() {
 // ============================================================
 // BACKGROUND (admin)
 // ============================================================
+// The background controls are an admin's, and a read-only Builder has none of them
+// in the page at all — hence READ_ONLY as well as IS_ADMIN. loadLayout() calls in
+// here for both, so these are the guards that keep a read-only admin's page from
+// reaching for a control that was never rendered.
 function toggleBgInputs() {
-    if (!IS_ADMIN) return;
+    if (!IS_ADMIN || READ_ONLY) return;
     var t = document.getElementById('bg-type').value;
     document.getElementById('bg-color').style.display = t==='color' ? 'inline-block' : 'none';
     document.getElementById('bg-file').style.display  = t==='image' ? 'inline-block' : 'none';
 }
 function applyBg() {
-    if (!IS_ADMIN) return;
+    if (!IS_ADMIN || READ_ONLY) return;
     var canvas = document.getElementById('builder-canvas');
     canvas.style.backgroundColor = document.getElementById('bg-color').value;
     canvas.style.backgroundImage = 'none';
 }
 function applyBgFile() {
-    if (!IS_ADMIN) return;
+    if (!IS_ADMIN || READ_ONLY) return;
     var f = document.getElementById('bg-file').files[0];
     if (!f) return;
     var r = new FileReader();
@@ -1079,7 +1187,7 @@ function applyBgFile() {
 // CREATE SECTION (admin)
 // ============================================================
 function createSection() {
-    if (!IS_ADMIN) return;
+    if (!IS_ADMIN || READ_ONLY) return;
     var def    = BLOCK_DEFAULTS.section || {w:600, h:380};
     var center = getCanvasDropCenter(def.w, def.h, null);
     renderSection({
@@ -1091,7 +1199,7 @@ function createSection() {
 function renderSection(el) {
     var s = document.createElement('div');
     s.className = 'editable-block section-block';
-    if (!el.locked && IS_ADMIN) s.classList.add('draggable-block');
+    if (!el.locked && IS_ADMIN && !READ_ONLY) s.classList.add('draggable-block');
     s.dataset.type    = 'section';
     s.dataset.tempId  = el.temp_id || tmpId();
     s.dataset.dbId    = el.id      || '';
@@ -1127,6 +1235,7 @@ function renderSection(el) {
     if (el.locked) appendLockIcon(s);
 
     s.addEventListener('mousedown', function(e) {
+        if (READ_ONLY) return;   // no selecting, no targeting, no inspector
         if (e.target.closest('.child-block')) return;
         if (IS_ADMIN) {
             if (e.shiftKey) {
@@ -1146,6 +1255,7 @@ function renderSection(el) {
 // CREATE BLOCK
 // ============================================================
 function createBlock(type, subtype) {
+    if (READ_ONLY) return;
     // Basic users must have a section targeted
     if (!IS_ADMIN && !targetSection) {
         showToast('Please click on a section first to add content.', true);
@@ -1191,7 +1301,7 @@ function renderBlock(el, parent, isNew) {
     block.className = 'editable-block';
     var isChildBlock = parent !== document.getElementById('builder-canvas');
     block.classList.add(isChildBlock ? 'child-block' : 'root-block');
-    if (!el.locked && (IS_ADMIN || isChildBlock)) block.classList.add('draggable-block');
+    if (!el.locked && (IS_ADMIN || isChildBlock) && !READ_ONLY) block.classList.add('draggable-block');
     if (el.locked) block.classList.add('locked-block');
 
     block.dataset.type    = el.type;
@@ -1222,7 +1332,10 @@ function renderBlock(el, parent, isNew) {
         if (el.text_align) { block.style.textAlign = el.text_align; block.dataset.textAlign = el.text_align; }
         var inner = document.createElement('div');
         inner.className = 'text-inner';
-        inner.contentEditable = 'true';
+        // Not even editable in a read-only Builder: the dblclick that turns pointer
+        // events on is guarded too, but a contenteditable node is one stray focus
+        // away from accepting typing that could never be published.
+        inner.contentEditable = READ_ONLY ? 'false' : 'true';
         inner.style.pointerEvents = 'none'; // disabled until dblclick; lets drag/shift+click reach block div
         inner.style.whiteSpace = 'pre-wrap'; // preserve line breaks in plain text
         inner.textContent = content || (el.block_subtype !== 'free' ? 'Enter text here' : 'Double-click to edit');
@@ -1242,7 +1355,7 @@ function renderBlock(el, parent, isNew) {
             inner.style.webkitUserSelect = '';
         });
         block.addEventListener('dblclick', function(e) {
-            if (block.dataset.locked === '1' || _shiftDown || e.target.closest('.rh')) return;
+            if (READ_ONLY || block.dataset.locked === '1' || _shiftDown || e.target.closest('.rh')) return;
             block.classList.remove('just-added');   // first edit clears the highlight
             inner.style.pointerEvents = 'auto';
             inner.style.userSelect = 'text';
@@ -1291,6 +1404,7 @@ function renderBlock(el, parent, isNew) {
     if (el.locked) appendLockIcon(block);
 
     block.addEventListener('mousedown', function(e) {
+        if (READ_ONLY) return;               // no selecting, so no inspector to reach
         if (e.target.closest('.rh')) return; // resize handles handled by interact.js
         if (e.shiftKey) {
             e.preventDefault(); // prevent browser focus/text-selection changes during multi-select
@@ -1331,6 +1445,7 @@ function applyTextStyles(block, el) {
 // SELECTION (single)
 // ============================================================
 function selectBlock(block) {
+    if (READ_ONLY) return;
     clearMultiSel();
     deselectAll();
     activeBlock = block;
@@ -1691,7 +1806,7 @@ function setupCanvas() {
     document.addEventListener('selectionchange', trackSelection);
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Shift') _shiftDown = true;
-        if (e.key === 'Delete') {
+        if (e.key === 'Delete' && !READ_ONLY) {
             var ae = document.activeElement;
             if (ae && (ae.classList.contains('text-inner') || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')) return;
             if (activeBlock) {
@@ -1877,6 +1992,7 @@ function linkAsset(assetId) {
 // DELETE
 // ============================================================
 function deleteSelected() {
+    if (READ_ONLY) return;
     if (activeBlock) {
         if (activeBlock.dataset.type === 'section') {
             if (!confirm('Delete this section and ALL blocks inside it?')) return;
@@ -1890,6 +2006,11 @@ function deleteSelected() {
 // PUBLISH
 // ============================================================
 function publishCanvas() {
+    // There is no Publish button on a read-only page. The server refuses this
+    // anyway (LayoutStore checks the lock inside the publish transaction) — this is
+    // just not making the round trip to be told so.
+    if (READ_ONLY) { showToast(LOCK_HOLDER + ' is editing this display — nothing can be published from here.', true); return; }
+
     var canvas   = document.getElementById('builder-canvas');
     var elements = [];
 
@@ -1999,12 +2120,197 @@ function publishCanvas() {
                 showToast('Published to ' + DISPLAY_TITLE + ' (' + DISPLAY_TAG + '). '
                           + 'That screen updates within 30 seconds.');
                 loadAssets();
-            } else if (res.reason === 'stale') {
-                // Nothing was saved. This has to be acknowledged, not glimpsed:
-                // the layout on screen is still the editor's, and reloading is
-                // the only way forward.
+            } else if (res.reason === 'stale' || res.reason === 'locked') {
+                // Nothing was saved, and either refusal has to be acknowledged
+                // rather than glimpsed: the layout on screen is still the editor's,
+                // and what to do next differs — reload for a stale stamp, wait for
+                // somebody else's edit lock. The message says which.
+                if (res.reason === 'locked') { lockLost = true; renderLockBars(); }
                 alert(res.message);
             } else { showToast(res.message||'Publish failed.', true); }
+        })
+        .catch(function(){ showToast('Network error.', true); });
+}
+
+// ============================================================
+// EDIT LOCK (ADR-0007)
+// ============================================================
+// One account edits a Display at a time, and the lock is held by *work* rather than
+// by this tab being open. So the only thing tracked here is when something real last
+// happened, and every heartbeat sends that *age* rather than "now": a tab forgotten
+// on a back-office monitor keeps beating and still loses the display on time, while
+// somebody reading, thinking or typing slowly keeps it.
+//
+// Read-only is not managed here at all — the server decided it before this page was
+// built and READ_ONLY never changes. What can change is losing a lock that was held:
+// an admin took over, or it lapsed and somebody else claimed it. ADR-0007 keeps the
+// unsaved edits on screen for that case and lets the publish be refused, rather than
+// pulling the editor apart underneath the person using it.
+
+var LOCK_BEAT_MS = 60000;   // the most often the server hears from us
+var LOCK_TICK_MS = 15000;   // how often the bars are re-decided from the local clock
+var LOCK_POLL_MS = 30000;   // read-only: how often we check whether it has freed up
+
+var lastInteraction = Date.now();
+var lastBeatAt      = Date.now();
+var lockLost        = false;   // somebody else holds it — never claim again
+
+// The server's own idea of how idle this lock is, and when it said so. It knows
+// about every tab this account has open on this Display, which this tab does not:
+// without it, a second tab left sitting on the same sign would show its owner an
+// idle warning while they were busy working in the first one.
+var serverIdle       = 0;
+var serverAnsweredAt = 0;
+
+/**
+ * How long since the last real interaction, in seconds — the figure the bars are
+ * drawn from and the figure a heartbeat carries.
+ *
+ * The lower of this tab's own clock and the server's, aged forward since it
+ * answered. Whichever of the two saw work most recently is the one telling the
+ * truth about whether anybody is editing this Display.
+ */
+function lockIdleSeconds() {
+    var local = Math.round((Date.now() - lastInteraction) / 1000);
+    if (serverAnsweredAt === 0) { return local; }
+    return Math.min(local, serverIdle + Math.round((Date.now() - serverAnsweredAt) / 1000));
+}
+
+function setupLockWatch() {
+    if (READ_ONLY) {
+        // Watch for the display freeing up, so the offer to reload is a fact rather
+        // than a guess. Never claims it: taking a lock the moment its holder pauses
+        // is exactly what "an active editor is never interrupted" rules out.
+        setInterval(pollLockState, LOCK_POLL_MS);
+        return;
+    }
+    // A click, a key, an edit — the interactions ADR-0007 counts as work. Captured on
+    // the document so nothing downstream can stop propagation and starve the lock,
+    // and deliberately not `mousemove`: presence is not work, and mouse drift would
+    // hold a sign for as long as somebody left a cat on the desk.
+    document.addEventListener('pointerdown', noteInteraction, true);
+    document.addEventListener('keydown',     noteInteraction, true);
+    document.addEventListener('input',       noteInteraction, true);
+    window.addEventListener('pagehide', releaseLockOnLeave);
+    setInterval(lockTick, LOCK_TICK_MS);
+}
+
+function noteInteraction() {
+    var wasQuiet = (Date.now() - lastInteraction) > LOCK_BEAT_MS;
+    lastInteraction = Date.now();
+    // Coming back from a quiet spell is the one moment worth an immediate beat: the
+    // lock may have lapsed, and taking it back now is what stops a colleague
+    // starting on a display somebody is working on again. Any bar on screen implies
+    // a long quiet spell, so this is also the only time they need re-deciding.
+    if (wasQuiet) { holdLock(); renderLockBars(); }
+}
+
+function lockTick() {
+    renderLockBars();
+    if (!lockLost && (Date.now() - lastBeatAt) >= LOCK_BEAT_MS) { holdLock(); }
+}
+
+/** Take the lock, keep it, or take it back — one endpoint, as one question. */
+function holdLock() {
+    if (READ_ONLY || lockLost) { return; }
+    lastBeatAt = Date.now();
+    var fd = new FormData();
+    fd.append('csrf_token', CSRF_TOKEN);
+    fd.append('display', DISPLAY_TAG);
+    // The true age of the last interaction, so a beat can never quietly extend a
+    // lock on a display nobody has touched.
+    fd.append('idle_seconds', lockIdleSeconds());
+    fetch('api.php?action=hold_lock', {method:'POST', body:fd})
+        .then(function(r){ return r.json(); })
+        .then(applyLockAnswer)
+        .catch(function(){});   // a missed beat is covered by the next one
+}
+
+function applyLockAnswer(res) {
+    if (!res || res.status !== 'success') { return; }
+
+    if (res.held_by_me) {
+        serverIdle       = res.idle_seconds || 0;
+        serverAnsweredAt = Date.now();
+    }
+    if (!res.held_by_other) { return; }
+    // Lost it: somebody took over, or it lapsed and somebody else claimed it. The
+    // canvas is left exactly as it is — publishing is what gets refused.
+    lockLost = true;
+    var who = document.getElementById('lock-lost-who');
+    if (who) { who.textContent = res.held_by || 'Someone else'; }
+    renderLockBars();
+}
+
+/** The one click that keeps the lock, from the idle warning. */
+function keepEditing() {
+    lastInteraction = Date.now();
+    holdLock();
+    renderLockBars();
+}
+
+/** Which of the three bars belongs on screen, decided from the local idle age. */
+function renderLockBars() {
+    var idle = lockIdleSeconds();
+    showLockBar('lock-lost-bar',   lockLost);
+    showLockBar('lock-lapsed-bar', !lockLost && idle >= LOCK_LAPSE_SECONDS);
+    showLockBar('lock-idle-bar',   !lockLost && idle >= LOCK_WARN_SECONDS && idle < LOCK_LAPSE_SECONDS);
+    var mins = document.getElementById('lock-idle-mins');
+    if (mins) { mins.textContent = Math.max(1, Math.round((LOCK_LAPSE_SECONDS - idle) / 60)); }
+}
+
+function showLockBar(id, on) {
+    var el = document.getElementById(id);
+    if (el) { el.style.display = on ? 'flex' : 'none'; }
+}
+
+/** Read-only: has the display freed up while we were watching? */
+function pollLockState() {
+    fetch('api.php?action=lock_state&display=' + encodeURIComponent(DISPLAY_TAG))
+        .then(function(r){ return r.json(); })
+        .then(function(res) {
+            if (!res || res.status !== 'success') { return; }
+            // Shown when free and taken away again if somebody else starts, so the
+            // offer to reload means what it says at the moment it is read.
+            var hint = document.getElementById('lock-free-hint');
+            if (hint) { hint.style.display = res.held_by_other ? 'none' : 'inline'; }
+        })
+        .catch(function(){});
+}
+
+/**
+ * Hand the lock back as the page goes away, so the next person is not waiting out
+ * the idle window for a display nobody is looking at.
+ *
+ * `pagehide` and `sendBeacon` because this is the one send that survives a page
+ * being torn down. Best effort by nature — a closed lid or a flat battery sends
+ * nothing at all, which is what the idle window is there for.
+ */
+function releaseLockOnLeave() {
+    if (READ_ONLY || lockLost || !navigator.sendBeacon) { return; }
+    var fd = new FormData();
+    fd.append('csrf_token', CSRF_TOKEN);
+    fd.append('display', DISPLAY_TAG);
+    navigator.sendBeacon('api.php?action=release_lock', fd);
+}
+
+/** An admin taking the display off whoever has it — ADR-0007's force-unlock. */
+function takeOverEditing() {
+    if (!IS_ADMIN) { return; }
+    if (!confirm('Take over editing ' + DISPLAY_TITLE + '?\n\n'
+        + LOCK_HOLDER + ' is editing it right now. Anything they have not published yet will be '
+        + 'lost — they keep it on screen but will not be able to publish it once you take over.')) { return; }
+
+    var fd = new FormData();
+    fd.append('csrf_token', CSRF_TOKEN);
+    fd.append('display', DISPLAY_TAG);
+    fetch('api.php?action=take_over_lock', {method:'POST', body:fd})
+        .then(function(r){ return r.json(); })
+        .then(function(res) {
+            // Reload rather than enable the controls in place: read-only is a mode
+            // this page was built in, so the way out of it is to build it again.
+            if (res && res.held_by_me) { location.reload(); return; }
+            showToast((res && res.message) || 'Could not take over editing.', true);
         })
         .catch(function(){ showToast('Network error.', true); });
 }
@@ -2013,6 +2319,11 @@ function publishCanvas() {
 // INTERACT.JS – drag, resize, bounds
 // ============================================================
 function setupInteract() {
+    // Nothing on the canvas moves or resizes in a read-only Builder. One return
+    // covers sections, root blocks and child blocks — and covers a fourth
+    // interactable added here later, which is the point of putting it here.
+    if (READ_ONLY) { return; }
+
     var canvas = document.getElementById('builder-canvas');
 
     // Handle-based resize edges (corners + sides)

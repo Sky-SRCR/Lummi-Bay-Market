@@ -1,9 +1,9 @@
 # Roadmap — Multi-Display Support
 
-Status: **Phases 1–4 built on `claude/app-update-planning-1pjqfr`, not yet deployed.**
-Phases 5–6 not started. How the code is shaped, and the invariants each phase
-must preserve, are in [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that
-alongside this file.
+Status: **Phases 1–5 built on `claude/app-update-planning-1pjqfr`, not yet deployed.**
+Phase 6 not started. How the code is shaped, and the invariants each phase must
+preserve, are in [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that alongside
+this file.
 
 ## Why
 
@@ -227,6 +227,33 @@ must respect it, in a file that is largely inline JavaScript.
 Display after 15 minutes, an active editor is never interrupted, and a force-unlock
 works with the holder warned.
 
+**Built.** Opening a Display in the Builder claims its lock; a second account gets
+the same page with no editing controls in it at all and a bar naming the holder and
+since when. Read-only is decided server-side before the page is built, which is what
+made this tractable in a file that is mostly inline JavaScript — a control added
+later is either inside the `if (!$readOnly)` block or it is reachable, and that shows
+up in a diff. The lock is held by work: the Builder reports the *age* of the last
+real click, key or drag, so a tab forgotten on a back-office monitor keeps
+heartbeating and still frees the sign exactly 15 minutes after somebody last touched
+it. The holder gets a warning bar with one button at 13 minutes, and leaving the
+Builder releases the lock immediately rather than making the next person wait it out.
+
+`LayoutStore::publish()` now refuses two ways, and reports the lock first: "reload
+and re-apply" is bad advice while somebody else is mid-edit. Losing the lock while a
+tab is open does not disturb the canvas — ADR-0007's rule is that the unsaved edits
+stay on screen and the publish is refused, which is both kinder and far simpler than
+dismantling the editor underneath somebody. An admin can take a Display off its
+holder from the read-only Builder, behind a confirm that says what it costs; the
+takeover *transfers* the lock rather than clearing it, or the ousted tab's next
+heartbeat would take it straight back.
+
+The planned `takeLock()`/`heartbeat()` pair became one `claimLock()`, and
+`forceUnlock()` became `seizeLock()`; see BUILD-REFERENCE §4e for both and the rest
+of the phase's decisions, including why `builder.php` claims the lock on a GET. 237
+self-test checks pass. **Not yet run against MySQL or a browser**, and this is the
+phase that needs two browsers as well as two accounts — plus one 15-minute wait that
+nothing can shorten.
+
 ### Phase 6 — Docs and schema · size S · risk Low
 
 `schema.sql` updated to the real structure. `README.md`, `help.php` and `HANDOFF.md`
@@ -250,7 +277,7 @@ corrected — all three present 1920 × 1080 as a fixed property of the system, 
   those errors. Phases 2 and 5 touch it heavily and need reading, not just linting.
 - **No tests** — verification is manual against the live site.
 
-## Before this reaches the sign (Phases 1–4)
+## Before this reaches the sign (Phases 1–5)
 
 In order, on the one visit:
 
@@ -319,7 +346,29 @@ In order, on the one visit:
     Display, untick its grant as the admin and save. The open tab keeps working
     until it publishes; the publish is refused. Nothing it had unsaved reaches the
     screen.
-18. **Then clean up.** Delete the test Displays and the test account. A bare
+18. **Prove one editor at a time.** With the basic account editing its test Display
+    in one browser, open that same Display as the admin in the other. It must come up
+    **read-only**: a purple bar naming the other account and since when, no *+ block*
+    buttons, no background controls, no Publish button, and clicking a block does
+    nothing. Each Display card in Admin Panel → Displays also says who has it open.
+19. **Prove the takeover.** In the admin's read-only tab click **Take over editing**
+    and confirm. The page reloads as a normal Builder. Back in the basic account's
+    tab, wait up to a minute for its heartbeat: a red bar appears saying the admin
+    has it. Its canvas is untouched — that is deliberate — but publishing from it is
+    refused by name, and nothing reaches the screen.
+20. **Prove the idle release.** This is the one step with a real wait in it, and it
+    can run in a spare tab while the rest is checked. Open a test Display, touch
+    nothing, and watch: at **13 minutes** a warning bar appears with *Keep editing*
+    (clicking it must keep the Display, provably — the other browser still sees
+    read-only afterwards); at **15** the bar says the lock was released, and the other
+    browser can then open that Display and edit it normally. Then go back to the first
+    tab and change something: it takes the Display back if nobody claimed it, or says
+    who did.
+21. **Prove that leaving releases it at once.** Close the Builder tab, or click away
+    to the Asset Library, then immediately open that Display in the other browser. It
+    must be editable straight away — nobody should have to wait out 15 minutes for a
+    display nobody is looking at.
+22. **Then clean up.** Delete the test Displays and the test account. A bare
     `builder.php` as an admin goes straight into the drive-thru again — that is the
     single-sign entry rule — and the drive-thru layout is exactly as it was.
 

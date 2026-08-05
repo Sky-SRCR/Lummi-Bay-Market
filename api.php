@@ -121,6 +121,33 @@ function backgroundFromPost(bool $isAdmin): Background {
     return Background::keepImage();
 }
 
+/**
+ * The edit lock as the Builder consumes it (ADR-0007).
+ *
+ * Answers only what that page needs to decide: do I hold this Display, and if not,
+ * who does. The idle age is included because the server knows about every tab this
+ * account has open on this Display and a single tab does not — without it, a second
+ * tab left sitting on the same sign would warn its owner that the lock was about to
+ * lapse while they were busy working in the first one.
+ */
+function lockPayload(?Display $display, Actor $actor): array {
+    if (!$display) {
+        return ['status' => 'error', 'reason' => 'unknown', 'message' => 'Display not found'];
+    }
+    $lock  = $display->lockState();
+    $other = $lock->heldByOther($actor->id());
+    return [
+        'status'     => 'success',
+        'held_by_me' => $lock->heldBy($actor->id()),
+        // Both flags, rather than one and its negation: neither is true when the
+        // Display is free, and the Builder does different things in all three cases.
+        'held_by_other' => $other,
+        'held_by'       => $other ? $lock->holderName() : '',
+        'since'         => $other ? $lock->takenAtLabel() : '',
+        'idle_seconds'  => $lock->idleSeconds(),
+    ];
+}
+
 /** Emit the standard "which Display?" failure for an endpoint that needs one. */
 function failResolution(DisplayResolution $resolution): void {
     echo json_encode([
@@ -248,6 +275,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
             'message' => $result->message(),
         ]);
     }
+    exit;
+}
+
+// ============================================================
+// The edit lock (ADR-0007)
+// ============================================================
+// One account edits a Display at a time. All four endpoints resolve their Display
+// through DisplayRequest like everything else, so a lock cannot be taken on, or
+// stolen from, a Display the account may not edit in the first place.
+
+// ---- POST: hold_lock — the Builder's claim, and its heartbeat ----
+// One endpoint for both, because they are one question: is this Display mine to
+// edit? Taking it on open, keeping it while working, and taking it back after an
+// idle lapse nobody else filled are the same statement (DisplayStore::claimLock).
+//
+// `idle_seconds` is how long ago the *last real interaction* was, not how long ago
+// the last heartbeat was. The Builder sending the true age is what lets it beat on
+// a lazy interval without ever extending a lock on work that stopped — and it means
+// a forgotten tab loses the Display on time even though it is still beating.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'hold_lock') {
+    $resolution = DisplayRequest::forEditing($displays, $writeParams, $actor);
+    if (!$resolution->isFound()) { failResolution($resolution); exit; }
+
+    echo json_encode(lockPayload(
+        $displays->claimLock($resolution->display(), $actor->id(), intval($_POST['idle_seconds'] ?? 0)),
+        $actor
+    ));
+    exit;
+}
+
+// ---- GET: lock_state — who holds it, without touching it ----
+// What a read-only Builder polls. It must not claim: a second person watching a
+// Display would otherwise take it the moment the holder went idle, which is the
+// opposite of the "an active editor is never interrupted" rule.
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'lock_state') {
+    $resolution = DisplayRequest::forEditing($displays, $_GET, $actor);
+    if (!$resolution->isFound()) { failResolution($resolution); exit; }
+
+    echo json_encode(lockPayload($resolution->display(), $actor));
+    exit;
+}
+
+// ---- POST: release_lock — leaving the Builder ----
+// Sent by beacon as the page goes away, so the next person does not wait out the
+// idle window for a Display nobody is looking at. Best effort by nature: a closed
+// lid or a dead battery sends nothing, which is what the idle window is for.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'release_lock') {
+    $resolution = DisplayRequest::forEditing($displays, $writeParams, $actor);
+    if (!$resolution->isFound()) { failResolution($resolution); exit; }
+
+    echo json_encode(lockPayload($displays->releaseLock($resolution->display(), $actor->id()), $actor));
+    exit;
+}
+
+// ---- POST: take_over_lock — an admin taking the Display (admin only) ----
+// ADR-0007's force-unlock. It hands the lock over rather than freeing it, so the
+// ousted Builder learns it lost the Display instead of quietly reclaiming it on its
+// next heartbeat. The confirm that states the holder loses unsaved work is in the
+// Builder; this endpoint is the deliberate act it confirms.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'take_over_lock') {
+    if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
+    $resolution = DisplayRequest::forEditing($displays, $writeParams, $actor);
+    if (!$resolution->isFound()) { failResolution($resolution); exit; }
+
+    echo json_encode(lockPayload($displays->seizeLock($resolution->display(), $actor->id()), $actor));
     exit;
 }
 

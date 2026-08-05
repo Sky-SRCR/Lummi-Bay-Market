@@ -142,6 +142,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // pointing at a deleted account would hand its access to whoever
             // inherited that id.
             $grantStore->revokeAllForAccount($uid);
+            // And any edit lock they were holding, for the same reason and one of
+            // its own: a lock naming a deleted account blocks that display for a
+            // full idle window, held by a name no banner can even print.
+            $displayStore->releaseLocksHeldBy($uid);
             $pdo->prepare("DELETE FROM users WHERE id = ?")->execute([$uid]);
             $msg = 'User deleted, along with any display access they had.';
         }
@@ -460,6 +464,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     color: #1a5276; border: 1px solid #d4e2ee; border-radius: 3px; padding: 1px 7px; }
         .display-facts { font-size: 12px; color: #7f8c8d; margin-top: 5px; line-height: 1.6; }
         .display-facts strong { color: #555; font-weight: 600; }
+        .display-facts .lock-line { color: #6b5291; }
         .addr-row { display: flex; align-items: center; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
         .addr-row input { flex: 1; min-width: 260px; font-family: "SF Mono", Menlo, Consolas, monospace;
                           font-size: 12px; background: #f8f9fa; color: #2c3e50; }
@@ -709,6 +714,18 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     &nbsp;·&nbsp; and every admin
                 <?php else: ?>
                     Admins only — no basic account has been assigned this display
+                <?php endif; ?>
+                <?php
+                // Who has it open right now (ADR-0007). Shown here because "why can I
+                // not edit this?" is asked on this screen; the taking-over is offered
+                // in the Builder, where you can see what you would be interrupting.
+                $cardLock = $d->lockState();
+                if ($cardLock->isHeld()):
+                ?>
+                    <br><span class="lock-line">Being edited now by
+                    <strong><?= htmlspecialchars($cardLock->holderName() !== '' ? $cardLock->holderName() : 'someone') ?></strong><?php
+                        if ($cardLock->takenAtLabel() !== ''): ?>, since <?= htmlspecialchars($cardLock->takenAtLabel()) ?><?php
+                        endif; ?> — opening it in the builder shows it read-only, and an admin can take over there.</span>
                 <?php endif; ?>
             </div>
 

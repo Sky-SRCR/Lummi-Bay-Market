@@ -96,11 +96,23 @@ function layoutWith($text, $tempId = 's1')
     ];
 }
 
+/**
+ * One publish, as one visit to the Builder: publish, then leave.
+ *
+ * The leaving matters. A publish keeps the publisher's edit lock alive (ADR-0007),
+ * so a Display that changes hands between two checks would otherwise refuse the
+ * second account for a reason that has nothing to do with what is being tested.
+ * Releasing here models what actually happens — the tab closes — and keeps every
+ * lock assertion in the one section that is about locks.
+ */
 function publishAs(LayoutStore $layouts, Display $display, array $elements, $stamp, $isAdmin = true, $actorId = 1, Background $bg = null)
 {
-    return $layouts->publish($display, new PublishRequest(
+    global $pdo;
+    $result = $layouts->publish($display, new PublishRequest(
         $elements, $bg ?: Background::unchanged(), $actorId, $isAdmin, $stamp
     ));
+    (new DisplayStore($pdo))->releaseLock($display, $actorId);
+    return $result;
 }
 
 $res = publishAs($layouts, $driveT, layoutWith('Drive-thru $9.99'), '0');
@@ -604,5 +616,157 @@ checkSame(true, newTestActor($pdo, 1, 'admin')->mayEdit($deli),
 // An account being deleted takes its grants with it, the same way a Display does.
 checkSame(1, $grants->revokeAllForAccount($janeId), 'deleting an account revokes its grants');
 checkSame([], (new GrantStore($pdo))->displayIdsFor($janeId), 'leaving it holding nothing');
+
+// ─────────────────────────────────────────────────────────────
+section('One editor per Display: the edit lock');
+
+// Note: this section calls $layouts->publish() directly rather than publishAs(),
+// because that helper releases the lock afterwards to model leaving the Builder —
+// which is exactly the behaviour under test here.
+
+$pdo     = newTestDb();
+$store   = new DisplayStore($pdo);
+$layouts = newTestLayoutStore($pdo);
+$driveT  = makeTestDisplay($pdo, 'drive-thru', 'Drive-Thru');
+$lobby   = makeTestDisplay($pdo, 'lobby', 'Lobby');
+
+check(LockState::WARN_AFTER_SECONDS < LockState::IDLE_LAPSE_SECONDS,
+      'the holder is warned before the lock is released, not after');
+
+// Nobody has opened it: free, and free means free for everyone.
+$lock = $driveT->lockState();
+checkSame(false, $lock->isHeld(), 'a Display nobody has opened is not locked');
+checkSame(true,  $lock->isFree(), 'which is the same thing said the other way');
+checkSame(false, $lock->heldBy(1), 'and is nobody\'s in particular');
+checkSame(false, $lock->heldByOther(1), 'nor anybody else\'s');
+
+// ---- Taking it ----------------------------------------------------------------
+$d    = $store->claimLock($driveT, 1);
+$lock = $d->lockState();
+checkSame(true,  $lock->heldBy(1), 'opening a Display claims its lock');
+checkSame(true,  $lock->heldByOther(2), 'which is what makes a second account read-only');
+checkSame(false, $lock->heldByOther(1), 'the holder is never "somebody else"');
+checkSame('sky', $lock->holderName(), 'the lock knows whose it is by name, for the banner');
+check($lock->takenAtLabel() !== '', 'and since when');
+check($lock->idleSeconds() < 5, 'a lock just taken is not idle');
+
+$since = $lock->takenAtLabel();
+$d     = $store->claimLock($driveT, 2);
+checkSame(true, $d->lockState()->heldBy(1), 'a second account cannot take a lock that is being held');
+checkSame(1,    $d->lockState()->holderId(), 'the holder is unchanged');
+
+// A heartbeat is the same call, and keeps "editing since" where it was: it is when
+// they started, not when they last clicked.
+$d = $store->claimLock($driveT, 1);
+checkSame(true,  $d->lockState()->heldBy(1), 'a heartbeat from the holder keeps the lock');
+checkSame($since, $d->lockState()->takenAtLabel(), 'and does not restart "editing since"');
+
+// ---- Held by work, not by presence --------------------------------------------
+// The Builder reports the age of the last real interaction, so a tab that is still
+// beating but nobody is touching still loses the Display on time.
+$d = $store->claimLock($driveT, 1, 800);
+check($d->lockState()->idleSeconds() >= 795,
+      'a heartbeat records when the last interaction was, not when the beat arrived');
+checkSame(true, $d->lockState()->isHeld(), 'inside the window it is still held');
+
+$d = $store->claimLock($driveT, 1, LockState::IDLE_LAPSE_SECONDS + 60);
+check($d->lockState()->idleSeconds() >= 795,
+      'a beat from a tab idle past the window does not renew the lock');
+
+// ---- Lapsing ------------------------------------------------------------------
+ageTestLock($pdo, $driveT->id(), LockState::IDLE_LAPSE_SECONDS + 1);
+$d = $store->forId($driveT->id());
+checkSame(false, $d->lockState()->isHeld(), 'a lock idle past the window has lapsed');
+checkSame(false, $d->lockState()->heldByOther(2), 'so nobody is blocked by it');
+checkSame('',    $d->lockState()->holderName(), 'and it names nobody, though the row still does');
+
+$d = $store->claimLock($driveT, 2);
+checkSame(true, $d->lockState()->heldBy(2), 'a lapsed lock can be claimed by somebody else');
+
+// Returning to a lapsed tab takes it back, if nobody filled the gap (ADR-0007).
+$d = $store->claimLock($lobby, 1);
+checkSame(true, $d->lockState()->heldBy(1), 'the other Display is claimed independently');
+ageTestLock($pdo, $lobby->id(), LockState::IDLE_LAPSE_SECONDS + 1);
+$d = $store->claimLock($lobby, 1);
+checkSame(true, $d->lockState()->heldBy(1), 'and a lapsed lock is silently re-taken by its own holder');
+
+// ---- Releasing ----------------------------------------------------------------
+$d = $store->releaseLock($lobby, 1);
+checkSame(false, $d->lockState()->isHeld(), 'leaving the Builder releases the lock');
+
+$d = $store->claimLock($lobby, 1);
+$d = $store->releaseLock($lobby, 2);
+checkSame(true, $d->lockState()->heldBy(1),
+          'a release from an account that is not the holder does nothing — a tab closing late '
+          . 'must not free somebody else\'s lock');
+$store->releaseLock($lobby, 1);
+
+// ---- A publish and the lock ---------------------------------------------------
+// drive-thru is account 2's at this point. Account 1 publishing is the collision
+// the lock exists to catch: refused, and nothing written.
+$driveT = $store->forId($driveT->id());
+$before = count(elementsOf($pdo, $driveT->id()));
+$res = $layouts->publish($driveT, new PublishRequest(
+    layoutWith('Published over somebody'), Background::unchanged(), 1, true, $driveT->layoutStamp()
+));
+checkSame('locked', $res->kind(), 'a publish is refused while somebody else holds the lock');
+check(strpos($res->message(), 'clerk') !== false, 'the refusal names who is editing');
+check(strpos($res->message(), 'still on screen') !== false,
+      'and says the work is not lost, because it is not');
+checkSame($before, count(elementsOf($pdo, $driveT->id())), 'and nothing was written');
+
+// The holder's own publish goes through, and keeps the lock alive.
+$res = $layouts->publish($driveT, new PublishRequest(
+    layoutWith('The holder publishes'), Background::unchanged(), 2, true, $driveT->layoutStamp()
+));
+check($res->isOk(), 'the account holding the lock may publish');
+$d = $store->forId($driveT->id());
+checkSame(true, $d->lockState()->heldBy(2), 'and publishing keeps the lock — it is a real interaction');
+
+// The lock refusal comes first: "reload and re-apply" is bad advice while somebody
+// else is mid-edit, because re-applying would only be refused again.
+$res = $layouts->publish($driveT, new PublishRequest(
+    layoutWith('Stale and locked out'), Background::unchanged(), 1, true, 'nonsense-stamp'
+));
+checkSame('locked', $res->kind(), 'a publish that is both stale and locked out reports the lock');
+
+// A lapsed lock nobody claimed does not stop the person who let it lapse.
+ageTestLock($pdo, $driveT->id(), LockState::IDLE_LAPSE_SECONDS + 1);
+$driveT = $store->forId($driveT->id());
+$res = $layouts->publish($driveT, new PublishRequest(
+    layoutWith('Back after a break'), Background::unchanged(), 1, true, $driveT->layoutStamp()
+));
+check($res->isOk(), 'a publish onto a lapsed lock succeeds');
+$d = $store->forId($driveT->id());
+checkSame(true, $d->lockState()->heldBy(1), 'and takes the lock for whoever published');
+
+// ---- An admin taking over -----------------------------------------------------
+$d = $store->seizeLock($driveT, 2);
+checkSame(true,  $d->lockState()->heldBy(2), 'an admin taking over gets the lock whoever held it');
+checkSame(false, $d->lockState()->heldBy(1), 'and the previous holder no longer has it');
+
+// The reason a takeover hands the lock over instead of clearing it: the ousted tab
+// heartbeats, and a free lock would be claimed straight back within the minute.
+$d = $store->claimLock($driveT, 1);
+checkSame(true, $d->lockState()->heldBy(2), 'the ousted tab\'s next heartbeat cannot reclaim it');
+
+$res = $layouts->publish($driveT, new PublishRequest(
+    layoutWith('Publishing after being ousted'), Background::unchanged(), 1, true, $driveT->layoutStamp()
+));
+checkSame('locked', $res->kind(), 'and its publish is refused, which is how it finds out');
+
+// ---- An account being deleted --------------------------------------------------
+$store->claimLock($lobby, 2);
+checkSame(2, $store->releaseLocksHeldBy(2), 'deleting an account releases every lock it held');
+checkSame(false, $store->forId($driveT->id())->lockState()->isHeld(), 'drive-thru is free again');
+checkSame(false, $store->forId($lobby->id())->lockState()->isHeld(),  'and so is lobby');
+
+// ---- The lock is not the Screens' business -------------------------------------
+$store->claimLock($driveT, 1);
+$snapshot = $layouts->snapshot($store->forId($driveT->id()));
+checkSame(false, array_key_exists('lock_holder_id', $snapshot['display']),
+          'a layout snapshot carries no lock holder — get_layout is public');
+checkSame(false, array_key_exists('lock_activity_at', $snapshot['display']),
+          'nor when they last touched it');
 
 reportChecks();

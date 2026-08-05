@@ -108,6 +108,7 @@ function newTestDb()
         last_published_at TEXT,
         last_published_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
         lock_holder_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        lock_taken_at TEXT,
         lock_activity_at TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )");
@@ -176,11 +177,28 @@ function makeTestDisplay(PDO $pdo, $tag, $title = 'Sign', $w = 1920, $h = 1080)
 
 function loadTestDisplay(PDO $pdo, $id)
 {
-    $stmt = $pdo->prepare("SELECT d.*, u.username AS last_published_by_name
-                             FROM displays d LEFT JOIN users u ON d.last_published_by = u.id
+    $stmt = $pdo->prepare("SELECT d.*, u.username AS last_published_by_name,
+                                  lu.username AS lock_holder_name
+                             FROM displays d
+                             LEFT JOIN users u  ON d.last_published_by = u.id
+                             LEFT JOIN users lu ON d.lock_holder_id    = lu.id
                             WHERE d.id = ?");
     $stmt->execute([intval($id)]);
     return new Display($stmt->fetch());
+}
+
+/**
+ * Push a held lock's last interaction into the past, so the idle window can be
+ * tested without waiting a quarter of an hour.
+ *
+ * The honest way to do it: LockState decides lapsed-or-held by comparing that column
+ * to the clock, so ageing the column is exactly what fifteen quiet minutes would
+ * have done. Nothing about the lock rules is stubbed.
+ */
+function ageTestLock(PDO $pdo, $displayId, $seconds)
+{
+    $pdo->prepare("UPDATE displays SET lock_activity_at = ? WHERE id = ?")
+        ->execute([date('Y-m-d H:i:s', time() - intval($seconds)), intval($displayId)]);
 }
 
 function elementsOf(PDO $pdo, $displayId)

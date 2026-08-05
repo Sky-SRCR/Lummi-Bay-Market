@@ -255,6 +255,27 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <p>Publishing is part of editing: if a display is yours, you can publish it to its screen. Being
        assigned a display is not permanent — an admin can take it back, and the next publish from a
        builder tab that has lost access is refused.</p>
+
+    <h3>One person edits a display at a time</h3>
+    <p>Opening a display in the builder claims it. While you have it, anyone else who opens the same
+       display sees it <strong>read-only</strong> — a purple bar at the top names you, and none of the
+       editing controls are there. Different displays can be worked on at the same time by different
+       people; it is only the same display that is one at a time.</p>
+    <ul>
+        <li><strong>You keep it while you are working.</strong> Clicks, typing and dragging all count.
+            Simply having the tab open does not.</li>
+        <li><strong>After 15 minutes with nothing happening it is released</strong>, even with the tab
+            open, so a builder left open on a back-office screen does not block anyone. You get a
+            warning bar with a <em>Keep editing</em> button two minutes before that.</li>
+        <li><strong>Coming back after a break is fine.</strong> Change anything and the display is
+            yours again — unless somebody else started in the meantime, in which case a red bar says
+            so and your publish is refused. Your work stays on the screen either way.</li>
+        <li><strong>Leaving the builder releases it immediately</strong>, so the next person does not
+            wait out the 15 minutes.</li>
+    </ul>
+    <div class="admin-only"><strong>Admins</strong> can take a display off whoever has it: open it in
+       the builder and click <em>Take over editing</em>. The confirm says what it costs — the other
+       person keeps what is on their screen but can no longer publish it.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -466,6 +487,16 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><span>A success message appears. The display viewer will show the new layout within 30 seconds.</span></li>
     </ol>
     <div class="note"><strong>Important:</strong> Unpublished changes exist only in your browser tab. If you close the tab or navigate away <em>without</em> publishing, your changes are lost. Always publish before leaving the builder.</div>
+    <p>A publish can be <strong>refused</strong>, and nothing is saved when it is. There are two reasons,
+       and the message says which:</p>
+    <ul>
+        <li><em>"This display changed since you opened it"</em> — somebody published, or an element was
+            hidden or deleted, while your tab was open. Reload and re-apply your change, so you do not
+            overwrite their work.</li>
+        <li><em>"Someone else is editing this display now"</em> — the display was released while you were
+            idle and somebody took it, or an admin took over. Your work is still on screen; publish again
+            once they have finished.</li>
+    </ul>
     <div class="tip"><strong>Tip:</strong> The viewer auto-polls every 30 seconds. You don't need to refresh the TV browser — just publish and wait.</div>
 </div>
 

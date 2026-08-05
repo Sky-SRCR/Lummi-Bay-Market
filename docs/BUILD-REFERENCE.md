@@ -54,10 +54,10 @@ Design rules, applied to every module added by this build:
 | Module | Interface, in one line | Hides |
 |--------|------------------------|-------|
 | `schema.php` | `ensureSignageSchema(PDO): void` | Every idempotent `ALTER`/`CREATE`, the `displays` table, `display_id` + backfill + index + FK, the drive-thru seed, and the "run at most once per request" latch. |
-| `displays.php` | `Display` + `Background` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the lock columns, and self-healing when the table is not there yet. |
+| `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the whole access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. |
-| `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: staleness check, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, scoped hide/delete. |
+| `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, scoped hide/delete. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 
@@ -86,11 +86,12 @@ through the app again:
   endpoint is covered by construction and none has its own `if`. The picker filter
   did *not* land as `DisplayStore::editableBy()`: it is `Actor::openable()`, next
   to the grants it consults, rather than in the module that owns `displays`.
-- **Phase 5** (edit lock): the lock columns already exist on `displays`;
-  `DisplayStore` gains `takeLock()`, `heartbeat()`, `releaseLock()`,
-  `forceUnlock()`, and `Display::lockState()` decides lapsed-vs-held by comparing
-  timestamps on read (no cron). `LayoutStore::publish()` already refuses on a
-  stale stamp; it also refuses when the lock moved on.
+- ~~**Phase 5** (edit lock)~~ **Done**, with two planned shapes changed — see §4e.
+  `Display::lockState()` decides lapsed-from-held by comparing timestamps on read,
+  as planned, and `LayoutStore::publish()` refuses when the lock has moved on. But
+  the planned `takeLock()` and `heartbeat()` are one method, `claimLock()`, and
+  `forceUnlock()` is `seizeLock()` because it hands the lock over rather than
+  freeing it.
 - **Phase 6** (docs/schema): `schema.sql` is regenerated to match `schema.php`.
   Keep the two in step as you go so Phase 6 is proofreading, not archaeology.
 
@@ -114,7 +115,10 @@ through the app again:
    offer, accept, or infer a resize. Duplication is offered only between Displays
    of identical dimensions.
 5. **A publish that would overwrite someone else's work is refused, not merged**
-   (ADR-0006). There is no undo; refusal is the whole safety net.
+   (ADR-0006, ADR-0007). There is no undo; refusal is the whole safety net. Two
+   things can make a publish that refusal: a stamp that has moved, and an edit
+   lock that has. Both are checked inside `LayoutStore::publish()`, under the same
+   row lock, so neither can be talked out of by a client.
 6. **Text-block content is plain text** (ADR-0002). `toPlainText()` on save for
    `type = 'text'` only; render with `textContent`. Never `innerHTML`, never
    strip carousel/table/marquee JSON or media paths.
@@ -133,6 +137,12 @@ through the app again:
    splitting it breaks the live sign.
 10. **The live database is behind the repo.** Assume nothing about what columns
     exist. Every schema change is an idempotent statement in `schema.php`.
+11. **The edit lock is held by work, not by presence** (ADR-0007). Only a real
+    interaction — a click, a key, a drag, an edit — may extend it; never a timer,
+    a poll, mouse movement, or the fact that a tab is open. A heartbeat reports
+    the *age* of the last interaction, so a forgotten tab keeps beating and still
+    frees the Display on time. Anything added to the Builder that keeps the lock
+    alive must be something a person did on purpose.
 
 ---
 
@@ -339,6 +349,90 @@ decisions already made, not new decisions.
   is revoked, for a store where a `basic` account holding two signs is already the
   unusual case. Signing in afresh shows the picker once.
 
+## 4e. Decisions taken during Phase 5
+
+- **Taking and keeping the lock are one method, and one endpoint.** This file
+  planned `takeLock()` and `heartbeat()`. They differ only in whether there was a
+  holder, and both have to get the same idle cutoff right — so they are one
+  conditional `UPDATE`, `DisplayStore::claimLock()`, whose `WHERE` clause allows a
+  claim when the lock is free, already this account's, or lapsed. That also covers
+  the third case ADR-0007 asks for, silently re-taking a lapsed lock on return,
+  without a third method. The API surface follows: one `hold_lock` endpoint the
+  Builder calls to open, to beat, and to come back.
+- **A conditional UPDATE, not a read then a write.** Two people opening the same
+  Display in the same second must not both be told it is theirs. The claim is one
+  statement whose guard *is* the rule; the caller reads the row back afterwards and
+  asks its `LockState` what happened, rather than trusting a `rowCount()` that
+  means different things on different engines.
+- **A heartbeat sends the age of the last interaction, not "now".** This is what
+  makes invariant 11 enforceable rather than aspirational: the Builder can beat on
+  a lazy 60-second timer, and a tab left open on a back-office monitor keeps
+  beating and still loses the Display exactly 15 minutes after the last real
+  interaction. It also means the beat interval and the idle window are independent
+  — changing one cannot quietly change the other. The age is a client's claim, and
+  a client that wanted to lie could synthesise interactions anyway; the lock is a
+  courtesy between colleagues, not a security boundary. It is clamped to the window
+  and ignored past it.
+- **The lock's clock is PHP's, on both sides.** `recordPublish()` can use
+  `CURRENT_TIMESTAMP` because nothing subtracts one publish time from another; the
+  lock is the one thing here that compares two timestamps, so its statements bind a
+  PHP-formatted time. If MySQL and PHP disagreed about the hour, a 15-minute window
+  would be an hour long or already expired.
+- **Force-unlock hands the lock over rather than freeing it.** ADR-0007 calls it
+  force-unlock; `DisplayStore::seizeLock()` transfers instead, because a cleared
+  lock is a free lock and the ousted Builder's next heartbeat would claim it back
+  within the minute — the takeover would silently undo itself. Transferring also
+  gives that tab something definite to report instead of a glitch. The self-test
+  asserts exactly this: the ousted account's next claim does not get it back.
+- **Read-only is a mode the page is built in, not a set of disabled controls.**
+  `builder.php` resolves the lock server-side and renders no creation buttons, no
+  background controls and no Publish button at all when somebody else holds it. The
+  JavaScript guards (`setupInteract`, the mousedown handlers, `contenteditable`,
+  the Delete key) are the second line, for what is reachable without a button. This
+  is the only shape that scales in a file that is mostly inline JavaScript: a
+  control added later is either inside the `if (!$readOnly)` block or it is
+  reachable, and that is visible in the diff.
+- **`builder.php` claims the lock on a GET.** Normally worth avoiding, and taken
+  deliberately: the alternative is to render the editor and let script claim a
+  moment later, which means a flicker at best and somebody starting to drag a block
+  that is about to turn read-only at worst. Claiming during the render is also what
+  makes two simultaneous opens resolve to one holder. What a crafted link can
+  achieve is making the victim hold a Display *they may already edit* for at most
+  one idle window — an annoyance, not an escalation.
+- **Losing the lock mid-session does not tear the editor apart.** ADR-0007 says the
+  unsaved edits stay on screen and the publish is refused, so `READ_ONLY` is fixed
+  for the life of the page and the lost-lock case is a banner plus a refusal. That
+  removes the hardest part of the phase — dynamically disabling ~40 controls — and
+  it is also the kinder behaviour: nobody's work vanishes because a colleague
+  clicked something.
+- **The lock refusal is checked before the staleness refusal.** When both apply,
+  "reload and re-apply" is bad advice: re-applying while somebody else is mid-edit
+  would only be refused again. The lock message says to wait instead, and says the
+  work is still on screen.
+- **Publishing keeps the lock, and takes it back if it had lapsed.** Publishing is
+  as real as an interaction gets. It is never a steal — the check a few lines above
+  has already established nobody else holds the Display.
+- **A lock is not in `toClientArray()`.** That array is what the public `get_layout`
+  poll hands to every Screen, and who is editing a sign is nobody's business from
+  the street. The self-test asserts the snapshot carries neither the holder nor the
+  activity time.
+- **A held lock with no recorded activity counts as free.** That is the state a
+  half-finished write or a hand edit would leave, and the safe reading of it is
+  that nobody is editing.
+- **Deleting an account releases its locks explicitly**, alongside its grants and
+  for the same reason: `ON DELETE SET NULL` is added by `schemaTry()`, which
+  swallows failures, and a lock naming a deleted account blocks a sign for a full
+  idle window under a name no banner can print.
+- **The admin panel shows who is editing; the Builder is where you take over.** The
+  panel is where "why can I not edit this?" gets asked, so each Display card names
+  its current editor. The taking-over lives in the Builder, where you can see what
+  you would be interrupting — and one action surface means one confirm to keep
+  honest.
+- **The Work Area's hide and delete still ignore the lock.** They are admin
+  element-level edits, not the Builder, and they already advance the stamp — so a
+  Builder holding the old layout is refused by ADR-0006 the moment it publishes.
+  Extending the lock to cover them would be a second rule about the same collision.
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -350,6 +444,7 @@ php tools/selftest_layout.php            # the real modules, in-memory database
 grep -rn "canvas_elements" --include=*.php .   # only lib/layout_store.php may hit
 grep -rn "INTO displays\|UPDATE displays\|FROM displays" --include=*.php .  # only lib/, plus tools/ fixtures
 grep -rn "INTO display_permissions\|FROM display_permissions" --include=*.php .  # only lib/grants.php, plus tools/
+grep -rn "lock_holder_id\|lock_activity_at" --include=*.php .  # only lib/displays.php + lib/schema.php, plus tools/
 grep -rn "WHERE id = 1\|id=1" --include=*.php . # must be empty
 grep -rn "1920\|1080" --include=*.php .        # only prose, presets and help.php (Phase 6)
 ```

@@ -29,7 +29,8 @@
 //
 // Invariants enforced here, not by callers:
 //   · No statement touches canvas_elements without a display_id predicate.
-//   · A publish whose stamp no longer matches the Display is refused (ADR-0006).
+//   · A publish whose stamp no longer matches the Display is refused (ADR-0006),
+//     and so is one whose edit lock has moved to somebody else (ADR-0007).
 //   · A basic account's publish preserves that Display's sections (ADR-0005),
 //     and cannot parent content into another Display's section.
 //   · type='text' content is stripped to plain text (ADR-0002); carousel/table/
@@ -71,7 +72,7 @@ class PublishRequest
  */
 class PublishResult
 {
-    private $kind;      // 'ok' | 'stale' | 'failed'
+    private $kind;      // 'ok' | 'stale' | 'locked' | 'failed'
     private $stamp;
     private $message;
 
@@ -84,6 +85,8 @@ class PublishResult
 
     public static function ok($stamp)       { return new self('ok', (string)$stamp, ''); }
     public static function stale($message)  { return new self('stale', '', $message); }
+    /** Somebody else holds the edit lock (ADR-0007) — a different refusal from a stale stamp. */
+    public static function locked($message) { return new self('locked', '', $message); }
     public static function failed($message) { return new self('failed', '', $message); }
 
     public function isOk()    { return $this->kind === 'ok'; }
@@ -305,10 +308,20 @@ class LayoutStore
     /**
      * Replace this Display's layout with the submitted one, in one transaction.
      *
-     * Refuses (without writing anything) when the submitted stamp is not the
-     * Display's current stamp — someone else published, or an element was hidden
-     * or deleted, since this Builder loaded. There is no merge and no undo: the
-     * refusal is the safety net (ADR-0006).
+     * Refuses (without writing anything) in two cases, and there is no merge and no
+     * undo behind either — the refusal is the whole safety net:
+     *
+     *   · somebody else holds the edit lock (ADR-0007). The lock says no at the
+     *     door, but a lock can move while a tab sits open, so it is checked again
+     *     here: hold the lock, go idle, lose it, and this is what stops the
+     *     colleague who took over being overwritten.
+     *   · the submitted stamp is not the Display's current stamp (ADR-0006) —
+     *     someone published, or an element was hidden or deleted, since this
+     *     Builder loaded.
+     *
+     * The lock is checked first. When both are true the lock is the more useful
+     * thing to say: "reload and re-apply" is bad advice while somebody else is
+     * mid-edit, because re-applying would only be refused again.
      *
      * An admin publishes the whole canvas including sections and background. A
      * basic account's publish keeps every section exactly as it is and replaces
@@ -324,11 +337,18 @@ class LayoutStore
                 return PublishResult::failed('That display no longer exists. Reload the page.');
             }
 
+            // The Display as it stands under that row lock. Both refusals below are
+            // decided from this one read, so they cannot disagree about the moment
+            // they describe.
+            $fresh = $this->displays->forId($display->id());
+            $lock  = ($fresh ?: $display)->lockState();
+
+            if ($lock->heldByOther($request->actorId())) {
+                $this->pdo->rollBack();
+                return PublishResult::locked($this->lockedMessage($lock));
+            }
+
             if ((string)intval($current) !== $request->stamp()) {
-                // Re-read before rolling back, so the refusal names whoever
-                // published most recently rather than whoever had when this
-                // request started.
-                $fresh = $this->displays->forId($display->id());
                 $this->pdo->rollBack();
                 return PublishResult::stale($this->stalenessMessage($fresh ?: $display));
             }
@@ -341,6 +361,12 @@ class LayoutStore
             }
 
             $newStamp = $this->displays->recordPublish($display, $request->actorId());
+
+            // Publishing is about as real as an interaction gets, so it keeps the
+            // lock alive — and takes it back for a tab whose lock had lapsed while
+            // nobody else claimed it (ADR-0007). Never a steal: the check above has
+            // already established nobody else is holding this Display.
+            $this->displays->claimLock($display, $request->actorId());
 
             $this->pdo->commit();
             return PublishResult::ok($newStamp);
@@ -519,6 +545,22 @@ class LayoutStore
         $stmt = $this->pdo->prepare("SELECT id FROM canvas_elements WHERE id = ? AND display_id = ? LIMIT 1");
         $stmt->execute([intval($elementId), $display->id()]);
         return $stmt->fetchColumn() !== false;
+    }
+
+    /**
+     * Why a publish was refused when somebody else has the Display.
+     *
+     * Says the work is still on screen, because it is: nothing was deleted, and the
+     * one thing that would lose it now is closing the tab. Reloading is deliberately
+     * *not* the advice here — that is the staleness message's advice, and following
+     * it while a colleague is mid-edit would throw away work that may well be
+     * publishable in ten minutes.
+     */
+    private function lockedMessage(LockState $lock)
+    {
+        return 'Someone else is editing this display now (' . $lock->holderDescription() . '). '
+             . 'Nothing was saved. Your changes are still on screen — publish again once they '
+             . 'are finished, or ask them to close the builder.';
     }
 
     /**

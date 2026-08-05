@@ -65,9 +65,7 @@ function ensureSignageSchema(PDO $pdo)
     // ---- displays -----------------------------------------------------------
     // One row per configured sign. Absorbs canvas_settings (background) and
     // carries the canvas dimensions that were hardcoded as 1920×1080, the
-    // publish stamp (ADR-0006) and the edit-lock columns (ADR-0007). The lock
-    // columns are unused until Phase 5; they cost nothing now and adding them
-    // later would mean a second visit to the live database.
+    // publish stamp (ADR-0006) and the edit-lock columns (ADR-0007).
     schemaTry($pdo, "CREATE TABLE IF NOT EXISTS displays (
         id                INT(11)      NOT NULL AUTO_INCREMENT,
         tag               VARCHAR(32)  NOT NULL COMMENT 'screen name tag — the Viewer URL contract',
@@ -81,8 +79,9 @@ function ensureSignageSchema(PDO $pdo)
         layout_revision   INT(11)      NOT NULL DEFAULT 0 COMMENT 'publish stamp; increments on every publish',
         last_published_at DATETIME     DEFAULT NULL,
         last_published_by INT(11)      DEFAULT NULL,
-        lock_holder_id    INT(11)      DEFAULT NULL COMMENT 'edit lock holder (Phase 5)',
-        lock_activity_at  DATETIME     DEFAULT NULL COMMENT 'last real interaction by the holder (Phase 5)',
+        lock_holder_id    INT(11)      DEFAULT NULL COMMENT 'edit lock holder',
+        lock_taken_at     DATETIME     DEFAULT NULL COMMENT 'when the holder started editing',
+        lock_activity_at  DATETIME     DEFAULT NULL COMMENT 'last real interaction by the holder',
         created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
         UNIQUE KEY tag (tag),
@@ -90,9 +89,14 @@ function ensureSignageSchema(PDO $pdo)
         KEY lock_holder_id (lock_holder_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
+    // CREATE TABLE above is a no-op on a database that already has `displays`, so
+    // a column added to it after that database converged needs its own statement.
+    // lock_taken_at is what lets a read-only Builder say *since when* somebody has
+    // been editing, rather than only that they are.
+    schemaTry($pdo, "ALTER TABLE displays ADD COLUMN lock_taken_at DATETIME DEFAULT NULL");
+
     // Both point at accounts and must survive an account being deleted, so the
-    // Display is never taken with it. Added separately: CREATE TABLE above is a
-    // no-op on an existing table, which would leave these missing.
+    // Display is never taken with it. Added separately for the same reason.
     schemaTry($pdo, "ALTER TABLE displays ADD CONSTRAINT displays_ibfk_1
                      FOREIGN KEY (last_published_by) REFERENCES users (id) ON DELETE SET NULL");
     schemaTry($pdo, "ALTER TABLE displays ADD CONSTRAINT displays_ibfk_2

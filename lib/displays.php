@@ -5,15 +5,15 @@
 // A Display is one configured sign: its screen name tag, canvas size, title,
 // location, background, active state, publish stamp and edit lock (CONTEXT.md).
 //
-// Two things live here and nowhere else:
+// Three things live here and nowhere else:
 //   Display      — one Display's facts, in the app's vocabulary rather than the
 //                  database's.
+//   LockState    — whether it is being edited right now, and by whom (ADR-0007).
 //   DisplayStore — every statement that touches the `displays` table, the tag
 //                  and canvas-size rules, and the recovery when the table is not
 //                  there yet.
 //
-// No caller outside this file may write SQL against `displays`. Phase 5 adds
-// methods here (lock take/heartbeat/release) rather than SQL anywhere else.
+// No caller outside this file may write SQL against `displays`.
 //
 // The *use case* of administering Displays — what a complete new Display needs,
 // creating one as a duplicate, destroying one with its layout — is one level up,
@@ -47,6 +47,106 @@ class Background
 
     public function kind()  { return $this->kind; }
     public function value() { return $this->value; }
+}
+
+/**
+ * Who is editing a Display, and whether they still are (ADR-0007).
+ *
+ * A lock is held by *activity*, not presence: the Builder reports the time of the
+ * last real interaction, and a lock whose last interaction is older than
+ * IDLE_LAPSE_SECONDS is simply free. That comparison happens here, on every read,
+ * which is why nothing has to be scheduled to clean locks up — there is no cron on
+ * this host and a lapsed lock that needed sweeping would outlive the tab that left
+ * it. The consequence is that "free" and "lapsed" are the same state everywhere.
+ *
+ * A value object: built from a `displays` row, never stored. Two accounts asking
+ * at the same moment get the same answer.
+ */
+class LockState
+{
+    /**
+     * How long a lock survives without a real interaction, and when its holder is
+     * warned that it is about to go.
+     *
+     * 15 minutes is ADR-0007's judgement call — long enough that reading, thinking
+     * or a phone call does not cost you the sign, short enough that a Builder left
+     * open on a back-office monitor frees it before it matters. Both numbers are
+     * sent to the Builder rather than duplicated in its JavaScript, so the warning
+     * cannot drift away from the window it warns about.
+     */
+    const IDLE_LAPSE_SECONDS = 900;
+    const WARN_AFTER_SECONDS = 780;
+
+    private $holderId;
+    private $holderName;
+    private $takenAt;
+    private $activityAt;
+    private $idleSeconds;
+
+    public function __construct($holderId, $holderName, $takenAt, $activityAt)
+    {
+        $this->holderId   = intval($holderId);
+        $this->holderName = (string)$holderName;
+        $this->takenAt    = $takenAt    ?: null;
+        $this->activityAt = $activityAt ?: null;
+        // Both sides of this subtraction are PHP's clock — see DisplayStore's lock
+        // statements, which bind a PHP-formatted timestamp for exactly that reason.
+        $this->idleSeconds = $this->activityAt === null
+            ? self::IDLE_LAPSE_SECONDS
+            : max(0, time() - strtotime($this->activityAt));
+    }
+
+    /**
+     * Is somebody editing this Display right now?
+     *
+     * A holder with no recorded activity counts as nobody: the row says someone
+     * started and never reported working, which is the state a half-finished write
+     * or a hand edit would leave, and the safe reading of it is "free".
+     */
+    public function isHeld()
+    {
+        if ($this->holderId <= 0) { return false; }
+        return $this->idleSeconds < self::IDLE_LAPSE_SECONDS;
+    }
+
+    public function isFree() { return !$this->isHeld(); }
+
+    public function holderId()   { return $this->isHeld() ? $this->holderId : 0; }
+    public function holderName() { return $this->isHeld() ? $this->holderName : ''; }
+
+    /** Held, by this account — the question the Builder asks about itself. */
+    public function heldBy($accountId)
+    {
+        return $this->isHeld() && $this->holderId === intval($accountId);
+    }
+
+    /**
+     * Held, by somebody else — the question that decides a read-only Builder and
+     * refuses a publish. Deliberately not `!heldBy()`: a free Display is neither.
+     */
+    public function heldByOther($accountId)
+    {
+        return $this->isHeld() && $this->holderId !== intval($accountId);
+    }
+
+    /** How long since the holder's last real interaction. Seconds. */
+    public function idleSeconds() { return $this->idleSeconds; }
+
+    /** "2:04pm" — when the holder started, for a banner. Empty when free. */
+    public function takenAtLabel()
+    {
+        if (!$this->isHeld() || $this->takenAt === null) { return ''; }
+        return date('g:ia', strtotime($this->takenAt));
+    }
+
+    /** "sky, editing since 2:04pm" — the material for a refused publish. Empty when free. */
+    public function holderDescription()
+    {
+        if (!$this->isHeld()) { return ''; }
+        $who   = $this->holderName !== '' ? $this->holderName : 'someone else';
+        $since = $this->takenAtLabel();
+        return $since === '' ? $who : $who . ', editing since ' . $since;
+    }
 }
 
 class Display
@@ -111,9 +211,31 @@ class Display
     public function lastPublishedById()   { return $this->row['last_published_by'] ? intval($this->row['last_published_by']) : 0; }
     public function lastPublishedByName() { return isset($this->row['last_published_by_name']) ? (string)$this->row['last_published_by_name'] : ''; }
 
-    // Edit-lock columns. Read-only until Phase 5 gives them behaviour.
+    // Edit-lock columns. Raw facts; the rule that turns them into "is anyone
+    // editing this?" is LockState, so nothing has to remember the idle window.
     public function lockHolderId()   { return $this->row['lock_holder_id'] ? intval($this->row['lock_holder_id']) : 0; }
     public function lockActivityAt() { return $this->row['lock_activity_at'] ?: null; }
+
+    /**
+     * Who is editing this Display, and whether they still are (ADR-0007).
+     *
+     * Deliberately absent from toClientArray(): that array is what the public
+     * `get_layout` poll returns to every Screen, and who is editing a sign is
+     * nobody's business from the street.
+     */
+    public function lockState()
+    {
+        return new LockState(
+            $this->lockHolderId(),
+            // Guarded rather than assumed: a hand-written query that skips the
+            // holder join, or a database where the lock_taken_at ALTER has not
+            // applied, simply has no such key — and a lock still works without a
+            // name or a start time to print.
+            isset($this->row['lock_holder_name']) ? $this->row['lock_holder_name'] : '',
+            isset($this->row['lock_taken_at'])    ? $this->row['lock_taken_at']    : null,
+            $this->lockActivityAt()
+        );
+    }
 
     /** "sky, Aug 5 at 2:04pm" — the material for a refused-publish message. Empty when never published. */
     public function lastPublishDescription()
@@ -373,6 +495,140 @@ class DisplayStore
         $this->pdo->prepare("DELETE FROM displays WHERE id = ?")->execute([$display->id()]);
     }
 
+    // ---- The edit lock (ADR-0007) -------------------------------------------
+    // One account edits a Display at a time. Every statement here stamps the time
+    // of a *real interaction*, not the time of the request: a lock is held by work,
+    // and a Builder left open on a back-office monitor must not hold a sign all
+    // afternoon. LockState turns those stamps into held-or-free on read.
+    //
+    // Both sides of that comparison are PHP's clock, which is why these bind a
+    // PHP-formatted timestamp instead of CURRENT_TIMESTAMP. It is the one place in
+    // this file that subtracts one time from another, and if MySQL and PHP disagree
+    // about the hour a 15-minute window becomes an hour long or already expired.
+
+    /**
+     * Take the lock, keep it, or take it back — one statement for all three.
+     *
+     * Claims when the lock is free, already this account's, or lapsed; leaves it
+     * alone when somebody else is actively holding it. That is the heartbeat's rule
+     * as well, which is why there is no separate heartbeat method: taking and
+     * keeping differ only in whether there was a holder, and two methods would be
+     * two places to get the lapse cutoff wrong.
+     *
+     * @param int $idleSeconds how long ago the holder's last real interaction was.
+     *                         The Builder sends the true age rather than "now", so
+     *                         a heartbeat can never quietly extend a lock on a
+     *                         Display nobody has touched.
+     * @return Display|null the Display as it now stands — ask its lockState()
+     *                      whether the claim succeeded. Null if it has been deleted.
+     */
+    public function claimLock(Display $display, $accountId, $idleSeconds = 0)
+    {
+        $accountId   = intval($accountId);
+        $idleSeconds = max(0, intval($idleSeconds));
+
+        // Nothing to claim on behalf of, and nothing to claim once the reported
+        // idle age is past the window: storing it would record a lock that is
+        // already lapsed, and a caller sending that is asking who holds it now.
+        if ($accountId <= 0 || $idleSeconds >= LockState::IDLE_LAPSE_SECONDS) {
+            return $this->forId($display->id());
+        }
+
+        $now      = time();
+        $activity = date('Y-m-d H:i:s', $now - $idleSeconds);
+        $cutoff   = date('Y-m-d H:i:s', $now - LockState::IDLE_LAPSE_SECONDS);
+
+        // One conditional UPDATE rather than a read and then a write: two people
+        // opening the same Display in the same second must not both be told it is
+        // theirs. lock_taken_at survives a heartbeat from the same account, so
+        // "editing since" means since they started rather than since their last
+        // click — but a lapse ends that session, so coming back starts a new one.
+        //
+        // lock_holder_id is assigned *last* on purpose. MySQL evaluates a SET list
+        // left to right and a later expression sees the values already assigned,
+        // while SQLite reads the original row throughout — so a CASE that consults
+        // lock_holder_id has to be written before that column is overwritten, or the
+        // two engines disagree about which holder it is asking about.
+        $this->pdo->prepare(
+            "UPDATE displays
+                SET lock_taken_at    = CASE WHEN lock_holder_id = ? AND lock_activity_at >= ?
+                                            THEN lock_taken_at ELSE ? END,
+                    lock_activity_at = ?,
+                    lock_holder_id   = ?
+              WHERE id = ?
+                AND (lock_holder_id IS NULL
+                     OR lock_holder_id = ?
+                     OR lock_activity_at IS NULL
+                     OR lock_activity_at < ?)"
+        )->execute([
+            $accountId, $cutoff, $activity,
+            $activity,
+            $accountId,
+            $display->id(),
+            $accountId,
+            $cutoff,
+        ]);
+
+        return $this->forId($display->id());
+    }
+
+    /**
+     * Give the lock up, if this account is the one holding it.
+     *
+     * Called when the Builder is left. Naming the holder in the WHERE clause is the
+     * point: a tab that closes late — after its lock lapsed and a colleague took
+     * over — must not free the lock that colleague is now working under.
+     */
+    public function releaseLock(Display $display, $accountId)
+    {
+        $this->pdo->prepare(
+            "UPDATE displays
+                SET lock_holder_id = NULL, lock_taken_at = NULL, lock_activity_at = NULL
+              WHERE id = ? AND lock_holder_id = ?"
+        )->execute([$display->id(), intval($accountId)]);
+        return $this->forId($display->id());
+    }
+
+    /**
+     * Hand the lock to this account, whoever held it — an admin taking over
+     * (ADR-0007's force-unlock), behind a confirm.
+     *
+     * It transfers rather than clears, which is the difference between a takeover
+     * that sticks and one that silently undoes itself: a cleared lock is a free
+     * lock, and the ousted Builder's next heartbeat would claim it straight back
+     * within the minute. Transferring also gives that tab something definite to
+     * report — somebody else holds this now — instead of looking like a glitch.
+     */
+    public function seizeLock(Display $display, $accountId)
+    {
+        $now = date('Y-m-d H:i:s');
+        $this->pdo->prepare(
+            "UPDATE displays SET lock_holder_id = ?, lock_taken_at = ?, lock_activity_at = ? WHERE id = ?"
+        )->execute([intval($accountId), $now, $now, $display->id()]);
+        return $this->forId($display->id());
+    }
+
+    /**
+     * Drop every lock this account holds, on every Display.
+     *
+     * Called when the account is deleted. `ON DELETE SET NULL` should do it, but
+     * that constraint is added by schemaTry() and may never have applied — and a
+     * lock naming a deleted account is a sign nobody can edit for fifteen minutes,
+     * held by a name the banner cannot even print.
+     *
+     * @return int locks released
+     */
+    public function releaseLocksHeldBy($accountId)
+    {
+        $stmt = $this->pdo->prepare(
+            "UPDATE displays
+                SET lock_holder_id = NULL, lock_taken_at = NULL, lock_activity_at = NULL
+              WHERE lock_holder_id = ?"
+        );
+        $stmt->execute([intval($accountId)]);
+        return $stmt->rowCount();
+    }
+
     // ---- Tag rules ----------------------------------------------------------
 
     /** Fold user input toward a valid tag without inventing one: trim, lowercase. */
@@ -435,9 +691,10 @@ class DisplayStore
 
     private function rows($where, array $params)
     {
-        $sql = "SELECT d.*, u.username AS last_published_by_name
+        $sql = "SELECT d.*, u.username AS last_published_by_name, lu.username AS lock_holder_name
                 FROM displays d
-                LEFT JOIN users u ON d.last_published_by = u.id
+                LEFT JOIN users u  ON d.last_published_by = u.id
+                LEFT JOIN users lu ON d.lock_holder_id    = lu.id
                 " . $where;
         try {
             return $this->select($sql, $params);

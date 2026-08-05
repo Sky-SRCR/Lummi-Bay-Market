@@ -143,6 +143,17 @@ if ($hasGrants) {
     report(in_array('users', $refs, true),    'and to its account');
 }
 
+// The edit-lock columns. lock_taken_at arrives after `displays` already exists on
+// any database that converged for an earlier phase, so it is added by its own
+// ALTER — and an ALTER that silently did not apply is the failure this reports.
+$dcols = [];
+foreach ($pdo->query("SHOW COLUMNS FROM displays")->fetchAll() as $c) {
+    $dcols[$c['Field']] = $c;
+}
+report(isset($dcols['lock_holder_id']),   'displays.lock_holder_id exists');
+report(isset($dcols['lock_taken_at']),    'displays.lock_taken_at exists');
+report(isset($dcols['lock_activity_at']), 'displays.lock_activity_at exists');
+
 $store  = new DisplayStore($pdo);
 $legacy = $store->forTag(LEGACY_DISPLAY_TAG);
 report($legacy !== null, 'the drive-thru Display exists');
@@ -238,6 +249,29 @@ if ($hasGrants && $anAccount) {
     $grants->grant($a->id(), $anAccount);
     $grantedA = in_array($a->id(), $grants->displayIdsFor($anAccount), true);
     report($grantedA, 'a grant can be stored and read back');
+}
+
+// The edit lock, on the same throwaway Display. MySQL is where the claim's WHERE
+// clause has to compare a bound DATETIME string against the column, and where the
+// second LEFT JOIN has to produce the holder's name — neither of which SQLite can
+// answer for. Display A is deleted a few lines below, so no real sign is affected.
+$accounts = [];
+foreach ($pdo->query("SELECT id FROM users ORDER BY id ASC LIMIT 2")->fetchAll() as $row) {
+    $accounts[] = intval($row['id']);
+}
+if ($accounts) {
+    $held = $store->claimLock($a, $accounts[0]);
+    report($held && $held->lockState()->heldBy($accounts[0]), 'an edit lock can be taken and read back');
+    report($held && $held->lockState()->holderName() !== '',  'and comes back with the holder\'s name');
+
+    if (count($accounts) > 1) {
+        $held = $store->claimLock($a, $accounts[1]);
+        report($held && $held->lockState()->heldBy($accounts[0]),
+               'a second account cannot take a lock that is being held');
+    }
+
+    $freed = $store->releaseLock($a, $accounts[0]);
+    report($freed && $freed->lockState()->isFree(), 'and releasing it frees the display');
 }
 
 // ---- Cleanup ---------------------------------------------------------------
