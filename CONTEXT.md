@@ -40,6 +40,12 @@ A Display retired from service with its layout preserved. Still editable by admi
 its Viewer states that the Display is turned off rather than rendering a layout.
 _Avoid_: disabled, archived, hidden
 
+**Edit lock**:
+The right to edit one Display, held by a single account at a time. Taken on opening
+the Display in the Builder and released by leaving or by 15 minutes without
+interaction. Anyone else may open that Display read-only meanwhile.
+_Avoid_: checkout, reservation, session
+
 **Grant**:
 Permission for one account to edit one Display. A single flag — what the account may
 do inside that Display comes from its role, and publishing is included. Admins hold

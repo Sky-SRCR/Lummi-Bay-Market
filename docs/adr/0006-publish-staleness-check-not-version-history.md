@@ -35,9 +35,11 @@ extra cost.
 - **Drafts, version history and rollback** — deferred, not rejected. It solves
   overwrites *and* mistakes, but it is a separate project; bundling it would hold up
   multi-Display.
-- **Locking a Display while someone edits it** — rejected. Locks need expiry,
-  override, and a story for the tab someone closed at 5pm; a check at publish time
-  needs none of that.
+- **Locking a Display while someone edits it** — initially rejected here on the
+  grounds that locks need expiry, override, and a story for the tab someone closed
+  at 5pm. **Subsequently adopted** as the primary defence; see ADR-0007. The
+  staleness check described in this ADR is kept as the backstop for the gap a lapsed
+  lock leaves.
 
 ## Consequences
 
