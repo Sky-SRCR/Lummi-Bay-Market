@@ -5,7 +5,16 @@
 <title>Display</title>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { width: 100%; height: 100%; background: #111; overflow: hidden; }
+    /* Kiosk / embedded display: never scroll. Lock the viewport, kill
+       scrollbars, overscroll rubber-banding, and touch-drag scrolling. */
+    html, body {
+        width: 100%; height: 100%; background: #111;
+        overflow: hidden;
+        position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+        overscroll-behavior: none;
+        touch-action: none;
+        -ms-touch-action: none;
+    }
 
     /* 1920×1080 design canvas – scaled to fill any screen via JS */
     #viewer-canvas {
