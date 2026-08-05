@@ -143,7 +143,7 @@ class GrantStore
             $rows = $this->pdo
                 ->query("SELECT display_id, user_id FROM display_permissions ORDER BY display_id ASC, user_id ASC")
                 ->fetchAll();
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             return [];
         }
 

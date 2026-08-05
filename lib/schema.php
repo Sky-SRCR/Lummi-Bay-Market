@@ -181,7 +181,7 @@ function seedLegacyDisplay(PDO $pdo)
 {
     try {
         $count = $pdo->query("SELECT COUNT(*) FROM displays")->fetchColumn();
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         return;   // table missing — CREATE TABLE above failed; nothing to seed into
     }
     if (intval($count) > 0) { return; }
@@ -196,7 +196,7 @@ function seedLegacyDisplay(PDO $pdo)
             $bgType = ($row['bg_type'] === 'image') ? 'image' : 'color';
             if (isset($row['bg_val']) && $row['bg_val'] !== '') { $bgVal = $row['bg_val']; }
         }
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         // No canvas_settings (fresh install) — defaults are the same ones it held.
     }
 
@@ -205,7 +205,7 @@ function seedLegacyDisplay(PDO $pdo)
             "INSERT INTO displays (tag, title, location, canvas_width, canvas_height, bg_type, bg_val, is_active)
              VALUES (?, ?, NULL, 1920, 1080, ?, ?, 1)"
         )->execute([LEGACY_DISPLAY_TAG, 'Drive-Thru', $bgType, $bgVal]);
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         // Unique tag collision — another request seeded it first. Fine.
     }
 }
@@ -225,7 +225,7 @@ function legacyDisplayId(PDO $pdo)
 
         $id = $pdo->query("SELECT id FROM displays ORDER BY id ASC LIMIT 1")->fetchColumn();
         return $id ? intval($id) : 0;
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         return 0;
     }
 }
@@ -242,7 +242,7 @@ function schemaTry(PDO $pdo, $sql)
     try {
         $pdo->exec($sql);
         return true;
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         return false;
     }
 }

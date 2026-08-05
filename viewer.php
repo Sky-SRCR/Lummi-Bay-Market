@@ -22,13 +22,23 @@ $resolution = DisplayRequest::forViewing(new DisplayStore($pdo), $_GET);
 $display    = $resolution->display();
 
 // A Display this URL does not name, or one that is turned off, is a notice — never
-// another Display's layout (ADR-0003). No polling: nothing here can start working.
+// another Display's layout (ADR-0003).
+//
+// The notice re-checks every 30 seconds, matching the poll cadence, because two of
+// the three reasons for it do go away: a Display that was turned off gets turned
+// back on, and one that was renamed gets its tag corrected. Without this, a Screen
+// that happened to boot during either — a TV powered on before opening while the
+// sign was still retired — sat on the notice until somebody walked over and reloaded
+// the browser, while the admin panel had already promised the screen would update
+// within 30 seconds. A meta refresh rather than script, so it works on the least
+// capable kiosk browser.
 if (!$resolution->isFound()) {
     $notice = $resolution->message();
     ?><!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="refresh" content="30">
 <title><?= htmlspecialchars($display ? $display->title() : 'Display') ?></title>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -278,9 +288,15 @@ $canvasH = $display->canvasHeight();
     function loadLayout() {
         if (_loading) return;
         _loading = true;
+        // A request that never settles must not freeze the sign for good. _loading
+        // is only cleared in .then/.catch, and fetch has no timeout of its own, so
+        // one wedged request (captive portal, stalled worker, a query blocked on a
+        // lock) would silently end all further polling.
+        var _watchdog = setTimeout(function() { _loading = false; }, 20000);
         fetch('api.php?action=get_layout&display=' + encodeURIComponent(DISPLAY_TAG))
             .then(function(r) { return r.json(); })
             .then(function(data) {
+                clearTimeout(_watchdog);
                 _loading = false;
 
                 if (!data || data.status !== 'success') {
@@ -290,7 +306,6 @@ $canvasH = $display->canvasHeight();
 
                 var hash = JSON.stringify(data);
                 if (hash === _layoutHash) return; // nothing changed — leave videos running
-                _layoutHash = hash;
 
                 stopAnimations();
                 hideNotice();
@@ -354,6 +369,14 @@ $canvasH = $display->canvasHeight();
                         && !parseInt(e.hidden)
                         && !hiddenSections.has(parseInt(e.section_id));
                 }).forEach(function(el) {
+                  // One element must never take the sign down. An element's stored
+                  // content is deliberately unvalidated for the non-text types
+                  // (invariant 6), so a table whose `rows` is not an array — from a
+                  // hand edit, an older Builder, or a crafted publish — used to throw
+                  // mid-render, after the canvas had already been emptied. Skipping
+                  // the bad block leaves the rest of the sign up, which is what a
+                  // customer-facing board needs.
+                  try {
                     var parent = el.section_id ? sectionMap[el.section_id] : canvas;
                     if (!parent) return;
 
@@ -438,10 +461,22 @@ $canvasH = $display->canvasHeight();
                     }
 
                     parent.appendChild(block);
+                  } catch (e) {
+                    // Skip this element. The block is appended last, so a throw
+                    // part-way through leaves nothing half-drawn on the canvas.
+                  }
                 });
+
+                // Latched only now, and only on a render that finished. Latching it
+                // before the canvas was rebuilt meant a render that threw left the
+                // sign blank *and* every later poll comparing equal — so the sign
+                // stayed blank until somebody walked over and reloaded the browser.
+                _layoutHash = hash;
             })
             .catch(function() {
-                _loading = false; // allow retry on next interval
+                clearTimeout(_watchdog);
+                _loading = false;   // allow retry on next interval
+                _layoutHash = '';   // and re-render from scratch when it comes back
             });
     }
 

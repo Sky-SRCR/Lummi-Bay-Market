@@ -250,8 +250,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
     $display = $resolution->display();
 
-    $result = $layouts->publish($display, new PublishRequest(
-        json_decode($_POST['layout_data'] ?? '[]', true) ?: [],
+    // A body that did not decode is not an empty layout — see
+    // PublishRequest::fromPostedJson. Refused here rather than published as a
+    // wipe that reports success.
+    $request = PublishRequest::fromPostedJson(
+        $_POST['layout_data'] ?? '[]',
         backgroundFromPost($isAdmin),
         currentUser()['id'],
         $isAdmin,
@@ -260,7 +263,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
         // layout from before Display scoping, which is exactly the write the
         // check exists to stop.
         $_POST['layout_stamp'] ?? ''
-    ));
+    );
+    if (!$request) {
+        echo json_encode([
+            'status'  => 'error',
+            'message' => 'That publish could not be read, so nothing was saved. Reload the display and try again.',
+        ]);
+        exit;
+    }
+
+    $result = $layouts->publish($display, $request);
 
     if ($result->isOk()) {
         echo json_encode([

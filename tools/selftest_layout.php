@@ -769,4 +769,71 @@ checkSame(false, array_key_exists('lock_holder_id', $snapshot['display']),
 checkSame(false, array_key_exists('lock_activity_at', $snapshot['display']),
           'nor when they last touched it');
 
-reportChecks();
+// ─────────────────────────────────────────────────────────────
+section('A publish that cannot be read is refused, not treated as "delete everything"');
+
+// The adapter line this replaces was `json_decode($raw, true) ?: []`, which reads
+// "an unreadable request is an empty layout" — and publishing an empty layout
+// deletes every element on the Display, advances the stamp, and returns ok, so the
+// Builder said "Published" over a sign that had just gone blank. No undo.
+$bg = Background::unchanged();
+foreach ([
+    ['{"broken": ',                'a truncated body'],
+    ['[{"type":"text"',            'a body cut off mid-element'],
+    ['["\ud83d"]',                 'an unpaired surrogate — text truncated mid-emoji'],
+    ['5',                          'a bare number'],
+    ['"a string"',                 'a bare string'],
+    ['true',                       'a bare boolean'],
+    ['null',                       'a literal null'],
+    ['',                           'an empty body'],
+] as $case) {
+    checkSame(null, PublishRequest::fromPostedJson($case[0], $bg, 1, true, '0'),
+              $case[1] . ' is not a layout');
+}
+
+// The other half: an empty array really is a layout. Somebody who deleted every
+// block and published meant it, and must not be refused.
+$emptyReq = PublishRequest::fromPostedJson('[]', $bg, 1, true, '0');
+check($emptyReq !== null,               'an empty array is still a publish');
+checkSame([], $emptyReq->elements(),    'and it carries no elements');
+
+// End to end, on a Display that has something to lose.
+$pdo     = newTestDb();
+$store   = new TestDisplayStore($pdo);
+$layouts = newTestLayoutStore($pdo);
+$victim  = makeTestDisplay($pdo, 'victim', 'Victim');
+$layouts->publish($victim, new PublishRequest(
+    layoutWith('Sockeye 18.99'), Background::unchanged(), 1, true, $victim->layoutStamp()
+));
+$victim = $store->forId($victim->id());
+checkSame(2, count(elementsOf($pdo, $victim->id())), 'the Display starts with a published layout');
+
+checkSame(null, PublishRequest::fromPostedJson('[{"type":', $bg, 1, true, $victim->layoutStamp()),
+          'and an unreadable publish for it never reaches the store');
+checkSame(2, count(elementsOf($pdo, $victim->id())), 'so its elements are still there');
+
+// ─────────────────────────────────────────────────────────────
+section('A hostile publish payload is a refusal, never an escaping error');
+
+// toPlainText() is typed `string`, so manual_content arriving as an object raises a
+// TypeError — which extends Error, not Exception. `catch (Exception)` let it escape
+// *after* both DELETEs had run: no rollback of the module's own, no result object,
+// and the Builder reported "Network error." for a rejected publish.
+$victim = $store->forId($victim->id());
+$res = $layouts->publish($victim, new PublishRequest(
+    [['type' => 'text', 'manual_content' => ['not' => 'a string'], 'temp_id' => 't1']],
+    Background::unchanged(), 1, true, $victim->layoutStamp()
+));
+checkSame('failed', $res->kind(), 'manual_content as an object is a failed result, not a fatal');
+checkSame(2, count(elementsOf($pdo, $victim->id())), 'and the layout it would have replaced survives');
+checkSame(false, $pdo->inTransaction(), 'with no transaction left open behind it');
+
+$victim = $store->forId($victim->id());
+$res = $layouts->publish($victim, new PublishRequest(
+    [['type' => 'section', 'temp_id' => ['an', 'array']]],
+    Background::unchanged(), 1, true, $victim->layoutStamp()
+));
+checkSame('failed', $res->kind(), 'an array where a temp_id belongs is refused the same way');
+checkSame(2, count(elementsOf($pdo, $victim->id())), 'and again nothing was lost');
+
+reportChecks(255);

@@ -223,8 +223,39 @@ function allGrants(PDO $pdo)
 
 // ---- Minimal assertions -----------------------------------------------------
 
-$GLOBALS['_checks'] = 0;
-$GLOBALS['_fails']  = [];
+$GLOBALS['_checks']   = 0;
+$GLOBALS['_fails']    = [];
+$GLOBALS['_reported'] = false;
+
+// A suite that cannot fail is not a suite. Three ways this one used to report
+// "0 failed" while genuinely broken, all closed here:
+//
+//   1. A PHP warning was invisible. Thirty-six "Undefined array key" warnings
+//      from inside a module still printed a clean run, and on the 7.1 target
+//      they are quieter still. Any diagnostic is now a failed check.
+//   2. A fatal part-way through printed no summary line at all, so anything
+//      reading the output — rather than the exit code — learned nothing, and
+//      every check after the crash was silently skipped.
+//   3. Deleting a whole section of the file printed "193 checks, 0 failed" and
+//      exited 0, because nothing anchored the expected count. reportChecks()
+//      now takes that number.
+set_error_handler(function ($severity, $message, $file, $line) {
+    $GLOBALS['_checks']++;
+    $label = 'no PHP diagnostics during the run — got "' . $message . '" at '
+           . basename($file) . ':' . $line;
+    $GLOBALS['_fails'][] = $label;
+    echo "  FAIL $label\n";
+    return true;   // handled; do not also print it through the default handler
+});
+
+register_shutdown_function(function () {
+    if ($GLOBALS['_reported']) { return; }
+    $err = error_get_last();
+    echo "\nENDED WITHOUT REPORTING after " . $GLOBALS['_checks'] . " checks";
+    echo $err ? " — fatal: " . $err['message'] . " at " . basename($err['file']) . ':' . $err['line'] . "\n"
+              : " — the suite stopped early.\n";
+    exit(1);
+});
 
 function check($condition, $label)
 {
@@ -248,9 +279,22 @@ function section($title)
     echo "\n$title\n";
 }
 
-function reportChecks()
+/**
+ * $expected is the number of checks this file is supposed to run. Passing it is
+ * the only thing that makes deleting checks visible: without it, a suite that
+ * silently stopped running half its assertions still reported a clean pass.
+ * Adding checks means updating the number, on purpose.
+ */
+function reportChecks($expected = null)
 {
+    $GLOBALS['_reported'] = true;
     $fails = $GLOBALS['_fails'];
+
+    if ($expected !== null && $GLOBALS['_checks'] !== $expected) {
+        $fails[] = 'the suite ran every check it is supposed to — expected '
+                 . $expected . ' checks, ran ' . $GLOBALS['_checks'];
+    }
+
     echo "\n" . $GLOBALS['_checks'] . " checks, " . count($fails) . " failed\n";
     if ($fails) {
         foreach ($fails as $f) { echo "  FAILED: $f\n"; }

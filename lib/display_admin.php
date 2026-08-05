@@ -172,8 +172,8 @@ class DisplayAdmin
             }
         }
 
-        $this->pdo->beginTransaction();
         try {
+            $this->pdo->beginTransaction();
             $display = $this->displays->insert($clean);
             if (!$display) {
                 $this->pdo->rollBack();
@@ -199,8 +199,8 @@ class DisplayAdmin
             return DisplayResult::ok($display,
                 'Display "' . $display->title() . '" created' . $what . '. '
                 . 'Point a screen at ' . $this->viewerPath($display) . '.');
-        } catch (Exception $e) {
-            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+        } catch (Throwable $e) {
+            $this->abandon();
             // The one expected failure is a tag that was taken between the check
             // and the insert; anything else is reported the same way, because
             // either way nothing was written.
@@ -226,7 +226,7 @@ class DisplayAdmin
 
         try {
             $updated = $this->displays->updateDetails($display, $clean);
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             return DisplayResult::failed('That display could not be updated. Nothing was changed.');
         }
         if (!$updated) {
@@ -250,7 +250,7 @@ class DisplayAdmin
     {
         try {
             $updated = $this->displays->setActive($display, $active);
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             return DisplayResult::failed('That display could not be changed. Nothing was changed.');
         }
         if (!$updated) {
@@ -281,7 +281,7 @@ class DisplayAdmin
             $this->displays->applyBackground($display, Background::color(self::cleanColor($hex)));
             $this->displays->advanceLayoutRevision($display);
             $updated = $this->displays->forId($display->id());
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             return DisplayResult::failed('That background could not be changed. Nothing was changed.');
         }
         if (!$updated) {
@@ -308,8 +308,8 @@ class DisplayAdmin
                 . 'Nothing was deleted.');
         }
 
-        $this->pdo->beginTransaction();
         try {
+            $this->pdo->beginTransaction();
             // Elements and grants first, and explicitly: both `ON DELETE CASCADE`
             // constraints may never have applied on a live database that is behind
             // the repo. A layout orphaned by a deleted Display is invisible to
@@ -319,8 +319,8 @@ class DisplayAdmin
             $this->grants->revokeAllForDisplay($display);
             $this->displays->deleteRow($display);
             $this->pdo->commit();
-        } catch (Exception $e) {
-            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+        } catch (Throwable $e) {
+            $this->abandon();
             return DisplayResult::failed('That display could not be deleted. Nothing was changed.');
         }
 
@@ -357,8 +357,8 @@ class DisplayAdmin
         $granted = 0;
         $revoked = 0;
 
-        $this->pdo->beginTransaction();
         try {
+            $this->pdo->beginTransaction();
             foreach ($accountIds as $rawAccountId) {
                 $accountId = intval($rawAccountId);
                 if ($accountId <= 0) { continue; }
@@ -388,8 +388,8 @@ class DisplayAdmin
                 }
             }
             $this->pdo->commit();
-        } catch (Exception $e) {
-            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+        } catch (Throwable $e) {
+            $this->abandon();
             return DisplayResult::failed('Access could not be changed. Nothing was changed.');
         }
 
@@ -452,6 +452,23 @@ class DisplayAdmin
 
         $clean = ['title' => $title, 'tag' => $tag, 'location' => $location];
         return null;
+    }
+
+    /**
+     * Roll back if there is anything to roll back, and never throw doing it.
+     *
+     * inTransaction() is PDO's own bookkeeping, so it still reports true after the
+     * connection has gone — and rollBack() would then throw from inside the catch
+     * that exists to turn a failure into a returned result.
+     */
+    private function abandon()
+    {
+        try {
+            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+        } catch (Throwable $e) {
+            // Nothing was committed either way, and the caller is already
+            // returning a refusal.
+        }
     }
 
     /** The Viewer address to put on a device, relative to the app root. */

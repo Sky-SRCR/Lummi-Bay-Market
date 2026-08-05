@@ -1354,6 +1354,24 @@ function renderBlock(el, parent, isNew) {
             inner.style.userSelect = '';
             inner.style.webkitUserSelect = '';
         });
+        // Typing breaks the link to the library entry, exactly as uploadBlockImage,
+        // uploadBlockVideo and changeImageFit already do for their own content.
+        //
+        // This is load-bearing, not tidiness. Publishing pools a text block's
+        // content into `assets` and nulls the element's own copy, so after one
+        // publish every text block comes back asset-linked — and publishCanvas
+        // only collects content for a block with no asset. Without this line the
+        // second edit of a price is dropped in the browser, the toast still says
+        // Published, and the sign keeps the old number. It also means editing one
+        // sign never rewrites a library entry other Displays are sharing.
+        inner.addEventListener('input', function() {
+            if (!block.dataset.assetId) return;
+            block.dataset.assetId = '';
+            if (block === activeBlock) {
+                var _link = document.getElementById('asset-link');
+                if (_link) _link.value = '';
+            }
+        });
         block.addEventListener('dblclick', function(e) {
             if (READ_ONLY || block.dataset.locked === '1' || _shiftDown || e.target.closest('.rh')) return;
             block.classList.remove('just-added');   // first edit clears the highlight

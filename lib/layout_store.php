@@ -58,6 +58,27 @@ class PublishRequest
         $this->stamp      = (string)$stamp;
     }
 
+    /**
+     * Build one from a posted JSON body, or return null if that body is not a
+     * layout at all.
+     *
+     * This exists because the obvious adapter line — `json_decode($raw, true) ?: []`
+     * — reads "an unreadable request is an empty layout", and publishing an empty
+     * layout deletes every element on the Display. A truncated POST, a body cut
+     * mid-multibyte-character, or JSON.stringify emitting an unpaired surrogate for
+     * text truncated mid-emoji all decode to null, and all used to blank the sign
+     * and report success. There is no undo.
+     *
+     * An empty array is still a layout: that is somebody who deleted every block
+     * and meant it. Only "this did not decode" is refused.
+     */
+    public static function fromPostedJson($raw, Background $background, $actorId, $isAdmin, $stamp)
+    {
+        $elements = json_decode((string)$raw, true);
+        if (!is_array($elements)) { return null; }
+        return new self($elements, $background, $actorId, $isAdmin, $stamp);
+    }
+
     public function elements()   { return $this->elements; }
     public function background() { return $this->background; }
     public function actorId()    { return $this->actorId; }
@@ -329,11 +350,15 @@ class LayoutStore
      */
     public function publish(Display $display, PublishRequest $request)
     {
-        $this->pdo->beginTransaction();
         try {
+            // Inside the try: beginTransaction can throw too (a connection that
+            // died between the request starting and this call), and a publish that
+            // fails must be a returned value, never an escaping exception.
+            $this->pdo->beginTransaction();
+
             $current = $this->displays->lockLayoutRevision($display);
             if ($current === false) {
-                $this->pdo->rollBack();
+                $this->abandon();
                 return PublishResult::failed('That display no longer exists. Reload the page.');
             }
 
@@ -344,12 +369,12 @@ class LayoutStore
             $lock  = ($fresh ?: $display)->lockState();
 
             if ($lock->heldByOther($request->actorId())) {
-                $this->pdo->rollBack();
+                $this->abandon();
                 return PublishResult::locked($this->lockedMessage($lock));
             }
 
             if ((string)intval($current) !== $request->stamp()) {
-                $this->pdo->rollBack();
+                $this->abandon();
                 return PublishResult::stale($this->stalenessMessage($fresh ?: $display));
             }
 
@@ -370,9 +395,32 @@ class LayoutStore
 
             $this->pdo->commit();
             return PublishResult::ok($newStamp);
-        } catch (Exception $e) {
-            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+        } catch (Throwable $e) {
+            // Throwable, not Exception. A TypeError from a hostile or malformed
+            // payload is an Error, so `catch (Exception)` let it escape *after*
+            // the DELETEs had run: no rollback of our own, no result object, and
+            // the Builder reported "Network error." for a rejected publish. Only
+            // PDO's teardown was undoing the delete.
+            $this->abandon();
             return PublishResult::failed('Publish failed. Nothing was saved.');
+        }
+    }
+
+    /**
+     * Roll back if there is anything to roll back, and never throw doing it.
+     *
+     * inTransaction() is PDO's own bookkeeping, so it still reports true after
+     * "MySQL server has gone away" — and rollBack() then throws from inside the
+     * catch that was meant to contain the failure, past a Content-Type header
+     * that has already promised JSON.
+     */
+    private function abandon()
+    {
+        try {
+            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+        } catch (Throwable $e) {
+            // Nothing left to do: the write is not committed either way, and the
+            // caller is already returning a refusal.
         }
     }
 
