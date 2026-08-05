@@ -40,6 +40,12 @@ A Display retired from service with its layout preserved. Still editable by admi
 its Viewer states that the Display is turned off rather than rendering a layout.
 _Avoid_: disabled, archived, hidden
 
+**Grant**:
+Permission for one account to edit one Display. A single flag — what the account may
+do inside that Display comes from its role, and publishing is included. Admins hold
+every Display without a grant.
+_Avoid_: assignment, share, access level
+
 ### Authentication & access
 
 **Account**:
