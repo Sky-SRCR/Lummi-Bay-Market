@@ -69,13 +69,19 @@ server.
 Adding a phase should mean *filling in a module*, not threading a new concept
 through the app again:
 
-- **Phase 2** (canvas dimensions): `viewer.php` and `builder.php` become adapters
-  over `DisplayRequest` + `Display`. Every `1920`/`1080` literal is replaced by
-  `$display->canvasWidth()` / `->canvasHeight()`. No new module.
+- ~~**Phase 2** (canvas dimensions)~~ **Done.** `viewer.php` and `builder.php` are
+  adapters over `DisplayRequest` + `Display`; no `1920`/`1080` literal remains in
+  either. No new module was needed. See §7 for the zoom mechanics.
 - **Phase 3** (admin Displays screen): `DisplayStore` gains `create()`,
   `update()`, `rename()`, `deactivate()`, `delete()`, `duplicateLayoutFrom()`.
   The tag rules and the "duplicate only from identical dimensions" rule live in
-  the store, not in the panel.
+  the store, not in the panel. Two things Phase 2 deliberately left:
+  - The Builder loads its layout through `get_layout`, which resolves
+    **`forViewing`** and so returns nothing for a deactivated Display. Nothing can
+    deactivate one until this phase's UI exists, so Phase 3 must add an
+    authenticated editing read (`forEditing`) before shipping deactivation — or a
+    retired Display becomes uneditable, contradicting CONTEXT.md.
+  - The picker replaces the transitional editing fallback (§3).
 - **Phase 4** (grants): `display_permissions` table added to `schema.php`;
   `DisplayRequest::resolve()` gains the grant check so *every* endpoint is
   covered by construction; `DisplayStore::editableBy(account)` filters the
@@ -126,20 +132,26 @@ through the app again:
 
 ---
 
-## 3. Transitional behaviour introduced in Phase 1 (delete in Phase 2/3)
+## 3. Transitional behaviour (Phase 1; half removed in Phase 2, rest in Phase 3)
 
-Phase 1 must be deployable on its own, and the live Screen and SmartSign2Go
-widget still request a bare `viewer.php` (they are re-pointed at the end of
-Phase 2). So a request that names no Display resolves to the installation's
-**sole** Display:
+A request that names no Display resolves to the installation's **sole** Display,
+so each phase is deployable before the Screens and the UI catch up:
 
 - It resolves **only** when exactly one Display exists. With two or more, a
   request with no tag **fails** rather than guessing — so a Phase 3 second
   Display can never be misrouted a write.
-- It is implemented in exactly one place, `DisplayRequest::resolve()`, tagged
+- It is implemented in exactly one place, `DisplayRequest::locate()`, tagged
   `PHASE-1 TRANSITIONAL`.
-- **Phase 2** removes it for `get_layout` once `viewer.php` sends its tag.
-  **Phase 3** removes it entirely once the Builder and admin panel send theirs.
+
+**Phase 2 removed it from the viewing path.** `DisplayRequest::forViewing()` is
+now strict: a Viewer URL names its Display or renders a notice (ADR-0003), even
+when a single Display exists and the guess would have been right. The Viewer sends
+its tag, so nothing needs the fallback — and a truncated URL can never silently
+show another sign.
+
+**It survives only for editing.** `forEditing()` still falls back, because the
+Builder and admin panel have no picker until Phase 3. Phase 3 deletes it and the
+`$allowSoleFallback` parameter with it.
 
 Search `PHASE-1 TRANSITIONAL` to find every line that has to go.
 
@@ -178,6 +190,33 @@ decisions already made, not new decisions.
   deactivate a Display before the Phase 3 UI exists.
 
 ---
+
+## 4b. Decisions taken during Phase 2
+
+- **The canvas is CSS-scaled, and every screen-pixel measurement divides by
+  `ZOOM`.** `interact.js` reports drag and resize deltas in screen pixels, so a
+  scaled canvas desynchronises editing unless each conversion is divided:
+  `handleMove` (`event.dx/dy`), `handleResize` (`event.deltaRect` *and*
+  `event.rect`, since the new width is a measurement too), and
+  `getCanvasDropCenter` (frame scroll geometry). Those three are the complete list;
+  a fourth conversion added later must divide as well or dragging will drift at any
+  zoom but 100%.
+- **`#canvas-sizer` wraps the canvas.** A CSS transform does not change layout
+  size, so without a wrapper carrying the *scaled* footprint the editor frame
+  cannot scroll to the far edge of a zoomed-in canvas.
+- **Zoom-to-fit never magnifies past 100%.** Fitting a small canvas by blowing it
+  up would misrepresent how it will look on the Screen.
+- **Known caveat:** the section minimum size (`restrictSize`, 100×60) is in screen
+  pixels, so at 50% zoom the effective floor is 200×120 canvas pixels. A floor, not
+  a correctness problem — left alone rather than adding a fourth zoom conversion.
+- **The Viewer resolves server-side.** The canvas is correct on first paint and the
+  notice needs no round-trip. It also means `viewer.php` includes no `auth.php` —
+  the public path starts no session and runs no DDL.
+- **A Display turned off mid-run flips to the notice within one poll.** The Viewer
+  treats any non-`success` status as a notice, so deactivating or deleting a
+  Display reaches the Screen in ≤30s rather than leaving a stale layout up.
+- **The transitional `settings` alias is gone.** Both clients read `display` now,
+  and the self-test asserts the alias is absent so it cannot come back.
 
 ## 5. Verification
 

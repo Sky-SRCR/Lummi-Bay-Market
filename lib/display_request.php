@@ -80,11 +80,14 @@ class DisplayRequest
     /**
      * Resolve for rendering a sign. Public: no session, no account.
      *
+     * Strict since Phase 2: a Viewer URL names its Display or renders a notice
+     * (ADR-0003). There is no fallback here — the Screens send their tag.
+     *
      * @param array $params usually $_GET
      */
     public static function forViewing(DisplayStore $store, array $params)
     {
-        $resolution = self::locate($store, $params);
+        $resolution = self::locate($store, $params, false);
         if (!$resolution->isFound()) { return $resolution; }
         if (!$resolution->display()->isActive()) {
             return DisplayResolution::inactive($resolution->display());
@@ -102,26 +105,34 @@ class DisplayRequest
      */
     public static function forEditing(DisplayStore $store, array $params, array $actor)
     {
-        return self::locate($store, $params);
+        return self::locate($store, $params, true);
     }
 
-    /** Tag → Display, with the transitional no-tag fallback. */
-    private static function locate(DisplayStore $store, array $params)
+    /**
+     * Tag → Display.
+     *
+     * @param bool $allowSoleFallback PHASE-1 TRANSITIONAL, editing paths only.
+     */
+    private static function locate(DisplayStore $store, array $params, $allowSoleFallback)
     {
         $raw = isset($params[self::PARAM]) ? (string)$params[self::PARAM] : '';
 
         if (trim($raw) === '') {
+            if (!$allowSoleFallback) {
+                // Viewing is strict (ADR-0003): the Screen shows a notice rather
+                // than guessing which sign was meant.
+                return DisplayResolution::noTag();
+            }
+
             // PHASE-1 TRANSITIONAL — no tag resolves to the sole Display.
             //
-            // The live drive-thru Screen and the SmartSign2Go widget request a
-            // bare `viewer.php` until they are re-pointed at the end of Phase 2,
-            // and the Builder and admin panel have no picker until Phase 3. So a
-            // request that names nothing gets the one Display that exists.
+            // Editing paths only, now that the Viewer sends its tag. The Builder
+            // and admin panel have no picker until Phase 3, so a request that
+            // names nothing gets the one Display that exists.
             //
             // `sole()` returns null the moment a second Display is created, so
             // this can never route a write to the wrong sign — it fails instead.
-            // Remove with the Phase 2 Viewer and the Phase 3 picker
-            // (BUILD-REFERENCE.md §3).
+            // Remove with the Phase 3 picker (BUILD-REFERENCE.md §3).
             $only = $store->sole();
             return $only ? DisplayResolution::found($only) : DisplayResolution::noTag();
         }

@@ -30,8 +30,15 @@ $store  = new DisplayStore($pdo);
 $driveT = makeTestDisplay($pdo, 'drive-thru', 'Drive-Thru');
 $actor  = ['id' => 1, 'username' => 'sky', 'role' => 'admin'];
 
+// Viewing is strict as of Phase 2 (ADR-0003): the Screens send their tag, so a
+// URL that names nothing gets a notice rather than a guess — even when only one
+// Display exists and the guess would have been right.
 $r = DisplayRequest::forViewing($store, []);
-check($r->isFound() && $r->display()->tag() === 'drive-thru', 'no tag resolves to the sole Display (transitional)');
+checkSame(DisplayResolution::NO_TAG, $r->kind(), 'viewing with no tag is refused even with a sole Display');
+
+// Editing keeps the transitional fallback until the Phase 3 picker exists.
+$r = DisplayRequest::forEditing($store, [], $actor);
+check($r->isFound() && $r->display()->tag() === 'drive-thru', 'editing with no tag resolves to the sole Display (transitional)');
 
 $r = DisplayRequest::forViewing($store, ['display' => 'DRIVE-THRU']);
 check($r->isFound(), 'a tag is matched case-insensitively');
@@ -45,7 +52,7 @@ checkSame(DisplayResolution::UNKNOWN, $r->kind(), 'an invalid tag is rejected, n
 
 $lobby = makeTestDisplay($pdo, 'lobby', 'Lobby', 1080, 1920);
 $r = DisplayRequest::forViewing($store, []);
-checkSame(DisplayResolution::NO_TAG, $r->kind(), 'with two Displays, no tag resolves to nothing');
+checkSame(DisplayResolution::NO_TAG, $r->kind(), 'with two Displays, no tag still resolves to nothing');
 checkSame('No display specified', $r->message(), 'no-tag notice wording (ADR-0003)');
 
 $r = DisplayRequest::forEditing($store, [], $actor);
@@ -287,8 +294,9 @@ $driveT = loadTestDisplay($pdo, $driveT->id());
 $snapshot = $layouts->snapshot($driveT);
 
 checkSame($driveT->layoutStamp(), $snapshot['layout_stamp'], 'the snapshot carries the stamp the Builder must hold');
-checkSame(1920, $snapshot['display']['canvas_width'], 'the snapshot carries the canvas size (Phase 2 reads this)');
-checkSame('image', $snapshot['settings']['bg_type'], 'the legacy `settings` alias still carries the background');
+checkSame(1920, $snapshot['display']['canvas_width'], 'the snapshot carries the canvas size the Viewer and Builder size themselves from');
+checkSame('image', $snapshot['display']['bg_type'], 'the Display carries the background');
+check(!isset($snapshot['settings']), 'the transitional `settings` alias is gone (Phase 2)');
 check(isset($snapshot['block_styles']['price']), 'shared Brand Standards typography is included');
 
 $onlyMine = true;

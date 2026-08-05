@@ -93,10 +93,10 @@ class Display
     }
 
     /**
-     * The Display as the Viewer and Builder consume it. `bg_type`/`bg_val` keep
-     * the exact key names the retired single-row `canvas_settings` used, so the
-     * clients that read `data.settings` need no change in Phase 1 and can adopt
-     * the richer fields in Phase 2.
+     * The Display as the Viewer and Builder consume it, under the `display` key of
+     * a layout snapshot. `bg_type`/`bg_val` keep the exact key names the retired
+     * single-row `canvas_settings` used, so the background reading code was
+     * unchanged when Phase 2 moved both clients onto this array.
      */
     public function toClientArray()
     {

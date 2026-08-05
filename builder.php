@@ -1,9 +1,42 @@
 <?php
 require_once 'auth.php';
 require_once 'db_connect.php';
+require_once __DIR__ . '/lib/schema.php';
+require_once __DIR__ . '/lib/displays.php';
+require_once __DIR__ . '/lib/display_request.php';
 requireLogin();
 $me      = currentUser();
 $isAdmin = isAdmin();
+
+// Which Display is being edited, and at what canvas size. Authenticated, so schema
+// convergence is safe here (BUILD-REFERENCE §2 invariant 7).
+ensureSignageSchema($pdo);
+
+$displayStore = new DisplayStore($pdo);
+$resolution   = DisplayRequest::forEditing($displayStore, $_GET, $me);
+
+// No picker until Phase 3, so this resolves through the transitional sole-Display
+// fallback. It fails only if there are no Displays, or several and no tag named one.
+if (!$resolution->isFound()) {
+    $notice = $resolution->kind() === DisplayResolution::UNKNOWN
+        ? 'That display does not exist.'
+        : 'No display specified.';
+    ?><!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Builder</title></head>
+<body style="background:#2c3e50;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+<div style="text-align:center;">
+  <p style="font-size:15px;margin-bottom:14px;"><?= htmlspecialchars($notice) ?></p>
+  <p style="font-size:13px;color:#bdc3c7;">Add <code>?display=&lt;screen-name-tag&gt;</code> to this URL to choose one.</p>
+</div>
+</body>
+</html><?php
+    exit;
+}
+
+$display  = $resolution->display();
+$canvasW  = $display->canvasWidth();
+$canvasH  = $display->canvasHeight();
 
 // Load store branding (defaults if config not yet set)
 if (!defined('BRAND_NAV_BG') && file_exists(__DIR__ . '/branding_config.php')) {
@@ -79,10 +112,14 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #editor-frame { flex: 1; overflow: auto; padding: 40px; display: flex;
                 justify-content: flex-start; align-items: flex-start; user-select: none; }
 
+/* This Display's canvas, at the dimensions fixed when it was created (ADR-0004).
+   Scaled by the zoom control — transform-origin keeps the top-left anchored so
+   scroll position and pointer maths stay predictable. */
 #builder-canvas {
-    width: 1920px; height: 1080px; background: #fff; position: relative;
+    width: <?= $canvasW ?>px; height: <?= $canvasH ?>px; background: #fff; position: relative;
     flex-shrink: 0; box-shadow: 0 10px 30px rgba(0,0,0,.5);
     background-size: cover; background-position: center;
+    transform-origin: top left;
 }
 
 /* ── Blocks ── */
@@ -328,7 +365,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <a href="admin_panel.php">Admin Panel</a>
     <?php endif; ?>
     <a href="help.php" target="_blank">Help</a>
-    <a href="viewer.php" target="_blank">View Display ↗</a>
+    <a href="viewer.php?display=<?= urlencode($display->tag()) ?>" target="_blank">View Display ↗</a>
     <a href="logout.php">Sign Out</a>
 </div>
 
@@ -362,7 +399,15 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
            style="display:none; font-size:11px; color:#aaa;">
     <?php endif; ?>
 
-    <button class="btn publish-btn" style="margin-left:auto;" onclick="publishCanvas()">&#10003; Publish</button>
+    <div class="sep" style="margin-left:auto;"></div>
+    <label style="font-size:11px; color:#bdc3c7;">Zoom:</label>
+    <button class="btn gray" onclick="zoomToFit()" title="Fit the whole canvas in the window">Fit</button>
+    <button class="btn gray" onclick="applyZoom(1)" title="Actual size">100%</button>
+    <button class="btn gray" onclick="nudgeZoom(-1)" title="Zoom out">&minus;</button>
+    <button class="btn gray" onclick="nudgeZoom(1)" title="Zoom in">+</button>
+    <span id="zoom-readout" style="font-size:11px; color:#bdc3c7; min-width:34px; text-align:right;">100%</span>
+
+    <button class="btn publish-btn" style="margin-left:12px;" onclick="publishCanvas()">&#10003; Publish</button>
 </div>
 
 <!-- ── Align bar (shown on multi-select OR single select) ── -->
@@ -395,7 +440,12 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 
 <!-- ── Canvas ── -->
 <div id="editor-frame">
-    <div id="builder-canvas"></div>
+    <!-- #canvas-sizer carries the ZOOMED footprint. A CSS transform does not
+         change layout size, so without this the frame could not scroll to the
+         far edge of a canvas zoomed past the viewport. -->
+    <div id="canvas-sizer" style="flex-shrink:0;">
+        <div id="builder-canvas"></div>
+    </div>
 </div>
 
 <!-- ── Inspector panel ── -->
@@ -407,21 +457,21 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <div class="insp-row">
             <div>
                 <label>X (px)</label>
-                <input type="number" id="insp-x" min="-1920" max="1920" onchange="applyPos('x',this.value)">
+                <input type="number" id="insp-x" min="-<?= $canvasW ?>" max="<?= $canvasW ?>" onchange="applyPos('x',this.value)">
             </div>
             <div>
                 <label>Y (px)</label>
-                <input type="number" id="insp-y" min="-1080" max="1080" onchange="applyPos('y',this.value)">
+                <input type="number" id="insp-y" min="-<?= $canvasH ?>" max="<?= $canvasH ?>" onchange="applyPos('y',this.value)">
             </div>
         </div>
         <div class="insp-row" style="margin-top:4px;">
             <div>
                 <label>W (px)</label>
-                <input type="number" id="insp-w" min="40" max="1920" onchange="applyDim('w',this.value)">
+                <input type="number" id="insp-w" min="40" max="<?= $canvasW ?>" onchange="applyDim('w',this.value)">
             </div>
             <div>
                 <label>H (px)</label>
-                <input type="number" id="insp-h" min="24" max="1080" onchange="applyDim('h',this.value)">
+                <input type="number" id="insp-h" min="24" max="<?= $canvasH ?>" onchange="applyDim('h',this.value)">
             </div>
         </div>
     </div>
@@ -671,6 +721,18 @@ var IS_ADMIN  = <?= $isAdmin ? 'true' : 'false' ?>;
 var SITE_NAME = <?= json_encode(SITE_NAME, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 var CSRF_TOKEN = <?= json_encode(csrfToken(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 
+// The Display being edited. Its canvas size was fixed at creation (ADR-0004), so
+// these are constants for the life of the page — every bound, clamp and default
+// below is derived from them rather than from a hardcoded 1920×1080.
+var DISPLAY_TAG = <?= json_encode($display->tag(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var CANVAS_W    = <?= $canvasW ?>;
+var CANVAS_H    = <?= $canvasH ?>;
+
+// Editor zoom. The canvas is CSS-scaled, so interact.js deltas — which arrive in
+// screen pixels — are divided by ZOOM before becoming canvas coordinates. Miss one
+// of those divisions and dragging drifts at any zoom but 100%.
+var ZOOM = 1;
+
 // The layout stamp this editor loaded (docs/adr/0006). Publish submits it back;
 // if the display has changed since — someone else published, or an element was
 // hidden or deleted in the admin panel — the publish is refused instead of
@@ -690,7 +752,7 @@ var BLOCK_DEFAULTS = {
     section:        { w:600, h:380 },
     carousel:       { w:480, h:320 },
     table:          { w:480, h:200 },
-    marquee:        { w:1920, h:60  },
+    marquee:        { w:CANVAS_W, h:60  },
 };
 
 var FONT_FAMILIES = ['Arial','Georgia','Verdana','Tahoma',
@@ -724,7 +786,48 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!IS_ADMIN) {
         document.getElementById('section-banner').style.display = 'block';
     }
+    // After the banner, so the fit measures the frame at its final height.
+    zoomToFit();
 });
+
+// ============================================================
+// ZOOM
+// ============================================================
+// A Display's canvas can be larger or taller than the editor window — a portrait
+// 1080×1920 does not fit at all — so the canvas is CSS-scaled and #canvas-sizer
+// carries the scaled footprint so the frame can still scroll.
+//
+// Every place a screen-pixel measurement becomes a canvas coordinate divides by
+// ZOOM: handleMove, handleResize, getCanvasDropCenter. Nothing else needs to know.
+
+var ZOOM_MIN = 0.1;
+var ZOOM_MAX = 3;
+var ZOOM_PAD = 80;   // #editor-frame's 40px padding, both sides
+
+function applyZoom(z) {
+    ZOOM = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+    var canvas = document.getElementById('builder-canvas');
+    var sizer  = document.getElementById('canvas-sizer');
+    canvas.style.transform = (ZOOM === 1) ? 'none' : 'scale(' + ZOOM + ')';
+    sizer.style.width  = Math.round(CANVAS_W * ZOOM) + 'px';
+    sizer.style.height = Math.round(CANVAS_H * ZOOM) + 'px';
+    var readout = document.getElementById('zoom-readout');
+    if (readout) readout.textContent = Math.round(ZOOM * 100) + '%';
+}
+
+/** Largest zoom that shows the whole canvas, never magnifying past 100%. */
+function zoomToFit() {
+    var frame = document.getElementById('editor-frame');
+    var z = Math.min(
+        (frame.clientWidth  - ZOOM_PAD) / CANVAS_W,
+        (frame.clientHeight - ZOOM_PAD) / CANVAS_H
+    );
+    applyZoom(Math.min(1, z));
+}
+
+function nudgeZoom(direction) {
+    applyZoom(ZOOM * (direction > 0 ? 1.25 : 0.8));
+}
 
 // ============================================================
 // LOAD
@@ -755,15 +858,15 @@ function populateAssetLinkOptions(blockType) {
 }
 
 function loadLayout() {
-    return fetch('api.php?action=get_layout')
+    return fetch('api.php?action=get_layout&display=' + encodeURIComponent(DISPLAY_TAG))
         .then(function(r){ return r.json(); })
         .then(function(data) {
             blockStyles  = data.block_styles || {};
             LAYOUT_STAMP = data.layout_stamp || '';
             var canvas   = document.getElementById('builder-canvas');
 
-            if (data.settings) {
-                var s = data.settings;
+            if (data.display) {
+                var s = data.display;
                 document.getElementById('bg-type') && (document.getElementById('bg-type').value = s.bg_type);
                 if (s.bg_type === 'color') {
                     document.getElementById('bg-color') && (document.getElementById('bg-color').value = s.bg_val);
@@ -1270,8 +1373,8 @@ function _parentContainer(block) {
     var p = block.parentElement;
     return {
         el: p,
-        w: (p === canvas) ? 1920 : p.offsetWidth,
-        h: (p === canvas) ? 1080 : p.offsetHeight
+        w: (p === canvas) ? CANVAS_W : p.offsetWidth,
+        h: (p === canvas) ? CANVAS_H : p.offsetHeight
     };
 }
 
@@ -1719,6 +1822,7 @@ function publishCanvas() {
     var fd = new FormData();
     fd.append('layout_data', JSON.stringify(elements));
     fd.append('csrf_token', CSRF_TOKEN);
+    fd.append('display', DISPLAY_TAG);
     fd.append('layout_stamp', LAYOUT_STAMP);
 
     if (IS_ADMIN) {
@@ -1804,8 +1908,9 @@ function handleMove(event) {
     var t = event.target;
     if (t && t.classList) t.classList.remove('just-added');  // first move clears the new-block highlight
     if (t.dataset.locked === '1') return;
-    var x = (parseFloat(t.getAttribute('data-x'))||0) + event.dx;
-    var y = (parseFloat(t.getAttribute('data-y'))||0) + event.dy;
+    // event.dx/dy are screen pixels; ZOOM converts them to canvas pixels.
+    var x = (parseFloat(t.getAttribute('data-x'))||0) + event.dx / ZOOM;
+    var y = (parseFloat(t.getAttribute('data-y'))||0) + event.dy / ZOOM;
     t.style.transform = 'translate('+x+'px,'+y+'px)';
     t.setAttribute('data-x', x);
     t.setAttribute('data-y', y);
@@ -1818,16 +1923,17 @@ function handleMove(event) {
 function handleResize(event) {
     var t = event.target;
     if (t.dataset.locked === '1') return;
-    var x = (parseFloat(t.getAttribute('data-x'))||0) + event.deltaRect.left;
-    var y = (parseFloat(t.getAttribute('data-y'))||0) + event.deltaRect.top;
-    t.style.width  = event.rect.width  + 'px';
-    t.style.height = event.rect.height + 'px';
+    // event.deltaRect and event.rect are screen pixels; ZOOM converts to canvas.
+    var x = (parseFloat(t.getAttribute('data-x'))||0) + event.deltaRect.left / ZOOM;
+    var y = (parseFloat(t.getAttribute('data-y'))||0) + event.deltaRect.top  / ZOOM;
+    t.style.width  = (event.rect.width  / ZOOM) + 'px';
+    t.style.height = (event.rect.height / ZOOM) + 'px';
     t.style.transform = 'translate('+x+'px,'+y+'px)';
     t.setAttribute('data-x', x);
     t.setAttribute('data-y', y);
 
-    var w = Math.round(event.rect.width);
-    var h = Math.round(event.rect.height);
+    var w = Math.round(event.rect.width  / ZOOM);
+    var h = Math.round(event.rect.height / ZOOM);
     var lbl = document.getElementById('resize-label');
     lbl.textContent = w + ' × ' + h + ' px';
     var r = t.getBoundingClientRect();
@@ -1848,7 +1954,7 @@ function hideResizeLabel() {
 function _parentBounds() {
     // Returns {w, h} of the parent container (section or canvas)
     var p = activeBlock && activeBlock.parentElement;
-    if (!p) return { w: 1920, h: 1080 };
+    if (!p) return { w: CANVAS_W, h: CANVAS_H };
     return { w: p.offsetWidth, h: p.offsetHeight };
 }
 
@@ -1877,8 +1983,8 @@ function applyPos(which, val) {
     var y   = parseFloat(activeBlock.getAttribute('data-y')) || 0;
     // Clamp to parent bounds for child blocks; canvas bounds for root/section blocks
     var isChild = activeBlock.classList.contains('child-block');
-    if (which === 'x') x = isChild ? Math.max(0, Math.min(val, pb.w - bw)) : Math.max(0, Math.min(val, 1920 - bw));
-    else               y = isChild ? Math.max(0, Math.min(val, pb.h - bh)) : Math.max(0, Math.min(val, 1080 - bh));
+    if (which === 'x') x = isChild ? Math.max(0, Math.min(val, pb.w - bw)) : Math.max(0, Math.min(val, CANVAS_W - bw));
+    else               y = isChild ? Math.max(0, Math.min(val, pb.h - bh)) : Math.max(0, Math.min(val, CANVAS_H - bh));
     activeBlock.style.transform = 'translate('+x+'px,'+y+'px)';
     activeBlock.setAttribute('data-x', x);
     activeBlock.setAttribute('data-y', y);
@@ -1935,8 +2041,9 @@ function getCanvasDropCenter(defW, defH, parent) {
             y: Math.max(0, Math.round((sh - defH) / 2))
         };
     }
-    var cx = Math.round(frame.scrollLeft + frame.clientWidth  / 2 - PAD - defW / 2);
-    var cy = Math.round(frame.scrollTop  + frame.clientHeight / 2 - PAD - defH / 2);
+    // The frame's visual centre, expressed in canvas coordinates.
+    var cx = Math.round((frame.scrollLeft + frame.clientWidth  / 2 - PAD) / ZOOM - defW / 2);
+    var cy = Math.round((frame.scrollTop  + frame.clientHeight / 2 - PAD) / ZOOM - defH / 2);
     cx = Math.max(0, Math.min(cx, canvas.offsetWidth  - defW));
     cy = Math.max(0, Math.min(cy, canvas.offsetHeight - defH));
     return { x: cx, y: cy };
@@ -2438,11 +2545,11 @@ function applyTextAlign(align) {
 }
 
 // ============================================================
-// ALIGN TO SCREEN (1920 × 1080 canvas)
+// ALIGN TO SCREEN (this Display's canvas)
 // ============================================================
 // "Align to Parent" — snaps each element to a position within its own parent container.
 // For child blocks in a section, the section is the parent.
-// For root-level blocks and sections, the canvas (1920×1080) is the parent.
+// For root-level blocks and sections, the canvas is the parent.
 function alignToParent(direction) {
     var targets = multiSel.length > 0 ? multiSel : (activeBlock ? [activeBlock] : []);
     if (targets.length === 0) return;

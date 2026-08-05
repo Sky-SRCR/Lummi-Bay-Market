@@ -1,8 +1,69 @@
-<!DOCTYPE html>
+<?php
+// ============================================================
+// VIEWER — the public page a Screen shows
+// ============================================================
+// A thin adapter: it resolves which Display this URL names, sizes the canvas from
+// that Display's record, and renders. Every `displays` statement lives in
+// lib/displays.php; the notice wording lives in lib/display_request.php. See
+// docs/BUILD-REFERENCE.md.
+//
+// Public and login-free by design, so any Screen on the network can show a sign.
+// Deliberately does NOT include auth.php: no session is started here.
+//
+// Runs no DDL — this page is polled every 30s by every Screen forever
+// (BUILD-REFERENCE §2 invariant 7). DisplayStore self-heals only if the schema is
+// genuinely absent.
+
+require_once __DIR__ . '/db_connect.php';
+require_once __DIR__ . '/lib/displays.php';
+require_once __DIR__ . '/lib/display_request.php';
+
+$resolution = DisplayRequest::forViewing(new DisplayStore($pdo), $_GET);
+$display    = $resolution->display();
+
+// A Display this URL does not name, or one that is turned off, is a notice — never
+// another Display's layout (ADR-0003). No polling: nothing here can start working.
+if (!$resolution->isFound()) {
+    $notice = $resolution->message();
+    ?><!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Display</title>
+<title><?= htmlspecialchars($display ? $display->title() : 'Display') ?></title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+        width: 100%; height: 100%;
+        overflow: hidden;
+        background: #111;
+        overscroll-behavior: none;
+        touch-action: none;
+    }
+    body { display: flex; align-items: center; justify-content: center; }
+    .notice {
+        font-family: Arial, Helvetica, sans-serif;
+        color: #8a8a8a;
+        font-size: 2.2vw;
+        letter-spacing: 0.04em;
+        text-align: center;
+        padding: 0 6vw;
+    }
+</style>
+</head>
+<body>
+<p class="notice"><?= htmlspecialchars($notice) ?></p>
+</body>
+</html><?php
+    exit;
+}
+
+$canvasW = $display->canvasWidth();
+$canvasH = $display->canvasHeight();
+?><!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title><?= htmlspecialchars($display->title()) ?></title>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     /* Kiosk / embedded display: never scroll in either direction. Lock the
@@ -26,15 +87,32 @@
         -ms-touch-action: none;
     }
 
-    /* 1920×1080 design canvas – scaled to fill any screen via JS */
+    /* The Display's canvas, at the dimensions fixed when it was created
+       (ADR-0004) — scaled to fill any Screen via JS. */
     #viewer-canvas {
-        width: 1920px; height: 1080px;
+        width: <?= $canvasW ?>px; height: <?= $canvasH ?>px;
         position: absolute; top: 0; left: 0;
         transform-origin: top left;
         overflow: hidden;
         background-color: #1a1a2e;
         background-size: cover;
         background-position: center;
+    }
+
+    /* Shown if the Display is turned off while a Screen is running. */
+    #viewer-notice {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: #111;
+        align-items: center;
+        justify-content: center;
+        font-family: Arial, Helvetica, sans-serif;
+        color: #8a8a8a;
+        font-size: 2.2vw;
+        letter-spacing: 0.04em;
+        text-align: center;
+        padding: 0 6vw;
     }
 
     /* Sections */
@@ -142,16 +220,24 @@
 </head>
 <body>
 <div id="viewer-canvas"></div>
+<div id="viewer-notice"></div>
 <script>
-    // Scale 1920×1080 canvas to fill the actual screen
+    // This Display's canvas, fixed at creation (ADR-0004).
+    var CANVAS_W = <?= $canvasW ?>;
+    var CANVAS_H = <?= $canvasH ?>;
+    // The screen name tag this Screen was pointed at. Every poll names it.
+    var DISPLAY_TAG = <?= json_encode($display->tag()) ?>;
+
+    // Scale the canvas to fill the actual Screen. Letterboxed on a shape
+    // mismatch — min() preserves proportions rather than distorting prices.
     function scaleToFit() {
         var c  = document.getElementById('viewer-canvas');
-        var sx = window.innerWidth  / 1920;
-        var sy = window.innerHeight / 1080;
+        var sx = window.innerWidth  / CANVAS_W;
+        var sy = window.innerHeight / CANVAS_H;
         var s  = Math.min(sx, sy);
         c.style.transform  = 'scale(' + s + ')';
-        c.style.marginLeft = ((window.innerWidth  - 1920 * s) / 2) + 'px';
-        c.style.marginTop  = ((window.innerHeight - 1080 * s) / 2) + 'px';
+        c.style.marginLeft = ((window.innerWidth  - CANVAS_W * s) / 2) + 'px';
+        c.style.marginTop  = ((window.innerHeight - CANVAS_H * s) / 2) + 'px';
     }
     window.addEventListener('resize', scaleToFit);
     scaleToFit();
@@ -171,32 +257,57 @@
         _marqueeStops = [];
     }
 
+    // A Display turned off (or deleted) while this Screen is running: show the
+    // notice instead of the last layout, within one poll.
+    function showNotice(message) {
+        stopAnimations();
+        var canvas = document.getElementById('viewer-canvas');
+        var notice = document.getElementById('viewer-notice');
+        canvas.innerHTML  = '';
+        canvas.style.display = 'none';
+        notice.textContent   = message || 'No display specified';
+        notice.style.display = 'flex';
+        _layoutHash = '';   // re-render from scratch if it comes back
+    }
+
+    function hideNotice() {
+        document.getElementById('viewer-notice').style.display = 'none';
+        document.getElementById('viewer-canvas').style.display = '';
+    }
+
     function loadLayout() {
         if (_loading) return;
         _loading = true;
-        fetch('api.php?action=get_layout')
+        fetch('api.php?action=get_layout&display=' + encodeURIComponent(DISPLAY_TAG))
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 _loading = false;
+
+                if (!data || data.status !== 'success') {
+                    showNotice(data && data.message);
+                    return;
+                }
+
                 var hash = JSON.stringify(data);
                 if (hash === _layoutHash) return; // nothing changed — leave videos running
                 _layoutHash = hash;
 
                 stopAnimations();
+                hideNotice();
 
                 var canvas = document.getElementById('viewer-canvas');
                 canvas.innerHTML = '';
 
-                var settings    = data.settings    || {};
+                var display     = data.display     || {};
                 var elements    = data.elements    || [];
                 var blockStyles = data.block_styles || {};
 
-                // Background
-                if (settings.bg_type === 'color') {
-                    canvas.style.backgroundColor = settings.bg_val || '#1a1a2e';
+                // Background — the Display owns it (canvas_settings is retired)
+                if (display.bg_type === 'color') {
+                    canvas.style.backgroundColor = display.bg_val || '#1a1a2e';
                     canvas.style.backgroundImage = 'none';
                 } else {
-                    canvas.style.backgroundImage = "url('" + settings.bg_val + "')";
+                    canvas.style.backgroundImage = "url('" + display.bg_val + "')";
                     canvas.style.backgroundColor = '#111';
                 }
 

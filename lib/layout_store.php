@@ -129,13 +129,10 @@ class LayoutStore
         $display_ = $display->toClientArray();
 
         return [
+            // The Display carries its own background and canvas size. Phase 2 moved
+            // the Viewer and Builder onto this key and removed the transitional
+            // `settings` alias that stood in for the retired canvas_settings row.
             'display'      => $display_,
-            // PHASE-1 TRANSITIONAL — `settings` is the key the Viewer and Builder
-            // already read for bg_type/bg_val, from the retired single-row
-            // canvas_settings. Same array under both names so Phase 1 needs no
-            // client change; Phase 2 moves both clients to `display` and this
-            // alias goes.
-            'settings'     => $display_,
             'elements'     => $elements,
             'block_styles' => $styles,
             'layout_stamp' => $display->layoutStamp(),

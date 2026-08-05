@@ -126,14 +126,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_layout') {
     $resolution = DisplayRequest::forViewing($displays, $_GET);
 
     if (!$resolution->isFound()) {
-        // Nothing to render. The notice is the payload; a Phase 1 Viewer ignores
-        // it and shows a bare kiosk background, which is the correct picture for
-        // "no layout" — Phase 2 renders the wording on the Screen.
+        // Nothing to render. The notice is the payload: the Viewer shows this
+        // wording on the Screen, so a Display turned off (or deleted) while a
+        // Screen is running replaces the layout with the notice within one poll.
         echo json_encode([
             'status'       => $resolution->kind(),
             'message'      => $resolution->message(),
             'display'      => null,
-            'settings'     => ['bg_type' => 'color', 'bg_val' => '#1a1a2e'],
             'elements'     => [],
             'block_styles' => [],
         ]);

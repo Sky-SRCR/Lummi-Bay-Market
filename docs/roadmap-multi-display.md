@@ -1,7 +1,7 @@
 # Roadmap — Multi-Display Support
 
-Status: **Phase 1 built on `claude/app-update-planning-1pjqfr`, not yet deployed.**
-Phases 2–6 not started. How the code is shaped, and the invariants each phase
+Status: **Phases 1–2 built on `claude/app-update-planning-1pjqfr`, not yet deployed.**
+Phases 3–6 not started. How the code is shaped, and the invariants each phase
 must preserve, are in [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that
 alongside this file.
 
@@ -114,6 +114,22 @@ and the negative cases show notices.
 SmartSign2Go widget from `…/viewer.php` to `…/viewer.php?display=drive-thru`. Deploy
 and re-point in the same visit — in between, that Screen shows the notice.
 
+**Built.** No `1920`/`1080` literal remains in `viewer.php` or `builder.php`; both
+are adapters over `DisplayRequest` + `Display`, and no new module was needed. The
+Viewer resolves its Display server-side, so the canvas is right on first paint and
+the ADR-0003 notices render without a round-trip; a Display turned off while a
+Screen is running flips to the notice within one poll. The Builder derives its
+canvas CSS, inspector bounds, marquee default, root clamps and align maths from the
+record, and opens at zoom-to-fit with Fit / 100% / − / +. Viewing is now strict —
+the transitional no-tag fallback survives for editing only, until the Phase 3
+picker (BUILD-REFERENCE §3). The `settings` alias is retired. 87 self-test checks
+pass. **Not yet run against MySQL or a browser**, and the cutover above has not
+happened: see "Before this reaches the sign".
+
+The zoom control is the part to re-read rather than trust: `interact.js` deltas
+arrive in screen pixels and are divided by `ZOOM` in exactly three places
+(BUILD-REFERENCE §4b).
+
 ### Phase 3 — Admin Displays screen · size M · risk Low
 
 A **Displays** tab in `admin_panel.php`: create (dimensions first, then blank or
@@ -178,7 +194,7 @@ corrected — all three present 1920 × 1080 as a fixed property of the system, 
   those errors. Phases 2 and 5 touch it heavily and need reading, not just linting.
 - **No tests** — verification is manual against the live site.
 
-## Before this reaches the sign (Phase 1)
+## Before this reaches the sign (Phases 1–2)
 
 In order, on the one visit:
 
@@ -195,12 +211,28 @@ In order, on the one visit:
    schema convergence: it creates `displays`, seeds the drive-thru Display from
    `canvas_settings`, and backfills `display_id`. (If the sign's poll gets there
    first it self-heals, but signing in makes it deliberate.)
-5. **Check the sign.** `viewer.php` still shows the drive-thru layout unchanged —
-   during Phase 1 a bare URL still resolves, because exactly one Display exists.
+5. **Check the sign at its new URL.** `viewer.php?display=drive-thru` shows the
+   drive-thru layout unchanged, pixel for pixel. A bare `viewer.php` now shows "No
+   display specified" — that is Phase 2 working as designed (ADR-0003), not a fault.
 6. **Publish once** from the Builder and confirm the Screen updates within 30s.
 7. **Prove the refusal**: leave a second Builder tab open, publish from the first,
    then publish from the stale tab — it must be refused by name, and the layout
    must not change.
+8. **Re-point the Screen and the widget** to `…/viewer.php?display=drive-thru` —
+   the SmartSign2Go widget and the TV both. This is the Phase 2 cutover and the
+   only manual step in the project; until it is done that Screen shows the notice.
+9. **Exercise the zoom** in the Builder: at Fit and at 100%, drag a block and
+   resize it, then confirm the inspector's X/Y/W/H match where it actually sits and
+   that publishing puts it there on the Screen. Zoom is the one place Phase 2 could
+   drift silently.
+10. **Prove a different shape**, ideally before trusting Phase 3: insert a portrait
+    Display by hand
+    (`INSERT INTO displays (tag,title,canvas_width,canvas_height,bg_type,bg_val,is_active)
+    VALUES ('test-portrait','Test Portrait',1080,1920,'color','#1a1a2e',1)`),
+    open `builder.php?display=test-portrait` and `viewer.php?display=test-portrait`,
+    confirm both are 1080×1920 and letterbox correctly, then delete the row. Note
+    that while it exists, a bare `builder.php` stops resolving — two Displays and no
+    tag is a deliberate refusal, so use the tag while testing.
 
 If the sign goes blank after step 4, the backfill is the thing to check:
 `SELECT COUNT(*) FROM canvas_elements WHERE display_id IS NULL` should be 0. It
