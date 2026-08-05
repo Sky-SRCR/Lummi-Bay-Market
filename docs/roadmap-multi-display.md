@@ -1,7 +1,7 @@
 # Roadmap — Multi-Display Support
 
-Status: **Phases 1–2 built on `claude/app-update-planning-1pjqfr`, not yet deployed.**
-Phases 3–6 not started. How the code is shaped, and the invariants each phase
+Status: **Phases 1–3 built on `claude/app-update-planning-1pjqfr`, not yet deployed.**
+Phases 4–6 not started. How the code is shaped, and the invariants each phase
 must preserve, are in [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that
 alongside this file.
 
@@ -146,6 +146,34 @@ to. The Work Area tab becomes Display-scoped.
 **Done when** an admin can create a second Display, build it, publish it, show it on
 another Screen, and delete it without touching the first.
 
+**Built.** Creation is three gated steps — canvas size first, then the name, then
+blank-or-duplicate — and the duplicate list only ever offers Displays of exactly
+the size being created (ADR-0004). The size is read-only afterwards, enforced by
+there being no statement anywhere that can change it. Each Display shows its tag,
+shape, element count, last-published-by and a copy-ready absolute Viewer address,
+above the standing note that anyone with that address can watch the sign without
+signing in. Deleting needs the tag typed back and states how many elements go with
+it; retiring keeps the layout and says so on the Screen within one poll.
+
+The write surface landed as `DisplayStore` (statements, tag and size rules) plus a
+new `DisplayAdmin` (the use case: validation, duplication, transactions) — not all
+on `DisplayStore` as BUILD-REFERENCE had planned, because that would have put
+`canvas_elements` writes in the module that owns `displays`. See BUILD-REFERENCE
+§4c for that and the rest of the phase's decisions.
+
+Two things Phase 2 deliberately left are closed: `get_editor_layout` is the
+authenticated editing read, so a retired Display still opens in the Builder; and
+the Builder has a picker, so the no-tag editing rule is now a decided entry
+shortcut for single-sign installations rather than a transitional prop (§3). The
+Builder's top bar names the Display it is editing, publish says which sign it
+reached, and the Work Area tab is Display-scoped. 152 self-test checks pass.
+**Not yet run against MySQL or a browser.**
+
+The picker is shown to every account. The *Builder entry* decision below has
+`basic` accounts resuming their last Display instead of picking; that arrives with
+grants in Phase 4, since until grants exist every account can see every Display and
+"their last" would be a memory of an unrestricted set.
+
 ### Phase 4 — Grants and the Display picker · size M · risk Medium
 
 `display_permissions` plus a grant UI (a Display↔account matrix), enforced
@@ -194,7 +222,7 @@ corrected — all three present 1920 × 1080 as a fixed property of the system, 
   those errors. Phases 2 and 5 touch it heavily and need reading, not just linting.
 - **No tests** — verification is manual against the live site.
 
-## Before this reaches the sign (Phases 1–2)
+## Before this reaches the sign (Phases 1–3)
 
 In order, on the one visit:
 
@@ -225,14 +253,29 @@ In order, on the one visit:
    resize it, then confirm the inspector's X/Y/W/H match where it actually sits and
    that publishing puts it there on the Screen. Zoom is the one place Phase 2 could
    drift silently.
-10. **Prove a different shape**, ideally before trusting Phase 3: insert a portrait
-    Display by hand
-    (`INSERT INTO displays (tag,title,canvas_width,canvas_height,bg_type,bg_val,is_active)
-    VALUES ('test-portrait','Test Portrait',1080,1920,'color','#1a1a2e',1)`),
-    open `builder.php?display=test-portrait` and `viewer.php?display=test-portrait`,
-    confirm both are 1080×1920 and letterbox correctly, then delete the row. Note
-    that while it exists, a bare `builder.php` stops resolving — two Displays and no
-    tag is a deliberate refusal, so use the tag while testing.
+10. **Prove a different shape** — the one thing that shows the dimensions are really
+    data-driven. Admin Panel → **Displays** → Add a Display: preset *1080×1920
+    Portrait HD*, title "Test Portrait", blank canvas. Open it in the Builder (the
+    canvas is portrait and opens zoom-to-fit), add a block, publish, and open its
+    screen address in a second tab — the layout letterboxes inside the window
+    rather than distorting.
+11. **Prove duplication.** Add another Display at 1920×1080 and choose *a copy of an
+    existing display's layout* → the drive-thru. The copy must have the same blocks
+    in the same places, and the drive-thru must be untouched. Check the refusal too:
+    at 1080×1920 the drive-thru is **not** offered as a source, and at 1920×1080 the
+    portrait Display is not.
+12. **Prove the Work Area is Display-scoped.** Switch the Display selector: each one
+    lists only its own elements. Hide one element on a test Display and confirm the
+    drive-thru is unaffected — and that a Builder tab opened before the hide is now
+    refused when it publishes.
+13. **Prove retirement, then deletion.** Turn a test Display off: its screen address
+    says "This display is turned off" within 30s, and it still opens in the Builder
+    with the red banner (that is `get_editor_layout` doing its job). Then delete it —
+    a mistyped tag must refuse, the right tag must delete it and its elements, and
+    the drive-thru must still be intact after both.
+14. **Prove the picker.** While more than one Display exists, a bare `builder.php`
+    lists them to choose from. Delete the test Displays and a bare `builder.php`
+    goes straight into the drive-thru again — that is the single-sign entry rule.
 
 If the sign goes blank after step 4, the backfill is the thing to check:
 `SELECT COUNT(*) FROM canvas_elements WHERE display_id IS NULL` should be 0. It

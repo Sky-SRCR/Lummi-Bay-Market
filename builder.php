@@ -15,28 +15,95 @@ ensureSignageSchema($pdo);
 $displayStore = new DisplayStore($pdo);
 $resolution   = DisplayRequest::forEditing($displayStore, $_GET, $me);
 
-// No picker until Phase 3, so this resolves through the transitional sole-Display
-// fallback. It fails only if there are no Displays, or several and no tag named one.
+// One Display and no tag goes straight in (DisplayStore::sole()). Anything else
+// that names no Display — or names one that does not exist — lands here and picks.
 if (!$resolution->isFound()) {
-    $notice = $resolution->kind() === DisplayResolution::UNKNOWN
-        ? 'That display does not exist.'
-        : 'No display specified.';
+    $notice  = '';
+    if ($resolution->kind() === DisplayResolution::UNKNOWN) {
+        $notice = 'That display does not exist. It may have been deleted, or its screen name tag renamed.';
+    } elseif ($resolution->kind() === DisplayResolution::INACTIVE) {
+        // Only a basic account lands here: a retired Display opens normally for an
+        // admin, banner and all.
+        $notice = 'That display is turned off, so it is not yours to edit while it is out of service. '
+                . 'An admin can turn it back on.';
+    }
+
+    // A retired Display is not offered to someone who could not open it anyway.
+    $choices = [];
+    foreach ($displayStore->all() as $candidate) {
+        if ($candidate->isActive() || $isAdmin) { $choices[] = $candidate; }
+    }
     ?><!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><title>Builder</title></head>
-<body style="background:#2c3e50;color:#fff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-<div style="text-align:center;">
-  <p style="font-size:15px;margin-bottom:14px;"><?= htmlspecialchars($notice) ?></p>
-  <p style="font-size:13px;color:#bdc3c7;">Add <code>?display=&lt;screen-name-tag&gt;</code> to this URL to choose one.</p>
+<head><meta charset="UTF-8"><title>Choose a display — Builder</title>
+<style>
+* { box-sizing:border-box; margin:0; padding:0;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+body { background:#2c3e50; color:#fff; min-height:100vh; padding:40px 20px; }
+.wrap { max-width:640px; margin:0 auto; }
+h1 { font-size:19px; margin-bottom:6px; }
+.sub { font-size:13px; color:#bdc3c7; margin-bottom:22px; line-height:1.6; }
+.notice { background:#5d3a3a; border:1px solid #8c5252; border-radius:5px; padding:10px 14px;
+          font-size:13px; margin-bottom:18px; }
+a.pick { display:block; background:#34495e; border:1px solid #415b76; border-radius:6px;
+         padding:13px 16px; margin-bottom:9px; text-decoration:none; color:#fff; }
+a.pick:hover { background:#3d566e; }
+.pick .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.pick .title { font-size:15px; font-weight:600; }
+.pick .tag { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:12px; background:#2c3e50;
+             border:1px solid #4a6480; border-radius:3px; padding:1px 7px; color:#aed6f1; }
+.pick .off { font-size:11px; font-weight:700; background:#7b3f3f; border-radius:9px; padding:1px 8px; }
+.pick .facts { font-size:12px; color:#bdc3c7; margin-top:5px; }
+.foot { margin-top:24px; font-size:13px; }
+.foot a { color:#aed6f1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <?php if ($notice !== ''): ?><div class="notice"><?= htmlspecialchars($notice) ?></div><?php endif; ?>
+
+  <?php if ($choices): ?>
+    <h1>Which display do you want to edit?</h1>
+    <p class="sub">Each one is a separate sign with its own layout. Publishing sends only the
+       display you are in to its screen.</p>
+    <?php foreach ($choices as $d): ?>
+      <a class="pick" href="builder.php?display=<?= urlencode($d->tag()) ?>">
+        <span class="row">
+          <span class="title"><?= htmlspecialchars($d->title()) ?></span>
+          <span class="tag"><?= htmlspecialchars($d->tag()) ?></span>
+          <?php if (!$d->isActive()): ?><span class="off">TURNED OFF</span><?php endif; ?>
+        </span>
+        <span class="facts"><?= $d->dimensionsLabel() ?> <?= $d->orientation() ?><?php
+          if ($d->location() !== '') { echo ' · ' . htmlspecialchars($d->location()); } ?></span>
+      </a>
+    <?php endforeach; ?>
+  <?php elseif ($displayStore->count() > 0): ?>
+    <h1>Nothing to edit right now</h1>
+    <p class="sub">Every display is turned off. A display that is out of service is not editable
+       by a basic account — ask an admin to turn one back on.</p>
+  <?php else: ?>
+    <h1>There are no displays yet</h1>
+    <p class="sub">A display is one sign: its screen name tag, its canvas size and its layout.
+       <?= $isAdmin ? 'Add the first one in the Admin Panel, under Displays.'
+                    : 'Ask an admin to add one, and to give you access to it.' ?></p>
+  <?php endif; ?>
+
+  <p class="foot">
+    <?php if ($isAdmin): ?><a href="admin_panel.php?tab=displays">Manage displays</a> &nbsp;·&nbsp; <?php endif; ?>
+    <a href="crud.php">Asset Library</a> &nbsp;·&nbsp;
+    <a href="logout.php">Sign Out</a>
+  </p>
 </div>
 </body>
 </html><?php
     exit;
 }
 
-$display  = $resolution->display();
-$canvasW  = $display->canvasWidth();
-$canvasH  = $display->canvasHeight();
+$display      = $resolution->display();
+$canvasW      = $display->canvasWidth();
+$canvasH      = $display->canvasHeight();
+// More than one Display means there is somewhere to switch to.
+$displayCount = $displayStore->count();
 
 // Load store branding (defaults if config not yet set)
 if (!defined('BRAND_NAV_BG') && file_exists(__DIR__ . '/branding_config.php')) {
@@ -74,6 +141,23 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
             font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
             text-transform: uppercase; }
 .btn.publish-btn { background: <?= htmlspecialchars(BRAND_ACCENT) ?>; }
+
+/* Which sign am I editing? Never left to be inferred from the canvas shape. */
+#top-nav .display-badge { margin-left: 18px; display: flex; align-items: center; gap: 7px;
+                          font-size: 12px; white-space: nowrap; }
+#top-nav .display-badge .d-title { font-weight: 600; color: #fff; }
+#top-nav .display-badge .d-tag { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 11px;
+                                 background: #2c3e50; border: 1px solid #4a6480; border-radius: 3px;
+                                 padding: 1px 6px; color: #aed6f1; }
+#top-nav .display-badge .d-dims { color: #8fa6bb; font-size: 11px; }
+#top-nav .display-badge .d-off { background: #c0392b; color: #fff; font-size: 10px; font-weight: bold;
+                                 padding: 1px 6px; border-radius: 8px; text-transform: uppercase; }
+
+/* Editing a retired Display is allowed on purpose — but never by accident. */
+#display-off-banner {
+    display: none; background: #7b3f3f; color: #fff; font-size: 13px; padding: 8px 14px;
+    flex-shrink: 0; border-bottom: 1px solid #9b5252;
+}
 
 /* ── Control bar ── */
 #control-bar {
@@ -359,6 +443,15 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <?= htmlspecialchars($me['username']) ?>
         <span class="role-tag"><?= $isAdmin ? 'ADMIN' : 'USER' ?></span>
     </span>
+    <span class="display-badge" title="The display you are editing. Publishing sends only this one to its screen.">
+        <span class="d-title"><?= htmlspecialchars($display->title()) ?></span>
+        <span class="d-tag"><?= htmlspecialchars($display->tag()) ?></span>
+        <span class="d-dims"><?= $display->dimensionsLabel() ?></span>
+        <?php if (!$display->isActive()): ?><span class="d-off">off</span><?php endif; ?>
+    </span>
+    <?php if ($displayCount > 1): ?>
+        <a href="builder.php" title="Edit a different display">Switch display ⇄</a>
+    <?php endif; ?>
     <span class="nav-spacer"></span>
     <a href="crud.php">Asset Library</a>
     <?php if ($isAdmin): ?>
@@ -430,6 +523,20 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <div class="sep"></div>
     <span id="sel-count" style="font-size:11px; color:#bdc3c7;"></span>
 </div>
+
+<!-- ── Turned-off notice ── -->
+<?php if (!$display->isActive()): ?>
+<div id="display-off-banner" style="display:block;">
+    <strong>This display is turned off.</strong>
+    No screen is showing it — anything pointed at it says so instead. You can still edit and publish;
+    the layout is kept until someone turns it back on
+    <?php if ($isAdmin): ?>
+        (<a href="admin_panel.php?tab=displays" style="color:#ffd9d9;">Displays</a> in the Admin Panel).
+    <?php else: ?>
+        — ask an admin to turn it on.
+    <?php endif; ?>
+</div>
+<?php endif; ?>
 
 <!-- ── Section banner for basic users ── -->
 <?php if (!$isAdmin): ?>
@@ -724,9 +831,10 @@ var CSRF_TOKEN = <?= json_encode(csrfToken(), JSON_HEX_TAG | JSON_HEX_APOS | JSO
 // The Display being edited. Its canvas size was fixed at creation (ADR-0004), so
 // these are constants for the life of the page — every bound, clamp and default
 // below is derived from them rather than from a hardcoded 1920×1080.
-var DISPLAY_TAG = <?= json_encode($display->tag(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
-var CANVAS_W    = <?= $canvasW ?>;
-var CANVAS_H    = <?= $canvasH ?>;
+var DISPLAY_TAG   = <?= json_encode($display->tag(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var DISPLAY_TITLE = <?= json_encode($display->title(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var CANVAS_W      = <?= $canvasW ?>;
+var CANVAS_H      = <?= $canvasH ?>;
 
 // Editor zoom. The canvas is CSS-scaled, so interact.js deltas — which arrive in
 // screen pixels — are divided by ZOOM before becoming canvas coordinates. Miss one
@@ -858,9 +966,20 @@ function populateAssetLinkOptions(blockType) {
 }
 
 function loadLayout() {
-    return fetch('api.php?action=get_layout&display=' + encodeURIComponent(DISPLAY_TAG))
+    // The editing read, not the Viewer's: a Display that has been turned off is a
+    // notice on a Screen but must still open here (CONTEXT.md), and get_layout
+    // deliberately returns nothing for one.
+    return fetch('api.php?action=get_editor_layout&display=' + encodeURIComponent(DISPLAY_TAG))
         .then(function(r){ return r.json(); })
         .then(function(data) {
+            if (!data || data.status !== 'success') {
+                // The Display was deleted or renamed while this tab sat open. Its
+                // layout is gone; publishing what is on screen would recreate it
+                // under a Display that no longer exists.
+                showToast(((data && data.message) || 'That display could not be loaded.')
+                          + ' Reload to choose a display.', true);
+                return;
+            }
             blockStyles  = data.block_styles || {};
             LAYOUT_STAMP = data.layout_stamp || '';
             var canvas   = document.getElementById('builder-canvas');
@@ -1839,7 +1958,10 @@ function publishCanvas() {
                 // Adopt the stamp this publish created, so a second publish from
                 // this same tab is not mistaken for a stale one.
                 LAYOUT_STAMP = res.layout_stamp || LAYOUT_STAMP;
-                showToast('Published! Display screen will update in 30 seconds.');
+                // Named, because there is more than one sign now and "published!"
+                // does not tell you which one you just changed.
+                showToast('Published to ' + DISPLAY_TITLE + ' (' + DISPLAY_TAG + '). '
+                          + 'That screen updates within 30 seconds.');
                 loadAssets();
             } else if (res.reason === 'stale') {
                 // Nothing was saved. This has to be acknowledged, not glimpsed:

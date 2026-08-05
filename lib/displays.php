@@ -7,14 +7,18 @@
 //
 // Two things live here and nowhere else:
 //   Display      — one Display's facts, in the app's vocabulary rather than the
-//                  database's, including the compatibility shape the Viewer and
-//                  Builder still read as `settings`.
+//                  database's.
 //   DisplayStore — every statement that touches the `displays` table, the tag
-//                  rules, and the recovery when the table is not there yet.
+//                  and canvas-size rules, and the recovery when the table is not
+//                  there yet.
 //
-// No caller outside this file may write SQL against `displays`. Phases 3–5 add
-// methods here (create/rename/deactivate/delete, lock take/heartbeat/release)
-// rather than SQL anywhere else.
+// No caller outside this file may write SQL against `displays`. Phase 5 adds
+// methods here (lock take/heartbeat/release) rather than SQL anywhere else.
+//
+// The *use case* of administering Displays — what a complete new Display needs,
+// creating one as a duplicate, destroying one with its layout — is one level up,
+// in `display_admin.php`. That module composes this one with LayoutStore, because
+// a Display's elements are not this file's to touch.
 
 require_once __DIR__ . '/schema.php';
 
@@ -65,6 +69,35 @@ class Display
 
     public function backgroundType()  { return $this->row['bg_type'] === 'image' ? 'image' : 'color'; }
     public function backgroundValue() { return (string)$this->row['bg_val']; }
+
+    /**
+     * Same canvas shape, to the pixel.
+     *
+     * The one rule ADR-0004 turns on: a layout may be duplicated only between
+     * Displays of identical dimensions, because positions are absolute pixels and
+     * there is no undo to recover from a silently rescaled sign. Lives on the
+     * value object so the store, the use case and the UI all ask the same
+     * question instead of each comparing two pairs of integers.
+     */
+    public function sameShapeAs(Display $other)
+    {
+        return $this->canvasWidth() === $other->canvasWidth()
+            && $this->canvasHeight() === $other->canvasHeight();
+    }
+
+    /** "1920 × 1080" — for a heading, a picker row or a confirm. */
+    public function dimensionsLabel()
+    {
+        return $this->canvasWidth() . ' × ' . $this->canvasHeight();
+    }
+
+    /** Portrait, landscape or square — the word that makes a dimensions column readable. */
+    public function orientation()
+    {
+        if ($this->canvasHeight() > $this->canvasWidth()) { return 'portrait'; }
+        if ($this->canvasWidth() > $this->canvasHeight()) { return 'landscape'; }
+        return 'square';
+    }
 
     /**
      * The publish stamp (ADR-0006): an opaque token identifying this Display's
@@ -121,6 +154,19 @@ class DisplayStore
     const TAG_MIN = 2;
     const TAG_MAX = 32;
 
+    /** Column widths, so a too-long title is refused rather than silently truncated by MySQL. */
+    const TITLE_MAX    = 120;
+    const LOCATION_MAX = 160;
+
+    /**
+     * Canvas bounds. Wide enough for anything a store hangs on a wall — a video
+     * wall, a portrait menu board, a narrow ticker strip — and narrow enough that
+     * a typo (2 px, or 19200 px) is caught at creation, when it is still fixable.
+     * Dimensions cannot be changed afterwards (ADR-0004).
+     */
+    const CANVAS_MIN = 200;
+    const CANVAS_MAX = 10000;
+
     private $pdo;
     private $healAttempted = false;
 
@@ -156,22 +202,36 @@ class DisplayStore
         return $out;
     }
 
-    /** How many Displays exist. Phase 3's Builder entry rule turns on this. */
+    /** How many Displays exist. The Builder's entry rule turns on this. */
     public function count()
     {
         return count($this->all());
     }
 
     /**
-     * PHASE-1 TRANSITIONAL — the only Display, when there is exactly one.
+     * Every Display of exactly these dimensions — the Displays a new one may be
+     * duplicated from (ADR-0004). Ordered oldest first, like all().
+     */
+    public function withDimensions($width, $height)
+    {
+        $out = [];
+        foreach ($this->rows("WHERE d.canvas_width = ? AND d.canvas_height = ? ORDER BY d.id ASC",
+                             [intval($width), intval($height)]) as $row) {
+            $out[] = new Display($row);
+        }
+        return $out;
+    }
+
+    /**
+     * The only Display, when there is exactly one — the Builder's entry rule.
      *
-     * Requests that name no Display resolve through here while the live Screen
-     * and the SmartSign2Go widget still point at a bare `viewer.php`, and while
-     * the Builder and admin panel have no Display picker. Returning null as soon
-     * as a second Display exists is the safety property: a write can never be
-     * silently routed to the wrong sign, it fails instead (BUILD-REFERENCE.md §3).
+     * An installation with one sign should not ask which sign you meant, so an
+     * editing request that names no Display gets this one. Returning null the
+     * moment a second Display exists is the safety property: a write is never
+     * silently routed to the wrong sign, it fails and the Builder shows the
+     * picker instead (BUILD-REFERENCE.md §3).
      *
-     * Deleted in Phase 2 (Viewer) / Phase 3 (Builder, admin panel).
+     * Viewing never uses this — a Viewer URL always names its Display (ADR-0003).
      */
     public function sole()
     {
@@ -249,6 +309,82 @@ class DisplayStore
                   ->execute([$display->id()]);
     }
 
+    // ---- Administering Displays ---------------------------------------------
+    // Called by DisplayAdmin, which validates first and holds the transaction.
+    // These are the statements; the rules about what a *complete* Display needs
+    // are one level up, so that "create" and "create as a duplicate" cannot end
+    // up with two different ideas of a valid Display.
+
+    /**
+     * Insert a Display and return it as stored.
+     *
+     * Takes an already-validated set of fields — a caller reaching this method
+     * with a duplicate tag gets the unique-key exception, which is the database
+     * enforcing what DisplayAdmin already checked, not an expected path.
+     */
+    public function insert(array $fields)
+    {
+        $this->pdo->prepare(
+            "INSERT INTO displays (tag, title, location, canvas_width, canvas_height, bg_type, bg_val, is_active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )->execute([
+            self::normalizeTag($fields['tag']),
+            (string)$fields['title'],
+            isset($fields['location']) && $fields['location'] !== '' ? (string)$fields['location'] : null,
+            intval($fields['canvas_width']),
+            intval($fields['canvas_height']),
+            ($fields['bg_type'] ?? 'color') === 'image' ? 'image' : 'color',
+            (string)($fields['bg_val'] ?? '#1a1a2e'),
+            !empty($fields['is_active']) ? 1 : 0,
+        ]);
+        return $this->forId($this->pdo->lastInsertId());
+    }
+
+    /**
+     * Change the reference details and the screen name tag.
+     *
+     * Canvas dimensions are deliberately absent: they are fixed at creation
+     * (ADR-0004), and the way to not offer a resize is to have no statement that
+     * can perform one.
+     */
+    public function updateDetails(Display $display, array $fields)
+    {
+        $this->pdo->prepare(
+            "UPDATE displays SET tag = ?, title = ?, location = ? WHERE id = ?"
+        )->execute([
+            self::normalizeTag($fields['tag']),
+            (string)$fields['title'],
+            isset($fields['location']) && $fields['location'] !== '' ? (string)$fields['location'] : null,
+            $display->id(),
+        ]);
+        return $this->forId($display->id());
+    }
+
+    /**
+     * Turn a Display on or off. Off means Screens show "This display is turned
+     * off" (ADR-0003) while the layout is kept and stays editable.
+     */
+    public function setActive(Display $display, $active)
+    {
+        $this->pdo->prepare("UPDATE displays SET is_active = ? WHERE id = ?")
+                  ->execute([$active ? 1 : 0, $display->id()]);
+        return $this->forId($display->id());
+    }
+
+    /**
+     * Remove the Display row itself.
+     *
+     * Its elements are removed first, by DisplayAdmin through LayoutStore, rather
+     * than relying on the `ON DELETE CASCADE` — the live database is behind the
+     * repo and that constraint may never have applied (BUILD-REFERENCE §2.10).
+     * Deleting the row and orphaning a layout would leave rows no scoped query
+     * can ever see again.
+     */
+    public function deleteRow(Display $display)
+    {
+        $this->pdo->prepare("DELETE FROM displays WHERE id = ?")->execute([$display->id()]);
+    }
+
     // ---- Tag rules ----------------------------------------------------------
 
     /** Fold user input toward a valid tag without inventing one: trim, lowercase. */
@@ -262,6 +398,43 @@ class DisplayStore
         $len = strlen($tag);
         if ($len < self::TAG_MIN || $len > self::TAG_MAX) { return false; }
         return preg_match('/^[a-z0-9-]+$/', $tag) === 1;
+    }
+
+    /**
+     * A candidate tag from a title: "Lobby Screen #2" → "lobby-screen-2".
+     *
+     * A suggestion, not a guarantee — an admin may replace it, and a title of
+     * only punctuation yields '' rather than something invented. The result is
+     * still checked by isValidTag() before use.
+     */
+    public static function suggestTag($title)
+    {
+        $tag = strtolower(trim((string)$title));
+        $tag = preg_replace('/[^a-z0-9]+/', '-', $tag);
+        $tag = trim($tag, '-');
+        if (strlen($tag) > self::TAG_MAX) {
+            $tag = rtrim(substr($tag, 0, self::TAG_MAX), '-');
+        }
+        return $tag;
+    }
+
+    /** Is this tag taken? `$exceptId` lets a Display keep its own tag while renaming. */
+    public function tagExists($tag, $exceptId = 0)
+    {
+        $existing = $this->forTag($tag);
+        if (!$existing) { return false; }
+        return $existing->id() !== intval($exceptId);
+    }
+
+    /** Both dimensions present, whole, and inside the bounds above. */
+    public static function isValidCanvasSize($width, $height)
+    {
+        foreach ([$width, $height] as $n) {
+            if (intval($n) != $n) { return false; }   // loose: rejects "1920.5" and "abc"
+            $n = intval($n);
+            if ($n < self::CANVAS_MIN || $n > self::CANVAS_MAX) { return false; }
+        }
+        return true;
     }
 
     // ---- Internals ----------------------------------------------------------

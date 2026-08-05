@@ -36,9 +36,9 @@ $actor  = ['id' => 1, 'username' => 'sky', 'role' => 'admin'];
 $r = DisplayRequest::forViewing($store, []);
 checkSame(DisplayResolution::NO_TAG, $r->kind(), 'viewing with no tag is refused even with a sole Display');
 
-// Editing keeps the transitional fallback until the Phase 3 picker exists.
+// The editing entry rule: one Display and no tag goes straight in.
 $r = DisplayRequest::forEditing($store, [], $actor);
-check($r->isFound() && $r->display()->tag() === 'drive-thru', 'editing with no tag resolves to the sole Display (transitional)');
+check($r->isFound() && $r->display()->tag() === 'drive-thru', 'editing with no tag resolves to the sole Display');
 
 $r = DisplayRequest::forViewing($store, ['display' => 'DRIVE-THRU']);
 check($r->isFound(), 'a tag is matched case-insensitively');
@@ -65,7 +65,15 @@ checkSame('This display is turned off', $r->message(), 'deactivated notice wordi
 check($r->display() !== null, 'an inactive resolution still carries the Display');
 
 $r = DisplayRequest::forEditing($store, ['display' => 'lobby'], $actor);
-check($r->isFound(), 'a deactivated Display is still editable');
+check($r->isFound(), 'a deactivated Display is still editable by an admin');
+
+// ADR-0005: the role decides how much power. A sign out of service is not a basic
+// account's to work on, and that is decided in the seam, not in a page.
+$clerk = ['id' => 2, 'username' => 'clerk', 'role' => 'basic'];
+$r = DisplayRequest::forEditing($store, ['display' => 'lobby'], $clerk);
+checkSame(DisplayResolution::INACTIVE, $r->kind(), 'but not by a basic account');
+$r = DisplayRequest::forEditing($store, ['display' => 'drive-thru'], $clerk);
+check($r->isFound(), 'which does not stop a basic account editing an active Display');
 
 $pdo->exec("UPDATE displays SET is_active = 1 WHERE tag = 'lobby'");
 
@@ -308,5 +316,154 @@ check($onlyMine, 'the snapshot contains only this Display\'s elements');
 $lobbySnapshot = $layouts->snapshot(loadTestDisplay($pdo, $lobby->id()));
 checkSame(1080, $lobbySnapshot['display']['canvas_width'], 'a portrait Display reports its own dimensions');
 check(count($lobbySnapshot['elements']) === 2, 'and its own elements');
+
+// ─────────────────────────────────────────────────────────────
+section('Suggesting a screen name tag from a title');
+
+checkSame('lobby-screen', DisplayStore::suggestTag('Lobby Screen'), 'spaces become hyphens');
+checkSame('lobby-screen-2', DisplayStore::suggestTag('  Lobby Screen #2! '), 'punctuation collapses to one hyphen');
+checkSame('drive-thru', DisplayStore::suggestTag('Drive-Thru'), 'an existing hyphen survives');
+checkSame('', DisplayStore::suggestTag('!!!'), 'a title with nothing usable suggests nothing, rather than inventing a tag');
+checkSame(32, strlen(DisplayStore::suggestTag(str_repeat('long title ', 8))), 'a long title is cut to the tag limit');
+check(DisplayStore::isValidTag(DisplayStore::suggestTag(str_repeat('long title ', 8))), 'and what it cuts to is still valid');
+
+checkSame(true,  DisplayStore::isValidCanvasSize(1920, 1080), '1920×1080 is a valid canvas');
+checkSame(true,  DisplayStore::isValidCanvasSize('1080', '1920'), 'digits as strings are accepted');
+checkSame(false, DisplayStore::isValidCanvasSize(0, 1080),    'zero is not');
+checkSame(false, DisplayStore::isValidCanvasSize(1920, 99999),'nor is a typo of an extra digit');
+checkSame(false, DisplayStore::isValidCanvasSize('wide', 1080), 'nor is a word');
+
+// ─────────────────────────────────────────────────────────────
+section('Adding, editing, retiring and destroying a Display');
+
+$pdo    = newTestDb();
+$store  = new DisplayStore($pdo);
+$admin  = newTestDisplayAdmin($pdo);
+$layouts = newTestLayoutStore($pdo);
+
+$res = $admin->create(['title' => 'Drive-Thru', 'canvas_width' => 1920, 'canvas_height' => 1080]);
+check($res->isOk(), 'a Display is created from a title and a canvas size alone');
+$driveT = $res->display();
+checkSame('drive-thru', $driveT->tag(), 'its tag was suggested from its title');
+checkSame(1920, $driveT->canvasWidth(), 'it has the width it was given');
+checkSame(true, $driveT->isActive(), 'it is active from the moment it exists');
+check(strpos($res->message(), 'viewer.php?display=drive-thru') !== false,
+      'and the confirmation gives the address to point a Screen at');
+
+$res = $admin->create(['title' => 'Second Drive-Thru', 'tag' => 'drive-thru',
+                       'canvas_width' => 1920, 'canvas_height' => 1080]);
+checkSame(DisplayResult::CONFLICT, $res->kind(), 'a tag already in use is refused');
+checkSame('tag', $res->field(), 'and the refusal names the field to fix');
+checkSame(1, $store->count(), 'nothing was created');
+
+$res = $admin->create(['title' => '', 'canvas_width' => 1920, 'canvas_height' => 1080]);
+checkSame(DisplayResult::INVALID, $res->kind(), 'a Display with no title is refused');
+$res = $admin->create(['title' => 'Bad Tag', 'tag' => 'Lobby_1', 'canvas_width' => 1920, 'canvas_height' => 1080]);
+checkSame(DisplayResult::INVALID, $res->kind(), 'a tag with an underscore is refused');
+$res = $admin->create(['title' => 'No Size', 'canvas_width' => 0, 'canvas_height' => 0]);
+checkSame(DisplayResult::INVALID, $res->kind(), 'a Display with no canvas size is refused');
+checkSame('canvas_width', $res->field(), 'and the refusal points at the size');
+checkSame(1, $store->count(), 'still nothing created');
+
+// Give the drive-thru a layout worth duplicating: a section with a block inside.
+$res = publishAs($layouts, $driveT, layoutWith('Drive-thru $9.99'), '0');
+check($res->isOk(), 'the drive-thru gets a layout to duplicate');
+$driveT = loadTestDisplay($pdo, $driveT->id());
+
+$res = $admin->create(['title' => 'Portrait Board', 'canvas_width' => 1080, 'canvas_height' => 1920,
+                       'duplicate_from' => 'drive-thru']);
+checkSame(DisplayResult::INVALID, $res->kind(), 'duplicating into a different shape is refused (ADR-0004)');
+check(strpos($res->message(), '1920 × 1080') !== false, 'and the refusal states the shape it would have copied');
+checkSame(1, $store->count(), 'the Display was not created either');
+
+$res = $admin->create(['title' => 'Lobby', 'canvas_width' => 1920, 'canvas_height' => 1080,
+                       'duplicate_from' => 'drive-thru']);
+check($res->isOk(), 'duplicating from an identically sized Display works');
+$lobby = $res->display();
+check(strpos($res->message(), '2 elements copied') !== false, 'and the confirmation says how much was copied');
+
+$lobbyRows = elementsOf($pdo, $lobby->id());
+checkSame(2, count($lobbyRows), 'the copy has the same number of elements');
+checkSame(2, count(elementsOf($pdo, $driveT->id())), 'and the original still has its own');
+
+$copiedSection = null; $copiedText = null;
+foreach ($lobbyRows as $row) {
+    if ($row['type'] === 'section') { $copiedSection = $row; } else { $copiedText = $row; }
+}
+check($copiedSection && $copiedText, 'the copy has both the section and the block');
+checkSame(intval($copiedSection['id']), intval($copiedText['section_id']),
+          'the block is parented into the copy\'s own section, not the original\'s');
+checkSame('Drive-thru $9.99', $copiedText['manual_content'], 'the content came across');
+checkSame(10, intval($copiedSection['x_pos']), 'and so did the positions');
+
+$res = $admin->create(['title' => 'Third', 'canvas_width' => 1920, 'canvas_height' => 1080,
+                       'duplicate_from' => 'no-such-display']);
+checkSame(DisplayResult::INVALID, $res->kind(), 'duplicating from a Display that does not exist is refused');
+
+checkSame(false, $layouts->copyLayout($driveT, loadTestDisplay($pdo, $lobby->id())),
+          'a layout is never copied over a Display that already has one');
+
+// ---- Editing -----------------------------------------------------------------
+checkSame('lobby', $lobby->tag(), 'the duplicate was tagged from its own title, not the original\'s');
+
+$res = $admin->updateDetails($lobby, ['title' => 'Lobby Screen', 'tag' => 'lobby-screen',
+                                      'location' => 'Front entrance']);
+check($res->isOk(), 'title, tag and location can be edited');
+$lobby = $res->display();
+checkSame('lobby-screen', $lobby->tag(), 'the tag changed');
+checkSame('Front entrance', $lobby->location(), 'the location is stored');
+check(strpos($res->message(), 'viewer.php?display=lobby-screen') !== false,
+      'a rename says what address the Screen must be pointed at now');
+
+$res = $admin->updateDetails($lobby, ['title' => 'Lobby Screen', 'tag' => 'lobby-screen']);
+check($res->isOk() && strpos($res->message(), 'address changed') === false,
+      'saving without changing the tag does not claim the address changed');
+
+$res = $admin->updateDetails($lobby, ['title' => 'Lobby Screen', 'tag' => 'drive-thru']);
+checkSame(DisplayResult::CONFLICT, $res->kind(), 'renaming onto another Display\'s tag is refused');
+checkSame('lobby-screen', $store->forId($lobby->id())->tag(), 'and the tag is unchanged');
+
+$res = $admin->updateDetails($lobby, ['title' => 'Lobby', 'tag' => '']);
+check($res->isOk() && $res->display()->tag() === 'lobby',
+      'clearing the tag re-suggests it from the title rather than failing');
+$lobby = $res->display();
+
+// ---- Retiring ----------------------------------------------------------------
+$res = $admin->setActive($lobby, false);
+check($res->isOk(), 'a Display can be turned off');
+$lobby = $res->display();
+checkSame(false, $lobby->isActive(), 'and reports itself off');
+checkSame(2, count(elementsOf($pdo, $lobby->id())), 'its layout is kept');
+checkSame(2, count($layouts->snapshot($lobby)['elements']),
+          'and the editing read still hands the Builder that layout — get_editor_layout');
+
+$r = DisplayRequest::forViewing($store, ['display' => 'lobby']);
+checkSame(DisplayResolution::INACTIVE, $r->kind(), 'a Screen showing it gets the notice');
+$r = DisplayRequest::forEditing($store, ['display' => 'lobby'], ['id' => 1, 'role' => 'admin']);
+check($r->isFound(), 'and it is still editable — which is why the Builder needs the editing read');
+
+$lobby = $admin->setActive($lobby, true)->display();
+checkSame(true, $lobby->isActive(), 'and it can be turned back on');
+
+// ---- Destroying --------------------------------------------------------------
+$res = $admin->destroy($lobby, 'lobbi');
+checkSame(DisplayResult::INVALID, $res->kind(), 'a mistyped tag does not delete a Display');
+checkSame(2, $store->count(), 'both Displays are still there');
+checkSame(2, count(elementsOf($pdo, $lobby->id())), 'and its layout is untouched');
+
+$res = $admin->destroy($lobby, ' LOBBY ');
+check($res->isOk(), 'the typed tag is matched after trimming and lowercasing');
+check(strpos($res->message(), '2 elements were deleted') !== false, 'and the confirmation says what was lost');
+checkSame(1, $store->count(), 'the Display is gone');
+checkSame(0, count(elementsOf($pdo, $lobby->id())), 'its elements went with it');
+checkSame(2, count(elementsOf($pdo, $driveT->id())), 'and the other Display kept every one of its own');
+checkSame(2, count(allElements($pdo)), 'nothing was orphaned');
+
+// The roadmap decided there is no "last Display" rule: an installation may have
+// none, and the Builder says so rather than the panel refusing.
+$res = $admin->destroy($store->forTag('drive-thru'), 'drive-thru');
+check($res->isOk(), 'the last Display can be deleted too');
+checkSame(0, $store->count(), 'leaving none');
+checkSame(0, count(allElements($pdo)), 'and no elements behind');
 
 reportChecks();

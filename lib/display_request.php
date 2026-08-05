@@ -100,39 +100,53 @@ class DisplayRequest
      * A deactivated Display resolves normally here: retiring a sign preserves its
      * layout and keeps it editable.
      *
-     * @param array $actor currentUser() — the account asking. Unused in Phase 1;
-     *                     Phase 4 checks its grants here, once, for every caller.
+     * A retired Display stays editable by an **admin** (CONTEXT.md); to a `basic`
+     * account a sign that is out of service is simply not theirs to work on. That
+     * is the ADR-0005 split — the grant says which Displays, the role says how
+     * much power — and it is checked here rather than in each page, so no endpoint
+     * needs its own `if`.
+     *
+     * @param array $actor currentUser() — the account asking. Phase 4 checks its
+     *                     grants here too, once, for every caller.
      */
     public static function forEditing(DisplayStore $store, array $params, array $actor)
     {
-        return self::locate($store, $params, true);
+        $resolution = self::locate($store, $params, true);
+        if (!$resolution->isFound()) { return $resolution; }
+        if (!$resolution->display()->isActive() && !self::isAdmin($actor)) {
+            return DisplayResolution::inactive($resolution->display());
+        }
+        return $resolution;
+    }
+
+    private static function isAdmin(array $actor)
+    {
+        return isset($actor['role']) && $actor['role'] === 'admin';
     }
 
     /**
      * Tag → Display.
      *
-     * @param bool $allowSoleFallback PHASE-1 TRANSITIONAL, editing paths only.
+     * @param bool $allowSoleEntry editing paths only — see the entry rule below
      */
-    private static function locate(DisplayStore $store, array $params, $allowSoleFallback)
+    private static function locate(DisplayStore $store, array $params, $allowSoleEntry)
     {
         $raw = isset($params[self::PARAM]) ? (string)$params[self::PARAM] : '';
 
         if (trim($raw) === '') {
-            if (!$allowSoleFallback) {
+            if (!$allowSoleEntry) {
                 // Viewing is strict (ADR-0003): the Screen shows a notice rather
                 // than guessing which sign was meant.
                 return DisplayResolution::noTag();
             }
 
-            // PHASE-1 TRANSITIONAL — no tag resolves to the sole Display.
+            // The editing entry rule: an installation with one sign does not ask
+            // which sign you meant. A Builder or admin request that names nothing
+            // gets the only Display there is.
             //
-            // Editing paths only, now that the Viewer sends its tag. The Builder
-            // and admin panel have no picker until Phase 3, so a request that
-            // names nothing gets the one Display that exists.
-            //
-            // `sole()` returns null the moment a second Display is created, so
-            // this can never route a write to the wrong sign — it fails instead.
-            // Remove with the Phase 3 picker (BUILD-REFERENCE.md §3).
+            // `sole()` returns null the moment a second Display exists, so this
+            // can never route a write to the wrong sign — the request fails and
+            // the Builder shows its picker instead (BUILD-REFERENCE.md §3).
             $only = $store->sole();
             return $only ? DisplayResolution::found($only) : DisplayResolution::noTag();
         }

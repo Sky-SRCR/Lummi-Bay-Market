@@ -54,7 +54,8 @@ Design rules, applied to every module added by this build:
 | Module | Interface, in one line | Hides |
 |--------|------------------------|-------|
 | `schema.php` | `ensureSignageSchema(PDO): void` | Every idempotent `ALTER`/`CREATE`, the `displays` table, `display_id` + backfill + index + FK, the drive-thru seed, and the "run at most once per request" latch. |
-| `displays.php` | `Display` + `Background` value objects, `DisplayStore` | **Every** `displays` statement: tag rules, background intents, the publish stamp and record, the lock columns, and self-healing when the table is not there yet. |
+| `displays.php` | `Display` + `Background` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the lock columns, and self-healing when the table is not there yet. |
+| `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, and destroying it with its layout — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans both stores. |
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: staleness check, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, scoped hide/delete. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `display_request.php` | `DisplayRequest::resolve(...)` → `DisplayResolution` | Which Display an HTTP request means, the ADR-0003 notice wording per failure case, the transitional no-tag fallback, and (from Phase 4) the grant check. |
@@ -72,16 +73,13 @@ through the app again:
 - ~~**Phase 2** (canvas dimensions)~~ **Done.** `viewer.php` and `builder.php` are
   adapters over `DisplayRequest` + `Display`; no `1920`/`1080` literal remains in
   either. No new module was needed. See §7 for the zoom mechanics.
-- **Phase 3** (admin Displays screen): `DisplayStore` gains `create()`,
-  `update()`, `rename()`, `deactivate()`, `delete()`, `duplicateLayoutFrom()`.
-  The tag rules and the "duplicate only from identical dimensions" rule live in
-  the store, not in the panel. Two things Phase 2 deliberately left:
-  - The Builder loads its layout through `get_layout`, which resolves
-    **`forViewing`** and so returns nothing for a deactivated Display. Nothing can
-    deactivate one until this phase's UI exists, so Phase 3 must add an
-    authenticated editing read (`forEditing`) before shipping deactivation — or a
-    retired Display becomes uneditable, contradicting CONTEXT.md.
-  - The picker replaces the transitional editing fallback (§3).
+- ~~**Phase 3** (admin Displays screen)~~ **Done**, with one planned shape
+  changed — see §4c. The write surface landed as `DisplayStore` (statements and
+  table rules) plus a new `DisplayAdmin` (the use case), rather than all of it on
+  `DisplayStore`: `duplicateLayoutFrom()` there would have meant `DisplayStore`
+  writing `canvas_elements`, which invariant 1 forbids. Both things Phase 2 left
+  are settled: `get_editor_layout` is the authenticated editing read, and the
+  Builder's picker is in place.
 - **Phase 4** (grants): `display_permissions` table added to `schema.php`;
   `DisplayRequest::resolve()` gains the grant check so *every* endpoint is
   covered by construction; `DisplayStore::editableBy(account)` filters the
@@ -107,8 +105,9 @@ through the app again:
    left on the server as a rollback artefact but no code reads or writes it. A
    Display's background lives on the Display row.
 3. **A Viewer URL names its Display** (ADR-0003). No default, no master, no
-   fallback Display — the *only* exception is the transitional no-tag fallback in
-   §3, which is deleted in Phase 2.
+   fallback Display on the viewing path, ever. The one place a request may name no
+   Display is the *editing* entry rule in §3, which resolves only when the
+   installation has exactly one Display.
 4. **Canvas dimensions are immutable after creation** (ADR-0004). Nothing may
    offer, accept, or infer a resize. Duplication is offered only between Displays
    of identical dimensions.
@@ -132,28 +131,26 @@ through the app again:
 
 ---
 
-## 3. Transitional behaviour (Phase 1; half removed in Phase 2, rest in Phase 3)
+## 3. Which Display does a request with no tag mean?
 
-A request that names no Display resolves to the installation's **sole** Display,
-so each phase is deployable before the Screens and the UI catch up:
+**Viewing: none.** `DisplayRequest::forViewing()` is strict — a Viewer URL names
+its Display or renders a notice (ADR-0003), even when a single Display exists and
+the guess would have been right. A truncated URL can never silently show another
+sign. This became strict in Phase 2, when the Screens started sending their tag.
 
-- It resolves **only** when exactly one Display exists. With two or more, a
-  request with no tag **fails** rather than guessing — so a Phase 3 second
-  Display can never be misrouted a write.
-- It is implemented in exactly one place, `DisplayRequest::locate()`, tagged
-  `PHASE-1 TRANSITIONAL`.
+**Editing: the sole Display, if there is exactly one.** An installation with one
+sign should not ask which sign you meant, so a Builder or admin request naming no
+Display resolves through `DisplayStore::sole()`. It is a decided rule, not a
+leftover: the roadmap's *Builder entry* decision is "one Display → straight in for
+everyone; more than one → pick".
 
-**Phase 2 removed it from the viewing path.** `DisplayRequest::forViewing()` is
-now strict: a Viewer URL names its Display or renders a notice (ADR-0003), even
-when a single Display exists and the guess would have been right. The Viewer sends
-its tag, so nothing needs the fallback — and a truncated URL can never silently
-show another sign.
+The safety property is that `sole()` returns null the moment a second Display
+exists. A write is never routed to a guessed sign — the request fails, and the
+Builder shows its picker. It is implemented in exactly one place,
+`DisplayRequest::locate()`, behind `$allowSoleEntry`.
 
-**It survives only for editing.** `forEditing()` still falls back, because the
-Builder and admin panel have no picker until Phase 3. Phase 3 deletes it and the
-`$allowSoleFallback` parameter with it.
-
-Search `PHASE-1 TRANSITIONAL` to find every line that has to go.
+What Phase 3 removed was the *transitional* part: with a picker in place, failing
+to resolve is no longer a dead end.
 
 ---
 
@@ -218,6 +215,51 @@ decisions already made, not new decisions.
 - **The transitional `settings` alias is gone.** Both clients read `display` now,
   and the self-test asserts the alias is absent so it cannot come back.
 
+## 4c. Decisions taken during Phase 3
+
+- **`DisplayAdmin` exists because administering a Display spans both tables.**
+  This file planned `duplicateLayoutFrom()` on `DisplayStore`; that would have put
+  `canvas_elements` statements in the module that owns `displays`, contradicting
+  invariant 1 — the project's central safety property. Resolved by splitting on
+  *table* versus *use case*: `DisplayStore` keeps the statements and the table's
+  own rules (tag format, tag uniqueness, canvas bounds), and `DisplayAdmin`
+  composes the two stores with the validation and the transaction. It holds a PDO
+  for `beginTransaction`/`commit` only and writes no SQL — the invariant grep in §5
+  is what keeps that honest.
+- **Deleting a Display deletes its elements explicitly**, rather than trusting the
+  `ON DELETE CASCADE`. The constraint is added by `schemaTry()`, which swallows
+  failures, so on a live database behind the repo it may never have applied. A
+  Display row deleted without its elements leaves rows no scoped query can ever
+  see again.
+- **Duplication refuses a non-empty target.** It is a fill, not a merge. Combined
+  with the identical-dimensions rule (ADR-0004), the only thing `copyLayout()` can
+  do is populate a Display that was created a moment ago.
+- **The panel edits background *colour* only.** Images are uploaded from the
+  Builder, where the validated upload path already exists and you can see the
+  canvas you are changing. Adding a third copy of the upload whitelist to
+  `admin_panel.php` (which already has its own, for the logo) was the alternative.
+- **A background change from the panel advances the layout stamp.** The background
+  is part of what the Screen shows, and an admin with the Builder open would
+  otherwise publish their stale colour straight back over it. They get ADR-0006's
+  refusal instead.
+- **`get_editor_layout` is a separate endpoint, not a flag on `get_layout`.** The
+  Viewer's read is public and strict; the Builder's requires a session and accepts
+  a deactivated Display. A boolean on one endpoint would have meant the public
+  path carrying an authenticated branch.
+- **A retired Display is editable by admins only**, which is what CONTEXT.md has
+  always said and what the code did not do. `forEditing()` now uses the `$actor`
+  argument that had been sitting unused: a `basic` account naming a deactivated
+  Display gets the same INACTIVE resolution a Screen would, and the picker does not
+  list Displays that account could not open. One check, in the seam — the first use
+  of the mechanism Phase 4's grants will extend.
+- **The Builder's picker is shown to every account.** The roadmap's *Builder entry*
+  decision has `basic` accounts resuming their last Display instead of picking;
+  that arrives with grants in Phase 4, because until grants exist every account can
+  see every Display and "their last" would be a memory of an unrestricted set.
+- **Canvas dimensions have no update statement anywhere.** The way not to offer a
+  resize (ADR-0004) is for no method to be able to perform one:
+  `DisplayStore::updateDetails()` writes tag, title and location, and that is all.
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -225,10 +267,11 @@ and manual. Run all of it before every push.
 
 ```
 php -l <every touched .php>              # syntax; also a GitHub Action
-php tools/selftest_layout.php            # pure publish logic, no database
+php tools/selftest_layout.php            # the real modules, in-memory database
 grep -rn "canvas_elements" --include=*.php .   # only lib/layout_store.php may hit
+grep -rn "INTO displays\|UPDATE displays\|FROM displays" --include=*.php .  # only lib/, plus tools/ fixtures
 grep -rn "WHERE id = 1\|id=1" --include=*.php . # must be empty
-grep -rn "1920\|1080" --include=*.php .        # Phase 2 target list
+grep -rn "1920\|1080" --include=*.php .        # only prose, presets and help.php (Phase 6)
 ```
 
 `php -l` cannot see inline JavaScript, and `builder.php` is ~2450 lines of it.

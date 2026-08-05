@@ -17,6 +17,7 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 require_once __DIR__ . '/../lib/displays.php';
 require_once __DIR__ . '/../lib/layout_store.php';
 require_once __DIR__ . '/../lib/display_request.php';
+require_once __DIR__ . '/../lib/display_admin.php';
 
 /**
  * DisplayStore with its one non-portable statement swapped out.
@@ -48,6 +49,13 @@ class TestDisplayStore extends DisplayStore
 function newTestLayoutStore(PDO $pdo)
 {
     return new LayoutStore($pdo, new TestDisplayStore($pdo));
+}
+
+/** The real DisplayAdmin over the real stores — nothing about it is stubbed. */
+function newTestDisplayAdmin(PDO $pdo)
+{
+    $displays = new TestDisplayStore($pdo);
+    return new DisplayAdmin($pdo, $displays, new LayoutStore($pdo, $displays));
 }
 
 /** A fresh database with the live structure and one admin + one basic account. */

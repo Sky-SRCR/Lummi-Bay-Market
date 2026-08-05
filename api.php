@@ -146,6 +146,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_layout') {
 }
 
 // ============================================================
+// GET: get_editor_layout   (signed in — the Builder's read)
+// ============================================================
+// The same snapshot as get_layout, resolved for *editing*. The difference is the
+// one that matters after Phase 3: a deactivated Display is a notice to a Screen
+// but is still editable (CONTEXT.md), so the Builder cannot share the Viewer's
+// read or retiring a sign would make it impossible to work on.
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_editor_layout') {
+    $resolution = DisplayRequest::forEditing($displays, $_GET, currentUser());
+    if (!$resolution->isFound()) { failResolution($resolution); exit; }
+
+    $payload = $layouts->snapshot($resolution->display());
+    $payload['status'] = 'success';
+    echo json_encode($payload);
+    exit;
+}
+
+// ============================================================
 // GET: get_assets
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_assets') {

@@ -15,6 +15,9 @@
 //   elementIndex(Display)                 → the admin Work Area list
 //   setElementHidden(Display, id, bool)   → bool: was it this Display's element?
 //   deleteElement(Display, id)            → bool: was it this Display's element?
+//   elementCount(Display)                 → int, for a confirm that says what is at stake
+//   copyLayout(Display, Display)          → int copied: duplicating a Display
+//   deleteAllElements(Display)            → int deleted: destroying a Display
 //
 // Callers pass a Display and get results back. They never see the transaction,
 // the temp-id map, the staleness comparison, the asset auto-save, the plain-text
@@ -150,6 +153,120 @@ class LayoutStore
         );
         $stmt->execute([$display->id()]);
         return $stmt->fetchAll();
+    }
+
+    /** How many elements this Display carries — what a delete confirm needs to state. */
+    public function elementCount(Display $display)
+    {
+        $stmt = $this->pdo->prepare("SELECT COUNT(*) FROM canvas_elements WHERE display_id = ?");
+        $stmt->execute([$display->id()]);
+        return intval($stmt->fetchColumn());
+    }
+
+    // ---- Whole-layout writes, for administering Displays --------------------
+    // Called by DisplayAdmin inside its transaction. They are here rather than
+    // there for the reason the whole module exists: `canvas_elements` has exactly
+    // one gatekeeper, so the Display-scoping predicate cannot be forgotten in a
+    // second copy of these statements.
+
+    /**
+     * Copy one Display's layout onto another, for "create as a duplicate of".
+     *
+     * Refuses, without writing, when:
+     *   · the shapes differ — positions are absolute pixels and there is no undo,
+     *     so a rescaled layout is not something to guess at (ADR-0004); or
+     *   · the target already has elements — this is a fill, not a merge, and
+     *     overwriting a layout is the one thing this app never does silently.
+     *
+     * Section parents are remapped to the new rows, so the copy is a tree in its
+     * own right. Asset IDs are reused rather than duplicated: the library is
+     * shared across Displays by design.
+     *
+     * @return int|false elements copied, or false if refused
+     */
+    public function copyLayout(Display $source, Display $target)
+    {
+        if (!$source->sameShapeAs($target)) { return false; }
+        if ($source->id() === $target->id())  { return false; }
+        if ($this->elementCount($target) > 0) { return false; }
+
+        $stmt = $this->pdo->prepare(
+            "SELECT * FROM canvas_elements
+              WHERE display_id = ?
+              ORDER BY CASE WHEN type='section' THEN 0 ELSE 1 END, sort_order ASC, id ASC"
+        );
+        $stmt->execute([$source->id()]);
+        $rows = $stmt->fetchAll();
+
+        $insert = $this->pdo->prepare(
+            "INSERT INTO canvas_elements
+             (display_id, section_id, type, block_subtype, x_pos, y_pos, width, height,
+              manual_content, asset_id, section_bg,
+              font_family, font_size, font_color, font_weight, font_style, line_height,
+              text_align, locked, sort_order, z_index, hidden)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+        );
+
+        // Sections come first in the result set, so a child's parent is always
+        // already in the map by the time the child is inserted.
+        $idMap  = [];
+        $copied = 0;
+        foreach ($rows as $row) {
+            $oldSection = $row['section_id'] !== null ? intval($row['section_id']) : null;
+            $newSection = $oldSection !== null && isset($idMap[$oldSection]) ? $idMap[$oldSection] : null;
+
+            $insert->execute([
+                $target->id(),
+                $newSection,
+                $row['type'],
+                $row['block_subtype'],
+                intval($row['x_pos']),
+                intval($row['y_pos']),
+                intval($row['width']),
+                intval($row['height']),
+                $row['manual_content'],
+                $row['asset_id'] !== null ? intval($row['asset_id']) : null,
+                $row['section_bg'],
+                $row['font_family'],
+                intval($row['font_size']),
+                $row['font_color'],
+                $row['font_weight'],
+                $row['font_style'],
+                number_format(floatval($row['line_height']), 2),
+                $row['text_align'],
+                intval($row['locked']) ? 1 : 0,
+                intval($row['sort_order']),
+                max(1, intval($row['z_index'])),
+                intval($row['hidden']) ? 1 : 0,
+            ]);
+
+            if ($row['type'] === 'section') {
+                $idMap[intval($row['id'])] = intval($this->pdo->lastInsertId());
+            }
+            $copied++;
+        }
+
+        return $copied;
+    }
+
+    /**
+     * Remove every element of one Display, for destroying it.
+     *
+     * Children first, then the rest, for the same reason the publish delete does
+     * it in that order: the section_id self-FK cascades, and this ordering keeps
+     * that cascade from firing against rows the second statement removes anyway.
+     * Both statements are Display-scoped.
+     *
+     * @return int elements there were to delete
+     */
+    public function deleteAllElements(Display $display)
+    {
+        $before = $this->elementCount($display);
+        $this->pdo->prepare("DELETE FROM canvas_elements WHERE display_id = ? AND section_id IS NOT NULL")
+                  ->execute([$display->id()]);
+        $this->pdo->prepare("DELETE FROM canvas_elements WHERE display_id = ?")
+                  ->execute([$display->id()]);
+        return $before;
     }
 
     // ---- Element-level writes ----------------------------------------------

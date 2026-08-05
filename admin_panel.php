@@ -1,12 +1,36 @@
 <?php
 require_once 'auth.php';
 require_once 'db_connect.php';
+require_once __DIR__ . '/lib/schema.php';
+require_once __DIR__ . '/lib/displays.php';
+require_once __DIR__ . '/lib/layout_store.php';
+require_once __DIR__ . '/lib/display_admin.php';
 requireAdmin();
 
 $user = currentUser();
 $tab  = $_GET['tab'] ?? 'users';
 $msg  = '';
 $msgType = 'success';
+
+// Authenticated, so this is where schema convergence belongs (BUILD-REFERENCE §2.7).
+ensureSignageSchema($pdo);
+
+// Displays are administered through DisplayAdmin: this page collects the form and
+// shows the answer, and every rule about what a Display may be lives in lib/.
+$displayStore = new DisplayStore($pdo);
+$layoutStore  = new LayoutStore($pdo, $displayStore);
+$displayAdmin = new DisplayAdmin($pdo, $displayStore, $layoutStore);
+
+/**
+ * The address to type into a TV or a signage widget — absolute, because it is
+ * being copied to a device that has no idea what page it came from.
+ */
+function viewerUrlFor(Display $display): string {
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host   = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $dir    = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/');
+    return $scheme . '://' . $host . $dir . '/viewer.php?display=' . urlencode($display->tag());
+}
 
 // ── Branding config writer helper ─────────────────────────────
 function writeBrandingConfig(string $logo, string $navBg, string $navBorder,
@@ -116,6 +140,83 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tab = 'users';
     }
 
+    // ============================================================
+    // DISPLAY MANAGEMENT ACTIONS
+    // ============================================================
+    // Each one collects a form, hands it to DisplayAdmin, and shows what came
+    // back. No validation, no SQL, and no idea what a valid tag looks like.
+
+    // Add a display — dimensions first, then blank or a duplicate of one the
+    // same size (ADR-0004).
+    if (isset($_POST['action_create_display'])) {
+        $startFrom = ($_POST['d_start'] ?? 'blank') === 'duplicate' ? ($_POST['d_source'] ?? '') : '';
+        $res = $displayAdmin->create([
+            'title'          => $_POST['d_title']    ?? '',
+            'tag'            => $_POST['d_tag']      ?? '',
+            'location'       => $_POST['d_location'] ?? '',
+            'canvas_width'   => $_POST['d_width']    ?? '',
+            'canvas_height'  => $_POST['d_height']   ?? '',
+            'bg_val'         => $_POST['d_bg']       ?? '',
+            'duplicate_from' => $startFrom,
+        ]);
+        $msg     = $res->message();
+        $msgType = $res->isOk() ? 'success' : 'error';
+        $tab     = 'displays';
+    }
+
+    // Edit title, screen name tag, location — and the background colour, which is
+    // a separate change because it advances the layout stamp.
+    if (isset($_POST['action_update_display'])) {
+        $display = $displayStore->forId($_POST['d_id'] ?? 0);
+        if (!$display) {
+            $msg = 'That display no longer exists.'; $msgType = 'error';
+        } else {
+            $res = $displayAdmin->updateDetails($display, [
+                'title'    => $_POST['d_title']    ?? '',
+                'tag'      => $_POST['d_tag']      ?? '',
+                'location' => $_POST['d_location'] ?? '',
+            ]);
+            $msg     = $res->message();
+            $msgType = $res->isOk() ? 'success' : 'error';
+
+            $newBg = $_POST['d_bg'] ?? '';
+            if ($res->isOk() && $newBg !== ''
+                && !($display->backgroundType() === 'color' && strcasecmp($newBg, $display->backgroundValue()) === 0)) {
+                $bgRes = $displayAdmin->setBackgroundColor($res->display(), $newBg);
+                $msg  .= ' ' . $bgRes->message();
+                if (!$bgRes->isOk()) { $msgType = 'error'; }
+            }
+        }
+        $tab = 'displays';
+    }
+
+    // Retire a display, or bring it back. The layout is kept either way.
+    if (isset($_POST['action_toggle_display'])) {
+        $display = $displayStore->forId($_POST['d_id'] ?? 0);
+        if (!$display) {
+            $msg = 'That display no longer exists.'; $msgType = 'error';
+        } else {
+            $res     = $displayAdmin->setActive($display, empty($_POST['d_turn_off']));
+            $msg     = $res->message();
+            $msgType = $res->isOk() ? 'success' : 'error';
+        }
+        $tab = 'displays';
+    }
+
+    // Delete a display and its layout. There is no undo anywhere in this app, so
+    // the typed screen name tag is the safeguard — DisplayAdmin checks it.
+    if (isset($_POST['action_delete_display'])) {
+        $display = $displayStore->forId($_POST['d_id'] ?? 0);
+        if (!$display) {
+            $msg = 'That display no longer exists.'; $msgType = 'error';
+        } else {
+            $res     = $displayAdmin->destroy($display, $_POST['confirm_tag'] ?? '');
+            $msg     = $res->message();
+            $msgType = $res->isOk() ? 'success' : 'error';
+        }
+        $tab = 'displays';
+    }
+
     // Save branding (logo + colors)
     if (isset($_POST['action_save_branding'])) {
         $navBg     = preg_match('/^#[0-9a-fA-F]{6}$/', $_POST['nav_bg']     ?? '') ? $_POST['nav_bg']     : $curNavBg;
@@ -194,6 +295,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ---- READ DATA ----
 $users  = $pdo->query("SELECT * FROM users ORDER BY role DESC, username ASC")->fetchAll();
+
+// Displays, with how much each one would lose if it were deleted, and the sizes a
+// new Display could be duplicated from (ADR-0004: identical dimensions only).
+$displays      = $displayStore->all();
+$elementCounts = [];
+$dupCandidates = [];
+foreach ($displays as $d) {
+    $elementCounts[$d->id()] = $layoutStore->elementCount($d);
+    $dupCandidates[] = [
+        'tag'   => $d->tag(),
+        'title' => $d->title(),
+        'w'     => $d->canvasWidth(),
+        'h'     => $d->canvasHeight(),
+    ];
+}
+
+// Offered as a starting point only; any size inside the bounds can be typed.
+$canvasPresets = [
+    ['1920×1080 — Landscape HD (the drive-thru sign)', 1920, 1080],
+    ['1080×1920 — Portrait HD',                        1080, 1920],
+    ['3840×2160 — Landscape 4K',                       3840, 2160],
+    ['2160×3840 — Portrait 4K',                        2160, 3840],
+    ['1280×720 — Landscape, smaller screen',           1280,  720],
+    ['1920×540 — Wide strip / ticker',                 1920,  540],
+];
 $styles = [];
 foreach ($pdo->query("SELECT * FROM block_styles")->fetchAll() as $s) {
     $styles[$s['block_type']] = $s;
@@ -283,6 +409,30 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         .bs-table select { min-width: 130px; }
         .preview-text { padding: 4px 8px; border: 1px solid #eee; border-radius: 3px; white-space: nowrap; }
 
+        /* --- Displays --- */
+        .display-card { border: 1px solid #e3e8ee; border-radius: 7px; padding: 14px 16px; margin-bottom: 12px; }
+        .display-card.is-off { background: #fbfbfc; border-color: #e8dede; }
+        .display-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .display-head h3 { font-size: 15px; color: #2c3e50; }
+        .tag-chip { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px; background: #eef3f8;
+                    color: #1a5276; border: 1px solid #d4e2ee; border-radius: 3px; padding: 1px 7px; }
+        .display-facts { font-size: 12px; color: #7f8c8d; margin-top: 5px; line-height: 1.6; }
+        .display-facts strong { color: #555; font-weight: 600; }
+        .addr-row { display: flex; align-items: center; gap: 7px; margin-top: 10px; flex-wrap: wrap; }
+        .addr-row input { flex: 1; min-width: 260px; font-family: "SF Mono", Menlo, Consolas, monospace;
+                          font-size: 12px; background: #f8f9fa; color: #2c3e50; }
+        .display-actions { display: flex; gap: 7px; margin-top: 12px; flex-wrap: wrap; }
+        .display-actions .btn { font-size: 12px; padding: 6px 12px; }
+        .display-panel { display: none; margin-top: 12px; padding-top: 12px; border-top: 1px dashed #dfe6ec; }
+        .display-panel.open { display: block; }
+        .danger-panel { background: #fdf3f2; border: 1px solid #f5c6c1; border-radius: 5px; padding: 12px 14px; }
+        .hint { font-size: 13px; color: #7f8c8d; line-height: 1.6; }
+        .step-label { font-size: 12px; font-weight: 700; color: #2c3e50; text-transform: uppercase;
+                      letter-spacing: .4px; margin-bottom: 8px; }
+        .step { border-left: 3px solid #dde3ea; padding: 0 0 0 14px; margin-bottom: 20px; }
+        .step.locked { opacity: .45; }
+        fieldset { border: none; }
+
         /* --- Work Area element type badges --- */
         .el-badge { display:inline-block; padding:2px 7px; border-radius:3px; font-size:11px; font-weight:bold; text-transform:uppercase; }
         .el-section  { background:#e8d5fb; color:#6c3483; }
@@ -313,6 +463,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 
 <div class="tabs">
     <button class="tab-btn <?= $tab==='users'    ?'active':'' ?>" onclick="showTab('users')">User Management</button>
+    <button class="tab-btn <?= $tab==='displays' ?'active':'' ?>" onclick="showTab('displays')">Displays</button>
     <button class="tab-btn <?= $tab==='brand'    ?'active':'' ?>" onclick="showTab('brand')">Display Branding</button>
     <button class="tab-btn <?= $tab==='branding' ?'active':'' ?>" onclick="showTab('branding')">Site Branding</button>
     <button class="tab-btn <?= $tab==='settings' ?'active':'' ?>" onclick="showTab('settings')">Settings</button>
@@ -451,6 +602,268 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             <?php endforeach; ?>
             </tbody>
         </table>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- DISPLAYS TAB                                                  -->
+<!-- ============================================================ -->
+<div id="tab-displays" style="display:<?= $tab==='displays'?'block':'none' ?>">
+    <div class="card">
+        <h2>Displays (<?= count($displays) ?>)</h2>
+        <p class="hint" style="margin-bottom:18px;">
+            One display is one sign. Each has its own layout and its own screen address —
+            <strong>anyone who has that address can view the sign without signing in</strong>, so treat the
+            addresses as public and keep prices you are not ready to show off the canvas.
+        </p>
+
+        <?php if (!$displays): ?>
+            <p class="hint">No displays yet. Add the first one below.</p>
+        <?php endif; ?>
+
+        <?php foreach ($displays as $d):
+            $did   = $d->id();
+            $count = $elementCounts[$did];
+            $url   = viewerUrlFor($d);
+        ?>
+        <div class="display-card <?= $d->isActive() ? '' : 'is-off' ?>">
+            <div class="display-head">
+                <h3><?= htmlspecialchars($d->title()) ?></h3>
+                <span class="tag-chip"><?= htmlspecialchars($d->tag()) ?></span>
+                <span class="badge badge-<?= $d->isActive() ? 'active' : 'inactive' ?>">
+                    <?= $d->isActive() ? 'On' : 'Turned off' ?>
+                </span>
+            </div>
+            <div class="display-facts">
+                <strong><?= $d->dimensionsLabel() ?></strong> <?= $d->orientation() ?>
+                &nbsp;·&nbsp; <?= $count ?> element<?= $count === 1 ? '' : 's' ?>
+                <?php if ($d->location() !== ''): ?>
+                    &nbsp;·&nbsp; <?= htmlspecialchars($d->location()) ?>
+                <?php endif; ?>
+                <br>
+                <?php if ($d->lastPublishDescription() !== ''): ?>
+                    Last published by <?= htmlspecialchars($d->lastPublishDescription()) ?>
+                <?php else: ?>
+                    Never published
+                <?php endif; ?>
+            </div>
+
+            <div class="addr-row">
+                <label style="font-size:12px;font-weight:600;color:#666;">Screen address</label>
+                <input type="text" readonly value="<?= htmlspecialchars($url) ?>"
+                       id="addr-<?= $did ?>" onclick="this.select()">
+                <button class="btn btn-gray" style="font-size:12px;padding:6px 12px;"
+                        onclick="copyAddr(<?= $did ?>)">Copy</button>
+            </div>
+
+            <div class="display-actions">
+                <a class="btn btn-blue" style="text-decoration:none;"
+                   href="builder.php?display=<?= urlencode($d->tag()) ?>">Open in Builder</a>
+                <a class="btn btn-gray" style="text-decoration:none;" target="_blank"
+                   href="viewer.php?display=<?= urlencode($d->tag()) ?>">View ↗</a>
+                <button class="btn btn-gray" onclick="togglePanel('edit-display-<?= $did ?>')">Edit</button>
+
+                <form method="POST" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+                    <input type="hidden" name="d_id" value="<?= $did ?>">
+                    <?php if ($d->isActive()): ?>
+                        <input type="hidden" name="d_turn_off" value="1">
+                        <button type="submit" name="action_toggle_display" class="btn btn-gray"
+                                onclick="return confirmTurnOff(<?= htmlspecialchars(json_encode($d->title()), ENT_QUOTES) ?>)">
+                            Turn off</button>
+                    <?php else: ?>
+                        <button type="submit" name="action_toggle_display" class="btn btn-green">Turn on</button>
+                    <?php endif; ?>
+                </form>
+
+                <button class="btn btn-red" onclick="togglePanel('del-display-<?= $did ?>')">Delete…</button>
+            </div>
+
+            <!-- Edit -->
+            <div class="display-panel" id="edit-display-<?= $did ?>">
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+                    <input type="hidden" name="d_id" value="<?= $did ?>">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Title</label>
+                            <input type="text" name="d_title" value="<?= htmlspecialchars($d->title()) ?>"
+                                   style="width:200px;" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Screen name tag</label>
+                            <input type="text" name="d_tag" value="<?= htmlspecialchars($d->tag()) ?>"
+                                   data-original-tag="<?= htmlspecialchars($d->tag()) ?>"
+                                   pattern="[a-z0-9\-]{2,32}" style="width:170px;" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Location (for reference)</label>
+                            <input type="text" name="d_location" value="<?= htmlspecialchars($d->location()) ?>"
+                                   placeholder="e.g. Front entrance" style="width:200px;">
+                        </div>
+                        <div class="form-group">
+                            <label>Canvas size</label>
+                            <input type="text" value="<?= $d->dimensionsLabel() ?>" disabled
+                                   title="Set when the display was created and fixed from then on" style="width:110px;">
+                        </div>
+                        <div class="form-group">
+                            <label>Background colour</label>
+                            <input type="color" name="d_bg"
+                                   value="<?= $d->backgroundType() === 'color'
+                                              ? htmlspecialchars($d->backgroundValue()) : '#1a1a2e' ?>">
+                        </div>
+                        <div class="form-group">
+                            <label>&nbsp;</label>
+                            <button type="submit" name="action_update_display" class="btn btn-green"
+                                    onclick="return confirmTagChange(this.form)">Save</button>
+                        </div>
+                    </div>
+                    <p class="hint" style="font-size:12px;">
+                        The canvas size cannot be changed — the layout is positioned in exact pixels and there is
+                        no undo. To run this sign at another size, add a display at that size instead.
+                        <?php if ($d->backgroundType() === 'image'): ?>
+                            <br>This display currently uses an uploaded background image
+                            (<code><?= htmlspecialchars($d->backgroundValue()) ?></code>). Saving a colour here
+                            replaces it. Background images are uploaded from the Builder.
+                        <?php else: ?>
+                            Background images are uploaded from the Builder, where you can see the canvas.
+                        <?php endif; ?>
+                    </p>
+                </form>
+            </div>
+
+            <!-- Delete -->
+            <div class="display-panel" id="del-display-<?= $did ?>">
+                <div class="danger-panel">
+                    <p style="font-size:13px;color:#c0392b;font-weight:600;margin-bottom:8px;">
+                        Delete “<?= htmlspecialchars($d->title()) ?>” and its <?= $count ?>
+                        element<?= $count === 1 ? '' : 's' ?>?
+                    </p>
+                    <p class="hint" style="margin-bottom:10px;">
+                        This cannot be undone — nothing in this app is versioned. Any screen still pointed at
+                        <code><?= htmlspecialchars($d->tag()) ?></code> will show “Display not found”.
+                    </p>
+                    <form method="POST">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+                        <input type="hidden" name="d_id" value="<?= $did ?>">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Type <code><?= htmlspecialchars($d->tag()) ?></code> to confirm</label>
+                                <input type="text" name="confirm_tag" autocomplete="off" style="width:200px;">
+                            </div>
+                            <div class="form-group">
+                                <label>&nbsp;</label>
+                                <button type="submit" name="action_delete_display" class="btn btn-red">
+                                    Delete this display</button>
+                            </div>
+                            <div class="form-group">
+                                <label>&nbsp;</label>
+                                <button type="button" class="btn btn-gray"
+                                        onclick="togglePanel('del-display-<?= $did ?>')">Cancel</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <?php endforeach; ?>
+    </div>
+
+    <!-- ── Add a display: size first, then a name, then what it starts from ── -->
+    <div class="card">
+        <h2>Add a Display</h2>
+        <form method="POST" id="new-display-form">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+
+            <div class="step">
+                <div class="step-label">1 · Canvas size</div>
+                <p class="hint" style="margin-bottom:10px;">
+                    Set this first, and set it to the screen's real resolution. It is fixed from here on:
+                    the layout is positioned in exact pixels, so there is no safe way to resize it afterwards.
+                    A screen of the same shape but a different resolution is fine — the sign scales to fit.
+                </p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Preset</label>
+                        <select id="d_preset" onchange="applyPreset()" style="width:290px;">
+                            <option value="">Choose a size…</option>
+                            <?php foreach ($canvasPresets as $p): ?>
+                                <option value="<?= $p[1] ?>x<?= $p[2] ?>"><?= htmlspecialchars($p[0]) ?></option>
+                            <?php endforeach; ?>
+                            <option value="custom">Custom…</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Width (px)</label>
+                        <input type="number" name="d_width" id="d_width" min="<?= DisplayStore::CANVAS_MIN ?>"
+                               max="<?= DisplayStore::CANVAS_MAX ?>" oninput="sizeChanged()" style="width:110px;" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Height (px)</label>
+                        <input type="number" name="d_height" id="d_height" min="<?= DisplayStore::CANVAS_MIN ?>"
+                               max="<?= DisplayStore::CANVAS_MAX ?>" oninput="sizeChanged()" style="width:110px;" required>
+                    </div>
+                    <div class="form-group">
+                        <label>&nbsp;</label>
+                        <span id="size-readout" class="hint" style="padding-bottom:9px;">No size chosen yet</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-label">2 · Name it</div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Title</label>
+                        <input type="text" name="d_title" id="d_title" placeholder="Lobby Screen"
+                               oninput="suggestTag()" style="width:210px;" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Screen name tag</label>
+                        <input type="text" name="d_tag" id="d_tag" placeholder="lobby-screen"
+                               pattern="[a-z0-9\-]{2,32}" style="width:180px;">
+                    </div>
+                    <div class="form-group">
+                        <label>Location (for reference)</label>
+                        <input type="text" name="d_location" placeholder="Front entrance" style="width:200px;">
+                    </div>
+                    <div class="form-group">
+                        <label>Background colour</label>
+                        <input type="color" name="d_bg" value="#1a1a2e">
+                    </div>
+                </div>
+                <p class="hint" style="font-size:12px;">
+                    The tag is the display's address: <code>viewer.php?display=<span id="tag-echo">lobby-screen</span></code>.
+                    Lowercase letters, numbers and hyphens. Leave it blank and it is taken from the title.
+                </p>
+            </div>
+
+            <div class="step locked" id="start-step">
+                <div class="step-label">3 · Start from</div>
+                <fieldset id="start-fields" disabled>
+                    <label style="display:block;font-size:13px;margin-bottom:7px;">
+                        <input type="radio" name="d_start" value="blank" checked onchange="startChanged()">
+                        A blank canvas
+                    </label>
+                    <label style="display:block;font-size:13px;">
+                        <input type="radio" name="d_start" value="duplicate" id="d_start_dup" onchange="startChanged()">
+                        A copy of an existing display's layout
+                    </label>
+                    <div class="form-row" style="margin-top:8px; margin-left:22px;">
+                        <div class="form-group">
+                            <select name="d_source" id="d_source" disabled style="width:320px;"></select>
+                        </div>
+                    </div>
+                    <p class="hint" style="font-size:12px;" id="dup-note">
+                        Only displays of exactly the same size can be copied from — blocks are positioned in
+                        exact pixels, and rescaling a layout is a redesign, not a copy.
+                    </p>
+                </fieldset>
+                <p class="hint" style="font-size:12px;" id="start-locked-note">Choose a canvas size first.</p>
+            </div>
+
+            <button type="submit" name="action_create_display" class="btn btn-green">Add Display</button>
+        </form>
     </div>
 </div>
 
@@ -659,10 +1072,26 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
     <div class="card">
         <h2>Canvas Elements</h2>
         <p style="font-size:13px; color:#7f8c8d; margin-bottom:16px;">
-            All elements currently on the builder canvas. Hide removes the element from the viewer display immediately — no publish required. Delete permanently removes it from the canvas.
+            All elements currently on one display's canvas. Hide removes the element from that display
+            immediately — no publish required. Delete permanently removes it from the canvas. Either one
+            means a builder tab opened before now must reload before it can publish.
         </p>
-        <div style="margin-bottom:14px;">
-            <button class="btn btn-blue" style="font-size:12px;" onclick="loadCanvasElements()">&#8635; Refresh</button>
+        <div class="form-row" style="margin-bottom:14px;">
+            <div class="form-group">
+                <label>Display</label>
+                <select id="wa-display" onchange="loadCanvasElements()" style="width:340px;">
+                    <?php foreach ($displays as $d): ?>
+                    <option value="<?= htmlspecialchars($d->tag()) ?>">
+                        <?= htmlspecialchars($d->title()) ?> — <?= htmlspecialchars($d->tag()) ?>
+                        (<?= $d->dimensionsLabel() ?>)
+                    </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>&nbsp;</label>
+                <button class="btn btn-blue" style="font-size:12px;" onclick="loadCanvasElements()">&#8635; Refresh</button>
+            </div>
         </div>
         <div id="canvas-elements-wrap">
             <p style="color:#7f8c8d;font-size:13px;">Click Refresh or open this tab to load.</p>
@@ -673,8 +1102,14 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 </div><!-- .content -->
 
 <script>
-    var _tabs = ['users','brand','branding','settings','workarea'];
+    var _tabs = ['users','displays','brand','branding','settings','workarea'];
     var CSRF_TOKEN = <?= json_encode(csrfToken()) ?>;
+
+    // Every Display, for filtering the "duplicate from" list to the ones of the
+    // exact size being created (ADR-0004). The server checks it again — this only
+    // stops the wrong choice being offered.
+    var DISPLAYS = <?= json_encode($dupCandidates, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+
     function showTab(name) {
         _tabs.forEach(function(t) {
             document.getElementById('tab-' + t).style.display = t === name ? 'block' : 'none';
@@ -685,15 +1120,162 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         if (name === 'workarea') loadCanvasElements();
     }
 
+    // ── Displays ───────────────────────────────────────────────
+    function togglePanel(id) {
+        var el = document.getElementById(id);
+        if (el) el.classList.toggle('open');
+    }
+
+    function copyAddr(id) {
+        var input = document.getElementById('addr-' + id);
+        input.select();
+        // execCommand is deprecated but is the only copy that works without HTTPS,
+        // and this app is reached over plain HTTP on the store network.
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(input.value);
+        } else {
+            try { document.execCommand('copy'); } catch (e) { /* the text is selected either way */ }
+        }
+    }
+
+    function confirmTurnOff(title) {
+        return confirm('Turn off ' + title + '?\n\n' +
+            'The layout is kept and stays editable by admins, but any screen showing it will say ' +
+            '"This display is turned off" within 30 seconds.');
+    }
+
+    /** Renaming the tag changes the display's address, so say so before saving. */
+    function confirmTagChange(form) {
+        var field = form.querySelector('[name="d_tag"]');
+        var was   = field.getAttribute('data-original-tag');
+        var now   = (field.value || '').trim().toLowerCase();
+        if (now === was) return true;
+        return confirm(
+            'Change the screen name tag from "' + was + '" to "' + now + '"?\n\n' +
+            'The display\'s address becomes:\n    viewer.php?display=' + now + '\n\n' +
+            'Anything still pointed at the old address — a TV, a signage widget, a bookmark — ' +
+            'will show "Display not found" until you re-point it.');
+    }
+
+    // ── Add a display: size first, then the start-from choice ──
+    function applyPreset() {
+        var v = document.getElementById('d_preset').value;
+        if (v && v !== 'custom') {
+            var parts = v.split('x');
+            document.getElementById('d_width').value  = parts[0];
+            document.getElementById('d_height').value = parts[1];
+        } else if (v === 'custom') {
+            document.getElementById('d_width').focus();
+        }
+        sizeChanged();
+    }
+
+    function chosenSize() {
+        var w = parseInt(document.getElementById('d_width').value, 10);
+        var h = parseInt(document.getElementById('d_height').value, 10);
+        var min = <?= DisplayStore::CANVAS_MIN ?>, max = <?= DisplayStore::CANVAS_MAX ?>;
+        if (!w || !h || w < min || h < min || w > max || h > max) return null;
+        return { w: w, h: h };
+    }
+
+    /**
+     * The size gates step 3: until it is set there is nothing to duplicate *from*,
+     * because "same size" is the only thing that makes a copy meaningful.
+     */
+    function sizeChanged() {
+        var size   = chosenSize();
+        var step   = document.getElementById('start-step');
+        var fields = document.getElementById('start-fields');
+        var locked = document.getElementById('start-locked-note');
+        var readout = document.getElementById('size-readout');
+
+        if (!size) {
+            step.classList.add('locked');
+            fields.disabled = true;
+            locked.style.display = 'block';
+            readout.textContent = 'No size chosen yet';
+            return;
+        }
+
+        var shape = size.h > size.w ? 'portrait' : (size.w > size.h ? 'landscape' : 'square');
+        readout.textContent = size.w + ' × ' + size.h + ' ' + shape;
+        step.classList.remove('locked');
+        fields.disabled = false;
+        locked.style.display = 'none';
+
+        var matches = DISPLAYS.filter(function(d) { return d.w === size.w && d.h === size.h; });
+        var select  = document.getElementById('d_source');
+        var dupRadio = document.getElementById('d_start_dup');
+        select.innerHTML = matches.map(function(d) {
+            return '<option value="' + escHtml(d.tag) + '">' + escHtml(d.title) + ' — ' + escHtml(d.tag) + '</option>';
+        }).join('');
+
+        dupRadio.disabled = matches.length === 0;
+        if (matches.length === 0) {
+            if (dupRadio.checked) document.querySelector('[name="d_start"][value="blank"]').checked = true;
+            document.getElementById('dup-note').textContent =
+                'No display is ' + size.w + ' × ' + size.h + ', so there is nothing to copy from at this size. ' +
+                'A layout can only be duplicated between displays of exactly the same size.';
+        } else {
+            document.getElementById('dup-note').textContent =
+                matches.length + ' display' + (matches.length === 1 ? '' : 's') + ' at this exact size can be ' +
+                'copied from. The copy takes positions, hidden and locked blocks and section backgrounds, ' +
+                'and points at the same library assets.';
+        }
+        startChanged();
+    }
+
+    function startChanged() {
+        var dup = document.getElementById('d_start_dup');
+        document.getElementById('d_source').disabled = !(dup && dup.checked);
+    }
+
+    /** Fill the tag from the title until the admin types their own. */
+    function suggestTag() {
+        var tagField = document.getElementById('d_tag');
+        var suggested = document.getElementById('d_title').value
+            .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').substring(0, 32)
+            .replace(/-+$/, '');
+        if (!tagField.dataset.touched) { tagField.value = suggested; }
+        document.getElementById('tag-echo').textContent = (tagField.value || suggested) || 'lobby-screen';
+    }
+
+    (function initDisplayForm() {
+        var tagField = document.getElementById('d_tag');
+        if (!tagField) return;
+        tagField.addEventListener('input', function() {
+            this.dataset.touched = this.value === '' ? '' : '1';
+            document.getElementById('tag-echo').textContent = this.value || 'lobby-screen';
+        });
+        sizeChanged();
+    })();
+
     // ── Work Area ──────────────────────────────────────────────
+    /** Which Display the Work Area is looking at — every call here is scoped to it. */
+    function waDisplay() {
+        var sel = document.getElementById('wa-display');
+        return sel ? sel.value : '';
+    }
+
     function loadCanvasElements() {
         var wrap = document.getElementById('canvas-elements-wrap');
+        var tag  = waDisplay();
+        if (!tag) {
+            wrap.innerHTML = '<p style="color:#7f8c8d;font-size:13px;">No displays exist yet — add one on the Displays tab.</p>';
+            return;
+        }
         wrap.innerHTML = '<p style="color:#7f8c8d;font-size:13px;">Loading…</p>';
-        fetch('api.php?action=get_canvas_elements')
+        fetch('api.php?action=get_canvas_elements&display=' + encodeURIComponent(tag))
             .then(function(r) { return r.json(); })
             .then(function(data) {
-                if (!Array.isArray(data) || !data.length) {
-                    wrap.innerHTML = '<p style="color:#7f8c8d;font-size:13px;">No elements on the canvas.</p>';
+                if (!Array.isArray(data)) {
+                    // A resolution failure comes back as an object carrying the notice.
+                    wrap.innerHTML = '<p style="color:#e74c3c;font-size:13px;">' +
+                        escHtml((data && data.message) || 'Could not load that display.') + '</p>';
+                    return;
+                }
+                if (!data.length) {
+                    wrap.innerHTML = '<p style="color:#7f8c8d;font-size:13px;">No elements on this display\'s canvas.</p>';
                     return;
                 }
                 renderElementsList(data);
@@ -767,6 +1349,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         fd.append('action', 'set_element_hidden');
         fd.append('element_id', id);
         fd.append('hidden', hidden);
+        fd.append('display', waDisplay());
         fd.append('csrf_token', CSRF_TOKEN);
         fetch('api.php', { method:'POST', body:fd })
             .then(function(r) { return r.json(); })
@@ -784,6 +1367,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         var fd = new FormData();
         fd.append('action', 'delete_canvas_element');
         fd.append('element_id', id);
+        fd.append('display', waDisplay());
         fd.append('csrf_token', CSRF_TOKEN);
         fetch('api.php', { method:'POST', body:fd })
             .then(function(r) { return r.json(); })
