@@ -6,6 +6,40 @@ on a TV auto-refreshes to show it.
 
 ## Language
 
+### Displays
+
+**Display**:
+One configured sign — its name tag, canvas size, title, location, layout, and the
+list of accounts allowed to edit it. The unit an admin adds, modifies, and deletes.
+_Avoid_: viewer page, screen, canvas
+
+**Viewer**:
+The single public page that renders one Display fullscreen for a Screen. One Viewer
+page serves every Display; which one it shows comes from the name tag in its URL.
+_Avoid_: display page, kiosk page
+
+**Screen**:
+The physical hardware — a TV, kiosk, or embedded signage widget — showing a Viewer.
+Configured once, on site, with the URL of one Display.
+_Avoid_: monitor, device, display
+
+**Screen name tag**:
+The short word that names a Display in a Viewer URL (`lobby` in
+`viewer.php?display=lobby`). Unique, admin-editable, and the contract a configured
+Screen depends on.
+_Avoid_: slug, id, handle
+
+**Canvas**:
+A Display's design surface, in pixels. Fixed when the Display is created and never
+changed afterwards — the Builder edits at exactly these dimensions and the Viewer
+renders at exactly these dimensions. A different size means a new Display.
+_Avoid_: stage, artboard, resolution
+
+**Deactivated Display**:
+A Display retired from service with its layout preserved. Still editable by admins;
+its Viewer states that the Display is turned off rather than rendering a layout.
+_Avoid_: disabled, archived, hidden
+
 ### Authentication & access
 
 **Account**:
