@@ -88,10 +88,14 @@ function newTestDb()
     ]);
     $pdo->exec("PRAGMA foreign_keys = ON");   // so ON DELETE CASCADE is real here too
 
+    // is_active mirrors the live column: the session sync reads it on every
+    // authenticated request, so a fixture without it cannot test that a
+    // deactivated account's open tab stops working.
     $pdo->exec("CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL,
-        role TEXT NOT NULL DEFAULT 'basic'
+        role TEXT NOT NULL DEFAULT 'basic',
+        is_active INTEGER NOT NULL DEFAULT 1
     )");
 
     $pdo->exec("CREATE TABLE displays (
@@ -160,8 +164,16 @@ function newTestDb()
         hidden INTEGER NOT NULL DEFAULT 0
     )");
 
-    $pdo->exec("INSERT INTO block_styles (block_type,font_family,font_size,font_color,font_weight,font_style,line_height)
-                VALUES ('price','Arial',30,'#e74c3c','bold','normal',1.2)");
+    // All six branded types, matching the seed in lib/schema.php. One row was
+    // enough while the only question was "does a snapshot carry typography"; it is
+    // not enough to test that a save leaves the types it was not given alone.
+    $pdo->exec("INSERT INTO block_styles (block_type,font_family,font_size,font_color,font_weight,font_style,line_height) VALUES
+        ('section_header','Arial',36,'#ffffff','bold','normal',1.30),
+        ('item_title',    'Arial',24,'#ffffff','bold','normal',1.30),
+        ('item_title_2',  'Arial',24,'#27ae60','bold','normal',1.30),
+        ('price',         'Arial',30,'#e74c3c','bold','normal',1.20),
+        ('price_2',       'Arial',30,'#e74c3c','bold','normal',1.20),
+        ('description',   'Arial',16,'#bdc3c7','normal','normal',1.40)");
 
     $pdo->exec("INSERT INTO users (username, role) VALUES ('sky','admin'), ('clerk','basic')");
 

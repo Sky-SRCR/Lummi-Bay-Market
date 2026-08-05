@@ -9,6 +9,10 @@
 // rather than a broken test. Add to this file as later phases add rules.
 
 require_once __DIR__ . '/test_fixture.php';
+// auth.php starts a session, so it has to be included before this file prints
+// anything — PHP cannot set a session cookie once output has begun. The session
+// gate checks themselves live at the bottom, with the rest of the assertions.
+require_once __DIR__ . '/../auth.php';
 
 // ─────────────────────────────────────────────────────────────
 section('Screen name tag rules');
@@ -254,19 +258,19 @@ $driveT = loadTestDisplay($pdo, $driveT->id());
 $lobby  = loadTestDisplay($pdo, $lobby->id());
 $lobbyElement = elementsOf($pdo, $lobby->id())[0];
 
-checkSame(false, $layouts->setElementHidden($driveT, $lobbyElement['id'], true),
+checkSame('not_found', $layouts->setElementHidden($driveT, $lobbyElement['id'], true, 1)->kind(),
     'hiding another Display\'s element is refused');
 $reread = $pdo->query("SELECT hidden FROM canvas_elements WHERE id = " . intval($lobbyElement['id']))->fetchColumn();
 checkSame(0, intval($reread), 'and it stays visible');
 
-checkSame(false, $layouts->deleteElement($driveT, $lobbyElement['id']),
+checkSame('not_found', $layouts->deleteElement($driveT, $lobbyElement['id'], 1)->kind(),
     'deleting another Display\'s element is refused');
 $reread = $pdo->query("SELECT COUNT(*) FROM canvas_elements WHERE id = " . intval($lobbyElement['id']))->fetchColumn();
 checkSame(1, intval($reread), 'and it still exists');
 
 $ownElement = elementsOf($pdo, $driveT->id())[1];
 $stampBefore = loadTestDisplay($pdo, $driveT->id())->layoutStamp();
-checkSame(true, $layouts->setElementHidden($driveT, $ownElement['id'], true), 'hiding an own element works');
+checkSame(true, $layouts->setElementHidden($driveT, $ownElement['id'], true, 1)->isOk(), 'hiding an own element works');
 $stampAfter = loadTestDisplay($pdo, $driveT->id())->layoutStamp();
 check($stampAfter !== $stampBefore, 'hiding an element advances the stamp, so an open Builder cannot undo it');
 
@@ -281,7 +285,7 @@ check($res->isOk(), 'republished for the cascade check');
 $sectionId = 0;
 foreach (elementsOf($pdo, $driveT->id()) as $row) { if ($row['type'] === 'section') { $sectionId = intval($row['id']); } }
 $driveT = loadTestDisplay($pdo, $driveT->id());
-checkSame(true, $layouts->deleteElement($driveT, $sectionId), 'deleting a section works');
+checkSame(true, $layouts->deleteElement($driveT, $sectionId, 1)->isOk(), 'deleting a section works');
 checkSame(0, count(elementsOf($pdo, $driveT->id())), 'its children went with it');
 checkSame(2, count(elementsOf($pdo, $lobby->id())), 'lobby is still intact');
 
@@ -836,4 +840,159 @@ $res = $layouts->publish($victim, new PublishRequest(
 checkSame('failed', $res->kind(), 'an array where a temp_id belongs is refused the same way');
 checkSame(2, count(elementsOf($pdo, $victim->id())), 'and again nothing was lost');
 
-reportChecks(255);
+// ─────────────────────────────────────────────────────────────
+section('The edit lock covers every element write, not just publishing');
+
+$pdo     = newTestDb();
+$store   = new TestDisplayStore($pdo);
+$layouts = newTestLayoutStore($pdo);
+$sign    = makeTestDisplay($pdo, 'deli', 'Deli Case');
+$layouts->publish($sign, new PublishRequest(
+    layoutWith('Chowder 6.50'), Background::unchanged(), 1, true, $sign->layoutStamp()
+));
+$store->releaseLock($sign, 1);
+
+// Account 2 is mid-edit. Account 1 is an admin in the Work Area.
+$store->claimLock($store->forId($sign->id()), 2);
+$sign    = $store->forId($sign->id());
+$element = elementsOf($pdo, $sign->id())[1];
+$stampBefore = $sign->layoutStamp();
+
+$res = $layouts->setElementHidden($sign, $element['id'], true, 1);
+checkSame('locked', $res->kind(), 'hiding an element is refused while someone else is editing');
+check(strpos($res->message(), 'editing') !== false, 'and the refusal says who is editing it');
+$reread = $pdo->query("SELECT hidden FROM canvas_elements WHERE id = " . intval($element['id']))->fetchColumn();
+checkSame(0, intval($reread), 'the element is untouched');
+
+$res = $layouts->deleteElement($sign, $element['id'], 1);
+checkSame('locked', $res->kind(), 'and so is deleting one');
+checkSame(2, count(elementsOf($pdo, $sign->id())), 'nothing was deleted');
+checkSame($stampBefore, $store->forId($sign->id())->layoutStamp(),
+          'a refused element write does not advance the stamp, so the holder can still publish');
+
+// The holder themselves is not blocked by their own lock.
+$res = $layouts->setElementHidden($store->forId($sign->id()), $element['id'], true, 2);
+checkSame(true, $res->isOk(), 'the account holding the lock can still hide its own element');
+
+// A lapsed lock is free, here as everywhere else.
+ageTestLock($pdo, $sign->id(), LockState::IDLE_LAPSE_SECONDS + 60);
+$res = $layouts->deleteElement($store->forId($sign->id()), $element['id'], 1);
+checkSame(true, $res->isOk(), 'once the lock has lapsed the Work Area can delete again');
+
+// Deleting a section takes its children even with no cascade behind it — the FK
+// that would do it is the one lib/schema.php never converges.
+$sign = $store->forId($sign->id());
+$layouts->publish($sign, new PublishRequest(
+    layoutWith('Cascade, explicitly'), Background::unchanged(), 1, true, $sign->layoutStamp()
+));
+$pdo->exec("PRAGMA foreign_keys = OFF");
+$sectionId = 0;
+foreach (elementsOf($pdo, $sign->id()) as $row) { if ($row['type'] === 'section') { $sectionId = intval($row['id']); } }
+checkSame(true, $layouts->deleteElement($store->forId($sign->id()), $sectionId, 1)->isOk(),
+          'a section is deleted with foreign keys switched off');
+checkSame(0, count(elementsOf($pdo, $sign->id())),
+          'and its children go with it without relying on ON DELETE CASCADE');
+$pdo->exec("PRAGMA foreign_keys = ON");
+
+// ─────────────────────────────────────────────────────────────
+section('Brand Standards: shared typography, and what may change it');
+
+$pdo   = newTestDb();
+$store = new TestDisplayStore($pdo);
+$brand = new BrandStyles($pdo);
+$one   = makeTestDisplay($pdo, 'one', 'Sign One');
+$two   = makeTestDisplay($pdo, 'two', 'Sign Two');
+
+checkSame(null, $store->editedByAnyoneElse(1), 'nobody is editing anything to begin with');
+$store->claimLock($two, 2);
+$busy = $store->editedByAnyoneElse(1);
+check($busy !== null,        'a lock held by another account is visible to the whole installation');
+checkSame('two', $busy ? $busy->tag() : '', 'and it names which Display');
+checkSame(null, $store->editedByAnyoneElse(2), 'the holder is not blocked by their own lock');
+
+ageTestLock($pdo, $two->id(), LockState::IDLE_LAPSE_SECONDS + 60);
+checkSame(null, $store->editedByAnyoneElse(1), 'a lapsed lock does not block a brand change');
+
+// Absent means untouched — the defect that reset every sign to black Arial 16.
+$before = $brand->all();
+checkSame(0, $brand->save([]), 'a save carrying no typography writes nothing');
+checkSame($before, $brand->all(), 'and leaves every stored style exactly as it was');
+
+checkSame(1, $brand->save(['price' => ['font_family' => 'Georgia', 'font_size' => 44,
+                                       'font_color' => '#00FF00', 'font_weight' => 'bold',
+                                       'font_style' => 'normal', 'line_height' => 1.25]]),
+          'a save carrying one type writes one row');
+$after = $brand->all();
+checkSame('Georgia', $after['price']['font_family'],   'the submitted family is stored');
+checkSame('#00ff00', $after['price']['font_color'],    'a colour is normalised to lowercase hex');
+checkSame($before['item_title'], $after['item_title'], 'and the five types it did not carry are untouched');
+
+// Every one of these reaches every sign within 30 seconds with no publish, so a
+// value that cannot render must never be stored in the first place.
+checkSame(8,      BrandStyles::cleanSize(0),        'size 0 would make every price invisible');
+checkSame(8,      BrandStyles::cleanSize(-40),      'and so would a negative one');
+checkSame(400,    BrandStyles::cleanSize(99999),    'an absurd size is clamped, not stored');
+checkSame(16,     BrandStyles::cleanSize('16abc'),  'a numeric-ish string is read as its number');
+checkSame('#ffffff', BrandStyles::cleanColor('transparent'), 'a non-hex colour falls back');
+checkSame('#ffffff', BrandStyles::cleanColor('#fff'),        'and so does three-digit hex, which the column cannot hold');
+checkSame('normal',  BrandStyles::cleanWeight('javascript:alert(1)'), 'weight is one of two words');
+checkSame('normal',  BrandStyles::cleanStyle('oblique'),     'and style is one of two words');
+checkSame('Arial',   BrandStyles::cleanFamily('Arial;position:fixed;top:0;width:100vw'),
+          'a family carrying CSS is stripped to the name');
+checkSame('5.00',    BrandStyles::formatLineHeight(9999),
+          'a line height beyond the column is clamped, not written as "1,000.00"');
+checkSame('1.40',    BrandStyles::formatLineHeight('nonsense'), 'and nonsense falls back to the default');
+
+// ─────────────────────────────────────────────────────────────
+section('The session gates: a token that is really checked, and a role that is re-read');
+
+$_SESSION = [];
+$_POST    = [];
+checkSame(false, csrfOk(), 'a POST with no token, to a session with no token, is refused');
+
+$_POST['csrf_token'] = 'anything';
+checkSame(false, csrfOk(), 'and so is one carrying a token the session never issued');
+
+$_SESSION['csrf_token'] = csrfToken();
+$_POST['csrf_token']    = '';
+checkSame(false, csrfOk(), 'an empty submitted token never matches');
+
+$_POST['csrf_token'] = $_SESSION['csrf_token'];
+checkSame(true,  csrfOk(), 'the session\'s own token is accepted');
+
+$_POST['csrf_token'] = strtoupper($_SESSION['csrf_token']);
+checkSame(false, csrfOk(), 'a near-miss is refused');
+
+// hash_equals('', '') is true, which is what made the empty case dangerous: an
+// admin lands on the Builder's Display picker, which exits before minting a
+// token, so this state was reachable on every single login.
+check(hash_equals('', ''), 'the reason: hash_equals of two empty strings is true');
+
+$_POST = [];
+$_SESSION = [];
+
+// ---- The role is re-read, not remembered -------------------------------------
+$pdo = newTestDb();
+$_SESSION['user_id'] = 2;
+$_SESSION['role']    = 'admin';   // as if promoted, then demoted in another tab
+checkSame(true,   syncSessionAccount($pdo), 'a live account keeps its session');
+checkSame('basic', $_SESSION['role'],       'and the session takes the role the database says, not the one it cached');
+
+$pdo->exec("UPDATE users SET role = 'admin' WHERE id = 2");
+syncSessionAccount($pdo);
+checkSame('admin', $_SESSION['role'], 'a promotion is picked up on the next request too');
+
+$pdo->exec("UPDATE users SET is_active = 0 WHERE id = 2");
+checkSame(false, syncSessionAccount($pdo), 'a deactivated account\'s session is refused');
+
+$pdo->exec("UPDATE users SET is_active = 1 WHERE id = 2");
+$pdo->exec("DELETE FROM users WHERE id = 2");
+checkSame(false, syncSessionAccount($pdo), 'and so is a deleted one');
+
+$_SESSION['user_id'] = 999;
+checkSame(false, syncSessionAccount($pdo), 'an account that never existed is refused');
+
+$_SESSION = [];
+checkSame(false, syncSessionAccount($pdo), 'and a session with no account at all is refused');
+
+reportChecks(300);

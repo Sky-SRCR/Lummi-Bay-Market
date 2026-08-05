@@ -6,6 +6,8 @@ require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/layout_store.php';
 require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/display_admin.php';
+require_once __DIR__ . '/lib/brand_styles.php';
+requireCurrentAccount($pdo);
 requireAdmin();
 
 $user = currentUser();
@@ -308,22 +310,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // Save brand standards
     if (isset($_POST['action_save_styles'])) {
         $types = ['section_header','item_title','item_title_2','price','price_2','description'];
-        $stmt  = $pdo->prepare(
-            "UPDATE block_styles SET font_family=?, font_size=?, font_color=?, font_weight=?, font_style=?, line_height=? WHERE block_type=?"
-        );
-        foreach ($types as $t) {
-            $stmt->execute([
-                $_POST["bs_{$t}_family"]      ?? 'Arial',
-                intval($_POST["bs_{$t}_size"] ?? 16),
-                $_POST["bs_{$t}_color"]       ?? '#000000',
-                $_POST["bs_{$t}_weight"]      ?? 'normal',
-                $_POST["bs_{$t}_fstyle"]      ?? 'normal',
-                number_format(floatval($_POST["bs_{$t}_lh"] ?? 1.4), 2),
-                $t,
-            ]);
+        $tab   = 'brand';
+
+        // The same refusal the API makes: this table is shared by every Display and
+        // reaches every Screen on the next poll with no publish, so a held edit lock
+        // anywhere is a claim on it.
+        $busy = $displayStore->editedByAnyoneElse($user['id']);
+        if ($busy) {
+            $msg     = $busy->editingSentence()
+                     . ' Brand standards apply to every display and reach every screen'
+                     . ' within 30 seconds without a publish, so they cannot change while'
+                     . ' somebody is editing. Try again once they are finished.';
+            $msgType = 'error';
+        } else {
+            // Only the types this form actually carried. The loop used to write all
+            // six unconditionally against `?? 'Arial'` / `?? 16` / `?? '#000000'`
+            // defaults, so a POST that arrived without the fields — a truncated form,
+            // a resubmitted stale one, a request built by hand — reset the store's
+            // entire brand typography to black Arial 16 on every sign, reported
+            // "saved", and could not be undone. BrandStyles validates too: the
+            // min/max and the dropdowns below are HTML, which is to say advisory.
+            $submitted = [];
+            foreach ($types as $t) {
+                if (!isset($_POST["bs_{$t}_family"])) { continue; }
+                $submitted[$t] = [
+                    'font_family' => $_POST["bs_{$t}_family"],
+                    'font_size'   => $_POST["bs_{$t}_size"]   ?? null,
+                    'font_color'  => $_POST["bs_{$t}_color"]  ?? null,
+                    'font_weight' => $_POST["bs_{$t}_weight"] ?? null,
+                    'font_style'  => $_POST["bs_{$t}_fstyle"] ?? null,
+                    'line_height' => $_POST["bs_{$t}_lh"]     ?? null,
+                ];
+            }
+            $saved = (new BrandStyles($pdo))->save($submitted);
+            $msg = $saved
+                ? 'Brand standards saved. Every screen picks them up within 30 seconds — no publishing needed.'
+                : 'Nothing was saved: that form arrived with no typography in it.';
+            $msgType = $saved ? 'success' : 'error';
         }
-        $msg = 'Brand standards saved.';
-        $tab = 'brand';
     }
 }
 

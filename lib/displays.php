@@ -237,6 +237,20 @@ class Display
         );
     }
 
+    /**
+     * "Dana has been editing Drive-Thru since 2:15pm." — for a refusal that has to
+     * name who is in the way. Empty when this Display is free.
+     */
+    public function editingSentence()
+    {
+        $lock = $this->lockState();
+        if (!$lock->isHeld()) { return ''; }
+        $who   = $lock->holderName() !== '' ? $lock->holderName() : 'Someone';
+        $since = $lock->takenAtLabel();
+        return $who . ' has been editing ' . $this->title()
+             . ($since !== '' ? ' since ' . $since : '') . '.';
+    }
+
     /** "sky, Aug 5 at 2:04pm" — the material for a refused-publish message. Empty when never published. */
     public function lastPublishDescription()
     {
@@ -328,6 +342,30 @@ class DisplayStore
     public function count()
     {
         return count($this->all());
+    }
+
+    /**
+     * The first Display someone other than this account is editing right now, or
+     * null if nobody is.
+     *
+     * Brand Standards is the one edit that is not scoped to a Display: the six
+     * branded block types are shared by every sign, and their typography is part of
+     * every snapshot, so a change reaches every Screen on the next 30-second poll
+     * with no publish at all. A single Display's lock therefore cannot guard it —
+     * but any held lock is somebody sizing blocks against the typography that is
+     * about to change under them, and they would never be told.
+     *
+     * So the answer is "refuse while anyone else is editing anything". Lapsed locks
+     * are free and do not block, which is why this asks LockState rather than
+     * testing the column: a Builder left open on a back-office monitor stops
+     * counting after the idle window, same as everywhere else.
+     */
+    public function editedByAnyoneElse($accountId)
+    {
+        foreach ($this->all() as $display) {
+            if ($display->lockState()->heldByOther($accountId)) { return $display; }
+        }
+        return null;
     }
 
     /**

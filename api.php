@@ -18,6 +18,7 @@ require_once __DIR__ . '/lib/schema.php';
 require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/layout_store.php';
 require_once __DIR__ . '/lib/grants.php';
+require_once __DIR__ . '/lib/brand_styles.php';
 require_once __DIR__ . '/lib/display_request.php';
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
@@ -26,6 +27,20 @@ $action = $_GET['action'] ?? $_POST['action'] ?? '';
 // All other endpoints require an authenticated session.
 if ($action !== 'get_layout') {
     requireLogin();
+    // And the account behind that session must still exist, still be active, and
+    // still hold the role it held at login — see syncSessionAccount(). A page
+    // redirects here; an endpoint says so in JSON, because the Builder polls this
+    // every 60 seconds and would otherwise silently receive a login page.
+    if (!syncSessionAccount($pdo)) {
+        endSession();
+        header('Content-Type: application/json');
+        http_response_code(403);
+        echo json_encode([
+            'status'  => 'error',
+            'message' => 'Your account is no longer active. Sign in again.',
+        ]);
+        exit;
+    }
 }
 
 header('Content-Type: application/json');
@@ -34,8 +49,7 @@ $isAdmin = isAdmin();
 // CSRF protection: every state-changing (POST) request must carry a valid token.
 // GET endpoints are read-only, and get_layout is intentionally public so the
 // kiosk viewer can poll it without a session.
-if ($_SERVER['REQUEST_METHOD'] === 'POST'
-    && !hash_equals($_SESSION['csrf_token'] ?? '', $_POST['csrf_token'] ?? '')) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !csrfOk()) {
     http_response_code(403);
     echo json_encode(['status' => 'error', 'message' => 'Security token mismatch. Please reload the page and try again.']);
     exit;
@@ -362,25 +376,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'take_over_lock') {
 // deliberately not Display-scoped.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_brand_styles') {
     if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
-    $data   = json_decode($_POST['styles_data'] ?? '[]', true) ?: [];
-    $allowed = ['section_header','item_title','item_title_2','price','price_2','description'];
-    $stmt   = $pdo->prepare(
-        "UPDATE block_styles SET font_family=?, font_size=?, font_color=?, font_weight=?, font_style=?, line_height=? WHERE block_type=?"
-    );
-    foreach ($allowed as $t) {
-        if (!isset($data[$t])) continue;
-        $s = $data[$t];
-        $stmt->execute([
-            $s['font_family'] ?? 'Arial',
-            intval($s['font_size'] ?? 16),
-            $s['font_color']  ?? '#000000',
-            $s['font_weight'] ?? 'normal',
-            $s['font_style']  ?? 'normal',
-            number_format(floatval($s['line_height'] ?? 1.4), 2),
-            $t,
+
+    // Brand Standards is the edit that reaches every sign without a publish, so the
+    // edit lock covers it too — see DisplayStore::editedByAnyoneElse. Refused while
+    // anybody else is mid-edit anywhere, because the typography they are sizing
+    // blocks against would change under them within 30 seconds and nothing would
+    // tell them.
+    $busy = $displays->editedByAnyoneElse(currentUser()['id']);
+    if ($busy) {
+        echo json_encode([
+            'status'  => 'error',
+            'reason'  => 'locked',
+            'message' => $busy->editingSentence()
+                       . ' Brand standards apply to every display, and reach every screen'
+                       . ' within 30 seconds without a publish, so they cannot change while'
+                       . ' somebody is editing. Try again once they are finished.',
         ]);
+        exit;
     }
-    echo json_encode(['status' => 'success']);
+
+    $data  = json_decode($_POST['styles_data'] ?? '[]', true) ?: [];
+    $saved = (new BrandStyles($pdo))->save($data);
+
+    // Reporting how many rows were written, rather than an unconditional success.
+    // The UPDATE matches on block_type, so on a database missing a row it wrote
+    // nothing and still answered success — the field reverted on reload and nothing
+    // said why. That is the defect the six-row seed in lib/schema.php was added to
+    // prevent, and schemaTry() swallows a seed that does not apply, so it is worth
+    // saying out loud rather than assuming.
+    echo json_encode($saved
+        ? ['status' => 'success', 'saved' => $saved]
+        : ['status' => 'error', 'message' => 'Nothing was saved — those block types are missing from the database.']);
     exit;
 }
 
@@ -407,10 +433,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'set_element_hidden') {
     $id = intval($_POST['element_id'] ?? 0);
     if (!$id) { echo json_encode(['status'=>'error','message'=>'Missing element_id.']); exit; }
 
-    $done = $layouts->setElementHidden($resolution->display(), $id, intval($_POST['hidden'] ?? 0) === 1);
-    echo json_encode($done
+    $res = $layouts->setElementHidden($resolution->display(), $id,
+                                      intval($_POST['hidden'] ?? 0) === 1, currentUser()['id']);
+    echo json_encode($res->isOk()
         ? ['status' => 'success']
-        : ['status' => 'error', 'message' => 'That element is not on this display.']);
+        : ['status' => 'error', 'message' => $res->message()]);
     exit;
 }
 
@@ -425,10 +452,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'delete_canvas_element'
     $id = intval($_POST['element_id'] ?? 0);
     if (!$id) { echo json_encode(['status'=>'error','message'=>'Missing element_id.']); exit; }
 
-    $done = $layouts->deleteElement($resolution->display(), $id);
-    echo json_encode($done
+    $res = $layouts->deleteElement($resolution->display(), $id, currentUser()['id']);
+    echo json_encode($res->isOk()
         ? ['status' => 'success']
-        : ['status' => 'error', 'message' => 'That element is not on this display.']);
+        : ['status' => 'error', 'message' => $res->message()]);
     exit;
 }
 

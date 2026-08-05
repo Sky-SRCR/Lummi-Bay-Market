@@ -5,7 +5,7 @@ require_once __DIR__ . '/lib/schema.php';
 require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/display_request.php';
-requireLogin();
+requireCurrentAccount($pdo);
 $me      = currentUser();
 $isAdmin = isAdmin();
 

@@ -13,8 +13,8 @@
 //   snapshot(Display)                     → the payload a Viewer or Builder renders
 //   publish(Display, PublishRequest)      → PublishResult
 //   elementIndex(Display)                 → the admin Work Area list
-//   setElementHidden(Display, id, bool)   → bool: was it this Display's element?
-//   deleteElement(Display, id)            → bool: was it this Display's element?
+//   setElementHidden(Display, id, bool, actorId) → ElementResult
+//   deleteElement(Display, id, actorId)          → ElementResult
 //   elementCount(Display)                 → int, for a confirm that says what is at stake
 //   copyLayout(Display, Display)          → int copied: duplicating a Display
 //   deleteAllElements(Display)            → int deleted: destroying a Display
@@ -39,6 +39,7 @@
 
 require_once __DIR__ . '/plain_text.php';
 require_once __DIR__ . '/displays.php';
+require_once __DIR__ . '/brand_styles.php';
 
 /** One publish attempt: the layout, the background intent, who is publishing, and the stamp they hold. */
 class PublishRequest
@@ -87,6 +88,33 @@ class PublishRequest
 }
 
 /**
+ * The outcome of one element write (hide, show, delete), as a value.
+ *
+ * A bool could only say "that element is not on this display", which is why the
+ * lock refusal had nowhere to live before: an adapter cannot tell the difference
+ * between "wrong Display" and "somebody else is editing this one" from `false`.
+ */
+class ElementResult
+{
+    private $kind;      // 'ok' | 'not_found' | 'locked'
+    private $message;
+
+    private function __construct($kind, $message)
+    {
+        $this->kind    = $kind;
+        $this->message = $message;
+    }
+
+    public static function ok()           { return new self('ok', ''); }
+    public static function notOnDisplay() { return new self('not_found', 'That element is not on this display.'); }
+    public static function locked($message) { return new self('locked', $message); }
+
+    public function isOk()    { return $this->kind === 'ok'; }
+    public function kind()    { return $this->kind; }
+    public function message() { return $this->message; }
+}
+
+/**
  * The outcome of a publish, as a value. Adapters branch on kind() and pass
  * message() through to the user — never parse the message to work out what
  * happened.
@@ -127,6 +155,12 @@ class LayoutStore
         $this->displays = $displays;
     }
 
+    /** Brand Standards, which owns `block_styles`. Built on demand: only reads need it. */
+    private function brandStyles()
+    {
+        return new BrandStyles($this->pdo);
+    }
+
     // ---- Read ---------------------------------------------------------------
 
     /**
@@ -148,10 +182,10 @@ class LayoutStore
         $stmt->execute([$display->id()]);
         $elements = $stmt->fetchAll();
 
-        $styles = [];
-        foreach ($this->pdo->query("SELECT * FROM block_styles")->fetchAll() as $s) {
-            $styles[$s['block_type']] = $s;
-        }
+        // Brand Standards belongs to BrandStyles, which is the only writer of that
+        // table; reading it through the same module keeps one definition of what a
+        // stored style looks like.
+        $styles = $this->brandStyles()->all();
 
         $display_ = $display->toClientArray();
 
@@ -301,27 +335,66 @@ class LayoutStore
      * Displays. Advances the stamp, because a Builder tab holding the old layout
      * would otherwise republish the element it just saw hidden.
      */
-    public function setElementHidden(Display $display, $elementId, $hidden)
+    public function setElementHidden(Display $display, $elementId, $hidden, $actorId = 0)
     {
-        if (!$this->ownsElement($display, $elementId)) { return false; }
+        $refusal = $this->refuseIfHeldByOther($display, $actorId);
+        if ($refusal) { return $refusal; }
+        if (!$this->ownsElement($display, $elementId)) { return ElementResult::notOnDisplay(); }
+
         $this->pdo->prepare("UPDATE canvas_elements SET hidden = ? WHERE id = ? AND display_id = ?")
                   ->execute([$hidden ? 1 : 0, intval($elementId), $display->id()]);
         $this->displays->advanceLayoutRevision($display);
-        return true;
+        return ElementResult::ok();
     }
 
     /**
-     * Delete one element. Children of a section go with it via the section_id
-     * FK's ON DELETE CASCADE. Returns false when the element is not this
-     * Display's.
+     * Delete one element, and its children if it is a section.
+     *
+     * Refused while somebody else holds the edit lock, like every other write to
+     * this Display's elements.
      */
-    public function deleteElement(Display $display, $elementId)
+    public function deleteElement(Display $display, $elementId, $actorId = 0)
     {
-        if (!$this->ownsElement($display, $elementId)) { return false; }
+        $refusal = $this->refuseIfHeldByOther($display, $actorId);
+        if ($refusal) { return $refusal; }
+        if (!$this->ownsElement($display, $elementId)) { return ElementResult::notOnDisplay(); }
+
+        // Children are deleted explicitly rather than through the section_id FK's
+        // ON DELETE CASCADE. That constraint is the one this build never converges
+        // — lib/schema.php adds canvas_elements_ibfk_3 and nothing for ibfk_2 — so
+        // on a live database where it was never applied, a section's children would
+        // survive as rows pointing at a parent that is gone: invisible in both the
+        // Builder and the Viewer, and erased for good by the next publish. Every
+        // other destructive path in this build already deletes explicitly for the
+        // same reason (invariant 10: assume the live schema is behind the repo).
+        $this->pdo->prepare("DELETE FROM canvas_elements WHERE section_id = ? AND display_id = ?")
+                  ->execute([intval($elementId), $display->id()]);
         $this->pdo->prepare("DELETE FROM canvas_elements WHERE id = ? AND display_id = ?")
                   ->execute([intval($elementId), $display->id()]);
         $this->displays->advanceLayoutRevision($display);
-        return true;
+        return ElementResult::ok();
+    }
+
+    /**
+     * The edit lock covers a Display's elements, not just its publishes.
+     *
+     * The Work Area's hide and delete used to check the grant and nothing else, so
+     * an admin could remove a block from under somebody who was mid-edit. The stamp
+     * bump meant that person's next publish was refused as stale — which protects
+     * the layout but not their twenty minutes of work, and being told "reload and
+     * redo it" is the exact outcome ADR-0007 exists to prevent on top of ADR-0006.
+     *
+     * Read fresh, like publish does: a lock can be taken or lapse while a panel
+     * sits open. A lapsed lock is free and does not refuse anything.
+     */
+    private function refuseIfHeldByOther(Display $display, $actorId)
+    {
+        $fresh = $this->displays->forId($display->id());
+        $lock  = ($fresh ?: $display)->lockState();
+        if ($lock->heldByOther(intval($actorId))) {
+            return ElementResult::locked($this->lockedMessage($lock));
+        }
+        return null;
     }
 
     // ---- Publish ------------------------------------------------------------

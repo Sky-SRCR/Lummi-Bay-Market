@@ -17,12 +17,73 @@ function requireLogin(string $redirect = 'login.php'): void {
         header('Location: ' . $redirect);
         exit;
     }
+    // Mint the token here rather than waiting for a page to render a form. An
+    // authenticated session with no token used to be routine — login lands every
+    // admin on the Builder's Display picker, which exits before it renders one —
+    // and in that state csrfOk() has nothing to compare against.
+    csrfToken();
 }
 
 function requireAdmin(): void {
     requireLogin();
     if (($_SESSION['role'] ?? '') !== 'admin') {
         header('Location: builder.php');
+        exit;
+    }
+}
+
+/**
+ * Re-read the signed-in account and bring the session into line with it.
+ *
+ * Returns false when the session must end: the account has been deleted or
+ * deactivated. Otherwise it refreshes the cached role and returns true.
+ *
+ * Until this existed, `role` was frozen at login and the app never read the
+ * requesting account's row again — so demoting an admin, unticking Active, or
+ * deleting the account outright left that browser with full admin over every
+ * sign for as long as the tab stayed open, while the panel reported success.
+ * The grant half of ADR-0005 was already re-read on every request; this is the
+ * role half, which is the one that carries the power.
+ *
+ * Fails closed. A users read that throws means the database is unusable, and
+ * signing in again is impossible in that state anyway.
+ */
+function syncSessionAccount(PDO $pdo): bool {
+    if (empty($_SESSION['user_id'])) { return false; }
+    try {
+        $stmt = $pdo->prepare("SELECT role, is_active FROM users WHERE id = ? LIMIT 1");
+        $stmt->execute([intval($_SESSION['user_id'])]);
+        $row = $stmt->fetch();
+    } catch (Throwable $e) {
+        return false;
+    }
+    if (!$row || intval($row['is_active']) !== 1) { return false; }
+    $_SESSION['role'] = ($row['role'] === 'admin') ? 'admin' : 'basic';
+    return true;
+}
+
+/** Drop the session entirely — used when the account behind it is gone. */
+function endSession(): void {
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+        $p = session_get_cookie_params();
+        setcookie(session_name(), '', time() - 42000,
+                  $p['path'], $p['domain'], $p['secure'], $p['httponly']);
+    }
+    session_destroy();
+}
+
+/**
+ * The page-script form: sign the browser out and send it to the login page if
+ * the account behind the session no longer exists or is no longer active.
+ * Call it after db_connect.php and before requireAdmin(), so a demotion that
+ * happened while the tab was open is honoured on this request.
+ */
+function requireCurrentAccount(PDO $pdo, string $redirect = 'login.php'): void {
+    requireLogin($redirect);
+    if (!syncSessionAccount($pdo)) {
+        endSession();
+        header('Location: ' . $redirect);
         exit;
     }
 }
@@ -51,9 +112,26 @@ function csrfToken(): string {
     return $_SESSION['csrf_token'];
 }
 
+/**
+ * Does this POST carry the session's CSRF token?
+ *
+ * Fails closed when the session has no token. `hash_equals('', '')` is **true**,
+ * so the old check accepted a request with no token at all whenever the session
+ * had not yet minted one — and that state was reachable on every login, because
+ * login.php lands on the Builder's Display picker, which exits before the line
+ * that creates the token. In that window every POST endpoint in the app was
+ * unprotected, with SameSite=Lax the only thing standing in the way, and that is
+ * the browser's mitigation rather than ours.
+ */
+function csrfOk(): bool {
+    $session = $_SESSION['csrf_token'] ?? '';
+    $sent    = $_POST['csrf_token']    ?? '';
+    if (!is_string($session) || !is_string($sent) || $session === '') { return false; }
+    return hash_equals($session, $sent);
+}
+
 function verifyCsrf(): void {
-    $token = $_POST['csrf_token'] ?? '';
-    if (!hash_equals($_SESSION['csrf_token'] ?? '', $token)) {
+    if (!csrfOk()) {
         http_response_code(403);
         die('Security token mismatch. Please go back and try again.');
     }

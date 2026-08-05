@@ -1,7 +1,7 @@
 <?php
 require_once 'auth.php';
 require_once 'db_connect.php';
-requireLogin();   // all roles can access; delete is admin-only below
+requireCurrentAccount($pdo);   // all roles can access; delete is admin-only below
 $me = currentUser();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') { verifyCsrf(); }

@@ -1,7 +1,7 @@
 <?php
 require_once 'auth.php';
 require_once 'db_connect.php';
-requireLogin();
+requireCurrentAccount($pdo);
 $me      = currentUser();
 $isAdmin = isAdmin();
 
