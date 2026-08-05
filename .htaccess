@@ -1,19 +1,13 @@
-# ─────────────────────────────────────────────────────────────────────────
-# Lummi Bay Market — framing / clickjacking policy
-#
-# The whole app must stay un-frameable so the login, builder, and admin
-# screens can't be embedded in a hostile page (clickjacking protection).
-#
-# The ONE exception is viewer.php — the public, no-login display page — which
-# needs to load inside external digital-signage widgets such as SmartSign2Go.
-# viewer.php has no session and no interactive controls, so allowing any site
-# to frame it carries no clickjacking risk.
-# ─────────────────────────────────────────────────────────────────────────
 <IfModule mod_headers.c>
-    # Default for every page: only this same site may frame it.
     Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
 
-    # Public sign display: allow it to be embedded anywhere.
+    # Public sign display: allow viewer.php to be embedded in external
+    # digital-signage widgets (e.g. SmartSign2Go). It is public and
+    # read-only with no interactive controls, so framing it carries no
+    # clickjacking risk. Every other page keeps X-Frame-Options SAMEORIGIN.
     <Files "viewer.php">
         Header always unset X-Frame-Options
         Header always set Content-Security-Policy "frame-ancestors *"
