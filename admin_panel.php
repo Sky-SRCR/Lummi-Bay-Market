@@ -193,9 +193,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg     = $res->message();
             $msgType = $res->isOk() ? 'success' : 'error';
 
-            $newBg = $_POST['d_bg'] ?? '';
+            // Only when this Display is actually on a colour. A colour input always
+            // submits a value, so on an image-background Display the form carried
+            // "#1a1a2e" whether the admin touched it or not — and saving a change of
+            // location silently replaced the uploaded background with that colour
+            // and advanced the layout stamp, invalidating every open Builder tab.
+            // There was no way to edit the title of such a Display without losing
+            // its background, and no undo. Changing an image background is the
+            // Builder's job, where you can see what you are doing.
+            $newBg = $display->backgroundType() === 'color' ? ($_POST['d_bg'] ?? '') : '';
             if ($res->isOk() && $newBg !== ''
-                && !($display->backgroundType() === 'color' && strcasecmp($newBg, $display->backgroundValue()) === 0)) {
+                && strcasecmp($newBg, $display->backgroundValue()) !== 0) {
                 $bgRes = $displayAdmin->setBackgroundColor($res->display(), $newBg);
                 $msg  .= ' ' . $bgRes->message();
                 if (!$bgRes->isOk()) { $msgType = 'error'; }
@@ -266,12 +274,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // be stored XSS when served from our own origin.
             $allowed = ['image/png'=>'png','image/jpeg'=>'jpg','image/gif'=>'gif',
                         'image/webp'=>'webp'];
-            $mime = mime_content_type($_FILES['logo_file']['tmp_name']);
+            // The error check comes first. A logo over the host's upload limit
+            // arrives with an empty tmp_name, and on PHP 8 mime_content_type('')
+            // throws a ValueError — an uncaught fatal on the Admin Panel, with the
+            // absolute server path attached if display_errors is on. api.php and
+            // crud.php both check the error code first; this was the only sink
+            // that did not.
             if ($_FILES['logo_file']['error'] !== UPLOAD_ERR_OK) {
                 $msg = 'Logo upload failed. Please try again.'; $msgType = 'error';
             } elseif ($_FILES['logo_file']['size'] > 2 * 1024 * 1024) {
                 $msg = 'Logo must be 2 MB or smaller.'; $msgType = 'error';
-            } elseif (!isset($allowed[$mime])) {
+            } elseif (!isset($allowed[$mime = mime_content_type($_FILES['logo_file']['tmp_name'])])) {
                 $msg = 'Logo must be a PNG, JPG, GIF, or WEBP image.'; $msgType = 'error';
             } else {
                 $dest = __DIR__ . '/uploads/brand_logo.' . $allowed[$mime];

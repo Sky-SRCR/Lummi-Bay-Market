@@ -397,6 +397,40 @@ class LayoutStore
         return null;
     }
 
+    /**
+     * Which Displays have an element pointing at this library asset, and how many
+     * elements in total.
+     *
+     * The Asset Library is shared, and publishing moves a text block's content into
+     * it — de-duplicated by exact content, so two signs showing the same words end
+     * up sharing one row, with `manual_content` set to NULL on both. Deleting that
+     * row therefore blanks a line on every sign that used it (`asset_id` is
+     * ON DELETE SET NULL, and the element has no copy of its own left), and editing
+     * it rewrites all of them at once with no publish. Neither the Library page nor
+     * its confirm could say so, because counting the elements involved means asking
+     * `canvas_elements`, and that is this module's table.
+     *
+     * Returns ['elements' => int, 'displays' => [display_id, …]].
+     */
+    public function assetUsage($assetId)
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT display_id, COUNT(*) AS n
+               FROM canvas_elements
+              WHERE asset_id = ?
+              GROUP BY display_id"
+        );
+        $stmt->execute([intval($assetId)]);
+
+        $elements = 0;
+        $displays = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $elements  += intval($row['n']);
+            $displays[] = intval($row['display_id']);
+        }
+        return ['elements' => $elements, 'displays' => $displays];
+    }
+
     // ---- Publish ------------------------------------------------------------
 
     /**
@@ -657,8 +691,33 @@ class LayoutStore
         if ($existing) { return intval($existing['id']); }
 
         $this->pdo->prepare("INSERT INTO assets (type, content, label) VALUES (?,?,?)")
-                  ->execute([$type, $content, 'Auto: ' . substr(strip_tags($content), 0, 20)]);
+                  ->execute([$type, $content, 'Auto: ' . self::firstCharacters(strip_tags($content), 20)]);
         return intval($this->pdo->lastInsertId());
+    }
+
+    /**
+     * The first $max characters — never a fraction of one.
+     *
+     * `substr` counts bytes, so any multi-byte character straddling the cut was
+     * halved, and the result is not valid UTF-8. Bound into a utf8mb4 column on a
+     * MySQL in strict mode that is error 1366, which rolls the whole publish back
+     * — permanently, because the label is rebuilt identically on every retry, and
+     * with no message pointing at the text block responsible. An em dash or a
+     * curly quote landing on byte 18 was enough; both are ordinary in signage.
+     *
+     * mbstring is not assumed present on the live host, hence the fallback: drop
+     * trailing bytes until what remains is valid UTF-8.
+     */
+    private static function firstCharacters($text, $max)
+    {
+        if (function_exists('mb_substr')) {
+            return mb_substr((string)$text, 0, $max, 'UTF-8');
+        }
+        $out = substr((string)$text, 0, $max);
+        while ($out !== '' && !preg_match('//u', $out)) {
+            $out = substr($out, 0, -1);
+        }
+        return $out;
     }
 
     private function ownsElement(Display $display, $elementId)

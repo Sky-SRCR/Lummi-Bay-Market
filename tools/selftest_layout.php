@@ -995,4 +995,88 @@ checkSame(false, syncSessionAccount($pdo), 'an account that never existed is ref
 $_SESSION = [];
 checkSame(false, syncSessionAccount($pdo), 'and a session with no account at all is refused');
 
-reportChecks(300);
+// ─────────────────────────────────────────────────────────────
+section('The edit lock keeps time in UTC, so it survives a clock that repeats an hour');
+
+// The whole defect in one property: lock stamps must be UTC, whatever zone the
+// server is set to. Local wall-clock strings are not monotonic — the autumn
+// fall-back replays an hour, second-pass strings sort below first-pass ones, and
+// strtotime resolves the repeated hour to its first occurrence. For that hour
+// anyone could take a held lock, nothing was read-only, and no publish was
+// refused. There is no way to move this process's clock into November, but there
+// is no need to: the bug is entirely "wrote local, compared as if absolute", and
+// this asserts the storage is absolute.
+$tzWas = date_default_timezone_get();
+date_default_timezone_set('America/Los_Angeles');   // the store's own zone, 7-8h off UTC
+
+$pdo   = newTestDb();
+$store = new TestDisplayStore($pdo);
+$tz    = makeTestDisplay($pdo, 'tz', 'Timezone');
+
+$store->claimLock($tz, 1);
+$storedActivity = $pdo->query("SELECT lock_activity_at FROM displays WHERE id = " . $tz->id())->fetchColumn();
+$storedTaken    = $pdo->query("SELECT lock_taken_at FROM displays WHERE id = " . $tz->id())->fetchColumn();
+check(abs(strtotime($storedActivity . ' UTC') - time()) <= 5,
+      'claimLock stores UTC even when the server is not on it');
+check(abs(strtotime($storedTaken . ' UTC') - time()) <= 5,
+      'and so does the moment the holder started');
+check(abs(strtotime($storedActivity) - time()) > 3600,
+      'read as local time those same strings are hours out — which is what used to happen');
+
+$fresh = $store->forId($tz->id());
+checkSame(true, $fresh->lockState()->isHeld(), 'a lock just taken reads as held, not as hours idle');
+check($fresh->lockState()->idleSeconds() <= 5, 'and its idle age is seconds, not an offset');
+
+$store->seizeLock($fresh, 2);
+$storedSeize = $pdo->query("SELECT lock_activity_at FROM displays WHERE id = " . $tz->id())->fetchColumn();
+check(abs(strtotime($storedSeize . ' UTC') - time()) <= 5, 'a takeover stores UTC too');
+checkSame(true, $store->forId($tz->id())->lockState()->heldBy(2), 'and the Display is held by whoever took it');
+
+// The boundary the two halves used to disagree about: LockState called exactly
+// IDLE_LAPSE_SECONDS lapsed while the claim guard still called it held, so a
+// second account got a read-write Builder for a Display the UPDATE would refuse.
+ageTestLock($pdo, $tz->id(), LockState::IDLE_LAPSE_SECONDS);
+$atBoundary = $store->forId($tz->id());
+checkSame(false, $atBoundary->lockState()->isHeld(), 'at exactly the idle window the lock reads as free');
+$claimed = $store->claimLock($atBoundary, 1);
+checkSame(true, $claimed->lockState()->heldBy(1), 'and it can actually be claimed at that same moment');
+
+date_default_timezone_set($tzWas);
+
+// ─────────────────────────────────────────────────────────────
+section('An Asset Library entry knows which signs depend on it');
+
+$pdo     = newTestDb();
+$store   = new TestDisplayStore($pdo);
+$layouts = newTestLayoutStore($pdo);
+$a = makeTestDisplay($pdo, 'aa', 'Sign A');
+$b = makeTestDisplay($pdo, 'bb', 'Sign B');
+
+// Both signs publish the same words. The pool de-duplicates by exact content, so
+// they end up sharing one row — which is what made a single delete blank both.
+$shared = ['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'Sockeye  18.99',
+           'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60];
+$layouts->publish($a, new PublishRequest([$shared], Background::unchanged(), 1, true, $a->layoutStamp()));
+$store->releaseLock($a, 1);
+$layouts->publish($b, new PublishRequest([$shared], Background::unchanged(), 1, true, $b->layoutStamp()));
+$store->releaseLock($b, 1);
+
+$assetId = intval($pdo->query("SELECT id FROM assets ORDER BY id ASC LIMIT 1")->fetchColumn());
+check($assetId > 0, 'publishing a text block put its words in the shared library');
+checkSame(2, count($pdo->query("SELECT id FROM canvas_elements WHERE asset_id = " . $assetId)->fetchAll()),
+          'and both signs point at the one row');
+
+$usage = $layouts->assetUsage($assetId);
+checkSame(2, $usage['elements'],        'the library can see how many blocks depend on an entry');
+checkSame(2, count($usage['displays']), 'and how many displays that is');
+
+$idle = $layouts->assetUsage(999999);
+checkSame(0, $idle['elements'], 'an entry nothing uses reports no blocks');
+checkSame([], $idle['displays'], 'and no displays');
+
+// The reason it matters: the elements keep no copy of their own text.
+$own = $pdo->query("SELECT manual_content FROM canvas_elements WHERE asset_id = " . $assetId)->fetchAll();
+checkSame([null, null], array_column($own, 'manual_content'),
+          'a pooled block holds no content of its own, so losing the entry loses the words');
+
+reportChecks(316);

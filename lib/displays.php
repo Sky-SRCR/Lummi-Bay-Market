@@ -93,7 +93,7 @@ class LockState
         // statements, which bind a PHP-formatted timestamp for exactly that reason.
         $this->idleSeconds = $this->activityAt === null
             ? self::IDLE_LAPSE_SECONDS
-            : max(0, time() - strtotime($this->activityAt));
+            : max(0, time() - self::toEpoch($this->activityAt));
     }
 
     /**
@@ -129,6 +129,21 @@ class LockState
         return $this->isHeld() && $this->holderId !== intval($accountId);
     }
 
+    /**
+     * A stored lock timestamp as an epoch second.
+     *
+     * The stored form is UTC (see DisplayStore's lock statements), and strtotime
+     * reads a bare 'Y-m-d H:i:s' in the *server's* zone — so it has to be told.
+     * A row written before this build stored local time and will read up to a few
+     * hours stale here, which errs towards "lapsed": the lock frees early rather
+     * than sticking, and one heartbeat rewrites it correctly.
+     */
+    private static function toEpoch($stamp)
+    {
+        $epoch = strtotime($stamp . ' UTC');
+        return $epoch === false ? 0 : $epoch;
+    }
+
     /** How long since the holder's last real interaction. Seconds. */
     public function idleSeconds() { return $this->idleSeconds; }
 
@@ -136,7 +151,9 @@ class LockState
     public function takenAtLabel()
     {
         if (!$this->isHeld() || $this->takenAt === null) { return ''; }
-        return date('g:ia', strtotime($this->takenAt));
+        // Stored in UTC, shown in the server's local time — the one place the two
+        // are allowed to meet, because this string is only ever read by a person.
+        return date('g:ia', self::toEpoch($this->takenAt));
     }
 
     /** "sky, editing since 2:04pm" — the material for a refused publish. Empty when free. */
@@ -543,6 +560,17 @@ class DisplayStore
     // PHP-formatted timestamp instead of CURRENT_TIMESTAMP. It is the one place in
     // this file that subtracts one time from another, and if MySQL and PHP disagree
     // about the hour a 15-minute window becomes an hour long or already expired.
+    //
+    // And they are UTC — gmdate, not date. Local wall-clock strings are not
+    // monotonic: on the autumn fall-back the hour from 1:00 to 2:00 happens twice,
+    // second-pass strings sort *below* first-pass ones, and strtotime resolves the
+    // repeated hour to its first occurrence. That combination broke the lock in
+    // three different directions for an hour every year — anyone could steal an
+    // actively-held lock, then for the rest of the hour every idle age read as an
+    // hour so nothing was read-only and no publish was refused, and afterwards a
+    // free Display could be claimed by nobody. UTC has no repeated hour. The only
+    // local time in this file is what a human reads, and that is formatted on the
+    // way out, not stored.
 
     /**
      * Take the lock, keep it, or take it back — one statement for all three.
@@ -573,8 +601,8 @@ class DisplayStore
         }
 
         $now      = time();
-        $activity = date('Y-m-d H:i:s', $now - $idleSeconds);
-        $cutoff   = date('Y-m-d H:i:s', $now - LockState::IDLE_LAPSE_SECONDS);
+        $activity = gmdate('Y-m-d H:i:s', $now - $idleSeconds);
+        $cutoff   = gmdate('Y-m-d H:i:s', $now - LockState::IDLE_LAPSE_SECONDS);
 
         // One conditional UPDATE rather than a read and then a write: two people
         // opening the same Display in the same second must not both be told it is
@@ -589,7 +617,7 @@ class DisplayStore
         // two engines disagree about which holder it is asking about.
         $this->pdo->prepare(
             "UPDATE displays
-                SET lock_taken_at    = CASE WHEN lock_holder_id = ? AND lock_activity_at >= ?
+                SET lock_taken_at    = CASE WHEN lock_holder_id = ? AND lock_activity_at > ?
                                             THEN lock_taken_at ELSE ? END,
                     lock_activity_at = ?,
                     lock_holder_id   = ?
@@ -597,7 +625,7 @@ class DisplayStore
                 AND (lock_holder_id IS NULL
                      OR lock_holder_id = ?
                      OR lock_activity_at IS NULL
-                     OR lock_activity_at < ?)"
+                     OR lock_activity_at <= ?)"
         )->execute([
             $accountId, $cutoff, $activity,
             $activity,
@@ -639,7 +667,7 @@ class DisplayStore
      */
     public function seizeLock(Display $display, $accountId)
     {
-        $now = date('Y-m-d H:i:s');
+        $now = gmdate('Y-m-d H:i:s');
         $this->pdo->prepare(
             "UPDATE displays SET lock_holder_id = ?, lock_taken_at = ?, lock_activity_at = ? WHERE id = ?"
         )->execute([intval($accountId), $now, $now, $display->id()]);

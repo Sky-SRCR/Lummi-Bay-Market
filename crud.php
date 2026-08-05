@@ -1,6 +1,8 @@
 <?php
 require_once 'auth.php';
 require_once 'db_connect.php';
+require_once __DIR__ . '/lib/displays.php';
+require_once __DIR__ . '/lib/layout_store.php';
 requireCurrentAccount($pdo);   // all roles can access; delete is admin-only below
 $me = currentUser();
 
@@ -129,7 +131,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_update'])) {
     if (empty($message) && $id > 0 && !empty($content)) {
         $stmt = $pdo->prepare("UPDATE assets SET label = ?, content = ? WHERE id = ?");
         $stmt->execute([$label, $content, $id]);
-        $message = 'Asset updated successfully.';
+
+        // Editing a library entry changes every sign that draws on it, on the next
+        // 30-second poll, with nobody publishing anything. Advance those Displays'
+        // stamps so a Builder that is open on one is refused rather than quietly
+        // republishing the text that was here a moment ago (ADR-0006).
+        $usage = (new LayoutStore($pdo, new DisplayStore($pdo)))->assetUsage($id);
+        $signs = new DisplayStore($pdo);
+        foreach ($usage['displays'] as $displayId) {
+            $d = $signs->forId($displayId);
+            if ($d) { $signs->advanceLayoutRevision($d); }
+        }
+
+        $message = $usage['elements']
+            ? 'Asset updated. It is used by ' . $usage['elements'] . ' block'
+              . ($usage['elements'] === 1 ? '' : 's') . ' on ' . count($usage['displays'])
+              . ' display' . (count($usage['displays']) === 1 ? '' : 's')
+              . ', which will show the new content within 30 seconds.'
+            : 'Asset updated successfully.';
     }
     } // end isAdmin check
 }
@@ -144,8 +163,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_delete'])) {
     } else {
         $id = intval($_POST['delete_id'] ?? 0);
         if ($id > 0) {
-            $pdo->prepare("DELETE FROM assets WHERE id = ?")->execute([$id]);
-            $message = 'Asset deleted.';
+            // Refused while any Display uses it. `canvas_elements.asset_id` is
+            // ON DELETE SET NULL and a pooled block keeps no copy of its own text,
+            // so deleting a used entry blanked that line on every sign drawing on
+            // it — within 30 seconds, with no warning, and permanently, because the
+            // next publish from either Builder writes the emptiness back. Publishing
+            // de-duplicates by exact content, so two signs showing the same words
+            // share one row and one delete takes out both.
+            $usage = (new LayoutStore($pdo, new DisplayStore($pdo)))->assetUsage($id);
+            if ($usage['elements'] > 0) {
+                $message  = 'That asset is still in use: ' . $usage['elements'] . ' block'
+                          . ($usage['elements'] === 1 ? '' : 's') . ' on ' . count($usage['displays'])
+                          . ' display' . (count($usage['displays']) === 1 ? '' : 's')
+                          . ' would be left blank. Remove those blocks first, or edit this'
+                          . ' asset instead of deleting it.';
+                $msgClass = 'error';
+            } else {
+                $pdo->prepare("DELETE FROM assets WHERE id = ?")->execute([$id]);
+                $message = 'Asset deleted.';
+            }
         }
     }
 }

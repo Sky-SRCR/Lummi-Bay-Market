@@ -210,7 +210,9 @@ function loadTestDisplay(PDO $pdo, $id)
 function ageTestLock(PDO $pdo, $displayId, $seconds)
 {
     $pdo->prepare("UPDATE displays SET lock_activity_at = ? WHERE id = ?")
-        ->execute([date('Y-m-d H:i:s', time() - intval($seconds)), intval($displayId)]);
+        // gmdate, matching what DisplayStore writes. Local time here would agree
+        // with a UTC container by accident and hide the bug this mirrors.
+        ->execute([gmdate('Y-m-d H:i:s', time() - intval($seconds)), intval($displayId)]);
 }
 
 function elementsOf(PDO $pdo, $displayId)

@@ -1,13 +1,31 @@
 <?php
 // Session authentication helpers — include at the top of every protected page.
-if (session_status() === PHP_SESSION_NONE) {
+// AUTH_NO_SESSION lets the one public entry point — api.php's get_layout, polled
+// every 30 seconds by every Screen — include this file for its helpers without
+// opening a session it never reads. A framed Screen returns no cookie, so each
+// poll was minting a fresh session file: thousands a day, per Screen, reaped by
+// nothing.
+if (!defined('AUTH_NO_SESSION') && session_status() === PHP_SESSION_NONE) {
     // Harden the session cookie: unreadable to page scripts (HttpOnly),
     // HTTPS-only (Secure), and not sent on cross-site requests (SameSite=Lax).
-    session_set_cookie_params([
-        'httponly' => true,
-        'secure'   => true,
-        'samesite' => 'Lax',
-    ]);
+    //
+    // Two forms, because the options-array signature arrived in PHP 7.3 and this
+    // app targets 7.1 with the live version unverified. On 7.1 the array form is
+    // not a partial success — it fails argument parsing and sets *nothing*, so
+    // the cookie loses HttpOnly and Secure as well as SameSite, and the warning
+    // it emits lands before session_start() and can break sign-in outright. The
+    // pre-7.3 idiom appends the attribute to the path, which the header accepts
+    // verbatim.
+    if (PHP_VERSION_ID >= 70300) {
+        session_set_cookie_params([
+            'path'     => '/',
+            'httponly' => true,
+            'secure'   => true,
+            'samesite' => 'Lax',
+        ]);
+    } else {
+        session_set_cookie_params(0, '/; SameSite=Lax', '', true, true);
+    }
     session_start();
 }
 require_once __DIR__ . '/config.php';

@@ -12,6 +12,15 @@
 // endpoint added later inherits the check by resolving its Display the same way.
 // See docs/BUILD-REFERENCE.md.
 
+// The public poll gets no session. auth.php opens one at include time, and this
+// endpoint is fetched every 30 seconds by every Screen without ever reading
+// $_SESSION — so on a framed Screen, which returns no cookie, every poll was
+// creating a new session file. Read straight from $_GET: $action is not resolved
+// until after the includes, and this decision has to be made before them.
+if (($_GET['action'] ?? '') === 'get_layout' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
+    define('AUTH_NO_SESSION', true);
+}
+
 require_once 'auth.php';
 require_once 'db_connect.php';
 require_once __DIR__ . '/lib/schema.php';
@@ -122,16 +131,31 @@ function backgroundFromPost(bool $isAdmin): Background {
         return Background::color($_POST['bg_val'] ?? '#1a1a2e');
     }
 
-    if (isset($_FILES['bg_file'])) {
+    $sentAFile = isset($_FILES['bg_file'])
+              && ($_FILES['bg_file']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_NO_FILE;
+
+    if ($sentAFile) {
         $check = validateFile($_FILES['bg_file'], IMG_EXT, IMG_MIME);
         if ($check['ok']) {
             ensureUploads();
-            $name = 'bg_' . time() . '.' . $check['ext'];
+            // uniqid, not time(): two admins publishing a background in the same
+            // second produced the same path, and move_uploaded_file overwrites
+            // without a word — so the second publish silently replaced the first
+            // Display's background. The image and video uploads already do this.
+            $name = 'bg_' . uniqid('', true) . '.' . $check['ext'];
             if (move_uploaded_file($_FILES['bg_file']['tmp_name'], 'uploads/' . $name)) {
                 return Background::image('uploads/' . $name);
             }
         }
+        // The file was rejected — too large for the host, wrong type, or the move
+        // failed. That is emphatically not "keep the stored image": keepImage sets
+        // bg_type to 'image' while leaving bg_val as whatever it was, so a Display
+        // on a colour ended up with background-image: url('#1a1a2e'), which loads
+        // nothing and turns the sign near-black. Change nothing instead.
+        return Background::unchanged();
     }
+
+    // No file offered at all: the documented "switch back to the stored image".
     return Background::keepImage();
 }
 
