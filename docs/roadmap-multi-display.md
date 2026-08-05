@@ -1,9 +1,10 @@
 # Roadmap — Multi-Display Support
 
-Status: **Phases 1–5 built on `claude/app-update-planning-1pjqfr`, not yet deployed.**
-Phase 6 not started. How the code is shaped, and the invariants each phase must
-preserve, are in [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that alongside
-this file.
+Status: **All six phases built on `claude/app-update-planning-1pjqfr`, not yet
+deployed** — open as [PR #3](https://github.com/Sky-SRCR/Lummi-Bay-Market/pull/3).
+The build is finished; what is left is the deployment visit below. How the code is
+shaped, and the invariants any later change must preserve, are in
+[`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that alongside this file.
 
 ## Why
 
@@ -260,6 +261,29 @@ nothing can shorten.
 corrected — all three present 1920 × 1080 as a fixed property of the system, and
 `HANDOFF.md` states a viewer-only resolution change is impossible.
 
+**Built.** `schema.sql` now carries `display_permissions`, `lock_taken_at`, and a
+header that says what it is: a rebuild artefact that has to agree with the two
+runtime convergence functions, which are the authority on what the live database
+becomes. `CONTEXT.md`, `README.md` and `HANDOFF.md` describe an installation that
+drives any number of signs; `HANDOFF.md`'s claim that a viewer-only resolution
+change is impossible is replaced by what ADR-0004 actually establishes — a Screen's
+resolution and a Display's canvas size are different things, so swapping in a larger
+TV of the same shape needs no change at all, while a different *shape* means a new
+Display. `help.php` describes the canvas as the size of the display being edited,
+explains that the address is what decides which sign a screen shows, documents the
+three Viewer notices, and covers the Displays tab, the grant matrix and the zoom
+control.
+
+Proofreading turned up two real defects, both fixed here and recorded in
+BUILD-REFERENCE §4f. Brand Standards could not be edited on a fresh install: the
+form saves with `UPDATE … WHERE block_type = ?` and four of the six branded rows were
+never seeded, so saving them was a silent no-op — both schema files now seed all six.
+And `help.php`'s nav still linked to a bare `viewer.php`, which since ADR-0003 is the
+"no display specified" notice; the link is gone, and §5 has a grep to keep it that
+way. A third correction is a documentation-only one worth knowing: Brand Standards
+reach every Screen within 30 seconds *without* a publish, because the typography is
+part of every snapshot — three places said to publish afterwards.
+
 ## Risks and watch-items
 
 - **Unscoped delete on publish (Phase 1)** — the one change that can lose every
@@ -273,11 +297,11 @@ corrected — all three present 1920 × 1080 as a fixed property of the system, 
   `X-Frame-Options` so signage widgets can embed the sign, and the Viewer is
   scroll-locked for kiosks. Keeping one filename means every Display inherits both;
   anything that renames or splits `viewer.php` breaks them.
-- **`builder.php` is ~2450 lines, mostly inline JavaScript** — `php -l` cannot see
+- **`builder.php` is ~3050 lines, mostly inline JavaScript** — `php -l` cannot see
   those errors. Phases 2 and 5 touch it heavily and need reading, not just linting.
 - **No tests** — verification is manual against the live site.
 
-## Before this reaches the sign (Phases 1–5)
+## Before this reaches the sign
 
 In order, on the one visit:
 

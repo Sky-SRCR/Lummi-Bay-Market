@@ -1,8 +1,9 @@
 # Lummi Bay Market — Digital Signage
 
-A PHP + MySQL display-builder for the Lummi Bay Market drive-thru pricing
-sign: admins design a 1920×1080 layout, publish it, and a fullscreen viewer
-on a TV auto-refreshes to show it.
+A PHP + MySQL display-builder for the Lummi Bay Market's pricing signs: someone
+designs a layout on a Display's canvas, publishes it, and a fullscreen Viewer on
+a Screen auto-refreshes to show it. One installation drives any number of signs,
+each with its own canvas size and its own list of people allowed to edit it.
 
 ## Language
 

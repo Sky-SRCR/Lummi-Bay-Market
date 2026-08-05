@@ -53,7 +53,7 @@ Design rules, applied to every module added by this build:
 
 | Module | Interface, in one line | Hides |
 |--------|------------------------|-------|
-| `schema.php` | `ensureSignageSchema(PDO): void` | Every idempotent `ALTER`/`CREATE`, the `displays` table, `display_id` + backfill + index + FK, the drive-thru seed, and the "run at most once per request" latch. |
+| `schema.php` | `ensureSignageSchema(PDO): void` | Every idempotent `ALTER`/`CREATE`, the `displays` and `display_permissions` tables, `display_id` + backfill + index + FK, the drive-thru seed, the Brand Standards row seed, and the "run at most once per request" latch. |
 | `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the whole access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. |
@@ -92,8 +92,10 @@ through the app again:
   the planned `takeLock()` and `heartbeat()` are one method, `claimLock()`, and
   `forceUnlock()` is `seizeLock()` because it hands the lock over rather than
   freeing it.
-- **Phase 6** (docs/schema): `schema.sql` is regenerated to match `schema.php`.
-  Keep the two in step as you go so Phase 6 is proofreading, not archaeology.
+- ~~**Phase 6** (docs/schema)~~ **Done** — see §4f. `schema.sql` matches
+  `schema.php`, and the four docs that described a single fixed 1920×1080 sign
+  (`README.md`, `CONTEXT.md`, `HANDOFF.md`, `help.php`) describe what the code does.
+  Proofreading them found two real defects; both are fixed and recorded in §4f.
 
 ---
 
@@ -143,6 +145,11 @@ through the app again:
     the *age* of the last interaction, so a forgotten tab keeps beating and still
     frees the Display on time. Anything added to the Builder that keeps the lock
     alive must be something a person did on purpose.
+12. **`schema.sql` is what `schema.php` converges to.** They are two statements of
+    one structure, and the runtime one is authoritative — a column that exists only
+    in `schema.sql` never reaches the live server. Add to both in the same commit,
+    and remember `CREATE TABLE IF NOT EXISTS` is a no-op on a database that already
+    has the table, so a column added to an existing table needs its own `ALTER`.
 
 ---
 
@@ -202,7 +209,7 @@ decisions already made, not new decisions.
 - **`canvas_settings` is kept on the server, unread.** Dropping a table on a
   live database with no backup buys nothing; leaving it costs nothing and is a
   rollback path during the one visit where it matters. `schema.sql` documents it
-  as retired in Phase 6.
+  as retired and no longer creates it.
 - **PHP 7.1-compatible syntax.** The live server's PHP version is unverified and
   `.htaccess` still carries `mod_php7` blocks, so no typed properties,
   constructor promotion, enums, `readonly`, `match`, or arrow functions. This
@@ -433,6 +440,50 @@ decisions already made, not new decisions.
   Builder holding the old layout is refused by ADR-0006 the moment it publishes.
   Extending the lock to cover them would be a second rule about the same collision.
 
+## 4f. Decisions taken during Phase 6
+
+Phase 6 was meant to be proofreading. Reading the docs against the code found two
+things the code had wrong, which is the argument for doing this phase last rather
+than skipping it.
+
+- **`schema.sql` is a rebuild artefact, not a description of the server, and it
+  says so.** Its header now names the two runtime convergence functions and states
+  the order of authority: `lib/schema.php` and `auth.php` decide what the live
+  database becomes, and `schema.sql` has to agree with them (invariant 12). The
+  alternative — documenting the live server's current lagging structure — describes
+  something that changes the next time an admin signs in, and would have to be
+  rewritten after every deploy.
+- **Brand Standards could not be edited on a fresh install** (fixed). The form
+  saves with `UPDATE block_styles … WHERE block_type = ?`, and only `item_title_2`
+  and `price_2` were ever seeded — so on a database that never had the original four
+  rows, saving Section Header, Item Title, Price or Description was a silent no-op:
+  the field reverted on reload and nothing said why. Both `schema.php` and
+  `schema.sql` now seed all six branded types with `INSERT IGNORE`, which fills gaps
+  without touching the store's own values. Fixing the save to upsert was the
+  alternative; seeding is one statement in the file that already owns convergence,
+  and it keeps "a branded block type has a row" true for every reader of the table
+  rather than just for that one form.
+- **Brand Standards reach the Screens without a publish.** `LayoutStore` builds
+  `block_styles` into every snapshot, and the Viewer applies it on each poll, so a
+  saved style change appears on every Display within 30 seconds. Two help pages and
+  the panel's own blurb said to publish afterwards. Corrected rather than changed:
+  it is the one edit that is genuinely global, and making it wait for a publish
+  would mean waiting for a publish *per Display*. Worth knowing that it is also the
+  one edit that can alter a sign while somebody else holds its lock — the lock
+  guards a Display's layout, not the typography shared across all of them.
+- **`help.php` links to no Viewer.** Its nav carried `View Display ↗` pointing at a
+  bare `viewer.php`, which after ADR-0003 is the "no display specified" notice. The
+  link is gone rather than pointed somewhere: this page is not about one Display,
+  the Builder already links to the one it is editing, and the admin Displays tab
+  lists every address. Any future page-level "view the sign" link needs a Display in
+  hand — hence the new grep in §5.
+- **The user guide names sizes only as examples.** `help.php` had 1920 × 1080 in
+  three places as a property of the system. It now describes the canvas as the size
+  of the Display being edited, explains that the address decides which sign a screen
+  shows, documents the three Viewer notices, and covers the Displays tab, the grant
+  matrix and the zoom control. The size presets in `admin_panel.php` are the one
+  place those numbers still belong.
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -446,11 +497,18 @@ grep -rn "INTO displays\|UPDATE displays\|FROM displays" --include=*.php .  # on
 grep -rn "INTO display_permissions\|FROM display_permissions" --include=*.php .  # only lib/grants.php, plus tools/
 grep -rn "lock_holder_id\|lock_activity_at" --include=*.php .  # only lib/displays.php + lib/schema.php, plus tools/
 grep -rn "WHERE id = 1\|id=1" --include=*.php . # must be empty
-grep -rn "1920\|1080" --include=*.php .        # only prose, presets and help.php (Phase 6)
+grep -rn "1920\|1080" --include=*.php .        # only the admin size presets, the seed, and prose
+grep -rn "viewer.php\"\|viewer.php'" --include=*.php .  # every link must carry ?display=
 ```
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~2450 lines of it.
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3050 lines of it.
 Anything touching that file needs reading, not linting.
+
+`schema.sql` has no automated check at all — nothing reads it, so a column missing
+from it fails silently on a future rebuild and nowhere else. Diff it against
+`lib/schema.php` by eye whenever either changes (invariant 12), and use
+`tools/rehearse_phase1.php` on a copy of live data to see what MySQL actually ends
+up with.
 
 On a server with a **copy** of live data — never the live database:
 
@@ -473,3 +531,8 @@ different-shaped Display, including a portrait one.
 One PR per phase, on `claude/app-update-planning-1pjqfr`, restarted from `main`
 after each merge. Every merge reaches the sign by hand, so phase order is
 deployment order and each phase must leave the app coherent on its own.
+
+In the event, Phases 1–5 went out as one PR — `main` had none of them, so there was
+nothing to restart from and no way to review Phase 5's lock without the Displays it
+locks. Phase 6 joined it for the same reason: the docs it corrects describe the code
+in that PR. The rhythm applies from the next phase of work, whatever it is.

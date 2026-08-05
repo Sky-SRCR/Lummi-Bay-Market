@@ -57,10 +57,21 @@ function ensureSignageSchema(PDO $pdo)
                      ENUM('free','section_header','item_title','item_title_2','price','price_2','description')
                      DEFAULT 'free'");
 
+    // One row per branded block type must exist for Brand Standards to be
+    // editable at all: that form saves with UPDATE … WHERE block_type = ?, so a
+    // missing row makes the save a silent no-op — the field reverts on reload and
+    // nothing says why. INSERT IGNORE, so the store's own numbers are never
+    // touched; this only fills gaps. All six are listed rather than just the two
+    // this build added, because the four originals are missing on a fresh install
+    // (schema.sql seeds the same set).
     schemaTry($pdo, "INSERT IGNORE INTO block_styles
                      (block_type,font_family,font_size,font_color,font_weight,font_style,line_height) VALUES
+                     ('section_header','Arial',36,'#ffffff','bold','normal',1.30),
+                     ('item_title','Arial',24,'#ffffff','bold','normal',1.30),
                      ('item_title_2','Arial',24,'#27ae60','bold','normal',1.30),
-                     ('price_2','Arial',30,'#e74c3c','bold','normal',1.20)");
+                     ('price','Arial',30,'#e74c3c','bold','normal',1.20),
+                     ('price_2','Arial',30,'#e74c3c','bold','normal',1.20),
+                     ('description','Arial',16,'#bdc3c7','normal','normal',1.40)");
 
     // ---- displays -----------------------------------------------------------
     // One row per configured sign. Absorbs canvas_settings (background) and

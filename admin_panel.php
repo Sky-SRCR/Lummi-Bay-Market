@@ -1028,8 +1028,9 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
     <div class="card">
         <h2>Brand Standards — Locked Text Styles</h2>
         <p style="font-size:13px; color:#7f8c8d; margin-bottom:16px;">
-            These styles apply to the four typed text blocks. Basic users cannot change them.
-            Changes take effect immediately on the display screen.
+            These styles apply to the six branded text blocks, on every display. Basic users
+            cannot change them. Changes reach every screen within 30 seconds — no publishing
+            needed, because a screen reads this typography on each poll.
         </p>
         <form method="POST">
             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">

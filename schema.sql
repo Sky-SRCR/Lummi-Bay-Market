@@ -1,22 +1,32 @@
 -- Lummi Bay Market — Digital Signage · Database schema
 --
 -- Verified against a phpMyAdmin dump of the live database
--- (`silverad_lummi_market_drive_thru`, server 5.7) on 2026-08-04, then extended
--- by Phase 1 of the multi-display build (`displays`, `canvas_elements.display_id`).
--- Structure only — contains no application/user data.
+-- (`silverad_lummi_market_drive_thru`, server 5.7) on 2026-08-04, then brought
+-- up to what the multi-display build expects (Phases 1–5): the `displays` table,
+-- `canvas_elements.display_id`, `display_permissions`, the publish stamp and the
+-- edit-lock columns. Structure only — no store content and no accounts.
 --
--- NOTE on Phase 1: the live server does not have the `displays` table or the
--- `display_id` column yet either. ensureSignageSchema() in lib/schema.php adds
--- them at runtime on the first authenticated request, backfills every existing
--- element to the drive-thru Display, and carries the background over from
--- canvas_settings. This file is what a fresh rebuild should produce.
+-- This file is what a **fresh rebuild** should produce. It is not a description
+-- of the live server, which lags it: the live database still has none of the
+-- multi-display tables or columns, and none of the three login-lockout columns
+-- on `users`. That gap is deliberate and self-closing — there is no migration
+-- tool here, so the application converges the schema at runtime with idempotent
+-- statements:
 --
--- NOTE on the login-lockout columns: the three columns on `users`
--- (failed_attempts, last_failed_at, locked_until) are NOT yet present on the
--- live server. The application adds them at runtime via an idempotent
--- ALTER TABLE (see ensureLockoutColumns() in auth.php) on the first login or
--- password reset. They are included here so a fresh rebuild matches what the
--- current code expects. See docs/adr/0001-account-keyed-login-lockout.md.
+--   * ensureSignageSchema() in lib/schema.php, on every authenticated request —
+--     the newer canvas_elements columns, the widened ENUMs, `displays`,
+--     `display_permissions`, and the display_id backfill that hands every
+--     pre-existing element to the drive-thru Display. Never run on the public
+--     get_layout poll.
+--   * ensureLockoutColumns() in auth.php, on the first login or password reset —
+--     failed_attempts, last_failed_at, locked_until. Those stay in the pre-auth
+--     path by design; see docs/adr/0001-account-keyed-login-lockout.md.
+--
+-- So the order of authority is: lib/schema.php and auth.php decide what the live
+-- database becomes, and this file has to agree with them. If the two ever
+-- disagree, they are both wrong until someone reconciles them — start with
+-- `php tools/rehearse_phase1.php`, which reports what a real MySQL database
+-- actually ended up with.
 
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
@@ -58,7 +68,15 @@ CREATE TABLE IF NOT EXISTS assets (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ─────────────────────────────────────────────────────────────
--- block_styles — default typography per block type, keyed by block_type.
+-- block_styles — Brand Standards: typography per branded block type, keyed by
+-- block_type and shared by every Display (a deliberate choice — per-Display
+-- typography is a clean later addition, see the roadmap's "out of scope").
+--
+-- One row per branded block type has to exist. The Brand Standards form saves
+-- with `UPDATE … WHERE block_type = ?`, so a missing row is not created by using
+-- the UI — the save silently does nothing. The seed below is why a fresh install
+-- has something to edit; lib/schema.php seeds the same rows at runtime for a
+-- database that predates them.
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS block_styles (
     block_type  VARCHAR(50)  NOT NULL,
@@ -72,12 +90,33 @@ CREATE TABLE IF NOT EXISTS block_styles (
     PRIMARY KEY (block_type)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Starting points for a fresh install, not a copy of the live values — the store
+-- edits these in Admin Panel → Display Branding and its own numbers win.
+-- INSERT IGNORE, so re-running this file never overwrites what is there.
+INSERT IGNORE INTO block_styles
+    (block_type, font_family, font_size, font_color, font_weight, font_style, line_height) VALUES
+    ('section_header', 'Arial', 36, '#ffffff', 'bold',   'normal', 1.30),
+    ('item_title',     'Arial', 24, '#ffffff', 'bold',   'normal', 1.30),
+    ('item_title_2',   'Arial', 24, '#27ae60', 'bold',   'normal', 1.30),
+    ('price',          'Arial', 30, '#e74c3c', 'bold',   'normal', 1.20),
+    ('price_2',        'Arial', 30, '#e74c3c', 'bold',   'normal', 1.20),
+    ('description',    'Arial', 16, '#bdc3c7', 'normal', 'normal', 1.40);
+
 -- ─────────────────────────────────────────────────────────────
 -- displays — one row per configured sign (a Display). Carries the canvas
 -- dimensions that used to be hardcoded as 1920×1080, the background that used
 -- to live in the single-row canvas_settings, the publish stamp (ADR-0006) and
--- the edit-lock columns (ADR-0007, behaviour arrives in Phase 5).
--- Added by Phase 1; created at runtime by ensureSignageSchema() in lib/schema.php.
+-- the edit-lock columns (ADR-0007).
+--
+-- `tag` is the screen name tag, and it is a URL contract: every Viewer names its
+-- Display (ADR-0003), so renaming a tag changes the address the Screen must be
+-- pointed at. The canvas dimensions are fixed when the row is created and never
+-- edited afterwards (ADR-0004) — every element position is an absolute integer,
+-- and shrinking a canvas would hide rows that still exist.
+--
+-- Both lock columns are read together and neither is authoritative alone: a
+-- holder with lock_activity_at older than the idle window is a **lapsed** lock,
+-- which is free. Nothing clears it on a schedule; LockState decides on read.
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS displays (
     id                INT(11)      NOT NULL AUTO_INCREMENT,
@@ -92,8 +131,9 @@ CREATE TABLE IF NOT EXISTS displays (
     layout_revision   INT(11)      NOT NULL DEFAULT 0 COMMENT 'publish stamp; increments on every publish',
     last_published_at DATETIME     DEFAULT NULL,
     last_published_by INT(11)      DEFAULT NULL,
-    lock_holder_id    INT(11)      DEFAULT NULL COMMENT 'edit lock holder (Phase 5)',
-    lock_activity_at  DATETIME     DEFAULT NULL COMMENT 'last real interaction by the holder (Phase 5)',
+    lock_holder_id    INT(11)      DEFAULT NULL COMMENT 'edit lock holder',
+    lock_taken_at     DATETIME     DEFAULT NULL COMMENT 'when the holder started editing',
+    lock_activity_at  DATETIME     DEFAULT NULL COMMENT 'last real interaction by the holder',
     created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY tag (tag),
@@ -139,6 +179,30 @@ CREATE TABLE IF NOT EXISTS canvas_elements (
     CONSTRAINT canvas_elements_ibfk_1 FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE SET NULL,
     CONSTRAINT canvas_elements_ibfk_2 FOREIGN KEY (section_id) REFERENCES canvas_elements (id) ON DELETE CASCADE,
     CONSTRAINT canvas_elements_ibfk_3 FOREIGN KEY (display_id) REFERENCES displays (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ─────────────────────────────────────────────────────────────
+-- display_permissions — one row per grant: this account may edit this Display
+-- (ADR-0005). A grant *is* the row's existence; there is deliberately no "level"
+-- column, because what an account may do once inside a Display comes from
+-- users.role. Two axes: the grant says which Displays, the role says how much.
+--
+-- Admins are never granted anything — they hold every Display by role — so an
+-- empty table means "no basic account can edit anything yet", which is the right
+-- default for a store that has been running on admin accounts only.
+-- ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS display_permissions (
+    id         INT(11)   NOT NULL AUTO_INCREMENT,
+    display_id INT(11)   NOT NULL,
+    user_id    INT(11)   NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY display_user (display_id, user_id),
+    KEY user_id (user_id),
+    -- Both cascade: a grant is meaningless once either side is gone, and a stale
+    -- row pointing at a reused id would hand someone access nobody gave them.
+    CONSTRAINT display_permissions_ibfk_1 FOREIGN KEY (display_id) REFERENCES displays (id) ON DELETE CASCADE,
+    CONSTRAINT display_permissions_ibfk_2 FOREIGN KEY (user_id)    REFERENCES users (id)    ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ─────────────────────────────────────────────────────────────
