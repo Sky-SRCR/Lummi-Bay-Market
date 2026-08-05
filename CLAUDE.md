@@ -32,4 +32,8 @@ php -l <every touched .php>
 php tools/selftest_layout.php
 ```
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~2450 lines of it.
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3060 lines of it —
+which is why the standing gate is not enough on its own. Extract the `<script>`
+block and run `node --check` over it after touching that file; the same goes for
+`viewer.php`, which runs unattended on a TV where a thrown exception is a blank
+sign rather than a stack trace anybody will read.

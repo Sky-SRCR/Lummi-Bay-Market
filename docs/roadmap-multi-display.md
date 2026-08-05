@@ -250,7 +250,7 @@ heartbeat would take it straight back.
 
 The planned `takeLock()`/`heartbeat()` pair became one `claimLock()`, and
 `forceUnlock()` became `seizeLock()`; see BUILD-REFERENCE §4e for both and the rest
-of the phase's decisions, including why `builder.php` claims the lock on a GET. 237
+of the phase's decisions, including why `builder.php` claims the lock on a GET. 316
 self-test checks pass. **Not yet run against MySQL or a browser**, and this is the
 phase that needs two browsers as well as two accounts — plus one 15-minute wait that
 nothing can shorten.

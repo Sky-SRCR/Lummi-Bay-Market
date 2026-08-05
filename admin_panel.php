@@ -403,10 +403,7 @@ $canvasPresets = [
     ['1280×720 — Landscape, smaller screen',           1280,  720],
     ['1920×540 — Wide strip / ticker',                 1920,  540],
 ];
-$styles = [];
-foreach ($pdo->query("SELECT * FROM block_styles")->fetchAll() as $s) {
-    $styles[$s['block_type']] = $s;
-}
+$styles = (new BrandStyles($pdo))->all();
 $typeLabels = [
     'section_header' => 'Section Header',
     'item_title'     => 'Item Title',

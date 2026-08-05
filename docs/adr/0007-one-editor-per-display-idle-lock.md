@@ -71,3 +71,47 @@ the first tab publishes over them.
   timestamps on read, so no cron is required.
 - 15 minutes is a judgement call, not a law. It is one constant, changeable if the
   store's rhythm turns out different.
+
+## Amendment — the lock covers a Display's content, not only its publishes
+
+The lock as first built guarded one action: publishing. An adversarial audit
+found two ways round it, and neither needed any trickery.
+
+The admin panel's Work Area hides and deletes elements directly, and checked only
+the grant. So an admin could remove a block from under somebody who was twenty
+minutes into an edit. The staleness stamp then refused that person's publish —
+which protects the *layout*, and is exactly the outcome this ADR exists to
+prevent on top of ADR-0006. "Reload and redo it" is the cost being avoided, and
+the stamp cannot avoid it. Both writes now refuse while another account holds a
+live lock, and say who holds it. They return an `ElementResult` rather than a
+bool, because a bool could only say "wrong Display" and had nowhere to put a
+second refusal.
+
+Brand Standards is the harder case and the reason this is an amendment rather
+than a bug fix. Its typography is shared by every Display (decision C in the
+roadmap), is part of every snapshot, and is applied at render — so it reaches
+every Screen on the next 30-second poll with **no publish at all**. A per-Display
+lock cannot guard a table every Display reads. Three options were weighed:
+
+- **Refuse while anyone else is editing anything** — chosen. Any held lock is
+  somebody sizing blocks against typography that is about to change under them,
+  and they would never be told. No new state, nothing to leak, nothing to wedge.
+  The cost is real: a busy shop can block a brand change until a lock lapses,
+  which takes at most one idle window.
+- **A separate global Brand Standards lock** — rejected. More machinery, another
+  lock that can strand, and it still would not stop a brand change landing on a
+  Display somebody is mid-edit on, which is the actual harm.
+- **Per-Display typography** — rejected here as out of scope. It is the fully
+  consistent answer and it reverses decision C: a migration, a reworked admin
+  surface, and the shared-look-across-signs property goes away unless copied by
+  hand. Worth its own project if the store ever wants signs that look different.
+
+A lapsed lock blocks nothing, in all three cases. That keeps "free and lapsed are
+the same state" true everywhere, which is what lets this scheme work without a
+cron.
+
+One more thing this amendment fixes rather than decides: the lock's timestamps
+are stored in UTC now. They were PHP local wall-clock strings, compared both as
+ordered SQL strings and through `strtotime` — and local time repeats an hour every
+autumn, which broke the lock in three directions for that hour. Nothing about the
+15-minute rule changed; only the clock it is measured against.

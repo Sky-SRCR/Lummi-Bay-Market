@@ -57,7 +57,8 @@ Design rules, applied to every module added by this build:
 | `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the whole access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. |
-| `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, scoped hide/delete. |
+| `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, and `assetUsage()` — which Displays depend on a shared library entry. |
+| `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 
@@ -105,10 +106,24 @@ through the app again:
    anywhere may touch the table without a `display_id` predicate. The publish
    `DELETE` is the dangerous one: it deletes *this Display's* rows only. Grep
    `canvas_elements` after any change; every hit must be inside
-   `lib/layout_store.php`.
-2. **No `WHERE id = 1`, ever again.** `canvas_settings` is retired: the table is
-   left on the server as a rollback artefact but no code reads or writes it. A
-   Display's background lives on the Display row.
+   `lib/layout_store.php` — with two standing exceptions that a reader has to know
+   about, or the grep trains them to skim: `lib/schema.php` carries the table's own
+   DDL and its backfill, and the string also appears in the endpoint *name*
+   `get_canvas_elements`, which puts hits in `api.php` and `admin_panel.php` that
+   are not statements at all. A genuinely unscoped statement added to `api.php`
+   would arrive among hits already classified as normal, so read them, don't count
+   them. There is also a back door the grep cannot see at all: `assets` is shared,
+   a pooled text block keeps no content of its own, and deleting a row there blanks
+   that line on every Display using it without the string `canvas_elements`
+   appearing anywhere. `LayoutStore::assetUsage()` exists so `crud.php` can refuse.
+2. **No `WHERE id = 1`, ever again.** A Display's background lives on the Display
+   row. `canvas_settings` is retired to exactly one reader: `seedLegacyDisplay()`
+   in `lib/schema.php` reads its lowest row once, to carry the old background
+   forward onto the Display that replaces it. Nothing writes it, and nothing else
+   reads it. (This invariant used to claim *no* code read it, which was wrong the
+   day it was written — and the §5 grep for it, `WHERE id = 1`, structurally cannot
+   match the `ORDER BY id ASC LIMIT 1` that does the reading. Two other docs stated
+   the truth; this one contradicted them.)
 3. **A Viewer URL names its Display** (ADR-0003). No default, no master, no
    fallback Display on the viewing path, ever. The one place a request may name no
    Display is the *editing* entry rule in §3, which resolves only when the
@@ -120,13 +135,21 @@ through the app again:
    (ADR-0006, ADR-0007). There is no undo; refusal is the whole safety net. Two
    things can make a publish that refusal: a stamp that has moved, and an edit
    lock that has. Both are checked inside `LayoutStore::publish()`, under the same
-   row lock, so neither can be talked out of by a client.
+   row lock, so neither can be talked out of by a client. And a body that did not
+   *decode* is not an empty layout: `PublishRequest::fromPostedJson()` refuses it,
+   because publishing an empty layout deletes every element and the old
+   `json_decode(...) ?: []` read an unreadable request as exactly that.
 6. **Text-block content is plain text** (ADR-0002). `toPlainText()` on save for
    `type = 'text'` only; render with `textContent`. Never `innerHTML`, never
    strip carousel/table/marquee JSON or media paths.
-7. **The public path runs no DDL.** `get_layout` is polled every 30s by every
-   Screen forever. Schema convergence happens on authenticated requests, plus one
-   self-healing retry if the schema is genuinely absent (§3).
+7. **The public path runs no DDL, and opens no session.** `get_layout` is polled
+   every 30s by every Screen forever. Schema convergence happens on authenticated
+   requests, plus one self-healing retry if the schema is genuinely absent (§3).
+   The session half is newer and was quietly false for a while: `api.php` includes
+   `auth.php`, which opens a session at include time, so the poll was minting one
+   session file per request on any Screen that discards cookies — which a framed
+   Screen does, because the cookie is SameSite=Lax. `AUTH_NO_SESSION` is defined
+   before the include on that one path.
 8. **Grants and roles are two axes** (ADR-0005). Grants say *which* Displays;
    `users.role` still says *how much* power. Enforcement is server-side, in the
    resolution seam, on reads and writes alike — never by an endpoint's own `if`,
@@ -206,10 +229,13 @@ decisions already made, not new decisions.
 - **Publish takes a row lock on the Display** (`SELECT … FOR UPDATE`) inside the
   transaction, so two simultaneous publishes serialise instead of both reading
   the same revision and both passing the check.
-- **`canvas_settings` is kept on the server, unread.** Dropping a table on a
-  live database with no backup buys nothing; leaving it costs nothing and is a
-  rollback path during the one visit where it matters. `schema.sql` documents it
-  as retired and no longer creates it.
+- **`canvas_settings` is kept on the server, read exactly once.** Dropping a
+  table on a live database with no backup buys nothing; leaving it costs nothing
+  and is a rollback path during the one visit where it matters. `schema.sql`
+  documents it as retired and no longer creates it. `seedLegacyDisplay()` reads
+  its lowest row to carry the old background onto the Display that replaces it —
+  the one reader, and the reason invariant 2 says "retired to one reader" rather
+  than "unread".
 - **PHP 7.1-compatible syntax.** The live server's PHP version is unverified and
   `.htaccess` still carries `mod_php7` blocks, so no typed properties,
   constructor promotion, enums, `readonly`, `match`, or arrow functions. This
@@ -484,6 +510,80 @@ than skipping it.
   matrix and the zoom control. The size presets in `admin_panel.php` are the one
   place those numbers still belong.
 
+## 4g. What a ten-agent adversarial audit changed
+
+Ten independent passes, each told to break one surface and to refute its own
+findings before reporting. Worth recording because the pattern in what it found
+is more useful than the list: **every defect that mattered was a write that
+failed quietly, and most of them printed a success message while failing.**
+
+What held, first, because it is most of the build: cross-Display scoping survived
+every attempt — forged publishes, forged section ids, element-id IDOR, numeric
+display ids, `$_GET` overriding a POST. `claimLock` is genuinely one atomic
+conditional UPDATE. 41 hostile screen-name tags all produced the right notice or
+the right Display. No XSS anywhere in the Viewer. No hardcoded 1920/1080 left in
+the Builder's JS, and its drag/resize maths is correct at every zoom level. No
+upload sink anywhere uses a client-supplied filename. `schema.sql` and
+`lib/schema.php` agree column for column.
+
+What it found, by class:
+
+- **`?:` on a decode.** `json_decode($raw, true) ?: []` reads "unreadable request"
+  as "empty layout", and publishing an empty layout deletes everything. Three
+  agents found this independently. The lesson generalises: in a module whose
+  refusals are the only safety net, a falsy-coalesce is a decision to write.
+- **`catch (Exception)` in PHP 7+.** A `TypeError` is an `Error`, so it escaped
+  the catch that existed to turn a failure into a value — *after* the DELETEs had
+  run. Every catch in `lib/` is `Throwable` now, and rollbacks go through a helper
+  that cannot itself throw.
+- **A latch set before the work it describes.** The Viewer stamped the layout hash
+  before rendering, so one bad element blanked a sign permanently and silently.
+- **A guard that passes when it has nothing to compare.** `hash_equals('', '')` is
+  true, and the admin's own landing page never minted a token, so CSRF was off on
+  every login.
+- **State cached at login and never re-read.** The role. Demotion, deactivation
+  and deletion all left a live session fully admin.
+- **Local wall-clock time used as if it were absolute.** The lock, for one hour
+  every autumn. See the amendment on ADR-0007.
+- **A shared row nobody owned.** `block_styles` had two writers that disagreed
+  about what a partial POST means, and `assets` had none at all — which is why
+  deleting one library row could blank a line on every sign. `block_styles` now
+  has `lib/brand_styles.php`; `assets` still has no owner, and `assetUsage()` is
+  the seam that lets `crud.php` refuse rather than the module that should exist.
+
+And the test suite was itself audited by mutation: **60% of realistic single-point
+defects survived it.** The scoping checks were real — the unscoped publish DELETE
+fails seven of them — but the fixture set `PRAGMA foreign_keys = ON` and declared
+a cascade `lib/schema.php` never creates, so several checks were verifying the
+fixture rather than the module. The harness also could not fail: no error handler,
+so PHP warnings were invisible; no count anchor, so deleting a whole section still
+printed "0 failed". Both are closed, and `reportChecks()` now takes the number of
+checks it expects. Every fix in this pass ships with a check that was verified to
+fail against the unfixed code — that verification is the point, not the check.
+
+Known and not fixed, so nobody assumes otherwise:
+
+- **The Builder addresses its Display by mutable tag**, never by the id the page
+  was built for. Renaming a tag under an open Builder can move its heartbeat, its
+  release and its publish onto a different sign, and ADR-0006's per-Display stamp
+  cannot see a cross-Display switch. The fix is to bind the id into the page and
+  check it server-side; it is the largest remaining correctness gap.
+- **The password reset's guess limiter lives in `$_SESSION`**, which the attacker
+  owns — the exact bypass ADR-0001 rewrote *login* to avoid. It needs the same
+  account-keyed treatment.
+- **Read-only Builder is only partly server-rendered.** The control bar honours
+  it; `#inspector`, `#align-bar` and the editor modals are emitted unconditionally,
+  so `READ_ONLY = false` in a console offers a full publish. Server-side refusal is
+  what actually stops it, which is the braces rather than the belt the file's own
+  comment claims.
+- **Convergence issues three real `ALTER TABLE`s on every authenticated request.**
+  Harmless until a slow publish holds the table, at which point every Screen's poll
+  can queue behind the metadata lock. It should read `information_schema` once.
+- **`schema.php` has no automated coverage at all** — its syntax is MySQL-only, so
+  the SQLite fixture cannot execute it. Only a MySQL service container can.
+
+---
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -492,13 +592,17 @@ and manual. Run all of it before every push.
 ```
 php -l <every touched .php>              # syntax; also a GitHub Action
 php tools/selftest_layout.php            # the real modules, in-memory database
-grep -rn "canvas_elements" --include=*.php .   # only lib/layout_store.php may hit
-grep -rn "INTO displays\|UPDATE displays\|FROM displays" --include=*.php .  # only lib/, plus tools/ fixtures
+grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL
+                                              # and the get_canvas_elements endpoint NAME
+grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?displays`?" --include=*.php .  # lib/displays.php + schema.php's ALTERs
 grep -rn "INTO display_permissions\|FROM display_permissions" --include=*.php .  # only lib/grants.php, plus tools/
-grep -rn "lock_holder_id\|lock_activity_at" --include=*.php .  # only lib/displays.php + lib/schema.php, plus tools/
-grep -rn "WHERE id = 1\|id=1" --include=*.php . # must be empty
-grep -rn "1920\|1080" --include=*.php .        # only the admin size presets, the seed, and prose
+grep -rn "lock_holder_id\|lock_activity_at\|lock_taken_at" --include=*.php .  # only lib/displays.php + lib/schema.php
+grep -rn "block_styles" --include=*.php .     # only lib/brand_styles.php + schema.php's seed
+grep -rEn "WHERE +`?id`? *= *'?1'?" --include=*.php .  # must be empty — whitespace and quotes included
+grep -rn "1920\|1080" --include=*.php .        # admin size presets, the seed, tools/, and prose
 grep -rn "viewer.php\"\|viewer.php'" --include=*.php .  # every link must carry ?display=
+grep -rn "catch (Exception" --include=*.php lib/  # must be empty: a TypeError is an Error, not an Exception
+grep -rn "hash_equals(" --include=*.php .     # only auth.php's csrfOk(), which fails closed on an empty token
 ```
 
 `php -l` cannot see inline JavaScript, and `builder.php` is ~3050 lines of it.

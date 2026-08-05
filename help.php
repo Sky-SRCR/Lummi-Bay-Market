@@ -681,7 +681,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     </ol>
 
     <div class="note"><strong>Note:</strong> Brand Standards only affect <em>branded</em> text blocks — not free text blocks, where you set the font yourself in the Inspector.</div>
-    <div class="tip"><strong>These reach the screens on their own.</strong> Every screen reads this typography each time it polls, so a saved change appears within 30 seconds on <em>every</em> display, with no publishing needed. That also means it is the one change you can make without opening the Builder — and the one that can alter a screen while somebody else is mid-edit on it.</div>
+    <div class="tip"><strong>These reach the screens on their own.</strong> Every screen reads this typography each time it polls, so a saved change appears within 30 seconds on <em>every</em> display, with no publishing needed. That also makes it the one change you can make without opening the Builder. Because it lands on every sign at once, it is refused while <em>anyone</em> is editing <em>any</em> display — the message names who, and you can save once they are finished or once their editing lock lapses after 15 idle minutes.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->

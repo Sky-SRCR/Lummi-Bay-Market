@@ -29,7 +29,7 @@ accounts. Ungranted Displays are hidden from a `basic` user entirely rather than
 shown disabled; an account with no grants sees a plain "no displays have been
 assigned to you yet" message in the Builder.
 
-Enforcement is server-side in `api.php` on every write and on
+Enforcement is server-side in the resolution seam, `lib/display_request.php` on every write and on
 `get_canvas_elements`, not merely absent from the Builder's picker.
 
 ## Considered options
