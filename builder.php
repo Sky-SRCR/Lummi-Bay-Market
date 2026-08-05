@@ -93,6 +93,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 }
 .editable-block:hover:not(.selected):not(.multi-sel) { outline: 1px dashed rgba(255,255,255,0.6); }
 .editable-block.draggable-block { cursor: move; }
+.editable-block.just-added { outline: 2px dashed #e0a400; outline-offset: -1px; background: rgba(255,212,0,.5); }
 .editable-block.selected  { outline: 2px solid #e74c3c; box-shadow: 0 0 8px rgba(231,76,60,.5); }
 .editable-block.multi-sel { outline: 2px solid #f39c12; box-shadow: 0 0 6px rgba(243,156,18,.4); }
 .editable-block.locked-block { cursor: default; }
@@ -916,10 +917,10 @@ function createBlock(type, subtype) {
         font_family: 'Arial', font_size: 16, font_color: '#000000',
         font_weight: 'normal', font_style: 'normal', line_height: 1.4
     };
-    renderBlock(el, parent);
+    renderBlock(el, parent, true);
 }
 
-function renderBlock(el, parent) {
+function renderBlock(el, parent, isNew) {
     var block = document.createElement('div');
     block.className = 'editable-block';
     var isChildBlock = parent !== document.getElementById('builder-canvas');
@@ -959,6 +960,12 @@ function renderBlock(el, parent) {
         inner.style.pointerEvents = 'none'; // disabled until dblclick; lets drag/shift+click reach block div
         inner.style.whiteSpace = 'pre-wrap'; // preserve line breaks in plain text
         inner.textContent = content || (el.block_subtype !== 'free' ? 'Enter text here' : 'Double-click to edit');
+        if (isNew) {
+            // Newly added block: highlight it so it's easy to find on any
+            // canvas. Builder-only; clears on first edit / move / text change.
+            block.classList.add('just-added');
+            inner.addEventListener('input', function(){ block.classList.remove('just-added'); }, { once: true });
+        }
         inner.addEventListener('focus', function() {
             if (_shiftDown || multiSel.length > 0) { inner.blur(); return; }
             if (block !== activeBlock) selectBlock(block);
@@ -970,6 +977,7 @@ function renderBlock(el, parent) {
         });
         block.addEventListener('dblclick', function(e) {
             if (block.dataset.locked === '1' || _shiftDown || e.target.closest('.rh')) return;
+            block.classList.remove('just-added');   // first edit clears the highlight
             inner.style.pointerEvents = 'auto';
             inner.style.userSelect = 'text';
             inner.style.webkitUserSelect = 'text';
@@ -1777,6 +1785,7 @@ function setupInteract() {
 
 function handleMove(event) {
     var t = event.target;
+    if (t && t.classList) t.classList.remove('just-added');  // first move clears the new-block highlight
     if (t.dataset.locked === '1') return;
     var x = (parseFloat(t.getAttribute('data-x'))||0) + event.dx;
     var y = (parseFloat(t.getAttribute('data-y'))||0) + event.dy;
