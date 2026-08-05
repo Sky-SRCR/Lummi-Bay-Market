@@ -1,6 +1,18 @@
 <?php
+// ============================================================
+// JSON API
+// ============================================================
+// A thin adapter: it reads the request, hands the work to a module in lib/, and
+// encodes the answer. Every statement against `canvas_elements` and `displays`
+// lives in lib/layout_store.php and lib/displays.php respectively — nothing in
+// this file writes SQL against them. See docs/BUILD-REFERENCE.md.
+
 require_once 'auth.php';
 require_once 'db_connect.php';
+require_once __DIR__ . '/lib/schema.php';
+require_once __DIR__ . '/lib/displays.php';
+require_once __DIR__ . '/lib/layout_store.php';
+require_once __DIR__ . '/lib/display_request.php';
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
 
@@ -23,21 +35,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     exit;
 }
 
-// Auto-migrations only run on authenticated requests. The public get_layout
-// endpoint is polled every 30s by every display, so running (and silently
-// failing) these DDL statements there would spam the DB continuously.
+// Schema convergence runs only on authenticated requests: the public get_layout
+// endpoint is polled every 30s by every Screen, so running DDL there would spam
+// the database continuously. A genuinely absent schema is still recovered — see
+// DisplayStore::healSchema().
 if ($action !== 'get_layout') {
-    // Auto-migrate: add text_align column if not yet present
-    try { $pdo->exec("ALTER TABLE canvas_elements ADD COLUMN text_align VARCHAR(16) NOT NULL DEFAULT ''"); } catch(Exception $e) {}
-    // Auto-migrate: add 'table' to type ENUM if not already present
-    try { $pdo->exec("ALTER TABLE canvas_elements MODIFY COLUMN type ENUM('section','text','image','video','carousel','marquee','table') NOT NULL"); } catch(Exception $e) {}
-    // Auto-migrate: seed item_title_2 and price_2 block styles
-    try { $pdo->exec("INSERT IGNORE INTO block_styles (block_type,font_family,font_size,font_color,font_weight,font_style,line_height) VALUES ('item_title_2','Arial',24,'#27ae60','bold','normal',1.30),('price_2','Arial',30,'#e74c3c','bold','normal',1.20)"); } catch(Exception $e) {}
-    // Auto-migrate: add z_index column for layer ordering
-    try { $pdo->exec("ALTER TABLE canvas_elements ADD COLUMN z_index INT NOT NULL DEFAULT 1"); } catch(Exception $e) {}
-    // Auto-migrate: add hidden column for admin visibility control
-    try { $pdo->exec("ALTER TABLE canvas_elements ADD COLUMN hidden TINYINT(1) NOT NULL DEFAULT 0"); } catch(Exception $e) {}
+    ensureSignageSchema($pdo);
 }
+
+$displays = new DisplayStore($pdo);
+$layouts  = new LayoutStore($pdo, $displays);
+
+// Which Display a write is for. POST wins, so a query string cannot redirect a
+// write that names its Display in the body.
+$writeParams = array_merge($_GET, $_POST);
 
 // ---- Upload whitelists ----
 define('IMG_EXT',  ['jpg','jpeg','png','gif','webp']);
@@ -68,25 +79,70 @@ function ensureUploads(): void {
     if (!is_dir('uploads')) mkdir('uploads', 0755, true);
 }
 
+/**
+ * Turn the background half of a publish POST into a Background intent.
+ *
+ * Only an admin may change a Display's background, and "image" with no new file
+ * means "switch back to the image already stored" — not "set the colour picker's
+ * value as the image path", which is what the old code did when an upload was
+ * rejected.
+ */
+function backgroundFromPost(bool $isAdmin): Background {
+    if (!$isAdmin) {
+        return Background::unchanged();
+    }
+
+    $type = ($_POST['bg_type'] ?? 'color') === 'image' ? 'image' : 'color';
+    if ($type === 'color') {
+        return Background::color($_POST['bg_val'] ?? '#1a1a2e');
+    }
+
+    if (isset($_FILES['bg_file'])) {
+        $check = validateFile($_FILES['bg_file'], IMG_EXT, IMG_MIME);
+        if ($check['ok']) {
+            ensureUploads();
+            $name = 'bg_' . time() . '.' . $check['ext'];
+            if (move_uploaded_file($_FILES['bg_file']['tmp_name'], 'uploads/' . $name)) {
+                return Background::image('uploads/' . $name);
+            }
+        }
+    }
+    return Background::keepImage();
+}
+
+/** Emit the standard "which Display?" failure for an endpoint that needs one. */
+function failResolution(DisplayResolution $resolution): void {
+    echo json_encode([
+        'status'  => 'error',
+        'reason'  => $resolution->kind(),
+        'message' => $resolution->message(),
+    ]);
+}
+
 // ============================================================
-// GET: get_layout
+// GET: get_layout   (public — polled by every Screen)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_layout') {
-    $settings = $pdo->query("SELECT * FROM canvas_settings WHERE id = 1")->fetch();
+    $resolution = DisplayRequest::forViewing($displays, $_GET);
 
-    // All elements; sections first so client can build DOM tree
-    $elements = $pdo->query(
-        "SELECT ce.*, a.content AS db_content
-         FROM canvas_elements ce
-         LEFT JOIN assets a ON ce.asset_id = a.id
-         ORDER BY CASE WHEN ce.type='section' THEN 0 ELSE 1 END, ce.sort_order ASC, ce.id ASC"
-    )->fetchAll();
+    if (!$resolution->isFound()) {
+        // Nothing to render. The notice is the payload; a Phase 1 Viewer ignores
+        // it and shows a bare kiosk background, which is the correct picture for
+        // "no layout" — Phase 2 renders the wording on the Screen.
+        echo json_encode([
+            'status'       => $resolution->kind(),
+            'message'      => $resolution->message(),
+            'display'      => null,
+            'settings'     => ['bg_type' => 'color', 'bg_val' => '#1a1a2e'],
+            'elements'     => [],
+            'block_styles' => [],
+        ]);
+        exit;
+    }
 
-    $styleRows = $pdo->query("SELECT * FROM block_styles")->fetchAll();
-    $styles    = [];
-    foreach ($styleRows as $s) $styles[$s['block_type']] = $s;
-
-    echo json_encode(['settings' => $settings, 'elements' => $elements, 'block_styles' => $styles]);
+    $payload = $layouts->snapshot($resolution->display());
+    $payload['status'] = 'success';
+    echo json_encode($payload);
     exit;
 }
 
@@ -136,149 +192,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'upload_video') {
 // POST: publish
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
-    $data   = json_decode($_POST['layout_data'] ?? '[]', true) ?: [];
-    $bgType = $_POST['bg_type'] ?? 'color';
-    $bgVal  = $_POST['bg_val']  ?? '#1a1a2e';
+    $resolution = DisplayRequest::forEditing($displays, $writeParams, currentUser());
+    if (!$resolution->isFound()) { failResolution($resolution); exit; }
+    $display = $resolution->display();
 
-    // Background image upload – admin only
-    if ($isAdmin && $bgType === 'image' && isset($_FILES['bg_file'])) {
-        $check = validateFile($_FILES['bg_file'], IMG_EXT, IMG_MIME);
-        if ($check['ok']) {
-            ensureUploads();
-            $name = 'bg_' . time() . '.' . $check['ext'];
-            if (move_uploaded_file($_FILES['bg_file']['tmp_name'], 'uploads/' . $name)) {
-                $bgVal = 'uploads/' . $name;
-            }
-        }
-    }
+    $result = $layouts->publish($display, new PublishRequest(
+        json_decode($_POST['layout_data'] ?? '[]', true) ?: [],
+        backgroundFromPost($isAdmin),
+        currentUser()['id'],
+        $isAdmin,
+        // The stamp the Builder captured when it loaded this Display. A publish
+        // without one is refused: an old tab predating this deploy holds a
+        // layout from before Display scoping, which is exactly the write the
+        // check exists to stop.
+        $_POST['layout_stamp'] ?? ''
+    ));
 
-    $pdo->beginTransaction();
-    try {
-        // Only admin updates canvas background
-        if ($isAdmin) {
-            if ($bgType === 'image' && !isset($_FILES['bg_file'])) {
-                // No new file uploaded — preserve existing image path, only update type
-                $pdo->prepare("UPDATE canvas_settings SET bg_type=? WHERE id=1")->execute([$bgType]);
-            } else {
-                $pdo->prepare("UPDATE canvas_settings SET bg_type=?, bg_val=? WHERE id=1")->execute([$bgType, $bgVal]);
-            }
-        }
-
-        // Phase 1: sections and temp_id → real_id map
-        $tempMap = [];
-
-        if ($isAdmin) {
-            // Admin: wipe everything and re-insert all sections from submitted data
-            $pdo->exec("DELETE FROM canvas_elements WHERE section_id IS NOT NULL");
-            $pdo->exec("DELETE FROM canvas_elements");
-
-            foreach ($data as $el) {
-                if (($el['type'] ?? '') !== 'section') continue;
-
-                $pdo->prepare(
-                    "INSERT INTO canvas_elements
-                     (type, x_pos, y_pos, width, height, section_bg, locked, sort_order, z_index, hidden)
-                     VALUES ('section', ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-                )->execute([
-                    intval($el['x_pos'] ?? 0),
-                    intval($el['y_pos'] ?? 0),
-                    intval($el['width'] ?? 400),
-                    intval($el['height'] ?? 300),
-                    $el['section_bg'] ?? null,
-                    intval($el['locked'] ?? 0),
-                    intval($el['sort_order'] ?? 0),
-                    max(1, intval($el['z_index'] ?? 1)),
-                    intval($el['hidden'] ?? 0) ? 1 : 0,
-                ]);
-                $realId = $pdo->lastInsertId();
-                if (!empty($el['temp_id'])) {
-                    $tempMap[$el['temp_id']] = $realId;
-                }
-            }
-        } else {
-            // Basic user: preserve existing sections; only wipe non-section elements.
-            // Build tempMap from the real DB IDs sent by the builder (db_id field).
-            $pdo->exec("DELETE FROM canvas_elements WHERE type != 'section'");
-
-            foreach ($data as $el) {
-                if (($el['type'] ?? '') !== 'section') continue;
-                if (!empty($el['temp_id']) && !empty($el['db_id'])) {
-                    $tempMap[$el['temp_id']] = intval($el['db_id']);
-                }
-            }
-        }
-
-        // Phase 2: insert non-section elements
-        $order = 0;
-        foreach ($data as $el) {
-            if (($el['type'] ?? '') === 'section') continue;
-
-            $type       = $el['type'] ?? 'text';
-            $subtype    = $el['block_subtype'] ?? 'free';
-            $parentTmp  = $el['parent_temp_id'] ?? null;
-            $sectionId  = $parentTmp ? ($tempMap[$parentTmp] ?? null) : null;
-            $assetId    = !empty($el['asset_id']) ? intval($el['asset_id']) : null;
-            $manual     = $el['manual_content'] ?? '';
-
-            // Text blocks are plain text only — strip any markup so nothing a
-            // browser would execute can be stored. Non-text types carry JSON
-            // (carousel/table/marquee) or file paths and must NOT be stripped.
-            if ($type === 'text') {
-                $manual = toPlainText($manual);
-            }
-
-            // Auto-save new standalone text/image content to asset pool
-            if (!$assetId && !empty($manual) && !empty($el['save_to_db_pool'])) {
-                $dup = $pdo->prepare("SELECT id FROM assets WHERE type=? AND content=? LIMIT 1");
-                $dup->execute([$type, $manual]);
-                $ex = $dup->fetch();
-                if ($ex) {
-                    $assetId = $ex['id'];
-                    $manual  = null;
-                } else {
-                    $ins = $pdo->prepare("INSERT INTO assets (type,content,label) VALUES (?,?,?)");
-                    $ins->execute([$type, $manual, 'Auto: '.substr(strip_tags($manual),0,20)]);
-                    $assetId = $pdo->lastInsertId();
-                    $manual  = null;
-                }
-            }
-
-            $pdo->prepare(
-                "INSERT INTO canvas_elements
-                 (section_id, type, block_subtype, x_pos, y_pos, width, height,
-                  manual_content, asset_id,
-                  font_family, font_size, font_color, font_weight, font_style, line_height,
-                  text_align, locked, sort_order, z_index, hidden)
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
-            )->execute([
-                $sectionId,
-                $type,
-                $subtype,
-                intval($el['x_pos']   ?? 0),
-                intval($el['y_pos']   ?? 0),
-                intval($el['width']   ?? 200),
-                intval($el['height']  ?? 100),
-                $manual ?: null,
-                $assetId,
-                $el['font_family']  ?? 'Arial',
-                intval($el['font_size'] ?? 16),
-                $el['font_color']   ?? '#000000',
-                $el['font_weight']  ?? 'normal',
-                $el['font_style']   ?? 'normal',
-                number_format(floatval($el['line_height'] ?? 1.4), 2),
-                $el['text_align']   ?? '',
-                intval($el['locked'] ?? 0),
-                $order++,
-                max(1, intval($el['z_index'] ?? 1)),
-                intval($el['hidden'] ?? 0) ? 1 : 0,
-            ]);
-        }
-
-        $pdo->commit();
-        echo json_encode(['status' => 'success']);
-    } catch (Exception $e) {
-        $pdo->rollBack();
-        echo json_encode(['status' => 'error', 'message' => 'Publish failed. Nothing was saved.']);
+    if ($result->isOk()) {
+        echo json_encode([
+            'status'       => 'success',
+            'display'      => $display->tag(),
+            'layout_stamp' => $result->stamp(),
+        ]);
+    } else {
+        echo json_encode([
+            'status'  => 'error',
+            'reason'  => $result->kind(),      // 'stale' | 'failed'
+            'message' => $result->message(),
+        ]);
     }
     exit;
 }
@@ -286,6 +227,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
 // ============================================================
 // POST: save_brand_styles  (admin only)
 // ============================================================
+// Brand Standards typography is shared by every Display, so this endpoint is
+// deliberately not Display-scoped.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_brand_styles') {
     if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
     $data   = json_decode($_POST['styles_data'] ?? '[]', true) ?: [];
@@ -315,12 +258,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_brand_styles') {
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_canvas_elements') {
     if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
-    $elements = $pdo->query(
-        "SELECT id, section_id, type, block_subtype, manual_content, hidden, z_index, width, height, sort_order
-         FROM canvas_elements
-         ORDER BY CASE WHEN type='section' THEN 0 ELSE 1 END, sort_order ASC, id ASC"
-    )->fetchAll();
-    echo json_encode($elements);
+    $resolution = DisplayRequest::forEditing($displays, $_GET, currentUser());
+    if (!$resolution->isFound()) { failResolution($resolution); exit; }
+    // A bare array, as the Work Area list has always received.
+    echo json_encode($layouts->elementIndex($resolution->display()));
     exit;
 }
 
@@ -329,11 +270,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_canvas_elements') {
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'set_element_hidden') {
     if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
-    $id     = intval($_POST['element_id'] ?? 0);
-    $hidden = intval($_POST['hidden'] ?? 0) ? 1 : 0;
+    $resolution = DisplayRequest::forEditing($displays, $writeParams, currentUser());
+    if (!$resolution->isFound()) { failResolution($resolution); exit; }
+
+    $id = intval($_POST['element_id'] ?? 0);
     if (!$id) { echo json_encode(['status'=>'error','message'=>'Missing element_id.']); exit; }
-    $pdo->prepare("UPDATE canvas_elements SET hidden=? WHERE id=?")->execute([$hidden, $id]);
-    echo json_encode(['status'=>'success']);
+
+    $done = $layouts->setElementHidden($resolution->display(), $id, intval($_POST['hidden'] ?? 0) === 1);
+    echo json_encode($done
+        ? ['status' => 'success']
+        : ['status' => 'error', 'message' => 'That element is not on this display.']);
     exit;
 }
 
@@ -342,11 +288,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'set_element_hidden') {
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'delete_canvas_element') {
     if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
+    $resolution = DisplayRequest::forEditing($displays, $writeParams, currentUser());
+    if (!$resolution->isFound()) { failResolution($resolution); exit; }
+
     $id = intval($_POST['element_id'] ?? 0);
     if (!$id) { echo json_encode(['status'=>'error','message'=>'Missing element_id.']); exit; }
-    // Children of sections are removed automatically via FK ON DELETE CASCADE
-    $pdo->prepare("DELETE FROM canvas_elements WHERE id=?")->execute([$id]);
-    echo json_encode(['status'=>'success']);
+
+    $done = $layouts->deleteElement($resolution->display(), $id);
+    echo json_encode($done
+        ? ['status' => 'success']
+        : ['status' => 'error', 'message' => 'That element is not on this display.']);
     exit;
 }
 

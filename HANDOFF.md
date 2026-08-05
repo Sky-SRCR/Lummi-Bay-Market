@@ -39,10 +39,21 @@ file) live on the server and are intentionally **not** in the repo.
   - (earlier: migration + adversarial-review fixes — `ab78cc8`, `8c0cb66`,
     `47b7e28`, `b5d82a9`)
 
-## 3. File map (all at repo root — flat, relative includes)
+## 3. File map (page scripts at repo root; data access in `lib/`)
+
+Since Phase 1 of the multi-display build, page scripts are thin adapters over
+four modules in `lib/`. Read [`docs/BUILD-REFERENCE.md`](docs/BUILD-REFERENCE.md)
+before changing any of them — it is the standing contract for the whole build.
 
 | File | Role |
 |------|------|
+| `lib/schema.php` | `ensureSignageSchema()` — every idempotent `ALTER`/`CREATE`, the `displays` table, `display_id` + backfill, the drive-thru seed |
+| `lib/displays.php` | `Display` value object + `DisplayStore` — all `displays` SQL, screen name tag rules |
+| `lib/layout_store.php` | `LayoutStore` — the **only** place that touches `canvas_elements`: publish transaction, staleness check, scoped hide/delete |
+| `lib/display_request.php` | Which Display a request means; ADR-0003 notice wording; where Phase 4 grants attach |
+| `lib/plain_text.php` | `toPlainText()` — plain-text signage content (ADR-0002), moved out of `auth.php` |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory DB, 85 checks. Run before pushing |
+| `tools/rehearse_phase1.php` | Rehearses the Phase 1 migration + scoping against a **copy** of live data |
 | `config.php` | Site constants (`SITE_NAME`, `MAIL_FROM`); loads `branding_config.php` |
 | `db_connect.php` | PDO `$pdo`; loads creds from `../../private/db_credentials.php` |
 | `auth.php` | `session_start`; `requireLogin/requireAdmin/isAdmin/currentUser`; `csrfToken()/verifyCsrf()` |
@@ -61,12 +72,23 @@ file) live on the server and are intentionally **not** in the repo.
 
 ## 4. Database (tables already exist on the live server)
 
-`users`, `password_resets`, `assets`, `canvas_elements`, `canvas_settings`,
-`block_styles`. `schema.sql` in the repo matches the live structure (incl. the
-three lockout columns on `users`). `api.php` auto-adds newer columns
-(`text_align`, `z_index`, `hidden`) and seeds
-`item_title_2`/`price_2` styles — but **only on authenticated (non-`get_layout`)
-requests** now (was previously running on every public poll).
+`users`, `password_resets`, `assets`, `canvas_elements`, `displays`,
+`block_styles`, and the retired `canvas_settings`. `schema.sql` in the repo is
+the structure the code expects; the live server lags it (it still lacks the three
+lockout columns on `users`, and — until Phase 1 is deployed — `displays` and
+`canvas_elements.display_id`).
+
+Schema convergence is now one call, `ensureSignageSchema()` in `lib/schema.php`,
+run on **authenticated (non-`get_layout`) requests only** so the public 30-second
+poll never runs DDL. It adds the newer element columns (`text_align`, `z_index`,
+`hidden`), seeds the `item_title_2`/`price_2` styles, creates `displays`, and
+backfills `canvas_elements.display_id` to the drive-thru Display. Every statement
+is idempotent, and the backfill re-runs on every authenticated request — so if a
+partly applied migration ever left elements unscoped (which would show as a blank
+sign), an admin page load repairs it.
+
+`canvas_settings` is retired: nothing reads it except the one-time seed that
+carries its background onto the drive-thru Display.
 
 Roles: `admin` (full) and `basic` (adds content inside existing sections only).
 

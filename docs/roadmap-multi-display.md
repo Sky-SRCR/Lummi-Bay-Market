@@ -1,6 +1,9 @@
 # Roadmap — Multi-Display Support
 
-Status: **agreed, not started.** No application code has changed.
+Status: **Phase 1 built on `claude/app-update-planning-1pjqfr`, not yet deployed.**
+Phases 2–6 not started. How the code is shaped, and the invariants each phase
+must preserve, are in [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that
+alongside this file.
 
 ## Why
 
@@ -81,6 +84,18 @@ Risk lives here. Publish currently deletes every element unscoped — a scoping 
 does not degrade one sign, it empties all of them. Worth a line-by-line review and a
 rehearsal against a copy of live data before it reaches the server. A `php -l` GitHub
 Action is cheap insurance and can ride along.
+
+**Built.** Data access moved into four deep modules under `lib/` — schema
+convergence, `Display`/`DisplayStore`, `LayoutStore` (the only place that touches
+`canvas_elements`), and the request-resolution seam where Phase 4's grants will
+land. `api.php` is now a thin adapter; `canvas_settings` is retired and no
+`WHERE id = 1` remains. The stamp is a revision counter rather than a timestamp
+(see BUILD-REFERENCE.md §4). `php tools/selftest_layout.php` runs the real publish
+path against an in-memory database — 85 checks covering scoping, refusal of stale
+publishes, the basic-account section rules and a forged cross-Display parent —
+and `tools/rehearse_phase1.php` proves the DDL and scoping on a copy of live data.
+A `php -l` + self-test GitHub Action rides along. Not yet run against MySQL or a
+browser: see "Before this reaches the sign" below.
 
 ### Phase 2 — Canvas dimensions from the Display record · size M · risk Medium
 
@@ -163,9 +178,41 @@ corrected — all three present 1920 × 1080 as a fixed property of the system, 
   those errors. Phases 2 and 5 touch it heavily and need reading, not just linting.
 - **No tests** — verification is manual against the live site.
 
+## Before this reaches the sign (Phase 1)
+
+In order, on the one visit:
+
+1. **Back up the database.** Publishing has no undo and this deploy rewrites how
+   every element is addressed. A phpMyAdmin export is enough.
+2. **Rehearse on a copy**, never on live:
+   `php tools/rehearse_phase1.php --host=localhost --db=<copy> --user=<user> --pass=<pass> --confirm-copy`.
+   It converges the schema, proves the backfill left no unscoped element, publishes
+   to two throwaway Displays, and removes them again. Expect "Rehearsal clean."
+3. **Upload the files**, including the new `lib/` and `tools/` folders *with* their
+   `.htaccess` files — those are what keep the modules and the rehearsal script
+   unreachable from a browser.
+4. **Sign in once as an admin.** That first authenticated request is what runs the
+   schema convergence: it creates `displays`, seeds the drive-thru Display from
+   `canvas_settings`, and backfills `display_id`. (If the sign's poll gets there
+   first it self-heals, but signing in makes it deliberate.)
+5. **Check the sign.** `viewer.php` still shows the drive-thru layout unchanged —
+   during Phase 1 a bare URL still resolves, because exactly one Display exists.
+6. **Publish once** from the Builder and confirm the Screen updates within 30s.
+7. **Prove the refusal**: leave a second Builder tab open, publish from the first,
+   then publish from the stale tab — it must be refused by name, and the layout
+   must not change.
+
+If the sign goes blank after step 4, the backfill is the thing to check:
+`SELECT COUNT(*) FROM canvas_elements WHERE display_id IS NULL` should be 0. It
+re-runs on every authenticated request, so loading an admin page repairs a partly
+applied migration; a non-zero count that persists means the `UPDATE` is being
+refused and needs running by hand.
+
 ## Verification
 
 - `php -l` every touched PHP file before committing — no PHP runtime here.
+- `php tools/selftest_layout.php` — the real modules against an in-memory
+  database. A failure is a release blocker, not a broken test.
 - `GET api.php?action=get_layout&display=<tag>` (public, no session) to diff layout
   JSON before and after a change, plus the negative cases: no tag, unknown tag,
   deactivated Display.

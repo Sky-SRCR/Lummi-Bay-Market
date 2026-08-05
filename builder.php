@@ -671,6 +671,13 @@ var IS_ADMIN  = <?= $isAdmin ? 'true' : 'false' ?>;
 var SITE_NAME = <?= json_encode(SITE_NAME, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 var CSRF_TOKEN = <?= json_encode(csrfToken(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 
+// The layout stamp this editor loaded (docs/adr/0006). Publish submits it back;
+// if the display has changed since — someone else published, or an element was
+// hidden or deleted in the admin panel — the publish is refused instead of
+// overwriting their work. There is no undo, so refusing is the safety net.
+// Empty until loadLayout() runs, and a publish without it is refused by design.
+var LAYOUT_STAMP = '';
+
 // Block default sizes
 var BLOCK_DEFAULTS = {
     section_header: { w:420, h:60  },
@@ -751,8 +758,9 @@ function loadLayout() {
     return fetch('api.php?action=get_layout')
         .then(function(r){ return r.json(); })
         .then(function(data) {
-            blockStyles = data.block_styles || {};
-            var canvas  = document.getElementById('builder-canvas');
+            blockStyles  = data.block_styles || {};
+            LAYOUT_STAMP = data.layout_stamp || '';
+            var canvas   = document.getElementById('builder-canvas');
 
             if (data.settings) {
                 var s = data.settings;
@@ -1711,6 +1719,7 @@ function publishCanvas() {
     var fd = new FormData();
     fd.append('layout_data', JSON.stringify(elements));
     fd.append('csrf_token', CSRF_TOKEN);
+    fd.append('layout_stamp', LAYOUT_STAMP);
 
     if (IS_ADMIN) {
         fd.append('bg_type', document.getElementById('bg-type').value);
@@ -1723,8 +1732,16 @@ function publishCanvas() {
         .then(function(r){ return r.json(); })
         .then(function(res) {
             if (res.status === 'success') {
+                // Adopt the stamp this publish created, so a second publish from
+                // this same tab is not mistaken for a stale one.
+                LAYOUT_STAMP = res.layout_stamp || LAYOUT_STAMP;
                 showToast('Published! Display screen will update in 30 seconds.');
                 loadAssets();
+            } else if (res.reason === 'stale') {
+                // Nothing was saved. This has to be acknowledged, not glimpsed:
+                // the layout on screen is still the editor's, and reloading is
+                // the only way forward.
+                alert(res.message);
             } else { showToast(res.message||'Publish failed.', true); }
         })
         .catch(function(){ showToast('Network error.', true); });

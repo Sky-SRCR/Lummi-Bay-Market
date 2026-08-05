@@ -1,0 +1,207 @@
+<?php
+// ============================================================
+// SCHEMA CONVERGENCE
+// ============================================================
+// One entry point — ensureSignageSchema($pdo) — brings whatever structure the
+// live database currently has up to what this code expects. There is no
+// migration tool and no version table: the live database is edited in place and
+// is known to lag the repo (see docs/BUILD-REFERENCE.md §2.10), so every
+// statement here must be safe to run against a database that has already had it
+// applied, and safe to run in any order relative to the others.
+//
+// Callers know one fact: call this on an authenticated request before touching
+// signage tables. Everything else — which columns are new, which statement
+// fails harmlessly when it has already run, how the drive-thru Display is
+// created out of the single-row canvas_settings it replaces — is in here.
+//
+// The public get_layout poll must NOT run this: every Screen hits it every 30
+// seconds forever. See DisplayStore, which converges once on a genuinely absent
+// schema and then never again.
+
+// Nothing is required here on purpose: this file must be includable without
+// starting a session or loading page-level helpers (see BUILD-REFERENCE.md §1).
+// The login-lockout columns stay where ADR-0001 put them — added by the pre-auth
+// login/reset pages, never from a data-access path.
+
+// The name tag of the Display that the pre-multi-display layout becomes.
+// Referenced by the Phase 2 cutover ("…/viewer.php?display=drive-thru").
+if (!defined('LEGACY_DISPLAY_TAG')) {
+    define('LEGACY_DISPLAY_TAG', 'drive-thru');
+}
+
+/**
+ * Converge the signage schema. Idempotent, and runs its statements at most once
+ * per request. Never throws: a statement that cannot apply (already applied, or
+ * blocked by data) leaves the database as it was.
+ */
+function ensureSignageSchema(PDO $pdo)
+{
+    static $done = false;
+    if ($done) { return; }
+    $done = true;
+
+    // ---- canvas_elements: columns added since the original install ----------
+    // Carried over verbatim from the inline ALTERs that used to sit at the top
+    // of api.php, so behaviour on an out-of-date database is unchanged.
+    schemaTry($pdo, "ALTER TABLE canvas_elements ADD COLUMN text_align VARCHAR(16) NOT NULL DEFAULT ''");
+    schemaTry($pdo, "ALTER TABLE canvas_elements ADD COLUMN z_index INT NOT NULL DEFAULT 1");
+    schemaTry($pdo, "ALTER TABLE canvas_elements ADD COLUMN hidden TINYINT(1) NOT NULL DEFAULT 0");
+    schemaTry($pdo, "ALTER TABLE canvas_elements MODIFY COLUMN type
+                     ENUM('section','text','image','video','carousel','marquee','table') NOT NULL");
+
+    // The Builder offers Title 2 and Price 2 as block subtypes and block_styles
+    // seeds both, but the ENUM never listed them — so publishing a layout that
+    // uses one either fails the whole transaction (strict mode) or silently
+    // blanks the subtype. Widening an ENUM changes no stored data.
+    schemaTry($pdo, "ALTER TABLE canvas_elements MODIFY COLUMN block_subtype
+                     ENUM('free','section_header','item_title','item_title_2','price','price_2','description')
+                     DEFAULT 'free'");
+
+    schemaTry($pdo, "INSERT IGNORE INTO block_styles
+                     (block_type,font_family,font_size,font_color,font_weight,font_style,line_height) VALUES
+                     ('item_title_2','Arial',24,'#27ae60','bold','normal',1.30),
+                     ('price_2','Arial',30,'#e74c3c','bold','normal',1.20)");
+
+    // ---- displays -----------------------------------------------------------
+    // One row per configured sign. Absorbs canvas_settings (background) and
+    // carries the canvas dimensions that were hardcoded as 1920×1080, the
+    // publish stamp (ADR-0006) and the edit-lock columns (ADR-0007). The lock
+    // columns are unused until Phase 5; they cost nothing now and adding them
+    // later would mean a second visit to the live database.
+    schemaTry($pdo, "CREATE TABLE IF NOT EXISTS displays (
+        id                INT(11)      NOT NULL AUTO_INCREMENT,
+        tag               VARCHAR(32)  NOT NULL COMMENT 'screen name tag — the Viewer URL contract',
+        title             VARCHAR(120) NOT NULL,
+        location          VARCHAR(160) DEFAULT NULL,
+        canvas_width      INT(11)      NOT NULL,
+        canvas_height     INT(11)      NOT NULL,
+        bg_type           ENUM('color','image') NOT NULL DEFAULT 'color',
+        bg_val            VARCHAR(255) NOT NULL DEFAULT '#1a1a2e',
+        is_active         TINYINT(1)   NOT NULL DEFAULT 1,
+        layout_revision   INT(11)      NOT NULL DEFAULT 0 COMMENT 'publish stamp; increments on every publish',
+        last_published_at DATETIME     DEFAULT NULL,
+        last_published_by INT(11)      DEFAULT NULL,
+        lock_holder_id    INT(11)      DEFAULT NULL COMMENT 'edit lock holder (Phase 5)',
+        lock_activity_at  DATETIME     DEFAULT NULL COMMENT 'last real interaction by the holder (Phase 5)',
+        created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY tag (tag),
+        KEY last_published_by (last_published_by),
+        KEY lock_holder_id (lock_holder_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // Both point at accounts and must survive an account being deleted, so the
+    // Display is never taken with it. Added separately: CREATE TABLE above is a
+    // no-op on an existing table, which would leave these missing.
+    schemaTry($pdo, "ALTER TABLE displays ADD CONSTRAINT displays_ibfk_1
+                     FOREIGN KEY (last_published_by) REFERENCES users (id) ON DELETE SET NULL");
+    schemaTry($pdo, "ALTER TABLE displays ADD CONSTRAINT displays_ibfk_2
+                     FOREIGN KEY (lock_holder_id) REFERENCES users (id) ON DELETE SET NULL");
+
+    seedLegacyDisplay($pdo);
+
+    // ---- canvas_elements.display_id ----------------------------------------
+    // Added nullable, backfilled, then tightened — in that order, because the
+    // live table already holds the drive-thru layout and a NOT NULL column with
+    // no default cannot be added to it.
+    schemaTry($pdo, "ALTER TABLE canvas_elements ADD COLUMN display_id INT(11) DEFAULT NULL");
+
+    // Backfill: everything that predates Display scoping is the drive-thru sign.
+    // Runs unconditionally — a row that arrives unscoped later (a partly applied
+    // migration, a hand edit) would otherwise be invisible to every scoped query
+    // while still occupying the canvas.
+    $legacyId = legacyDisplayId($pdo);
+    if ($legacyId) {
+        schemaTry($pdo, "UPDATE canvas_elements SET display_id = " . intval($legacyId) . " WHERE display_id IS NULL");
+    }
+
+    // Only succeeds once nothing is NULL, which is exactly the condition we want
+    // it to enforce. An unscoped row left behind keeps the column nullable, and
+    // rehearse/selftest surfaces it rather than the app silently dropping rows.
+    schemaTry($pdo, "ALTER TABLE canvas_elements MODIFY COLUMN display_id INT(11) NOT NULL");
+    schemaTry($pdo, "ALTER TABLE canvas_elements ADD KEY display_id (display_id)");
+
+    // ON DELETE CASCADE is the Phase 3 "delete destroys the Display and its
+    // layout" rule, enforced by the database rather than by remembering to
+    // delete elements first.
+    schemaTry($pdo, "ALTER TABLE canvas_elements ADD CONSTRAINT canvas_elements_ibfk_3
+                     FOREIGN KEY (display_id) REFERENCES displays (id) ON DELETE CASCADE");
+}
+
+/**
+ * Create the Display that the single pre-multi-display layout belongs to,
+ * inheriting the background from the canvas_settings row it replaces.
+ *
+ * Does nothing once any Display exists — including when an admin has already
+ * renamed this one, since the tag is theirs to change (ADR-0003) and a second
+ * "drive-thru" must not appear behind their back.
+ */
+function seedLegacyDisplay(PDO $pdo)
+{
+    try {
+        $count = $pdo->query("SELECT COUNT(*) FROM displays")->fetchColumn();
+    } catch (Exception $e) {
+        return;   // table missing — CREATE TABLE above failed; nothing to seed into
+    }
+    if (intval($count) > 0) { return; }
+
+    // canvas_settings is retired by this build, so this is the one and only
+    // place that still reads it: to carry the background forward.
+    $bgType = 'color';
+    $bgVal  = '#1a1a2e';
+    try {
+        $row = $pdo->query("SELECT bg_type, bg_val FROM canvas_settings ORDER BY id ASC LIMIT 1")->fetch();
+        if ($row) {
+            $bgType = ($row['bg_type'] === 'image') ? 'image' : 'color';
+            if (isset($row['bg_val']) && $row['bg_val'] !== '') { $bgVal = $row['bg_val']; }
+        }
+    } catch (Exception $e) {
+        // No canvas_settings (fresh install) — defaults are the same ones it held.
+    }
+
+    try {
+        $pdo->prepare(
+            "INSERT INTO displays (tag, title, location, canvas_width, canvas_height, bg_type, bg_val, is_active)
+             VALUES (?, ?, NULL, 1920, 1080, ?, ?, 1)"
+        )->execute([LEGACY_DISPLAY_TAG, 'Drive-Thru', $bgType, $bgVal]);
+    } catch (Exception $e) {
+        // Unique tag collision — another request seeded it first. Fine.
+    }
+}
+
+/**
+ * The Display that unscoped rows belong to: the one carrying LEGACY_DISPLAY_TAG,
+ * or failing that the oldest Display, so a renamed tag still backfills correctly.
+ * Returns 0 when there is nothing to backfill to.
+ */
+function legacyDisplayId(PDO $pdo)
+{
+    try {
+        $stmt = $pdo->prepare("SELECT id FROM displays WHERE tag = ? LIMIT 1");
+        $stmt->execute([LEGACY_DISPLAY_TAG]);
+        $id = $stmt->fetchColumn();
+        if ($id) { return intval($id); }
+
+        $id = $pdo->query("SELECT id FROM displays ORDER BY id ASC LIMIT 1")->fetchColumn();
+        return $id ? intval($id) : 0;
+    } catch (Exception $e) {
+        return 0;
+    }
+}
+
+/**
+ * Run one convergence statement, swallowing the failure that means "already
+ * applied". Deliberately silent: there is nowhere to log to on this host, the
+ * pattern predates this build, and a convergence failure must never break the
+ * request that happened to trigger it — the statement is simply re-attempted on
+ * the next authenticated request.
+ */
+function schemaTry(PDO $pdo, $sql)
+{
+    try {
+        $pdo->exec($sql);
+        return true;
+    } catch (Exception $e) {
+        return false;
+    }
+}
