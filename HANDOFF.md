@@ -20,14 +20,24 @@ file) live on the server and are intentionally **not** in the repo.
 
 ## 2. Git / branch
 
-- **Working branch:** `claude/website-build-migration-nfurek` (all work goes here)
-- Push with `git push -u origin claude/website-build-migration-nfurek`
-- No PR has been opened. Do **not** open one unless the user asks.
-- Commit history so far:
-  - `ab78cc8` migrate batch 1 (auth/setup/viewer)
-  - `8c0cb66` migrate core files (auth, api, builder, admin, assets)
-  - `47b7e28` bug fixes from adversarial review
-  - `b5d82a9` CSRF + asset-dropdown filter + logo hardening
+- **Working branch:** `claude/load-handoff-3az5j6` (all work goes here)
+- Push with `git push -u origin claude/load-handoff-3az5j6`
+- **PR #2** (`claude/load-handoff-3az5j6` → `main`):
+  https://github.com/Sky-SRCR/Lummi-Bay-Market/pull/2 — covers everything in
+  sections 6–7 below. Once merged, start future sessions from `main`.
+- Recent commit history (newest first):
+  - `4087204` fully lock viewer.php against scrolling in both axes
+  - `81aa05f` track full live .htaccess + viewer.php framing exception
+  - `6be4026` allow public viewer.php to be embedded in external signage widgets
+  - `464b8f5` builder: highlight a newly added text block until first use
+  - `df2ad5c` Asset Library UI: type hint + clearer save button label
+  - `c8d6773` block SVG/non-image references via the Asset Library URL field
+  - `04c8633` security hardening: stored XSS, session cookies, reset enumeration
+  - `a8cfc9c` correct schema.sql against live database structure
+  - `7d7b1cf` add repo housekeeping: .gitignore, schema.sql, README
+  - `9ecd8a0` fix L8: account-keyed, DB-backed login lockout
+  - (earlier: migration + adversarial-review fixes — `ab78cc8`, `8c0cb66`,
+    `47b7e28`, `b5d82a9`)
 
 ## 3. File map (all at repo root — flat, relative includes)
 
@@ -37,7 +47,8 @@ file) live on the server and are intentionally **not** in the repo.
 | `db_connect.php` | PDO `$pdo`; loads creds from `../../private/db_credentials.php` |
 | `auth.php` | `session_start`; `requireLogin/requireAdmin/isAdmin/currentUser`; `csrfToken()/verifyCsrf()` |
 | `branding_config.php` | Generated brand theme (`BRAND_*` constants) |
-| `login.php` / `logout.php` | Auth; session-based login lockout (5 tries / 5 min) |
+| `login.php` / `logout.php` | Auth; account-keyed DB login lockout (5 tries / 15-min window) |
+| `.htaccess` | Server config: index/sensitive-file blocks, security headers, PHP hardening, HTTPS redirect. Frames `viewer.php` for external widgets (see §7). |
 | `reset_password.php` | 2-step emailed 6-digit passcode reset (30-min expiry) |
 | `setup.php` | First-run admin creation; self-disables once a user exists. **Delete on server after setup.** |
 | `setup_branding.php` | Redirect shim → `admin_panel.php?tab=branding` |
@@ -51,8 +62,9 @@ file) live on the server and are intentionally **not** in the repo.
 ## 4. Database (tables already exist on the live server)
 
 `users`, `password_resets`, `assets`, `canvas_elements`, `canvas_settings`,
-`block_styles`. There is **no `schema.sql` in the repo yet** (see open items).
-`api.php` auto-adds newer columns (`text_align`, `z_index`, `hidden`) and seeds
+`block_styles`. `schema.sql` in the repo matches the live structure (incl. the
+three lockout columns on `users`). `api.php` auto-adds newer columns
+(`text_align`, `z_index`, `hidden`) and seeds
 `item_title_2`/`price_2` styles — but **only on authenticated (non-`get_layout`)
 requests** now (was previously running on every public poll).
 
@@ -89,15 +101,46 @@ Roles: `admin` (full) and `basic` (adds content inside existing sections only).
 
 ## 7. Open items (nothing in progress — safe to stop)
 
-- **L8 — login lockout is bypassable.** `login.php` stores `login_attempts` in
-  `$_SESSION`, so clearing the cookie resets the counter. Real fix needs IP- or
-  DB-backed attempt tracking. Not yet done (needs a small design decision).
-- **Repo housekeeping (never started):**
-  - `.gitignore` for `uploads/` and any local credentials
-  - `schema.sql` (CREATE TABLE for all 6 tables) for version control / rebuilds
-  - `README.md` (setup, roles, builder/viewer overview)
+- ~~**L8 — login lockout is bypassable.**~~ **Resolved.** Rebuilt as an
+  account-keyed, DB-backed lockout (5 failures / 15-min window) on three new
+  `users` columns; clears on successful login or password reset. See
+  `docs/adr/0001-account-keyed-login-lockout.md` and `CONTEXT.md`.
+- ~~**Repo housekeeping (never started):**~~ **Done.**
+  - `.gitignore` (uploads/, local credentials, editor/OS cruft) — added
+  - `schema.sql` (all 6 tables, reconstructed from app queries) — added
+  - `README.md` (setup, roles, builder/viewer overview, security) — added
 - CSRF end-to-end sanity check worth doing live: log in → edit an asset → publish;
   all should succeed, while a stale/forged POST gets "Security token mismatch."
+- ~~**Security hardening pass**~~ **Done** (audited whole codebase; verified
+  against the live dump in a real browser):
+  - *Stored XSS (high):* text blocks are now plain text — rendered with
+    `textContent` in viewer + builder, stripped server-side on save
+    (`toPlainText()` in `auth.php`). Removed the rich-text toolbar. See
+    `docs/adr/0002-plain-text-signage-content.md`.
+  - *Session cookies:* `HttpOnly + Secure + SameSite=Lax` set in `auth.php`.
+  - *Password-reset enumeration:* `reset_password.php` now advances every
+    request to the code screen with identical messaging.
+  - *Low:* `SITE_NAME` escaped in `builder.php` inline JS.
+  - Audit verified SAFE: SQLi (all parameterized), per-endpoint authz,
+    CSRF coverage, upload handling (no runnable files / path traversal).
+- ~~**Asset Library — SVG/non-image references.**~~ **Done.** SVG and other
+  non-image types are blocked on both file upload and the URL/reference field,
+  on create and edit (`isAllowedImageRef()` in `crud.php`). Plus UI tweaks:
+  accepted-types hint under the file input; "Save Library Asset" button label.
+- ~~**Builder — new text blocks are hard to see.**~~ **Done.** A newly added
+  text block is highlighted (yellow 50% + dashed outline) until its first
+  edit/move/text change, then renders as designed. Text blocks only.
+- ~~**Public viewer embedding + kiosk lock.**~~ **Done.**
+  - `.htaccess` keeps `X-Frame-Options: SAMEORIGIN` on the whole app but drops
+    it for `viewer.php` only (`Content-Security-Policy: frame-ancestors *`), so
+    the public display embeds in external signage widgets (e.g. SmartSign2Go).
+    `viewer.php` is public/read-only, so framing it carries no clickjacking risk.
+  - `viewer.php` is locked against scrolling in both axes (no scrollbars,
+    overscroll, or touch-drag) for kiosk/embedded use.
+  - Point the signage widget at `https://srcresort.com/lbm/viewer.php` (not the
+    app root, which redirects to login). The viewer auto-scales its 1920×1080
+    design to fill any 16:9 screen; a viewer-only resolution/aspect change is
+    NOT possible without also changing the builder's 1920×1080 coordinate grid.
 
 ## 8. Conventions / gotchas for the next session
 

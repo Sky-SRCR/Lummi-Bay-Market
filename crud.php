@@ -32,6 +32,16 @@ function ensureUploadsDir(): void {
     if (!is_dir('uploads')) { mkdir('uploads', 0755, true); }
 }
 
+// Validate an image referenced by URL/path (the "image URL" field) against the
+// same extension allow-list as uploads, so SVG and other non-image types can't
+// be inserted by reference — the file-upload path already blocks them.
+function isAllowedImageRef(string $ref, array $allowed_ext): bool {
+    $path = explode('|', $ref)[0];          // drop any |fit suffix (e.g. |contain)
+    $path = strtok($path, '?#');            // drop query string / fragment
+    $ext  = strtolower(pathinfo((string)$path, PATHINFO_EXTENSION));
+    return in_array($ext, $allowed_ext, true);
+}
+
 $message  = '';
 $msgClass = 'success';
 
@@ -44,7 +54,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create'])) {
     $content = '';
 
     if ($type === 'text') {
-        $content = trim($_POST['text_content'] ?? '');
+        $content = toPlainText($_POST['text_content'] ?? '');   // plain text only
     } elseif ($type === 'image') {
         if (!empty($_FILES['image_file']['name'])) {
             $check = validateImageFile($_FILES['image_file'], $allowedExtensions, $allowedMimeTypes);
@@ -63,6 +73,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create'])) {
             }
         } else {
             $content = trim($_POST['image_url'] ?? '');
+            if ($content !== '' && !isAllowedImageRef($content, $allowedExtensions)) {
+                $message  = 'Only JPG, PNG, GIF and WEBP images are allowed — SVG and other types are blocked.';
+                $msgClass = 'error';
+                $content  = '';
+            }
         }
     }
 
@@ -87,7 +102,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_update'])) {
     $id      = intval($_POST['edit_id'] ?? 0);
     $type    = $_POST['edit_type']  ?? '';
     $label   = trim($_POST['edit_label']  ?? '');
-    $content = trim($_POST['edit_content'] ?? '');
+    $content = ($type === 'text')
+        ? toPlainText($_POST['edit_content'] ?? '')   // plain text only
+        : trim($_POST['edit_content'] ?? '');
 
     if (!empty($_FILES['edit_image_file']['name'])) {
         $check = validateImageFile($_FILES['edit_image_file'], $allowedExtensions, $allowedMimeTypes);
@@ -101,6 +118,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_update'])) {
             $message  = $check['msg'];
             $msgClass = 'error';
         }
+    }
+
+    // Block SVG / non-image references entered via the URL field on edit too.
+    if (empty($message) && $type === 'image' && $content !== '' && !isAllowedImageRef($content, $allowedExtensions)) {
+        $message  = 'Only JPG, PNG, GIF and WEBP images are allowed — SVG and other types are blocked.';
+        $msgClass = 'error';
     }
 
     if (empty($message) && $id > 0 && !empty($content)) {
@@ -322,6 +345,7 @@ if (isset($_GET['edit_id'])) {
                 <div class="form-group">
                     <label>Upload Image File</label>
                     <input type="file" name="image_file" accept="image/jpeg,image/png,image/gif,image/webp">
+                    <small style="display:block; margin-top:4px; color:#7f8c8d; font-size:11px;">Accepted types: JPG, PNG, GIF, WEBP</small>
                 </div>
                 <div class="form-group">
                     <label>Or Paste Image URL / Path</label>
@@ -329,7 +353,7 @@ if (isset($_GET['edit_id'])) {
                 </div>
             </div>
 
-            <button type="submit" class="btn btn-green">Save to Database</button>
+            <button type="submit" class="btn btn-green">Save Library Asset</button>
         </form>
         <?php endif; ?>
     </div>

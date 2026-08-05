@@ -1,0 +1,73 @@
+# ── Display System — Root .htaccess ────────────────────────────
+
+  # Enable mod_rewrite (required)
+  Options -Indexes
+  Options -MultiViews
+
+  # Block direct browser access to files that should not be opened
+  <FilesMatch "^(auth|db_connect|config|branding_config)\.php$">
+      Order allow,deny
+      Deny from all
+  </FilesMatch>
+
+  # Protect the schema file
+  <FilesMatch "\.sql$">
+      Order allow,deny
+      Deny from all
+  </FilesMatch>
+
+  # Protect .htaccess itself
+  <Files ".htaccess">
+      Order allow,deny
+      Deny from all
+  </Files>
+
+  # Security headers sent with every response
+  <IfModule mod_headers.c>
+      Header always set X-Frame-Options "SAMEORIGIN"
+      Header always set X-Content-Type-Options "nosniff"
+      Header always set X-XSS-Protection "1; mode=block"
+      Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+      # Public sign display: allow viewer.php to be embedded in external
+      # digital-signage widgets (e.g. SmartSign2Go). It is public and
+      # read-only with no interactive controls, so framing it carries no
+      # clickjacking risk. Every other page keeps X-Frame-Options SAMEORIGIN.
+      <Files "viewer.php">
+          Header always unset X-Frame-Options
+          Header always set Content-Security-Policy "frame-ancestors *"
+      </Files>
+  </IfModule>
+
+  # Hide PHP version from response headers
+  <IfModule mod_php7.c>
+      php_flag expose_php Off
+  </IfModule>
+  <IfModule mod_php8.c>
+      php_flag expose_php Off
+  </IfModule>
+
+  # Force PHP session cookies to HttpOnly (prevents JS from reading them)
+  <IfModule mod_php7.c>
+      php_flag session.cookie_httponly On
+      php_flag session.use_strict_mode On
+      php_value session.cookie_samesite "Lax"
+  </IfModule>
+  <IfModule mod_php8.c>
+      php_flag session.cookie_httponly On
+      php_flag session.use_strict_mode On
+      php_value session.cookie_samesite "Lax"
+  </IfModule>
+
+  # Force HTTPS redirect
+  RewriteEngine On
+  RewriteCond %{HTTPS} off
+  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+  # Mark session cookie as Secure (HTTPS only)
+  <IfModule mod_php8.c>
+      php_flag session.cookie_secure On
+  </IfModule>
+  <IfModule mod_php7.c>
+      php_flag session.cookie_secure On
+  </IfModule>

@@ -23,22 +23,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['find_user'])) {
         $stmt->execute([$identifier, $identifier]);
         $user = $stmt->fetch();
 
-        if (!$user) {
-            // Intentionally vague to prevent user enumeration
-            $message = 'If that account exists, a reset code has been sent to the email on file.';
-            $msgType = 'success';
-        } else {
-            // Invalidate old tokens for this user
+        if ($user) {
+            // Real, active account: invalidate old tokens, issue a fresh
+            // passcode, and email it (best effort).
             $pdo->prepare("DELETE FROM password_resets WHERE user_id = ?")->execute([$user['id']]);
 
-            // Generate 6-digit passcode
             $passcode  = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
             $expiresAt = date('Y-m-d H:i:s', time() + 1800); // 30 minutes
-
             $pdo->prepare("INSERT INTO password_resets (user_id, passcode, expires_at) VALUES (?, ?, ?)")
                 ->execute([$user['id'], $passcode, $expiresAt]);
 
-            // Send email
             $to      = $user['email'];
             $subject = SITE_NAME . ' – Password Reset Code';
             $body    = "Hello {$user['username']},\r\n\r\n"
@@ -50,21 +44,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['find_user'])) {
             $headers = "From: " . MAIL_FROM_NAME . " <" . MAIL_FROM . ">\r\n"
                      . "Reply-To: " . MAIL_FROM . "\r\n"
                      . "X-Mailer: PHP/" . phpversion();
+            @mail($to, $subject, $body, $headers);
 
-            $sent = mail($to, $subject, $body, $headers);
-
-            if (!$sent) {
-                $pdo->prepare("DELETE FROM password_resets WHERE user_id = ?")->execute([$user['id']]);
-                $message = 'Could not send the reset email. Please try again later or contact your manager.';
-                $msgType = 'error';
-            } else {
-                $_SESSION['reset_user_id'] = $user['id'];
-                $_SESSION['reset_step']    = 2;
-                $step    = 2;
-                $message = 'A 6-digit code has been sent to the email on file. Enter it below.';
-                $msgType = 'success';
-            }
+            $_SESSION['reset_user_id'] = $user['id'];
+        } else {
+            // Unknown or inactive account: no token, no email. We still
+            // advance to the code screen below so the response is identical
+            // either way — this is what prevents account enumeration.
+            unset($_SESSION['reset_user_id']);
         }
+
+        // Always advance to the code-entry screen with the same message,
+        // regardless of whether the account exists.
+        $_SESSION['reset_step']     = 2;
+        $_SESSION['reset_attempts'] = 0;
+        $step    = 2;
+        $message = 'If an account matches, a 6-digit code has been sent to the email on file. Enter it below.';
+        $msgType = 'success';
     }
 }
 
@@ -73,13 +69,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_reset'])) {
     $passcode = trim($_POST['passcode'] ?? '');
     $newPass  = $_POST['new_password']  ?? '';
     $confirm  = $_POST['confirm']       ?? '';
+    // May be 0 for an unknown/inactive account that reached this screen. We do
+    // NOT bounce back to step 1 (that would reveal the account doesn't exist);
+    // instead the passcode lookup below simply finds no token and reports the
+    // same "incorrect code" as a real account with a wrong code.
     $userId   = intval($_SESSION['reset_user_id'] ?? 0);
-
-    if (!$userId) {
-        $_SESSION['reset_step'] = 1;
-        header('Location: reset_password.php');
-        exit;
-    }
 
     $_SESSION['reset_attempts'] = ($_SESSION['reset_attempts'] ?? 0);
 
@@ -125,6 +119,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_reset'])) {
             $pdo->prepare("UPDATE password_resets SET used = 1 WHERE id = ?")->execute([$reset['id']]);
             $pdo->prepare("UPDATE users SET password_hash = ? WHERE id = ?")
                 ->execute([password_hash($newPass, PASSWORD_DEFAULT), $userId]);
+
+            // A completed reset is a recovery path — release any login lockout.
+            ensureLockoutColumns($pdo);
+            clearLockout($pdo, $userId);
 
             unset($_SESSION['reset_user_id'], $_SESSION['reset_step'], $_SESSION['reset_attempts']);
             session_regenerate_id(true);

@@ -5,7 +5,26 @@
 <title>Display</title>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { width: 100%; height: 100%; background: #111; overflow: hidden; }
+    /* Kiosk / embedded display: never scroll in either direction. Lock the
+       body to the viewport and kill scrollbars, overscroll rubber-banding,
+       and touch-drag scrolling on both axes. */
+    html {
+        width: 100%; height: 100%;
+        overflow: hidden;
+        background: #111;
+    }
+    body {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        width: 100%; height: 100%;
+        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: hidden;
+        background: #111;
+        overscroll-behavior: none;
+        touch-action: none;
+        -ms-touch-action: none;
+    }
 
     /* 1920×1080 design canvas – scaled to fill any screen via JS */
     #viewer-canvas {
@@ -257,7 +276,10 @@
                             block.style.lineHeight  = el.line_height || 1.4;
                         }
                         if (el.text_align) block.style.textAlign = el.text_align;
-                        block.innerHTML = content || '';
+                        // Plain text only — textContent never executes markup.
+                        // pre-wrap preserves author line breaks.
+                        block.style.whiteSpace = 'pre-wrap';
+                        block.textContent = content || '';
 
                     } else if (el.type === 'image') {
                         var _p   = (content || '').split('|');

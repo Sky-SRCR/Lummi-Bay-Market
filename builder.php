@@ -93,6 +93,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 }
 .editable-block:hover:not(.selected):not(.multi-sel) { outline: 1px dashed rgba(255,255,255,0.6); }
 .editable-block.draggable-block { cursor: move; }
+.editable-block.just-added { outline: 2px dashed #e0a400; outline-offset: -1px; background: rgba(255,212,0,.5); }
 .editable-block.selected  { outline: 2px solid #e74c3c; box-shadow: 0 0 8px rgba(231,76,60,.5); }
 .editable-block.multi-sel { outline: 2px solid #f39c12; box-shadow: 0 0 6px rgba(243,156,18,.4); }
 .editable-block.locked-block { cursor: default; }
@@ -454,20 +455,6 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                 onclick="clearSectionBg()">Remove Background</button>
     </div>
 
-    <!-- WYSIWYG (admin only, free text) -->
-    <div id="insp-wysiwyg" class="insp-section" style="display:none;">
-        <label>Formatting</label>
-        <div id="wysiwyg-bar">
-            <button class="fmt-btn" title="Bold"      onmousedown="fmtCmd(event,'bold')"><b>B</b></button>
-            <button class="fmt-btn" title="Italic"    onmousedown="fmtCmd(event,'italic')"><i>I</i></button>
-            <button class="fmt-btn" title="Underline" onmousedown="fmtCmd(event,'underline')"><u>U</u></button>
-            <button class="fmt-btn" title="Strike"    onmousedown="fmtCmd(event,'strikeThrough')"><s>S</s></button>
-            <button class="fmt-btn" title="Align Left"   onmousedown="fmtCmd(event,'justifyLeft')">&#8676;</button>
-            <button class="fmt-btn" title="Center"       onmousedown="fmtCmd(event,'justifyCenter')">&#8660;</button>
-            <button class="fmt-btn" title="Align Right"  onmousedown="fmtCmd(event,'justifyRight')">&#8677;</button>
-        </div>
-    </div>
-
     <!-- Font controls (admin only, free text) -->
     <div id="insp-font" class="insp-section" style="display:none;">
         <label>Font</label>
@@ -681,8 +668,8 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 // CONSTANTS (injected by PHP)
 // ============================================================
 var IS_ADMIN  = <?= $isAdmin ? 'true' : 'false' ?>;
-var SITE_NAME = <?= json_encode(SITE_NAME) ?>;
-var CSRF_TOKEN = <?= json_encode(csrfToken()) ?>;
+var SITE_NAME = <?= json_encode(SITE_NAME, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var CSRF_TOKEN = <?= json_encode(csrfToken(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 
 // Block default sizes
 var BLOCK_DEFAULTS = {
@@ -930,10 +917,10 @@ function createBlock(type, subtype) {
         font_family: 'Arial', font_size: 16, font_color: '#000000',
         font_weight: 'normal', font_style: 'normal', line_height: 1.4
     };
-    renderBlock(el, parent);
+    renderBlock(el, parent, true);
 }
 
-function renderBlock(el, parent) {
+function renderBlock(el, parent, isNew) {
     var block = document.createElement('div');
     block.className = 'editable-block';
     var isChildBlock = parent !== document.getElementById('builder-canvas');
@@ -971,7 +958,14 @@ function renderBlock(el, parent) {
         inner.className = 'text-inner';
         inner.contentEditable = 'true';
         inner.style.pointerEvents = 'none'; // disabled until dblclick; lets drag/shift+click reach block div
-        inner.innerHTML = content || (el.block_subtype !== 'free' ? 'Enter text here' : 'Double-click to edit');
+        inner.style.whiteSpace = 'pre-wrap'; // preserve line breaks in plain text
+        inner.textContent = content || (el.block_subtype !== 'free' ? 'Enter text here' : 'Double-click to edit');
+        if (isNew) {
+            // Newly added block: highlight it so it's easy to find on any
+            // canvas. Builder-only; clears on first edit / move / text change.
+            block.classList.add('just-added');
+            inner.addEventListener('input', function(){ block.classList.remove('just-added'); }, { once: true });
+        }
         inner.addEventListener('focus', function() {
             if (_shiftDown || multiSel.length > 0) { inner.blur(); return; }
             if (block !== activeBlock) selectBlock(block);
@@ -983,6 +977,7 @@ function renderBlock(el, parent) {
         });
         block.addEventListener('dblclick', function(e) {
             if (block.dataset.locked === '1' || _shiftDown || e.target.closest('.rh')) return;
+            block.classList.remove('just-added');   // first edit clears the highlight
             inner.style.pointerEvents = 'auto';
             inner.style.userSelect = 'text';
             inner.style.webkitUserSelect = 'text';
@@ -1112,10 +1107,6 @@ function showInspector(block) {
         document.getElementById('section-bg-preview').textContent = bg || 'No background set';
         document.getElementById('section-bg-fit').value = block.dataset.bgFit || 'cover';
     }
-
-    // WYSIWYG – admin + free text only
-    var showWysiwyg = IS_ADMIN && type==='text' && subtype==='free';
-    document.getElementById('insp-wysiwyg').style.display = showWysiwyg ? 'block' : 'none';
 
     // Font controls – admin + free text only
     document.getElementById('insp-font').style.display = (IS_ADMIN && type==='text' && subtype==='free') ? 'block' : 'none';
@@ -1604,7 +1595,7 @@ function linkAsset(assetId) {
     var match = assetsCache.find(function(a){ return a.id == assetId; });
     if (!match) return;
     if (activeBlock.dataset.type === 'text') {
-        activeBlock.querySelector('.text-inner').innerHTML = match.content;
+        activeBlock.querySelector('.text-inner').textContent = match.content;
     } else if (activeBlock.dataset.type === 'image') {
         activeBlock.querySelector('img').src = match.content;
         activeBlock.dataset.imgSrc = match.content;
@@ -1668,7 +1659,9 @@ function publishCanvas() {
         if (!assetId) {
             if (type === 'text') {
                 var _inner = block.querySelector('.text-inner');
-                manual   = _inner ? _inner.innerHTML : '';
+                // Plain text only — innerText yields visible text with line
+                // breaks; the server strips any markup on save as well.
+                manual   = _inner ? _inner.innerText : '';
                 savePool = true;
             } else if (type === 'carousel') {
                 manual   = block.dataset.carouselData || '{}';
@@ -1792,6 +1785,7 @@ function setupInteract() {
 
 function handleMove(event) {
     var t = event.target;
+    if (t && t.classList) t.classList.remove('just-added');  // first move clears the new-block highlight
     if (t.dataset.locked === '1') return;
     var x = (parseFloat(t.getAttribute('data-x'))||0) + event.dx;
     var y = (parseFloat(t.getAttribute('data-y'))||0) + event.dy;
