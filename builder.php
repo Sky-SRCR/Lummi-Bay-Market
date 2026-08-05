@@ -3,6 +3,7 @@ require_once 'auth.php';
 require_once 'db_connect.php';
 require_once __DIR__ . '/lib/schema.php';
 require_once __DIR__ . '/lib/displays.php';
+require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/display_request.php';
 requireLogin();
 $me      = currentUser();
@@ -13,10 +14,28 @@ $isAdmin = isAdmin();
 ensureSignageSchema($pdo);
 
 $displayStore = new DisplayStore($pdo);
-$resolution   = DisplayRequest::forEditing($displayStore, $_GET, $me);
+// Who is asking, and which Displays they hold (ADR-0005). The same object decides
+// what this page may open and what the picker below offers, so the two cannot
+// disagree about what belongs to this account.
+$actor      = Actor::signedIn($me, new GrantStore($pdo));
+$resolution = DisplayRequest::forEditing($displayStore, $_GET, $actor);
 
-// One Display and no tag goes straight in (DisplayStore::sole()). Anything else
-// that names no Display — or names one that does not exist — lands here and picks.
+// One Display to work on and no tag goes straight in. Beyond that, a `basic`
+// account returns to whatever it was last editing rather than being asked again —
+// the roadmap's Builder entry decision. It is remembered for the session only, and
+// it lives here rather than in lib/ because nothing in lib/ touches $_SESSION.
+// Admins are asked every time: they hold every Display, and choosing is the point.
+// `?switch=1` is how the top bar's Switch display link asks for the picker anyway.
+if (!$resolution->isFound() && $resolution->kind() === DisplayResolution::NO_TAG
+    && !$isAdmin && empty($_GET['switch']) && !empty($_SESSION['last_display'])) {
+    $again = DisplayRequest::forEditing($displayStore, ['display' => $_SESSION['last_display']], $actor);
+    // Silently ignored if that Display was deleted, retired, or is no longer
+    // granted — a remembered choice must never override a refusal.
+    if ($again->isFound()) { $resolution = $again; }
+}
+
+// Anything that names no Display, names one that does not exist, or names one this
+// account may not open lands here and picks from what is actually theirs.
 if (!$resolution->isFound()) {
     $notice  = '';
     if ($resolution->kind() === DisplayResolution::UNKNOWN) {
@@ -26,13 +45,17 @@ if (!$resolution->isFound()) {
         // admin, banner and all.
         $notice = 'That display is turned off, so it is not yours to edit while it is out of service. '
                 . 'An admin can turn it back on.';
+    } elseif ($resolution->kind() === DisplayResolution::FORBIDDEN) {
+        $notice = $resolution->message();
     }
 
-    // A retired Display is not offered to someone who could not open it anyway.
-    $choices = [];
-    foreach ($displayStore->all() as $candidate) {
-        if ($candidate->isActive() || $isAdmin) { $choices[] = $candidate; }
-    }
+    // Only what this account may open — a Display it has not been granted is not
+    // offered, and neither is a retired one it could not work on anyway (ADR-0005).
+    $allDisplays = $displayStore->all();
+    $choices     = $actor->openable($allDisplays);
+    // Theirs by grant, turned off ones included: the difference between these two
+    // is what tells "you have not been given a sign yet" from "your sign is off".
+    $theirs      = $actor->granted($allDisplays);
     ?><!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><title>Choose a display — Builder</title>
@@ -65,7 +88,9 @@ a.pick:hover { background:#3d566e; }
   <?php if ($choices): ?>
     <h1>Which display do you want to edit?</h1>
     <p class="sub">Each one is a separate sign with its own layout. Publishing sends only the
-       display you are in to its screen.</p>
+       display you are in to its screen.<?= $isAdmin
+         ? ' As an admin you hold all of them.'
+         : ' These are the displays assigned to you.' ?></p>
     <?php foreach ($choices as $d): ?>
       <a class="pick" href="builder.php?display=<?= urlencode($d->tag()) ?>">
         <span class="row">
@@ -77,15 +102,20 @@ a.pick:hover { background:#3d566e; }
           if ($d->location() !== '') { echo ' · ' . htmlspecialchars($d->location()); } ?></span>
       </a>
     <?php endforeach; ?>
-  <?php elseif ($displayStore->count() > 0): ?>
-    <h1>Nothing to edit right now</h1>
-    <p class="sub">Every display is turned off. A display that is out of service is not editable
-       by a basic account — ask an admin to turn one back on.</p>
-  <?php else: ?>
+  <?php elseif (!$allDisplays): ?>
     <h1>There are no displays yet</h1>
     <p class="sub">A display is one sign: its screen name tag, its canvas size and its layout.
        <?= $isAdmin ? 'Add the first one in the Admin Panel, under Displays.'
                     : 'Ask an admin to add one, and to give you access to it.' ?></p>
+  <?php elseif (!$theirs): ?>
+    <h1>No displays have been assigned to you yet</h1>
+    <p class="sub">Editing a sign is given out one display at a time, so that nobody changes a
+       screen they were not asked to. Ask an admin which display is yours — they assign it in the
+       Admin Panel, under Displays.</p>
+  <?php else: ?>
+    <h1>Nothing to edit right now</h1>
+    <p class="sub">Every display assigned to you is turned off. A display that is out of service is
+       not editable by a basic account — ask an admin to turn one back on.</p>
   <?php endif; ?>
 
   <p class="foot">
@@ -99,11 +129,17 @@ a.pick:hover { background:#3d566e; }
     exit;
 }
 
-$display      = $resolution->display();
-$canvasW      = $display->canvasWidth();
-$canvasH      = $display->canvasHeight();
-// More than one Display means there is somewhere to switch to.
-$displayCount = $displayStore->count();
+$display = $resolution->display();
+$canvasW = $display->canvasWidth();
+$canvasH = $display->canvasHeight();
+
+// Where a `basic` account comes back to next time it opens the Builder without
+// naming a display. Read only by the entry rule above.
+$_SESSION['last_display'] = $display->tag();
+
+// There is somewhere to switch to only if this account may open a second Display —
+// offering the choice to someone holding one grant would be a link to a dead end.
+$switchable = count($actor->openable($displayStore->all()));
 
 // Load store branding (defaults if config not yet set)
 if (!defined('BRAND_NAV_BG') && file_exists(__DIR__ . '/branding_config.php')) {
@@ -449,8 +485,8 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <span class="d-dims"><?= $display->dimensionsLabel() ?></span>
         <?php if (!$display->isActive()): ?><span class="d-off">off</span><?php endif; ?>
     </span>
-    <?php if ($displayCount > 1): ?>
-        <a href="builder.php" title="Edit a different display">Switch display ⇄</a>
+    <?php if ($switchable > 1): ?>
+        <a href="builder.php?switch=1" title="Edit a different display">Switch display ⇄</a>
     <?php endif; ?>
     <span class="nav-spacer"></span>
     <a href="crud.php">Asset Library</a>

@@ -1,7 +1,7 @@
 # Roadmap — Multi-Display Support
 
-Status: **Phases 1–3 built on `claude/app-update-planning-1pjqfr`, not yet deployed.**
-Phases 4–6 not started. How the code is shaped, and the invariants each phase
+Status: **Phases 1–4 built on `claude/app-update-planning-1pjqfr`, not yet deployed.**
+Phases 5–6 not started. How the code is shaped, and the invariants each phase
 must preserve, are in [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that
 alongside this file.
 
@@ -166,7 +166,7 @@ authenticated editing read, so a retired Display still opens in the Builder; and
 the Builder has a picker, so the no-tag editing rule is now a decided entry
 shortcut for single-sign installations rather than a transitional prop (§3). The
 Builder's top bar names the Display it is editing, publish says which sign it
-reached, and the Work Area tab is Display-scoped. 152 self-test checks pass.
+reached, and the Work Area tab is Display-scoped. 155 self-test checks pass.
 **Not yet run against MySQL or a browser.**
 
 The picker is shown to every account. The *Builder entry* decision below has
@@ -183,6 +183,34 @@ account with no grants sees *"No displays have been assigned to you yet."*
 
 **Done when** a `basic` account granted one Display can edit only that Display, and a
 forged publish naming another is rejected by the API.
+
+**Built.** A grant is one row in `display_permissions` and one tick in a matrix on
+the Displays tab: accounts down the side, Displays across the top, one save. Admins
+are not in it — they hold every Display by role (ADR-0005) — and only `basic`
+accounts can be submitted, which is also what stops a forged POST writing a grant
+row for an admin. Each Display card names who it is assigned to.
+
+Enforcement is one predicate, `Actor::mayOpen()`, called by
+`DisplayRequest::forEditing()` — so `publish`, `get_editor_layout`,
+`get_canvas_elements`, `set_element_hidden` and `delete_canvas_element` are all
+covered without a line of their own, and an endpoint added later inherits it by
+resolving its Display the same way. A forged publish naming an ungranted Display is
+refused in the seam, before any layout code runs. Grants are read once per request
+and only for a `basic` account; the public Viewer poll builds no actor at all.
+
+The Builder's picker lists only what the account may open, distinguishes "no
+displays have been assigned to you yet" from "the one you have is turned off", and
+the entry rule generalised from *the installation's only Display* to *this
+account's only Display* — so a `basic` account with one grant never sees a picker.
+One with more than one returns to whatever it last opened, remembered for the
+session (BUILD-REFERENCE §3). Deleting a Display or an account takes its grants
+with it explicitly, for the same reason elements are deleted explicitly.
+
+The planned `DisplayStore::editableBy()` became `Actor::openable()` instead, and
+`DisplayStore::sole()` is gone; see BUILD-REFERENCE §4d for both and the rest of
+the phase's decisions. 193 self-test checks pass, including the forged publish.
+**Not yet run against MySQL or a browser**, and this is the first phase that
+genuinely needs two accounts to verify.
 
 ### Phase 5 — Edit lock and read-only Builder · size M · risk Medium
 
@@ -222,7 +250,7 @@ corrected — all three present 1920 × 1080 as a fixed property of the system, 
   those errors. Phases 2 and 5 touch it heavily and need reading, not just linting.
 - **No tests** — verification is manual against the live site.
 
-## Before this reaches the sign (Phases 1–3)
+## Before this reaches the sign (Phases 1–4)
 
 In order, on the one visit:
 
@@ -274,8 +302,26 @@ In order, on the one visit:
     a mistyped tag must refuse, the right tag must delete it and its elements, and
     the drive-thru must still be intact after both.
 14. **Prove the picker.** While more than one Display exists, a bare `builder.php`
-    lists them to choose from. Delete the test Displays and a bare `builder.php`
-    goes straight into the drive-thru again — that is the single-sign entry rule.
+    lists them to choose from — and as an admin it lists every Display, retired ones
+    included.
+15. **Prove a grant, with a second account.** This is the one thing only two
+    accounts can show. Add a `basic` account, sign in as it in another browser (or a
+    private window — one session per browser), and confirm it sees *"No displays have
+    been assigned to you yet"*. Then tick that account against **one** test Display
+    in Admin Panel → Displays → *Who can edit which display*, reload as the basic
+    account, and confirm it lands straight in that Display with no picker.
+16. **Prove the refusal, not just the absence.** Still signed in as the basic
+    account, put the drive-thru's address in the Builder by hand:
+    `builder.php?display=drive-thru`. It must say the display has not been assigned
+    to you and offer only their own. That is the check that matters — a Display
+    missing from a list proves nothing about what the API accepts.
+17. **Prove revoking reaches an open tab.** With the basic account editing its
+    Display, untick its grant as the admin and save. The open tab keeps working
+    until it publishes; the publish is refused. Nothing it had unsaved reaches the
+    screen.
+18. **Then clean up.** Delete the test Displays and the test account. A bare
+    `builder.php` as an admin goes straight into the drive-thru again — that is the
+    single-sign entry rule — and the drive-thru layout is exactly as it was.
 
 If the sign goes blank after step 4, the backfill is the thing to check:
 `SELECT COUNT(*) FROM canvas_elements WHERE display_id IS NULL` should be 0. It

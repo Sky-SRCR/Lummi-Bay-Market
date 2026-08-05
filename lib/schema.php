@@ -126,6 +126,32 @@ function ensureSignageSchema(PDO $pdo)
     // delete elements first.
     schemaTry($pdo, "ALTER TABLE canvas_elements ADD CONSTRAINT canvas_elements_ibfk_3
                      FOREIGN KEY (display_id) REFERENCES displays (id) ON DELETE CASCADE");
+
+    // ---- display_permissions ------------------------------------------------
+    // One row per grant: this account may edit this Display (ADR-0005). A grant
+    // is the row's existence — there is deliberately no "level" column, because
+    // what an account may do once inside comes from users.role.
+    //
+    // Admins are never granted anything; they hold every Display by role. So an
+    // empty table means "no basic account can edit anything yet", which is the
+    // right default for a store that has been running on admin accounts only.
+    schemaTry($pdo, "CREATE TABLE IF NOT EXISTS display_permissions (
+        id         INT(11)   NOT NULL AUTO_INCREMENT,
+        display_id INT(11)   NOT NULL,
+        user_id    INT(11)   NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY display_user (display_id, user_id),
+        KEY user_id (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // A grant is meaningless once either side is gone, and a stale row pointing
+    // at a reused id would hand someone access they were never given. Added
+    // separately, because CREATE TABLE above is a no-op on an existing table.
+    schemaTry($pdo, "ALTER TABLE display_permissions ADD CONSTRAINT display_permissions_ibfk_1
+                     FOREIGN KEY (display_id) REFERENCES displays (id) ON DELETE CASCADE");
+    schemaTry($pdo, "ALTER TABLE display_permissions ADD CONSTRAINT display_permissions_ibfk_2
+                     FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE");
 }
 
 /**

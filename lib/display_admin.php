@@ -8,15 +8,17 @@
 //   create(fields)                → DisplayResult   blank, or a duplicate of another Display
 //   updateDetails(Display, fields)→ DisplayResult   title, screen name tag, location
 //   setActive(Display, bool)      → DisplayResult   retire without losing the layout
-//   destroy(Display, typedTag)    → DisplayResult   the layout goes with it
+//   destroy(Display, typedTag)    → DisplayResult   the layout and its grants go with it
+//   setAccess(accounts, wanted)   → DisplayResult   who may edit what, in one write
 //
 // Why this exists rather than more methods on DisplayStore: administering a
-// Display spans both tables. Creating one as a duplicate writes a `displays` row
-// *and* a set of `canvas_elements` rows; destroying one removes both. Those two
-// tables have one gatekeeper each and neither may reach into the other, so the
-// composition — with the validation and the transaction that make it safe — needs
-// somewhere of its own. Without this module all of it would sit in
-// `admin_panel.php`, where Phase 4's grant screen would then need its own copy.
+// Display spans three tables. Creating one as a duplicate writes a `displays` row
+// *and* a set of `canvas_elements` rows; destroying one removes both plus every
+// grant on it; the access matrix writes only grants but has to know which Displays
+// exist. Those tables have one gatekeeper each and none may reach into another, so
+// the composition — with the validation and the transaction that make it safe —
+// needs somewhere of its own. Without this module all of it would sit in
+// `admin_panel.php`, in two copies by now.
 //
 // This module writes no SQL. It holds a PDO only to open and close the
 // transaction that makes "create as a duplicate" and "destroy" all-or-nothing;
@@ -31,9 +33,13 @@
 //     (ADR-0004), and only into an empty one.
 //   · Destroying a Display requires its screen name tag typed back. There is no
 //     undo anywhere in this app, and this is the most destructive button in it.
+//   · A grant is only ever "this account may edit this Display" (ADR-0005). This
+//     module does not know what an account's *role* is — that is the panel's
+//     business, and it is why granting is offered for `basic` accounts only.
 
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/layout_store.php';
+require_once __DIR__ . '/grants.php';
 
 /**
  * The outcome of an administrative change, as a value.
@@ -66,8 +72,11 @@ class DisplayResult
         return new self(self::OK, $display, $message, '');
     }
 
-    /** A Display that no longer exists — destroy() has nothing to hand back. */
-    public static function gone($message)
+    /**
+     * A change with no single Display as its subject: one that has just been
+     * destroyed, or a grant matrix that spans all of them.
+     */
+    public static function done($message)
     {
         return new self(self::OK, null, $message, '');
     }
@@ -101,15 +110,17 @@ class DisplayAdmin
     private $pdo;
     private $displays;
     private $layouts;
+    private $grants;
 
     /**
      * @param PDO $pdo transaction boundaries only — this module writes no SQL
      */
-    public function __construct(PDO $pdo, DisplayStore $displays, LayoutStore $layouts)
+    public function __construct(PDO $pdo, DisplayStore $displays, LayoutStore $layouts, GrantStore $grants)
     {
         $this->pdo      = $pdo;
         $this->displays = $displays;
         $this->layouts  = $layouts;
+        $this->grants   = $grants;
     }
 
     /**
@@ -299,11 +310,13 @@ class DisplayAdmin
 
         $this->pdo->beginTransaction();
         try {
-            // Elements first, and explicitly: the ON DELETE CASCADE may never have
-            // applied on a live database that is behind the repo, and a layout
-            // orphaned by a deleted Display is invisible to every scoped query
-            // while still occupying the table.
+            // Elements and grants first, and explicitly: both `ON DELETE CASCADE`
+            // constraints may never have applied on a live database that is behind
+            // the repo. A layout orphaned by a deleted Display is invisible to
+            // every scoped query while still occupying the table, and an orphaned
+            // grant is one id reuse away from granting the wrong sign.
             $lost = $this->layouts->deleteAllElements($display);
+            $this->grants->revokeAllForDisplay($display);
             $this->displays->deleteRow($display);
             $this->pdo->commit();
         } catch (Exception $e) {
@@ -311,10 +324,87 @@ class DisplayAdmin
             return DisplayResult::failed('That display could not be deleted. Nothing was changed.');
         }
 
-        return DisplayResult::gone(
+        return DisplayResult::done(
             'Display "' . $display->title() . '" (' . $display->tag() . ') and its '
             . $lost . ' element' . ($lost === 1 ? '' : 's') . ' were deleted. '
             . 'Any screen still pointed at it now shows "Display not found".');
+    }
+
+    /**
+     * Set exactly which Displays each of these accounts may edit.
+     *
+     * The whole submitted matrix in one transaction: an account listed here ends up
+     * holding exactly the Displays named for it, and nothing else. Accounts *not*
+     * listed are untouched, so a form that was rendered before a new account
+     * existed cannot silently strip that account's access.
+     *
+     * Ids naming a Display that does not exist are dropped rather than refused —
+     * the one way to send one is a form left open while the Display was deleted,
+     * and losing an unreachable grant is not worth making an admin retype the
+     * matrix for.
+     *
+     * @param array $accountIds the accounts this write covers. The caller decides
+     *                          which: grants are meaningless for an admin, who
+     *                          holds every Display by role (ADR-0005), so the
+     *                          panel passes `basic` accounts only.
+     * @param array $wanted     accountId => [displayId, …], as submitted
+     */
+    public function setAccess(array $accountIds, array $wanted)
+    {
+        $exists = [];
+        foreach ($this->displays->all() as $display) { $exists[] = $display->id(); }
+
+        $granted = 0;
+        $revoked = 0;
+
+        $this->pdo->beginTransaction();
+        try {
+            foreach ($accountIds as $rawAccountId) {
+                $accountId = intval($rawAccountId);
+                if ($accountId <= 0) { continue; }
+
+                $want = [];
+                if (isset($wanted[$accountId]) && is_array($wanted[$accountId])) {
+                    foreach ($wanted[$accountId] as $rawDisplayId) {
+                        $displayId = intval($rawDisplayId);
+                        if (in_array($displayId, $exists, true) && !in_array($displayId, $want, true)) {
+                            $want[] = $displayId;
+                        }
+                    }
+                }
+
+                $held = $this->grants->displayIdsFor($accountId);
+                foreach ($want as $displayId) {
+                    if (!in_array($displayId, $held, true)) {
+                        $this->grants->grant($displayId, $accountId);
+                        $granted++;
+                    }
+                }
+                foreach ($held as $displayId) {
+                    if (!in_array($displayId, $want, true)) {
+                        $this->grants->revoke($displayId, $accountId);
+                        $revoked++;
+                    }
+                }
+            }
+            $this->pdo->commit();
+        } catch (Exception $e) {
+            if ($this->pdo->inTransaction()) { $this->pdo->rollBack(); }
+            return DisplayResult::failed('Access could not be changed. Nothing was changed.');
+        }
+
+        if ($granted === 0 && $revoked === 0) {
+            return DisplayResult::done('Access is unchanged.');
+        }
+
+        // Revoking is the half worth spelling out: someone may be editing that
+        // Display right now, and what they will see is a refusal when they publish.
+        $note = $revoked > 0
+            ? ' Anyone who lost access and has the builder open cannot publish that display again.'
+            : '';
+        return DisplayResult::done(
+            'Access updated — ' . $granted . ' display' . ($granted === 1 ? '' : 's') . ' newly assigned and '
+            . $revoked . ' taken away.' . $note);
     }
 
     // ---- Internals ----------------------------------------------------------

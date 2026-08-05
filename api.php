@@ -3,15 +3,21 @@
 // JSON API
 // ============================================================
 // A thin adapter: it reads the request, hands the work to a module in lib/, and
-// encodes the answer. Every statement against `canvas_elements` and `displays`
-// lives in lib/layout_store.php and lib/displays.php respectively — nothing in
-// this file writes SQL against them. See docs/BUILD-REFERENCE.md.
+// encodes the answer. Every statement against `canvas_elements`, `displays` and
+// `display_permissions` lives in lib/layout_store.php, lib/displays.php and
+// lib/grants.php respectively — nothing in this file writes SQL against them.
+//
+// Nor does any endpoint here check whether the account may have the Display it
+// named: DisplayRequest answers that once, for all of them (ADR-0005). An
+// endpoint added later inherits the check by resolving its Display the same way.
+// See docs/BUILD-REFERENCE.md.
 
 require_once 'auth.php';
 require_once 'db_connect.php';
 require_once __DIR__ . '/lib/schema.php';
 require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/layout_store.php';
+require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/display_request.php';
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
@@ -45,6 +51,11 @@ if ($action !== 'get_layout') {
 
 $displays = new DisplayStore($pdo);
 $layouts  = new LayoutStore($pdo, $displays);
+
+// Who is asking, and which Displays they hold (ADR-0005). Built on the
+// authenticated path only: get_layout is public, has no account, and must not
+// read grants — it exits before anything below needs an actor.
+$actor = ($action === 'get_layout') ? null : Actor::signedIn(currentUser(), new GrantStore($pdo));
 
 // Which Display a write is for. POST wins, so a query string cannot redirect a
 // write that names its Display in the body.
@@ -153,7 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_layout') {
 // but is still editable (CONTEXT.md), so the Builder cannot share the Viewer's
 // read or retiring a sign would make it impossible to work on.
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_editor_layout') {
-    $resolution = DisplayRequest::forEditing($displays, $_GET, currentUser());
+    $resolution = DisplayRequest::forEditing($displays, $_GET, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
 
     $payload = $layouts->snapshot($resolution->display());
@@ -208,7 +219,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'upload_video') {
 // POST: publish
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
-    $resolution = DisplayRequest::forEditing($displays, $writeParams, currentUser());
+    $resolution = DisplayRequest::forEditing($displays, $writeParams, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
     $display = $resolution->display();
 
@@ -274,7 +285,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_brand_styles') {
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_canvas_elements') {
     if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
-    $resolution = DisplayRequest::forEditing($displays, $_GET, currentUser());
+    $resolution = DisplayRequest::forEditing($displays, $_GET, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
     // A bare array, as the Work Area list has always received.
     echo json_encode($layouts->elementIndex($resolution->display()));
@@ -286,7 +297,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_canvas_elements') {
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'set_element_hidden') {
     if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
-    $resolution = DisplayRequest::forEditing($displays, $writeParams, currentUser());
+    $resolution = DisplayRequest::forEditing($displays, $writeParams, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
 
     $id = intval($_POST['element_id'] ?? 0);
@@ -304,7 +315,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'set_element_hidden') {
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'delete_canvas_element') {
     if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
-    $resolution = DisplayRequest::forEditing($displays, $writeParams, currentUser());
+    $resolution = DisplayRequest::forEditing($displays, $writeParams, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
 
     $id = intval($_POST['element_id'] ?? 0);

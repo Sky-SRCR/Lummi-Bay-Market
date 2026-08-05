@@ -16,6 +16,7 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 
 require_once __DIR__ . '/../lib/displays.php';
 require_once __DIR__ . '/../lib/layout_store.php';
+require_once __DIR__ . '/../lib/grants.php';
 require_once __DIR__ . '/../lib/display_request.php';
 require_once __DIR__ . '/../lib/display_admin.php';
 
@@ -55,7 +56,27 @@ function newTestLayoutStore(PDO $pdo)
 function newTestDisplayAdmin(PDO $pdo)
 {
     $displays = new TestDisplayStore($pdo);
-    return new DisplayAdmin($pdo, $displays, new LayoutStore($pdo, $displays));
+    return new DisplayAdmin($pdo, $displays, new LayoutStore($pdo, $displays), new GrantStore($pdo));
+}
+
+/**
+ * An Actor built the way the app builds one: from an account row plus whatever
+ * grants that account actually holds. Going through GrantStore rather than
+ * Actor::withGrants() is the point — it is the reading of the grants that the
+ * self-test wants covered, not just the deciding.
+ */
+function newTestActor(PDO $pdo, $accountId, $role)
+{
+    return Actor::signedIn(
+        ['id' => $accountId, 'username' => 'account' . $accountId, 'role' => $role],
+        new GrantStore($pdo)
+    );
+}
+
+/** Grant one account one Display, without going through the admin use case. */
+function grantTestAccess(PDO $pdo, $displayId, $accountId)
+{
+    (new GrantStore($pdo))->grant($displayId, $accountId);
 }
 
 /** A fresh database with the live structure and one admin + one basic account. */
@@ -89,6 +110,14 @@ function newTestDb()
         lock_holder_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         lock_activity_at TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )");
+
+    $pdo->exec("CREATE TABLE display_permissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        display_id INTEGER NOT NULL REFERENCES displays(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (display_id, user_id)
     )");
 
     $pdo->exec("CREATE TABLE assets (
@@ -165,6 +194,13 @@ function elementsOf(PDO $pdo, $displayId)
 function allElements(PDO $pdo)
 {
     return $pdo->query("SELECT * FROM canvas_elements ORDER BY id ASC")->fetchAll();
+}
+
+/** Every grant row — for proving a destroyed Display took its grants with it. */
+function allGrants(PDO $pdo)
+{
+    return $pdo->query("SELECT display_id, user_id FROM display_permissions
+                        ORDER BY display_id ASC, user_id ASC")->fetchAll();
 }
 
 // ---- Minimal assertions -----------------------------------------------------

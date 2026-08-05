@@ -4,6 +4,7 @@ require_once 'db_connect.php';
 require_once __DIR__ . '/lib/schema.php';
 require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/layout_store.php';
+require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/display_admin.php';
 requireAdmin();
 
@@ -19,7 +20,8 @@ ensureSignageSchema($pdo);
 // shows the answer, and every rule about what a Display may be lives in lib/.
 $displayStore = new DisplayStore($pdo);
 $layoutStore  = new LayoutStore($pdo, $displayStore);
-$displayAdmin = new DisplayAdmin($pdo, $displayStore, $layoutStore);
+$grantStore   = new GrantStore($pdo);
+$displayAdmin = new DisplayAdmin($pdo, $displayStore, $layoutStore, $grantStore);
 
 /**
  * The address to type into a TV or a signage widget — absolute, because it is
@@ -134,8 +136,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($uid === $user['id']) {
             $msg = 'You cannot delete your own account.'; $msgType = 'error';
         } else {
+            // Their grants go first, and explicitly. The FK's ON DELETE CASCADE
+            // should do it, but it is added by schemaTry() and may never have
+            // applied on a database behind the repo — and a grant row left
+            // pointing at a deleted account would hand its access to whoever
+            // inherited that id.
+            $grantStore->revokeAllForAccount($uid);
             $pdo->prepare("DELETE FROM users WHERE id = ?")->execute([$uid]);
-            $msg = 'User deleted.';
+            $msg = 'User deleted, along with any display access they had.';
         }
         $tab = 'users';
     }
@@ -215,6 +223,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msgType = $res->isOk() ? 'success' : 'error';
         }
         $tab = 'displays';
+    }
+
+    // Who may edit which display (ADR-0005). One save for the whole matrix, so
+    // what an admin sees on screen is exactly what ends up stored.
+    if (isset($_POST['action_save_grants'])) {
+        // Only `basic` accounts can be granted anything: an admin already holds
+        // every Display by role, so a grant on one would mean nothing. Intersecting
+        // the submitted accounts with the basic ones is also what stops a forged
+        // POST from writing grant rows for an admin account.
+        $basicIds = [];
+        foreach ($pdo->query("SELECT id FROM users WHERE role = 'basic'")->fetchAll() as $row) {
+            $basicIds[] = intval($row['id']);
+        }
+        $declared = isset($_POST['grants_accounts']) && is_array($_POST['grants_accounts'])
+            ? array_map('intval', $_POST['grants_accounts']) : [];
+        $covered  = array_values(array_intersect($declared, $basicIds));
+
+        $res     = $displayAdmin->setAccess($covered, isset($_POST['grant']) && is_array($_POST['grant'])
+            ? $_POST['grant'] : []);
+        $msg     = $res->message();
+        $msgType = $res->isOk() ? 'success' : 'error';
+        $tab     = 'displays';
     }
 
     // Save branding (logo + colors)
@@ -309,6 +339,18 @@ foreach ($displays as $d) {
         'w'     => $d->canvasWidth(),
         'h'     => $d->canvasHeight(),
     ];
+}
+
+// Grants, both ways round: by account for the matrix's rows, by Display for the
+// "who may edit this sign" line on each card. Admins are in neither — they hold
+// every Display by role and are never granted one (ADR-0005).
+$grantsByAccount = $grantStore->displayIdsByAccount();
+$grantsByDisplay = $grantStore->accountIdsByDisplay();
+$basicUsers      = [];
+$userNames       = [];
+foreach ($users as $u) {
+    $userNames[intval($u['id'])] = $u['username'];
+    if ($u['role'] === 'basic') { $basicUsers[] = $u; }
 }
 
 // Offered as a starting point only; any size inside the bounds can be typed.
@@ -432,6 +474,15 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         .step { border-left: 3px solid #dde3ea; padding: 0 0 0 14px; margin-bottom: 20px; }
         .step.locked { opacity: .45; }
         fieldset { border: none; }
+
+        /* --- Grant matrix --- */
+        .grant-table { border-collapse: collapse; font-size: 13px; }
+        .grant-table th, .grant-table td { padding: 9px 14px; border-bottom: 1px solid #ecf0f1;
+                                           text-align: left; vertical-align: middle; }
+        .grant-table thead th { background: #f8f9fa; font-weight: 600; color: #555; font-size: 12px;
+                                line-height: 1.7; white-space: nowrap; vertical-align: bottom; }
+        .grant-table tbody tr:hover td { background: #fafbfc; }
+        .grant-table input[type="checkbox"] { width: 17px; height: 17px; cursor: pointer; }
 
         /* --- Work Area element type badges --- */
         .el-badge { display:inline-block; padding:2px 7px; border-radius:3px; font-size:11px; font-weight:bold; text-transform:uppercase; }
@@ -625,6 +676,12 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             $did   = $d->id();
             $count = $elementCounts[$did];
             $url   = viewerUrlFor($d);
+            // The basic accounts granted this Display. Admins are not listed: they
+            // hold every Display and listing them would suggest it is revocable.
+            $editors = [];
+            foreach (isset($grantsByDisplay[$did]) ? $grantsByDisplay[$did] : [] as $uid) {
+                if (isset($userNames[$uid])) { $editors[] = $userNames[$uid]; }
+            }
         ?>
         <div class="display-card <?= $d->isActive() ? '' : 'is-off' ?>">
             <div class="display-head">
@@ -645,6 +702,13 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     Last published by <?= htmlspecialchars($d->lastPublishDescription()) ?>
                 <?php else: ?>
                     Never published
+                <?php endif; ?>
+                <br>
+                <?php if ($editors): ?>
+                    Assigned to <strong><?= htmlspecialchars(implode(', ', $editors)) ?></strong>
+                    &nbsp;·&nbsp; and every admin
+                <?php else: ?>
+                    Admins only — no basic account has been assigned this display
                 <?php endif; ?>
             </div>
 
@@ -767,6 +831,79 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             </div>
         </div>
         <?php endforeach; ?>
+    </div>
+
+    <!-- ── Who can edit which display: one grant is one checkbox ── -->
+    <div class="card">
+        <h2>Who can edit which display</h2>
+        <p class="hint" style="margin-bottom:16px;">
+            A tick means that person may open that display in the Builder and publish it to its screen.
+            <strong>Admins are not listed: an admin can already edit every display</strong>, and that
+            comes with the role rather than from this table. What someone may change inside a display
+            they have been given is decided by their role too — a basic user still edits content inside
+            existing sections and cannot move the section layout.
+        </p>
+
+        <?php if (!$basicUsers): ?>
+            <p class="hint">Every account is an admin, so every account can already edit every display.
+               Add a basic user on the User Management tab to hand out one sign at a time.</p>
+        <?php elseif (!$displays): ?>
+            <p class="hint">There are no displays to assign yet. Add one below.</p>
+        <?php else: ?>
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+            <div style="overflow-x:auto;">
+                <table class="grant-table">
+                    <thead>
+                        <tr>
+                            <th>Account</th>
+                            <?php foreach ($displays as $d): ?>
+                                <th style="text-align:center;">
+                                    <?= htmlspecialchars($d->title()) ?><br>
+                                    <span class="tag-chip"><?= htmlspecialchars($d->tag()) ?></span>
+                                    <?php if (!$d->isActive()): ?><br><span
+                                        style="font-size:10px;color:#c0392b;font-weight:700;">TURNED OFF</span><?php endif; ?>
+                                </th>
+                            <?php endforeach; ?>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($basicUsers as $bu):
+                        $uid  = intval($bu['id']);
+                        $held = isset($grantsByAccount[$uid]) ? $grantsByAccount[$uid] : [];
+                    ?>
+                        <tr>
+                            <td>
+                                <!-- Names the accounts this save covers, so one left open while an
+                                     account was added cannot strip the new account's access. -->
+                                <input type="hidden" name="grants_accounts[]" value="<?= $uid ?>">
+                                <strong><?= htmlspecialchars($bu['username']) ?></strong>
+                                <?php if (!$bu['is_active']): ?>
+                                    <span class="badge badge-inactive">Inactive</span>
+                                <?php endif; ?>
+                                <div style="font-size:11px;color:#7f8c8d;">
+                                    <?= count($held) ?> display<?= count($held) === 1 ? '' : 's' ?>
+                                </div>
+                            </td>
+                            <?php foreach ($displays as $d): ?>
+                                <td style="text-align:center;">
+                                    <input type="checkbox" name="grant[<?= $uid ?>][]" value="<?= $d->id() ?>"
+                                           <?= in_array($d->id(), $held, true) ? 'checked' : '' ?>
+                                           title="<?= htmlspecialchars($bu['username'] . ' may edit ' . $d->title()) ?>">
+                                </td>
+                            <?php endforeach; ?>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <p class="hint" style="font-size:12px;margin:12px 0;">
+                Taking a display away from someone who has the Builder open does not close it — their
+                next publish is refused instead, and nothing they had unsaved reaches the screen.
+            </p>
+            <button type="submit" name="action_save_grants" class="btn btn-green">Save access</button>
+        </form>
+        <?php endif; ?>
     </div>
 
     <!-- ── Add a display: size first, then a name, then what it starts from ── -->

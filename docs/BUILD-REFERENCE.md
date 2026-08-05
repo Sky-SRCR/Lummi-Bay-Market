@@ -55,10 +55,11 @@ Design rules, applied to every module added by this build:
 |--------|------------------------|-------|
 | `schema.php` | `ensureSignageSchema(PDO): void` | Every idempotent `ALTER`/`CREATE`, the `displays` table, `display_id` + backfill + index + FK, the drive-thru seed, and the "run at most once per request" latch. |
 | `displays.php` | `Display` + `Background` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the lock columns, and self-healing when the table is not there yet. |
-| `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, and destroying it with its layout — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans both stores. |
+| `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
+| `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the whole access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. |
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: staleness check, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, scoped hide/delete. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
-| `display_request.php` | `DisplayRequest::resolve(...)` → `DisplayResolution` | Which Display an HTTP request means, the ADR-0003 notice wording per failure case, the transitional no-tag fallback, and (from Phase 4) the grant check. |
+| `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 
 `lib/` is denied to the browser by `lib/.htaccess`. Nothing in `lib/` prints,
 redirects, reads `$_POST`/`$_GET`, or touches `$_SESSION` — adapters pass what
@@ -80,10 +81,11 @@ through the app again:
   writing `canvas_elements`, which invariant 1 forbids. Both things Phase 2 left
   are settled: `get_editor_layout` is the authenticated editing read, and the
   Builder's picker is in place.
-- **Phase 4** (grants): `display_permissions` table added to `schema.php`;
-  `DisplayRequest::resolve()` gains the grant check so *every* endpoint is
-  covered by construction; `DisplayStore::editableBy(account)` filters the
-  picker. No endpoint gets its own `if` — that is the whole point of the seam.
+- ~~**Phase 4** (grants)~~ **Done**, with one planned shape changed — see §4d. The
+  grant check landed in `DisplayRequest::forEditing()` as planned, so every
+  endpoint is covered by construction and none has its own `if`. The picker filter
+  did *not* land as `DisplayStore::editableBy()`: it is `Actor::openable()`, next
+  to the grants it consults, rather than in the module that owns `displays`.
 - **Phase 5** (edit lock): the lock columns already exist on `displays`;
   `DisplayStore` gains `takeLock()`, `heartbeat()`, `releaseLock()`,
   `forceUnlock()`, and `Display::lockState()` decides lapsed-vs-held by comparing
@@ -121,7 +123,10 @@ through the app again:
    self-healing retry if the schema is genuinely absent (§3).
 8. **Grants and roles are two axes** (ADR-0005). Grants say *which* Displays;
    `users.role` still says *how much* power. Enforcement is server-side, in the
-   resolution seam, on reads and writes alike.
+   resolution seam, on reads and writes alike — never by an endpoint's own `if`,
+   and never by a Display merely being absent from the picker. Every statement
+   against `display_permissions` is inside `lib/grants.php`; every question about
+   whether an account may have a Display is one call to `Actor::mayOpen()`.
 9. **One filename for the Viewer.** `viewer.php` stays a single file — the
    `<Files "viewer.php">` block in `.htaccess` drops `X-Frame-Options` for the
    SmartSign2Go embed and the kiosk scroll lock rides on it. Renaming or
@@ -138,19 +143,30 @@ its Display or renders a notice (ADR-0003), even when a single Display exists an
 the guess would have been right. A truncated URL can never silently show another
 sign. This became strict in Phase 2, when the Screens started sending their tag.
 
-**Editing: the sole Display, if there is exactly one.** An installation with one
-sign should not ask which sign you meant, so a Builder or admin request naming no
-Display resolves through `DisplayStore::sole()`. It is a decided rule, not a
-leftover: the roadmap's *Builder entry* decision is "one Display → straight in for
-everyone; more than one → pick".
+**Editing: the one Display this account may open, if there is exactly one.** Nobody
+with a single sign to work on should be asked which sign they meant, so a Builder
+or API request naming no Display resolves to `Actor::openable()` when that list has
+one member. At a single-sign store that is the only Display there is; for a `basic`
+account holding one grant it is the sign they were given. It is a decided rule, not
+a leftover: the roadmap's *Builder entry* decision is "one Display → straight in;
+more than one → pick".
 
-The safety property is that `sole()` returns null the moment a second Display
-exists. A write is never routed to a guessed sign — the request fails, and the
+The safety property is that this resolves to nothing the moment two Displays are
+openable. A write is never routed to a guessed sign — the request fails, and the
 Builder shows its picker. It is implemented in exactly one place,
-`DisplayRequest::locate()`, behind `$allowSoleEntry`.
+`DisplayRequest::locate()`, which distinguishes viewing from editing by whether it
+was handed an `Actor` at all.
 
-What Phase 3 removed was the *transitional* part: with a picker in place, failing
-to resolve is no longer a dead end.
+Phase 3 removed the *transitional* part: with a picker in place, failing to resolve
+is no longer a dead end. Phase 4 generalised the rule from "the installation's only
+Display" to "this account's only Display" — the same sentence, once an account can
+hold fewer Displays than exist.
+
+A `basic` account with more than one grant returns to whatever it last opened
+instead of picking again. That lives in `builder.php`, not here: it reads
+`$_SESSION`, and nothing in `lib/` may. It is a *preference*, never a permission —
+the remembered tag is resolved through `forEditing()` like any other, so a Display
+since retired, deleted or un-granted simply falls back to the picker.
 
 ---
 
@@ -260,6 +276,69 @@ decisions already made, not new decisions.
   resize (ADR-0004) is for no method to be able to perform one:
   `DisplayStore::updateDetails()` writes tag, title and location, and that is all.
 
+## 4d. Decisions taken during Phase 4
+
+- **The check lives in the seam, not in `api.php`.** ADR-0005 says enforcement is
+  "server-side in `api.php`", which was written before Phase 1 turned that file into
+  a thin adapter. The decision it was making — server-side, not merely absent from
+  the picker — is honoured more completely here: one check in
+  `DisplayRequest::forEditing()` covers all five Display-scoped endpoints and every
+  endpoint added later. The ADR is left as written; this is where its address
+  changed to.
+- **The grant check is one predicate, and the wording is downstream of it.**
+  `forEditing()` decides with `Actor::mayOpen()` and only *then* asks the narrower
+  question — "is it theirs at all?" — to choose between "turned off" and "not
+  assigned to you". A refusal therefore cannot disagree with the decision that
+  produced it, which two parallel `if`s would eventually manage.
+- **`Actor` carries the account's grants; `DisplayStore` never learns they exist.**
+  This file planned `DisplayStore::editableBy(account)` for the picker. That would
+  have made the module that owns `displays` depend on the module that owns
+  `display_permissions`, to answer a question that is not about the table at all.
+  The filter is `Actor::openable(array $displays)` instead — the authority lives
+  with the thing that has it, and the picker and the entry rule are then provably
+  the same list.
+- **`DisplayStore::sole()` is gone.** The entry rule is no longer a fact about the
+  table ("is there exactly one row?") but about the account ("is there exactly one
+  I may open?"), so the method had nothing left to answer. What remains of it is one
+  `count() === 1` in `DisplayRequest::locate()`.
+- **A refusal names the sign rather than hiding it.** FORBIDDEN says "That display
+  has not been assigned to you", which admits the Display exists. Returning UNKNOWN
+  would leak less and help nobody: a clerk who typed a real address would go hunting
+  for a typo instead of asking an admin. The Displays a `basic` account is *offered*
+  still contain only their own.
+- **Grants are read once per request, and only for `basic` accounts.** An admin
+  holds every Display by role (ADR-0005), so `Actor::signedIn()` does not even
+  query. The public `get_layout` path builds no `Actor` at all — it has no account,
+  and a grant read on the poll every Screen makes every 30s would be a query per
+  poll against a table the viewing path has no business in.
+- **A failed grant read grants nothing.** `GrantStore::pairs()` swallows a database
+  failure and returns no grants, so the failure mode is a `basic` account locked out
+  (a support call) rather than one let in (a silent hole). The table is created by
+  the same convergence every authenticated request runs, so this is a genuinely
+  broken database, not a first-run condition.
+- **Deleting a Display or an account deletes the grants explicitly**, for the same
+  reason Phase 3 deletes elements explicitly: both `ON DELETE CASCADE` constraints
+  are added by `schemaTry()`, which swallows failures. An orphaned grant is worse
+  than an orphaned element — it is one id reuse away from granting a sign nobody
+  assigned.
+- **The matrix is one save, covering only the accounts it rendered.** A tick is a
+  grant; the whole submitted matrix is applied in one transaction, so what an admin
+  sees on screen is what ends up stored. Accounts *absent* from the submission keep
+  their grants, so a form left open while someone was added cannot strip the new
+  account. Ids naming a deleted Display are dropped rather than refused — the only
+  way to send one is a stale form, and there is nothing to save by making an admin
+  retype the matrix.
+- **Only `basic` accounts are offered grants.** `DisplayAdmin` cannot enforce that:
+  roles live on `users`, which is not its table. The panel intersects the submitted
+  accounts with the `basic` ones it queried, which both keeps admins out of the
+  matrix and stops a forged POST writing grant rows for one.
+- **"Basic users resume their last Display" is a session, not a column.** The
+  roadmap's entry decision is honoured for the working session: the Builder
+  remembers the tag in `$_SESSION` and re-resolves it. A durable version would mean
+  a new column on `users` and a stored preference that goes stale the moment a grant
+  is revoked, for a store where a `basic` account holding two signs is already the
+  unusual case. Signing in afresh shows the picker once.
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -270,6 +349,7 @@ php -l <every touched .php>              # syntax; also a GitHub Action
 php tools/selftest_layout.php            # the real modules, in-memory database
 grep -rn "canvas_elements" --include=*.php .   # only lib/layout_store.php may hit
 grep -rn "INTO displays\|UPDATE displays\|FROM displays" --include=*.php .  # only lib/, plus tools/ fixtures
+grep -rn "INTO display_permissions\|FROM display_permissions" --include=*.php .  # only lib/grants.php, plus tools/
 grep -rn "WHERE id = 1\|id=1" --include=*.php . # must be empty
 grep -rn "1920\|1080" --include=*.php .        # only prose, presets and help.php (Phase 6)
 ```

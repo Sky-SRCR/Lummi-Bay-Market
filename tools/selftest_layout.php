@@ -28,7 +28,8 @@ section('Which Display does a request mean?');
 $pdo    = newTestDb();
 $store  = new DisplayStore($pdo);
 $driveT = makeTestDisplay($pdo, 'drive-thru', 'Drive-Thru');
-$actor  = ['id' => 1, 'username' => 'sky', 'role' => 'admin'];
+// Account 1 is the admin, account 2 the basic clerk (see the fixture).
+$actor  = newTestActor($pdo, 1, 'admin');
 
 // Viewing is strict as of Phase 2 (ADR-0003): the Screens send their tag, so a
 // URL that names nothing gets a notice rather than a guess — even when only one
@@ -36,7 +37,7 @@ $actor  = ['id' => 1, 'username' => 'sky', 'role' => 'admin'];
 $r = DisplayRequest::forViewing($store, []);
 checkSame(DisplayResolution::NO_TAG, $r->kind(), 'viewing with no tag is refused even with a sole Display');
 
-// The editing entry rule: one Display and no tag goes straight in.
+// The editing entry rule: one Display to work on and no tag goes straight in.
 $r = DisplayRequest::forEditing($store, [], $actor);
 check($r->isFound() && $r->display()->tag() === 'drive-thru', 'editing with no tag resolves to the sole Display');
 
@@ -68,10 +69,13 @@ $r = DisplayRequest::forEditing($store, ['display' => 'lobby'], $actor);
 check($r->isFound(), 'a deactivated Display is still editable by an admin');
 
 // ADR-0005: the role decides how much power. A sign out of service is not a basic
-// account's to work on, and that is decided in the seam, not in a page.
-$clerk = ['id' => 2, 'username' => 'clerk', 'role' => 'basic'];
+// account's to work on, and that is decided in the seam, not in a page. The clerk
+// is granted both Displays here so that the refusal can only be about the role.
+grantTestAccess($pdo, $driveT->id(), 2);
+grantTestAccess($pdo, $lobby->id(), 2);
+$clerk = newTestActor($pdo, 2, 'basic');
 $r = DisplayRequest::forEditing($store, ['display' => 'lobby'], $clerk);
-checkSame(DisplayResolution::INACTIVE, $r->kind(), 'but not by a basic account');
+checkSame(DisplayResolution::INACTIVE, $r->kind(), 'but not by a basic account, even a granted one');
 $r = DisplayRequest::forEditing($store, ['display' => 'drive-thru'], $clerk);
 check($r->isFound(), 'which does not stop a basic account editing an active Display');
 
@@ -439,13 +443,20 @@ checkSame(2, count($layouts->snapshot($lobby)['elements']),
 
 $r = DisplayRequest::forViewing($store, ['display' => 'lobby']);
 checkSame(DisplayResolution::INACTIVE, $r->kind(), 'a Screen showing it gets the notice');
-$r = DisplayRequest::forEditing($store, ['display' => 'lobby'], ['id' => 1, 'role' => 'admin']);
+$r = DisplayRequest::forEditing($store, ['display' => 'lobby'], newTestActor($pdo, 1, 'admin'));
 check($r->isFound(), 'and it is still editable — which is why the Builder needs the editing read');
 
 $lobby = $admin->setActive($lobby, true)->display();
 checkSame(true, $lobby->isActive(), 'and it can be turned back on');
 
 // ---- Destroying --------------------------------------------------------------
+// Both Displays are granted to the clerk, so destroying one must take its grant
+// with it: a row left pointing at a deleted Display is invisible and one id reuse
+// away from granting a sign nobody assigned.
+grantTestAccess($pdo, $lobby->id(), 2);
+grantTestAccess($pdo, $driveT->id(), 2);
+checkSame(2, count(allGrants($pdo)), 'the clerk has been assigned both Displays');
+
 $res = $admin->destroy($lobby, 'lobbi');
 checkSame(DisplayResult::INVALID, $res->kind(), 'a mistyped tag does not delete a Display');
 checkSame(2, $store->count(), 'both Displays are still there');
@@ -459,11 +470,139 @@ checkSame(0, count(elementsOf($pdo, $lobby->id())), 'its elements went with it')
 checkSame(2, count(elementsOf($pdo, $driveT->id())), 'and the other Display kept every one of its own');
 checkSame(2, count(allElements($pdo)), 'nothing was orphaned');
 
+$grants = allGrants($pdo);
+checkSame(1, count($grants), 'the grant on the deleted Display went with it');
+checkSame($driveT->id(), intval($grants[0]['display_id']), 'and the surviving Display kept its own');
+
 // The roadmap decided there is no "last Display" rule: an installation may have
 // none, and the Builder says so rather than the panel refusing.
 $res = $admin->destroy($store->forTag('drive-thru'), 'drive-thru');
 check($res->isOk(), 'the last Display can be deleted too');
 checkSame(0, $store->count(), 'leaving none');
 checkSame(0, count(allElements($pdo)), 'and no elements behind');
+checkSame(0, count(allGrants($pdo)), 'and no grant pointing at a Display that is gone');
+
+// ─────────────────────────────────────────────────────────────
+section('Grants decide which Displays are an account\'s');
+
+$pdo    = newTestDb();
+$store  = new DisplayStore($pdo);
+$admin  = newTestDisplayAdmin($pdo);
+$grants = new GrantStore($pdo);
+$layouts = newTestLayoutStore($pdo);
+
+$driveT = makeTestDisplay($pdo, 'drive-thru', 'Drive-Thru');
+$lobby  = makeTestDisplay($pdo, 'lobby', 'Lobby');
+$deli   = makeTestDisplay($pdo, 'deli', 'Deli Case');
+
+// Accounts 1 (admin) and 2 (clerk) come from the fixture; jane is a second basic
+// account, so that a write covering one account can be shown not to touch another.
+$pdo->exec("INSERT INTO users (username, role) VALUES ('jane','basic')");
+$janeId = intval($pdo->lastInsertId());
+
+$asAdmin = newTestActor($pdo, 1, 'admin');
+$asClerk = newTestActor($pdo, 2, 'basic');
+
+// ADR-0005: admins hold every Display by role, and are never granted one.
+checkSame(true, $asAdmin->mayEdit($lobby), 'an admin holds a Display with no grant at all');
+checkSame(3, count($asAdmin->openable($store->all())), 'and may open every one of them');
+checkSame(0, count(allGrants($pdo)), 'without a single grant row existing');
+
+// A basic account starts with nothing. Not "everything by default, minus" — the
+// empty table is the safe state.
+checkSame(0, count($asClerk->openable($store->all())), 'a basic account with no grants holds nothing');
+$r = DisplayRequest::forEditing($store, ['display' => 'lobby'], $asClerk);
+checkSame(DisplayResolution::FORBIDDEN, $r->kind(), 'and naming one is refused');
+check(strpos($r->message(), 'has not been assigned to you') !== false,
+      'with a message that sends them to an admin rather than hunting for a typo');
+check($r->display() !== null, 'the refusal still carries the Display it was about');
+
+$grants->grant($lobby->id(), 2);
+$asClerk = newTestActor($pdo, 2, 'basic');
+$r = DisplayRequest::forEditing($store, ['display' => 'lobby'], $asClerk);
+check($r->isFound(), 'a granted Display opens');
+$r = DisplayRequest::forEditing($store, ['display' => 'deli'], $asClerk);
+checkSame(DisplayResolution::FORBIDDEN, $r->kind(), 'one grant is one Display, not a role change');
+
+// The done-when of this phase: a publish forged to name a Display the account was
+// never given is refused in the seam, before any layout code runs — every endpoint
+// resolves this way, so none of them needs its own check.
+$before = count(elementsOf($pdo, $deli->id()));
+$forged = DisplayRequest::forEditing(
+    $store,
+    ['display' => 'deli', 'layout_data' => '[]', 'layout_stamp' => $deli->layoutStamp()],
+    $asClerk
+);
+checkSame(DisplayResolution::FORBIDDEN, $forged->kind(), 'a forged publish naming another Display is refused');
+checkSame($before, count(elementsOf($pdo, $deli->id())), 'and that Display is untouched');
+
+// A grant is permission to publish, too (ADR-0005): one that cannot reach a Screen
+// would be no permission at all.
+$lobby = loadTestDisplay($pdo, $lobby->id());
+$res = publishAs($layouts, $lobby, layoutWith('Granted publish'), $lobby->layoutStamp(), false, 2);
+check($res->isOk(), 'and a granted basic account may publish to it');
+
+// The entry rule, generalised: the one Display *this account* may open. A clerk
+// with a single grant never sees a picker, whatever else exists.
+$r = DisplayRequest::forEditing($store, [], $asClerk);
+check($r->isFound() && $r->display()->tag() === 'lobby',
+      'no tag resolves to the account\'s only openable Display, not the installation\'s');
+checkSame(1, count($asClerk->openable($store->all())),
+          'which is exactly what the picker would have offered — one list, one rule');
+
+$grants->grant($deli->id(), 2);
+$asClerk = newTestActor($pdo, 2, 'basic');
+$r = DisplayRequest::forEditing($store, [], $asClerk);
+checkSame(DisplayResolution::NO_TAG, $r->kind(),
+          'a second grant means a write with no tag is refused rather than guessed');
+
+// Retiring and granting are independent axes, and both are checked here.
+$pdo->exec("UPDATE displays SET is_active = 0 WHERE tag = 'lobby'");
+$asClerk = newTestActor($pdo, 2, 'basic');
+$openable = $asClerk->openable($store->all());
+checkSame(1, count($openable), 'a retired Display drops off a basic account\'s list');
+checkSame('deli', $openable[0]->tag(), 'leaving the one still in service');
+checkSame(2, count($asClerk->granted($store->all())),
+          'though it is still theirs — which is how the Builder tells "none assigned" from "yours is off"');
+checkSame(3, count($asAdmin->openable($store->all())), 'an admin can still open the retired one');
+$pdo->exec("UPDATE displays SET is_active = 1 WHERE tag = 'lobby'");
+
+// ---- The matrix ---------------------------------------------------------------
+$grants->grant($driveT->id(), $janeId);
+
+$res = $admin->setAccess([2], [2 => [$lobby->id(), $driveT->id()]]);
+check($res->isOk(), 'the access matrix saves');
+checkSame([$driveT->id(), $lobby->id()], (new GrantStore($pdo))->displayIdsFor(2),
+          'the account ends up holding exactly what was ticked');
+checkSame([$driveT->id()], (new GrantStore($pdo))->displayIdsFor($janeId),
+          'and an account the save did not cover keeps what it had');
+
+$res = $admin->setAccess([2], [2 => [$lobby->id(), $driveT->id()]]);
+check($res->isOk() && strpos($res->message(), 'unchanged') !== false,
+      'saving the same matrix again says nothing changed');
+checkSame(3, count(allGrants($pdo)), 'and does not duplicate a grant');
+
+$res = $admin->setAccess([2], [2 => [$lobby->id(), 99999]]);
+check($res->isOk(), 'an id naming no Display is dropped rather than failing the whole save');
+checkSame([$lobby->id()], (new GrantStore($pdo))->displayIdsFor(2), 'the real one is kept');
+check(strpos($res->message(), 'cannot publish') !== false,
+      'and a revoke warns that whoever lost access cannot publish that display again');
+
+$res = $admin->setAccess([2], []);
+check($res->isOk(), 'an account with nothing ticked is allowed');
+checkSame([], (new GrantStore($pdo))->displayIdsFor(2), 'and holds nothing');
+$r = DisplayRequest::forEditing($store, ['display' => 'lobby'], newTestActor($pdo, 2, 'basic'));
+checkSame(DisplayResolution::FORBIDDEN, $r->kind(), 'so the Display it was editing is refused again');
+
+// An admin can never be granted anything through this path — the panel passes
+// `basic` accounts only, and nothing here would make a difference if it did.
+$res = $admin->setAccess([1], [1 => [$lobby->id()]]);
+check($res->isOk(), 'granting an admin is accepted');
+checkSame(true, newTestActor($pdo, 1, 'admin')->mayEdit($deli),
+          'and changes nothing: an admin already held every Display');
+
+// An account being deleted takes its grants with it, the same way a Display does.
+checkSame(1, $grants->revokeAllForAccount($janeId), 'deleting an account revokes its grants');
+checkSame([], (new GrantStore($pdo))->displayIdsFor($janeId), 'leaving it holding nothing');
 
 reportChecks();

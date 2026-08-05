@@ -7,6 +7,10 @@
 // server, that the backfill leaves no unscoped row, and that publishing to one
 // Display leaves the others alone on the actual engine.
 //
+// Named for Phase 1 because that is the migration with the risk in it; it has
+// grown to check every table this build adds, grants included. The name stays so
+// the deployment checklist keeps pointing at the same file.
+//
 //   php tools/rehearse_phase1.php --host=localhost --db=COPY_NAME \
 //        --user=USER --pass=PASS --confirm-copy
 //
@@ -22,6 +26,7 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 require_once __DIR__ . '/../lib/schema.php';
 require_once __DIR__ . '/../lib/displays.php';
 require_once __DIR__ . '/../lib/layout_store.php';
+require_once __DIR__ . '/../lib/grants.php';
 
 // ---- Arguments --------------------------------------------------------------
 
@@ -114,6 +119,30 @@ $fk = $pdo->prepare(
 $fk->execute([$opts['db']]);
 report(intval($fk->fetchColumn()) > 0, 'display_id is foreign-keyed to displays');
 
+// display_permissions is the Phase 4 table. Its two foreign keys are what stop a
+// grant outliving the Display or the account it names — and they are added by
+// schemaTry(), which swallows a failure, so this is the only place that says
+// whether they actually applied on this database.
+$hasGrants = false;
+try {
+    $pdo->query("SELECT 1 FROM display_permissions LIMIT 1");
+    $hasGrants = true;
+} catch (Exception $e) {}
+report($hasGrants, 'display_permissions exists');
+
+if ($hasGrants) {
+    $gfk = $pdo->prepare(
+        "SELECT REFERENCED_TABLE_NAME FROM information_schema.KEY_COLUMN_USAGE
+          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'display_permissions'
+            AND REFERENCED_TABLE_NAME IS NOT NULL"
+    );
+    $gfk->execute([$opts['db']]);
+    $refs = [];
+    foreach ($gfk->fetchAll() as $row) { $refs[] = $row['REFERENCED_TABLE_NAME']; }
+    report(in_array('displays', $refs, true), 'a grant is foreign-keyed to its Display');
+    report(in_array('users', $refs, true),    'and to its account');
+}
+
 $store  = new DisplayStore($pdo);
 $legacy = $store->forTag(LEGACY_DISPLAY_TAG);
 report($legacy !== null, 'the drive-thru Display exists');
@@ -198,6 +227,19 @@ $stale = rehearsalPublish($layouts, $a, 'A three', '0');
 report($stale->kind() === 'stale', 'a stale publish to A is refused');
 report($countFor($a->id()) === 2, 'and wrote nothing');
 
+// A grant on a throwaway Display, so the cleanup below can show whether a deleted
+// Display really takes its grants with it on this engine. Uses any existing
+// account — the row is removed either way, and grants nobody anything real
+// because A is deleted a few lines from now.
+$grants     = new GrantStore($pdo);
+$anAccount  = intval($pdo->query("SELECT id FROM users ORDER BY id ASC LIMIT 1")->fetchColumn());
+$grantedA   = false;
+if ($hasGrants && $anAccount) {
+    $grants->grant($a->id(), $anAccount);
+    $grantedA = in_array($a->id(), $grants->displayIdsFor($anAccount), true);
+    report($grantedA, 'a grant can be stored and read back');
+}
+
 // ---- Cleanup ---------------------------------------------------------------
 
 heading('Cleanup');
@@ -213,6 +255,18 @@ $orphans = intval($pdo->query(
      WHERE d.id IS NULL"
 )->fetchColumn());
 report($orphans === 0, 'their elements cascaded away, leaving no orphans');
+
+if ($grantedA) {
+    // The app deletes grants explicitly before deleting the Display, so a failure
+    // here means the constraint is absent rather than the app being wrong — but it
+    // is worth knowing, because it is the same constraint the elements rely on.
+    $orphanGrants = intval($pdo->query(
+        "SELECT COUNT(*) FROM display_permissions dp
+          LEFT JOIN displays d ON dp.display_id = d.id
+         WHERE d.id IS NULL"
+    )->fetchColumn());
+    report($orphanGrants === 0, 'and so did their grants');
+}
 report(!$legacy || $countFor($legacy->id()) === $legacyCountBefore,
     'the drive-thru layout is exactly as it was before this run');
 

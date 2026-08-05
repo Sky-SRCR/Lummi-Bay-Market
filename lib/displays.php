@@ -202,7 +202,7 @@ class DisplayStore
         return $out;
     }
 
-    /** How many Displays exist. The Builder's entry rule turns on this. */
+    /** How many Displays exist at all, whoever is asking. */
     public function count()
     {
         return count($this->all());
@@ -222,22 +222,10 @@ class DisplayStore
         return $out;
     }
 
-    /**
-     * The only Display, when there is exactly one — the Builder's entry rule.
-     *
-     * An installation with one sign should not ask which sign you meant, so an
-     * editing request that names no Display gets this one. Returning null the
-     * moment a second Display exists is the safety property: a write is never
-     * silently routed to the wrong sign, it fails and the Builder shows the
-     * picker instead (BUILD-REFERENCE.md §3).
-     *
-     * Viewing never uses this — a Viewer URL always names its Display (ADR-0003).
-     */
-    public function sole()
-    {
-        $rows = $this->rows("ORDER BY d.id ASC", []);
-        return count($rows) === 1 ? new Display($rows[0]) : null;
-    }
+    // The Builder's entry rule used to live here as sole(). It is now "the one
+    // Display this account may open", which is a question about an account's
+    // grants rather than about the table — so it lives with the Actor that holds
+    // them, and DisplayRequest::locate() asks it (BUILD-REFERENCE.md §3, §4d).
 
     // ---- Writes used by the publish transaction ----------------------------
     // These four are called by LayoutStore from inside its transaction. They

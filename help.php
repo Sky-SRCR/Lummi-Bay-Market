@@ -240,6 +240,21 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     </ul>
 
     <div class="admin-only"><strong>Admin-only features</strong> are marked with a red ADMIN tag throughout the builder interface.</div>
+
+    <h3>Which displays you can edit</h3>
+    <p>Your role decides <em>what</em> you can change; which <strong>displays</strong> you can change it
+       on is separate. An admin can edit every display. A basic user is assigned displays one at a time,
+       in Admin Panel → Displays → <em>Who can edit which display</em>.</p>
+    <ul>
+        <li>Assigned one display — the builder opens straight into it.</li>
+        <li>Assigned more than one — you choose which to edit, and the builder returns you to the last
+            one you had open.</li>
+        <li>Assigned none — the builder says <em>"No displays have been assigned to you yet"</em>. Ask an
+            admin which display is yours.</li>
+    </ul>
+    <p>Publishing is part of editing: if a display is yours, you can publish it to its screen. Being
+       assigned a display is not permanent — an admin can take it back, and the next publish from a
+       builder tab that has lost access is refused.</p>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
