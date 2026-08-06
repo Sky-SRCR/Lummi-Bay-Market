@@ -7,6 +7,8 @@ require_once __DIR__ . '/lib/layout_store.php';
 require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/display_admin.php';
 require_once __DIR__ . '/lib/brand_styles.php';
+require_once __DIR__ . '/lib/server_report.php';
+require_once __DIR__ . '/lib/password_resets.php';
 requireCurrentAccount($pdo);
 requireAdmin();
 
@@ -17,6 +19,12 @@ $msgType = 'success';
 
 // Authenticated, so this is where schema convergence belongs (BUILD-REFERENCE §2.7).
 ensureSignageSchema($pdo);
+// The reset-token table converges from the pre-auth reset page (ADR-0001's rule
+// for pre-auth state), which means a site nobody has ever asked for a password
+// reset on would show its guess-budget column missing in the Settings tab below
+// with no way for an admin to act on it. Converging it here too makes that
+// readout's advice — sign out and back in — true.
+(new ResetTokenStore($pdo))->ensureSchema();
 
 // Displays are administered through DisplayAdmin: this page collects the form and
 // shows the answer, and every rule about what a Display may be lives in lib/.
@@ -1252,6 +1260,72 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 
         <button type="submit" name="action_save_settings" class="btn btn-green">Save Settings</button>
     </form>
+
+    <?php
+    // Read-only, and outside the form on purpose: nothing here is a setting and
+    // there is nothing to submit. See lib/server_report.php for why it exists —
+    // in short, the repo has been written to a PHP version nobody ever checked,
+    // and the schema converges silently enough that a column can fail to apply
+    // for months without anyone noticing.
+    $server = new ServerReport($pdo);
+    ?>
+    <div class="card">
+        <h2>This Server</h2>
+        <p style="font-size:13px; color:#7f8c8d; margin-bottom:14px;">
+            What the site is actually running on. Nothing here can be changed from this page —
+            it is here so nobody has to guess. If you are asked what version of PHP the site uses,
+            this is the answer.
+        </p>
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <?php foreach ($server->runtime() as $label => $fact): ?>
+            <tr style="border-bottom:1px solid #ecf0f1;">
+                <td style="padding:7px 10px 7px 0; color:#7f8c8d; white-space:nowrap; vertical-align:top;">
+                    <?= htmlspecialchars($label) ?>
+                </td>
+                <td style="padding:7px 0; vertical-align:top;">
+                    <strong><?= htmlspecialchars($fact[0]) ?></strong>
+                    <?php if ($fact[1] !== ''): ?>
+                        <div style="color:#7f8c8d; font-size:12px; margin-top:2px;"><?= htmlspecialchars($fact[1]) ?></div>
+                    <?php endif; ?>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>Database Structure</h2>
+        <p style="font-size:13px; color:#7f8c8d; margin-bottom:14px;">
+            Some columns are added to the database automatically the first time an admin signs in
+            after an update. If one of them could not be added, the feature that needs it stops
+            working quietly rather than saying so — this is where that shows up.
+        </p>
+        <?php if ($server->isConverged()): ?>
+            <p style="color:#27ae60; font-size:13px; font-weight:600;">
+                &#10003; Everything this version of the app expects is in place.
+            </p>
+        <?php else: ?>
+            <p style="color:#c0392b; font-size:13px; font-weight:600; margin-bottom:10px;">
+                Something is missing. Signing out and back in as an admin usually applies it;
+                if a row below stays red, the database itself is refusing the change.
+            </p>
+        <?php endif; ?>
+        <table style="width:100%; border-collapse:collapse; font-size:13px; margin-top:8px;">
+            <?php foreach ($server->convergence() as $col): ?>
+            <tr style="border-bottom:1px solid #ecf0f1;">
+                <td style="padding:6px 10px 6px 0; white-space:nowrap;">
+                    <code><?= htmlspecialchars($col['table']) ?>.<?= htmlspecialchars($col['column']) ?></code>
+                </td>
+                <td style="padding:6px 0; color:<?= $col['ok'] ? '#27ae60' : '#c0392b' ?>; font-weight:600;">
+                    <?= $col['ok'] ? '&#10003; present' : '&#10007; missing' ?>
+                    <?php if ($col['note'] !== ''): ?>
+                        <span style="color:#7f8c8d; font-weight:normal;">— <?= htmlspecialchars($col['note']) ?></span>
+                    <?php endif; ?>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+        </table>
+    </div>
 </div>
 
 <!-- ============================================================ -->

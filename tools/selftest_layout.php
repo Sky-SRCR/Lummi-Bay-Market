@@ -1233,4 +1233,50 @@ checkSame(false, (new ResetTokenStore($rPdo))->redeem(1, '123'),  'a code withou
 checkSame(false, (new ResetTokenStore($rPdo))->redeem(1, '0001230'), 'nor is one with a digit added');
 checkSame(true,  (new ResetTokenStore($rPdo))->redeem(1, '000123'), 'the exact six characters are');
 
-reportChecks(359);
+// ─────────────────────────────────────────────────────────────
+section('The server report tells the truth about a database behind the repo');
+
+// The whole value of this report is that it goes red when a runtime-added column
+// did not land — schemaTry() swallows that failure by design, so nothing else in
+// the app will ever say so. A report that always says "everything is in place" is
+// worse than no report, because someone acts on it.
+$sPdo   = newTestDb();
+$server = new ServerReport($sPdo);
+
+check($server->isConverged(), 'a fully converged database reports as converged');
+$columns = $server->convergence();
+checkSame(6, count($columns), 'and every runtime-added column is accounted for');
+foreach ($columns as $col) {
+    check($col['ok'], 'present: ' . $col['table'] . '.' . $col['column']);
+    checkSame('', $col['note'], 'with nothing to warn about for ' . $col['column']);
+}
+
+// Now take one away — the one that matters most. display_id is what scopes every
+// element to a Display; without it a publish is not safe to run at all.
+$sPdo->exec("CREATE TABLE ce_narrow AS SELECT id, type FROM canvas_elements");
+$sPdo->exec("DROP TABLE canvas_elements");
+$sPdo->exec("ALTER TABLE ce_narrow RENAME TO canvas_elements");
+
+$server = new ServerReport($sPdo);
+checkSame(false, $server->isConverged(), 'a database missing a column does not report as converged');
+$missing = null;
+foreach ($server->convergence() as $col) {
+    if ($col['column'] === 'display_id') { $missing = $col; }
+}
+check($missing !== null && $missing['ok'] === false, 'and names the column that is missing');
+check($missing !== null && strpos($missing['note'], 'Do not publish') !== false,
+      'with the consequence spelled out rather than left to be inferred');
+
+// The runtime facts are reported for whatever this machine is; what the report
+// must not do is throw, or hand the page something it cannot print.
+$runtime = (new ServerReport(newTestDb()))->runtime();
+check(isset($runtime['PHP version']), 'the report names the PHP version');
+checkSame(PHP_VERSION, $runtime['PHP version'][0], 'and it is this machine\'s actual version');
+check(isset($runtime['Session cookie']), 'and reports whether the sign-in cookie is protected');
+$allStrings = true;
+foreach ($runtime as $fact) {
+    if (!is_string($fact[0]) || !is_string($fact[1])) { $allStrings = false; }
+}
+check($allStrings, 'every fact is a printable pair, so the panel cannot be handed an object');
+
+reportChecks(380);

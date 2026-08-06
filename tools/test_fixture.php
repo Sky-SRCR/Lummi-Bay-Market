@@ -20,6 +20,7 @@ require_once __DIR__ . '/../lib/grants.php';
 require_once __DIR__ . '/../lib/display_request.php';
 require_once __DIR__ . '/../lib/display_admin.php';
 require_once __DIR__ . '/../lib/password_resets.php';
+require_once __DIR__ . '/../lib/server_report.php';
 
 /**
  * DisplayStore with its one non-portable statement swapped out.
@@ -92,11 +93,19 @@ function newTestDb()
     // is_active mirrors the live column: the session sync reads it on every
     // authenticated request, so a fixture without it cannot test that a
     // deactivated account's open tab stops working.
+    // The three lockout columns are here because auth.php adds them to the live
+    // table at runtime, so a fixture without them is not shaped like the live
+    // schema — and the server report's whole job is to notice a column that never
+    // applied. A fixture that is missing one by accident would make that report
+    // look broken while it was working correctly.
     $pdo->exec("CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL,
         role TEXT NOT NULL DEFAULT 'basic',
-        is_active INTEGER NOT NULL DEFAULT 1
+        is_active INTEGER NOT NULL DEFAULT 1,
+        failed_attempts INTEGER NOT NULL DEFAULT 0,
+        last_failed_at TEXT DEFAULT NULL,
+        locked_until TEXT DEFAULT NULL
     )");
 
     $pdo->exec("CREATE TABLE displays (

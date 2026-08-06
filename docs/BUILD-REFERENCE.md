@@ -60,6 +60,7 @@ Design rules, applied to every module added by this build:
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, and `assetUsage()` — which Displays depend on a shared library entry. |
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `redeem` / `discard` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. |
+| `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads `information_schema` and PHP's own configuration and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 
@@ -113,7 +114,10 @@ through the app again:
    `get_canvas_elements`, which puts hits in `api.php` and `admin_panel.php` that
    are not statements at all. A genuinely unscoped statement added to `api.php`
    would arrive among hits already classified as normal, so read them, don't count
-   them. There is also a back door the grep cannot see at all: `assets` is shared,
+   them. `lib/server_report.php` is a third standing exception and a deliberately
+   inert one: it names the table in a list of columns it expects to find, and asks
+   `information_schema` whether they are there. It reads no rows, from any table.
+   There is also a back door the grep cannot see at all: `assets` is shared,
    a pooled text block keeps no content of its own, and deleting a row there blanks
    that line on every Display using it without the string `canvas_elements`
    appearing anywhere. `LayoutStore::assetUsage()` exists so `crud.php` can refuse.
@@ -722,6 +726,61 @@ really are inside one. Sixteen checks, verified against four mutations: shipping
 the inspector again fails 3, dropping `deselectAll`'s guard fails 1, restoring the
 role-only banner test fails 2, and dropping `loadAssets`'s guard fails 1.
 
+### 4k. Two things this repo believed without ever looking
+
+**"PHP 7.1-compatible syntax — the live server's version is unverified."** That
+sentence has shaped every file here. It is also the only rule in the project with
+no way to check it, and the one real violation it ever caught was not syntax at
+all: `session_set_cookie_params()`'s options-array form arrived in 7.3, and on 7.1
+it is a warning-and-no-op that silently drops HttpOnly, Secure and SameSite from
+the sign-in cookie. A syntax rule cannot catch a library signature, and neither
+can `php -l` at any version. Meanwhile, if the host is actually on 8.x — which a
+shared cPanel account usually is by now — the repo has been paying that price for
+nothing.
+
+**And whether the schema converged.** Invariant 10 says assume nothing about what
+columns exist, and `schemaTry()` swallows the failure of a statement that cannot
+apply, because most of those failures mean "already applied". The cost is that a
+statement which genuinely could not run is indistinguishable from one that did.
+The login lockout columns sat missing on the live database for months and nothing
+said so; the feature simply did not work.
+
+Both are now on one screen: **Admin Panel → Settings → This Server**, admin-only,
+read-only, nothing to submit. It reports the PHP and MySQL versions, the time zone
+(a server left on UTC prints every "editing since" seven hours out for a
+Washington store), whether errors are shown to visitors or written to a log, and
+what actually took on the session cookie — read back out of the *path* on a
+pre-7.3 server, where that is where `SameSite` has to live. Below it, one row per
+runtime-added column, green or red, each red one carrying the consequence rather
+than leaving it to be inferred: `canvas_elements.display_id` missing reads
+"Nothing is scoped to a Display. Do not publish."
+
+Two design points worth keeping:
+
+- **It reads the catalogue, never the rows.** `information_schema` is how it can
+  name `users`, `displays` and `canvas_elements` without becoming the second
+  writer those tables are not allowed to have — and it falls back to a
+  `SELECT … LIMIT 0` on engines that have no catalogue, which is what lets the
+  SQLite fixture exercise it.
+- **Nothing branches on it.** No code path reads `isConverged()` to decide
+  anything. A diagnostic that changes behaviour becomes a second, undocumented
+  configuration system.
+
+`admin_panel.php` now also converges the reset-token table, which otherwise only
+happens on the pre-auth reset page — without that, a site nobody had ever reset a
+password on would show a red row an admin had no way to clear, and the screen's
+own advice ("sign out and back in") would have been false.
+
+Twenty-one checks, including one that removes `display_id` from the fixture
+outright and asserts the report goes red and says why. Verified against two
+mutations — hard-coding the column check to true, and letting the no-catalogue
+fallback answer true on error — each of which fails 3.
+
+**Still open:** what the live server actually runs. The screen answers it the
+first time an admin opens Settings after this deploys; until then the 7.1 rule
+stands unchanged, because guessing in the other direction is the one mistake that
+breaks sign-in on the live site.
+
 ---
 
 ## 5. Verification
@@ -734,8 +793,12 @@ php -l <every touched .php>              # syntax; also a GitHub Action
 php tools/selftest_layout.php            # the real modules, in-memory database
 node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
                                          # that has only what a read-only page emits
-grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL
-                                              # and the get_canvas_elements endpoint NAME
+grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
+                                              # the get_canvas_elements endpoint NAME, and
+                                              # server_report.php's expected-column list
+grep -rn "information_schema" --include=*.php .  # only lib/server_report.php — the one file
+                                              # allowed to name a table it does not own,
+                                              # because it reads the catalogue and no rows
 grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?displays`?" --include=*.php .  # lib/displays.php + schema.php's ALTERs
 grep -rn "INTO display_permissions\|FROM display_permissions" --include=*.php .  # only lib/grants.php, plus tools/
 grep -rn "lock_holder_id\|lock_activity_at\|lock_taken_at" --include=*.php .  # only lib/displays.php + lib/schema.php
