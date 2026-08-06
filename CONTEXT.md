@@ -48,7 +48,8 @@ _Avoid_: disabled, archived, hidden
 **Edit lock**:
 The right to edit one Display, held by a single account at a time. Taken on opening
 the Display in the Builder and released by leaving or by 15 minutes without
-interaction. Anyone else may open that Display read-only meanwhile.
+interaction. Anyone else may open that Display read-only meanwhile — read-only means
+the editing controls are not rendered at all, not that they are rendered and refuse.
 _Avoid_: checkout, reservation, session
 
 **Grant**:

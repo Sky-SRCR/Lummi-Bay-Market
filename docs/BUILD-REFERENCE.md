@@ -596,11 +596,7 @@ Known and not fixed, so nobody assumes otherwise:
 
 - ~~**The Builder addresses its Display by mutable tag**~~ **Fixed** — see §4h.
 - ~~**The password reset's guess limiter lives in `$_SESSION`**~~ **Fixed** — see §4i.
-- **Read-only Builder is only partly server-rendered.** The control bar honours
-  it; `#inspector`, `#align-bar` and the editor modals are emitted unconditionally,
-  so `READ_ONLY = false` in a console offers a full publish. Server-side refusal is
-  what actually stops it, which is the braces rather than the belt the file's own
-  comment claims.
+- ~~**Read-only Builder is only partly server-rendered**~~ **Fixed** — see §4j.
 - **Convergence issues three real `ALTER TABLE`s on every authenticated request.**
   Harmless until a slow publish holds the table, at which point every Screen's poll
   can queue behind the metadata lock. It should read `information_schema` once.
@@ -677,6 +673,55 @@ the edit lock), where it used to be server-local on both sides. Any reset code
 issued in the half-hour before the deploy reads as expired afterwards; the person
 holding it requests another. Nothing else in the app reads that column.
 
+### 4j. A read-only Builder now is what the file said it was
+
+Two comments in `builder.php` stated that when somebody else holds the edit lock,
+"every control that would have changed something is simply not on the page". The
+control bar honoured that. `#inspector`, `#align-bar` and both editor modals were
+emitted unconditionally — the whole inspector, the carousel and table editors, and
+thirty-six write-intent handlers behind them, on a page that is not allowed to
+write anything.
+
+Nothing could reach them, and that is the interesting part. A read-only page
+cannot select a block: both `mousedown` handlers return on `READ_ONLY`, so
+`activeBlock` is permanently null, and every one of those handlers opens with
+`if (!activeBlock) return`. The controls were inert. But *inert* is a property of
+today's call graph, not a rule — it survives only as long as nobody adds a control
+that does not need a selection, and `uploadSlideImage()` was already that: no
+guard of any kind, and it posts a file. The markup was the belt, and the belt was
+missing.
+
+So the markup is now conditional, and the code is written for its absence rather
+than around it:
+
+- **Any lookup of a node in one of those blocks can come back null**, and the
+  functions that still run on a read-only page say so. Three of them run on *every
+  click* in the canvas area — `deselectAll`, `clearMultiSel` → `updateAlignBar`,
+  `clearTargetSection` — plus `loadAssets`, which runs on every page load because
+  a block pointing at a library entry still has to render.
+- **One of those was already broken.** `clearTargetSection()` tested the account's
+  role, but `#section-banner` is emitted only when the account is basic *and* the
+  page can edit — so a read-only basic clerk got an uncaught `TypeError` on every
+  click in the canvas area. The lookup now goes through `setSectionBanner()`, which
+  is null-safe and needs no role test at all.
+- **`uploadSlideImage()` gets an explicit `READ_ONLY` guard**, because it is the
+  one handler that never needed a selected block, and "its modal is not in the
+  page" is the argument this section exists to stop relying on.
+
+What did *not* change: `CSRF_TOKEN` still ships, because a read-only admin can take
+the lock over and that POST needs it, and the server-side refusals are untouched.
+Console access remains console access — this closes the gap between what the file
+claims and what it does, not the one between a browser and an API.
+
+`tools/selftest_builder_readonly.js` is new, and is the reason this is checkable
+rather than merely done: it strips the PHP, evaluates `builder.php`'s own inline
+JavaScript with `READ_ONLY = true`, and stubs a DOM holding **only** the ids that
+page emits, so any lookup of a removed control throws and a throw is a failure. It
+also walks the file's `<?php if (!$readOnly):` blocks to assert the four regions
+really are inside one. Sixteen checks, verified against four mutations: shipping
+the inspector again fails 3, dropping `deselectAll`'s guard fails 1, restoring the
+role-only banner test fails 2, and dropping `loadAssets`'s guard fails 1.
+
 ---
 
 ## 5. Verification
@@ -687,6 +732,8 @@ and manual. Run all of it before every push.
 ```
 php -l <every touched .php>              # syntax; also a GitHub Action
 php tools/selftest_layout.php            # the real modules, in-memory database
+node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
+                                         # that has only what a read-only page emits
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL
                                               # and the get_canvas_elements endpoint NAME
 grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?displays`?" --include=*.php .  # lib/displays.php + schema.php's ALTERs
@@ -710,8 +757,12 @@ grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request namin
                                               # exception: a Screen sends the tag alone (ADR-0003)
 ```
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3050 lines of it.
-Anything touching that file needs reading, not linting.
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3100 lines of it.
+Anything touching that file needs reading, not linting. `node --check` over the
+extracted `<script>` body proves it parses; `tools/selftest_builder_readonly.js`
+goes further and *runs* it, against a DOM stubbed to hold only the ids a read-only
+page emits — which is the only automated way to catch a lookup that reaches for a
+control the lock took away.
 
 `schema.sql` has no automated check at all — nothing reads it, so a column missing
 from it fails silently on a future rebuild and nowhere else. Diff it against

@@ -630,7 +630,11 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <?php endif; ?>
 </div>
 
-<!-- ── Align bar (shown on multi-select OR single select) ── -->
+<!-- ── Align bar (shown on multi-select OR single select) ──
+     Everything from here to the end of the editor modals is an editing control,
+     and a read-only Builder does not get any of it in the page. See the note
+     above #inspector for what that costs and why it is worth it. -->
+<?php if (!$readOnly): ?>
 <div id="align-bar">
     <span style="font-size:11px;color:#bdc3c7;">Align Items:</span>
     <button class="align-btn" title="Align left edges (single: to parent left)"    onclick="alignBlocks('left')"     style="width:auto;padding:0 8px;font-size:11px;">&#9664; Left</button>
@@ -650,6 +654,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <div class="sep"></div>
     <span id="sel-count" style="font-size:11px; color:#bdc3c7;"></span>
 </div>
+<?php endif; ?>
 
 <!-- ── Turned-off notice ── -->
 <?php if (!$display->isActive()): ?>
@@ -682,7 +687,19 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     </div>
 </div>
 
-<!-- ── Inspector panel ── -->
+<!-- ── Inspector panel ──
+     Not emitted when this Builder is read-only. The file used to claim, twice,
+     that "every control that would have changed something is simply not on the
+     page"; the control bar honoured that and this did not, so a read-only page
+     still shipped the whole inspector, both editor modals and the write handlers
+     behind them. Nothing could reach them — a read-only page cannot select a
+     block, so `activeBlock` stays null and every one of those handlers returns —
+     but that is the braces, and this comment was promising a belt.
+
+     Two things follow, and the JavaScript is written to expect both: any lookup
+     of a node in here can come back null, and any function that only exists to
+     drive one of these controls is now unreachable rather than merely inert. -->
+<?php if (!$readOnly): ?>
 <div id="inspector">
     <h3 id="insp-title">Block</h3>
 
@@ -944,6 +961,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         </div>
     </div>
 </div>
+<?php endif; ?>
 
 <div id="toast"></div>
 
@@ -1091,6 +1109,10 @@ function loadAssets() {
         .then(function(list) {
             assetsCache = list;
             var sel = document.getElementById('asset-link');
+            // The dropdown lives in the inspector, which a read-only page does
+            // not have. The cache is still worth filling: a block that points at
+            // a library entry renders from it.
+            if (!sel) { return; }
             sel.innerHTML = '<option value="">— None (manual content) —</option>';
             list.forEach(function(a) {
                 sel.innerHTML += '<option value="'+a.id+'">['+a.type.toUpperCase()+'] '+escHtml(a.label||a.content.substr(0,20))+'</option>';
@@ -1484,13 +1506,19 @@ function deselectAll() {
         if (_ti) { _ti.style.pointerEvents = 'none'; _ti.blur(); }
     }
     activeBlock = null;
-    document.getElementById('inspector').style.display = 'none';
-    if (multiSel.length === 0) document.getElementById('align-bar').style.display = 'none';
+    // Both panels are absent on a read-only page, and this runs on every click in
+    // the canvas area — including there, where there is nothing to deselect but
+    // the handler still fires.
+    var insp = document.getElementById('inspector');
+    if (insp) { insp.style.display = 'none'; }
+    var bar = document.getElementById('align-bar');
+    if (bar && multiSel.length === 0) { bar.style.display = 'none'; }
 }
 
 function showInspector(block) {
-    updateAlignBar(); // keep screen-align bar visible while a block is selected
     var insp = document.getElementById('inspector');
+    if (!insp) { return; }              // read-only: nothing to show it in
+    updateAlignBar(); // keep screen-align bar visible while a block is selected
     var type    = block.dataset.type;
     var subtype = block.dataset.subtype || 'free';
     var isSection = type === 'section';
@@ -1622,7 +1650,8 @@ function toggleMultiSel(block) {
         multiSel.push(activeBlock);
     }
     activeBlock = null;
-    document.getElementById('inspector').style.display = 'none';
+    var _insp = document.getElementById('inspector');
+    if (_insp) { _insp.style.display = 'none'; }
 
     var idx = multiSel.indexOf(block);
     if (idx >= 0) {
@@ -1644,6 +1673,7 @@ function clearMultiSel() {
 function updateAlignBar() {
     var bar  = document.getElementById('align-bar');
     var cnt  = document.getElementById('sel-count');
+    if (!bar || !cnt) { return; }       // read-only: the align bar is not in the page
     var total = multiSel.length + (activeBlock ? 1 : 0);
     if (total > 0) {
         bar.style.display = 'flex';
@@ -1797,25 +1827,29 @@ function appendLockIcon(el) {
 // ============================================================
 // SECTION TARGET (for adding children)
 // ============================================================
+// The banner is a basic account's instruction for adding blocks, so it is in the
+// page only when the account is basic AND the page can edit. These two functions
+// tested the role and not the lock — and clearTargetSection() runs on every click
+// in the canvas area, so a read-only basic account threw an uncaught TypeError on
+// every click, from exactly the unguarded lookup this file claims cannot exist.
+function setSectionBanner(text) {
+    var el = document.getElementById('section-banner');
+    if (el) { el.textContent = text; }
+}
+
 function setTargetSection(sectionEl) {
     if (targetSection) targetSection.classList.remove('targeted');
     targetSection = sectionEl;
     if (targetSection) {
         targetSection.classList.add('targeted');
-        if (!IS_ADMIN) {
-            document.getElementById('section-banner').textContent =
-                'Section selected — now add a block from the bar above.';
-        }
+        setSectionBanner('Section selected — now add a block from the bar above.');
     }
 }
 
 function clearTargetSection() {
     if (targetSection) targetSection.classList.remove('targeted');
     targetSection = null;
-    if (!IS_ADMIN) {
-        document.getElementById('section-banner').textContent =
-            'Click on a section (purple border) to target it, then add your blocks.';
-    }
+    setSectionBanner('Click on a section (purple border) to target it, then add your blocks.');
 }
 
 // ============================================================
@@ -2744,6 +2778,12 @@ function removeSlideRow(btn) {
 }
 
 function uploadSlideImage(input) {
+    // The only handler in the file that writes to the server without first
+    // needing a selected block — so it is the one that could not be left to the
+    // "nothing is selected, so nothing happens" argument. Its slide row is inside
+    // the carousel modal, which a read-only page no longer has; the guard is what
+    // makes that a rule rather than a consequence of the markup.
+    if (READ_ONLY) return;
     if (!input.files[0]) return;
     var row = input.closest('.slide-row');
     var fd  = new FormData();
