@@ -26,6 +26,16 @@ checkSame(false, DisplayStore::isValidTag('lobby_1'),    'underscores are not al
 checkSame(false, DisplayStore::isValidTag('Drive-Thru'), 'uppercase is not a valid stored tag');
 checkSame('drive-thru', DisplayStore::normalizeTag('  DRIVE-THRU '), 'input is trimmed and lowercased');
 
+// Folding stops at things that are not strings (#27). The cast that used to be here
+// answered "Array" for a list — a valid tag, so every caller went on to act on a
+// name nobody had sent — and raised a warning on the way past.
+checkSame('', DisplayStore::normalizeTag(['drive-thru']),
+          'a list is not a tag folded badly, it is not a tag');
+checkSame('', DisplayStore::normalizeTag(null),  'and neither is nothing');
+checkSame('', DisplayStore::normalizeTag(true),  'nor true, which used to fold to "1"');
+checkSame(false, DisplayStore::isValidTag(DisplayStore::normalizeTag(['x'])),
+          'so nothing downstream can be handed a tag it would accept');
+
 // ─────────────────────────────────────────────────────────────
 section('Which Display does a request mean?');
 
@@ -44,6 +54,43 @@ checkSame(DisplayResolution::NO_TAG, $r->kind(), 'viewing with no tag is refused
 // The editing entry rule: one Display to work on and no tag goes straight in.
 $r = DisplayRequest::forEditing($store, [], $actor);
 check($r->isFound() && $r->display()->tag() === 'drive-thru', 'editing with no tag resolves to the sole Display');
+
+// ---- A parameter that is not a tag names no sign (#27) -------------------------
+// Checked here, while drive-thru is still the only Display, because this is the
+// state where getting it wrong costs the most: the entry rule directly above would
+// otherwise hand a malformed parameter the sign it declines to ask about.
+$listed = ['display' => ['drive-thru']];
+
+$r = DisplayRequest::forViewing($store, $listed);
+checkSame(DisplayResolution::NO_TAG, $r->kind(), '?display[]=x names no sign');
+checkSame('No display specified', $r->message(),
+          'and the Screen says so, rather than "Display not found" — nothing was named');
+
+$r = DisplayRequest::forEditing($store, $listed, $actor);
+checkSame(DisplayResolution::NO_TAG, $r->kind(),
+          'and a write is refused rather than routed to the sole Display the entry rule would have picked');
+
+// Nothing is cast, so nothing warns. Since §4m that warning is a line in a 2 MB
+// rotating log rather than text above the document — and a Screen hung on the wall
+// with a malformed address writes one every 30 seconds for as long as it is up.
+$warned = null;
+set_error_handler(function ($sev, $msg) use (&$warned) { $warned = $msg; return true; });
+DisplayRequest::forViewing($store, $listed);
+DisplayStore::normalizeTag(['drive-thru']);
+restore_error_handler();
+checkSame(null, $warned, 'and no "Array to string conversion" is raised on the way');
+
+$r = DisplayRequest::forViewing($store, ['display' => 'array']);
+checkSame(DisplayResolution::UNKNOWN, $r->kind(),
+          'while the word the old cast produced is only ever an ordinary unknown tag');
+
+// The sharp end of it, and not a hypothetical: "array" is a perfectly ordinary
+// screen name tag, and with one in the table `?display[]=x` rendered that sign.
+makeTestDisplay($pdo, 'array', 'Array');
+$r = DisplayRequest::forViewing($store, $listed);
+checkSame(DisplayResolution::NO_TAG, $r->kind(),
+          'even with a Display genuinely tagged "array", a list still reaches nothing');
+$pdo->exec("DELETE FROM displays WHERE tag = 'array'");
 
 $r = DisplayRequest::forViewing($store, ['display' => 'DRIVE-THRU']);
 check($r->isFound(), 'a tag is matched case-insensitively');
@@ -543,6 +590,17 @@ $res = $admin->destroy($lobby, 'lobbi', 1);
 checkSame(DisplayResult::INVALID, $res->kind(), 'a mistyped tag does not delete a Display');
 checkSame(2, $store->count(), 'both Displays are still there');
 checkSame(2, count(elementsOf($pdo, $lobby->id())), 'and its layout is untouched');
+
+// The confirm box reached by the same fold as the URL (#27). It always refused a
+// list, because "Array" is not "lobby" — what it also did was raise a warning above
+// the admin panel on the way to refusing.
+$warned = null;
+set_error_handler(function ($sev, $msg) use (&$warned) { $warned = $msg; return true; });
+$res = $admin->destroy($lobby, ['lobby'], 1);
+restore_error_handler();
+checkSame(DisplayResult::INVALID, $res->kind(), 'a list typed into the delete confirm deletes nothing');
+checkSame(null, $warned, 'and refuses quietly, without a cast warning above the page');
+checkSame(2, $store->count(), 'both Displays are still there after that too');
 
 $res = $admin->destroy($lobby, ' LOBBY ', 1);
 check($res->isOk(), 'the typed tag is matched after trimming and lowercasing');
@@ -4188,4 +4246,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Two numbers because the MySQL run adds a section the SQLite one cannot ask for.
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
-reportChecks(testIsMysql() ? 1119 : 1096);
+reportChecks(testIsMysql() ? 1132 : 1109);

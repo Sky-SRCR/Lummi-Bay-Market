@@ -2511,12 +2511,69 @@ or on a null, reporting a crash three blocks from the line that broke.
 - Replacing the gone-already arm with a fallback to the caller's Display fails 2:
   two admins on the button at once, and the second one told it worked.
 
-**Not covered here, and deliberately.** `DisplayStore::normalizeTag()` still does
+~~**Not covered here, and deliberately.** `DisplayStore::normalizeTag()` still does
 `(string)$tag`, so `confirm_tag[]=x` raises "Array to string conversion" above the
-document before refusing. That is the same function and the same defect as **#27**
-(`?display[]=x` becoming the tag "array"), and fixing half of it here would leave
-#27's write-up describing a bug that was already partly gone. It refuses either way;
-what it does not do yet is refuse quietly.
+document before refusing.~~ **Closed by §4y**, which owns that function.
+
+### 4y. A parameter that is not a tag names no sign (#27)
+
+**Half of this item was already fixed, and by something else.** #27 is recorded as
+"`?display[]=x` became the tag "array" **and printed a warning above the document**".
+The printing stopped at §4m: `ErrorPolicy` sets `display_errors` off and swallows
+warnings into a log rather than the response, so on the live server that warning has
+not reached a page since. Worth saying plainly, because it is the second item on this
+list whose stated premise had expired before anybody got to it (#51 was the first).
+
+**What was actually still broken** is the more interesting half:
+
+- `(string)['x']` is the literal word **`Array`**, and `array` is a perfectly valid
+  screen name tag — lowercase letters, five of them. So the request did not fail, it
+  went and looked one up. With no such Display the Screen said *"Display not found"*,
+  which is a lie: nothing was named. **With a Display genuinely tagged `array`, it
+  rendered that sign.** The self-test asserts exactly that case, and it is the check
+  that fails loudest when the cast is put back.
+- The warning still costs something even unprinted. A Screen hung on a wall with a
+  malformed address writes an "Array to string conversion" line every 30 seconds,
+  forever, into a 2 MB rotating log on a shared host.
+
+**The fix is that a tag is a string, and nothing else is a tag.** No cast anywhere:
+`DisplayRequest::locate()` answers `noTag()` for a `display` parameter that is not a
+string, and `DisplayStore::normalizeTag()` answers `''` for anything that is not one.
+The second closes the same defect at every other door in one line — `forTag()`, the
+delete confirm's typed tag, and the Display form's tag field all read the empty
+answer correctly already.
+
+**Where the care went: the ordering, not the predicate.** The obvious implementation
+is to fold a non-string to `''` and let the existing empty-tag path handle it. That
+is wrong, and only for editing. `locate()`'s entry rule says an account with exactly
+one Display to work on is not asked which one it meant — a convenience for a person
+opening the Builder at a single-sign store. Fold `display[]=x` to `''` and a
+**publish** carrying it inherits that convenience and lands on a Display the request
+never named. So the check returns before the fallback: *a tag that cannot be read is
+not a tag left out.* Injecting the fold-to-empty version fails exactly one check, by
+name, and that check is the whole reason this paragraph exists.
+
+The asymmetry with `confirmIdentity()` two methods below is deliberate and now sits
+in plain sight: an array in **`display_id`** is a `mismatch`, not "no claim". That
+parameter is a caller asserting which record it holds, so sending a malformed one is
+a disagreement. `display` is an address, and a malformed address names nothing.
+
+**Coverage.** 13 new checks, both engines. Four on `normalizeTag()` directly, the
+rest on resolution — including the `array`-tagged Display, the editing ordering, and
+a `set_error_handler` assertion that nothing warns. The suite's own "no PHP
+diagnostics during the run" guard catches the warning independently, which is why
+restoring either cast fails eight or nine checks rather than the two it breaks.
+
+**The deliberate breakages the tests catch.** Verified by injection:
+
+- Restoring `(string)` in `locate()` fails 9, led by *even with a Display genuinely
+  tagged "array", a list still reaches nothing — expected 'no_tag', got 'found'*.
+  That failure is the defect at its sharpest: a public URL rendering a sign nobody
+  asked for.
+- Restoring `(string)` in `normalizeTag()` fails 8, across the fold itself, the
+  Viewer path and the delete confirm.
+- Folding a non-string to `''` instead of stopping fails exactly 1: *a write is
+  refused rather than routed to the sole Display the entry rule would have picked*.
 
 ---
 

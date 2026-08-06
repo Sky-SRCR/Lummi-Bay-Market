@@ -182,7 +182,30 @@ class DisplayRequest
      */
     private static function locate(DisplayStore $store, array $params, $actor)
     {
-        $raw = isset($params[self::PARAM]) ? (string)$params[self::PARAM] : '';
+        // A screen name tag is a string. `?display[]=x` is not one, and nothing that
+        // knows its Display sends one — so it names no sign (#27).
+        //
+        // The cast this replaces got two things wrong at once. `(string)['x']` is the
+        // literal word "Array", which is a *valid* tag, so the request went on to look
+        // one up: the Screen said "Display not found", which is not true — nothing was
+        // named — and it would render somebody's sign for real the day anybody tags one
+        // `array`. It also raised "Array to string conversion" every time, which since
+        // §4m is a line in a 2 MB rotating log rather than text above the document, and
+        // a Screen misconfigured with a malformed address writes one every 30 seconds
+        // for as long as it hangs on the wall.
+        //
+        // Answered before the editing fallback below, and that ordering is the
+        // load-bearing half. On a Screen "named nothing" and "named no sign" are the
+        // same notice, but for a write they are not: the fallback exists so that a
+        // person opening the Builder at a single-sign store is not asked which sign
+        // they meant, and extending that convenience to a malformed parameter would
+        // route a publish to a Display the request never named. A tag that cannot be
+        // read is not a tag left out.
+        if (isset($params[self::PARAM]) && !is_string($params[self::PARAM])) {
+            return DisplayResolution::noTag();
+        }
+
+        $raw = isset($params[self::PARAM]) ? $params[self::PARAM] : '';
 
         if (trim($raw) === '') {
             if ($actor === null) {

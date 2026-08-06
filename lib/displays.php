@@ -943,10 +943,21 @@ class DisplayStore
 
     // ---- Tag rules ----------------------------------------------------------
 
-    /** Fold user input toward a valid tag without inventing one: trim, lowercase. */
+    /**
+     * Fold user input toward a valid tag without inventing one: trim, lowercase.
+     *
+     * A tag is a string, and anything else is not a tag folded badly — it is not a
+     * tag (#27). `(string)$array` would raise "Array to string conversion" and hand
+     * back the word "Array", which is itself a perfectly valid tag, so the caller
+     * would go on to act on a name nobody sent. The three callers that see user
+     * input all read the empty answer correctly on their own: `forTag('')` finds no
+     * Display, the delete confirm cannot match it, and the Display form re-suggests
+     * a tag from the title exactly as it does for a box left blank.
+     */
     public static function normalizeTag($tag)
     {
-        return strtolower(trim((string)$tag));
+        if (!is_string($tag)) { return ''; }
+        return strtolower(trim($tag));
     }
 
     public static function isValidTag($tag)
