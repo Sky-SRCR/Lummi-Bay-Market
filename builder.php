@@ -230,16 +230,19 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #lock-banner .who { font-weight: 700; }
 #lock-banner .btn { padding: 4px 10px; }
 
-/* The holder's own bars: idle warning, lapsed, and lost-to-somebody-else. Each is
-   an offer or a fact, never a modal — interrupting an editor is the thing the idle
-   window exists to avoid. */
-#lock-idle-bar, #lock-lapsed-bar, #lock-lost-bar {
+/* The holder's own bars: idle warning, lapsed, lost-to-somebody-else, and access
+   taken away. Each is an offer or a fact, never a modal — interrupting an editor is
+   the thing the idle window exists to avoid. */
+#lock-idle-bar, #lock-lapsed-bar, #lock-lost-bar, #lock-access-bar {
     display: none; font-size: 13px; padding: 8px 14px; flex-shrink: 0;
     align-items: center; gap: 10px; flex-wrap: wrap;
 }
 #lock-idle-bar   { background: #7d6608; border-bottom: 1px solid #9e8109; }
 #lock-lapsed-bar { background: #4b3869; border-bottom: 1px solid #6b5291; }
 #lock-lost-bar   { background: #7b3f3f; border-bottom: 1px solid #9b5252; }
+/* Not the lock: the grant. Nothing on this page will work again until an admin
+   gives the display back, so it is the one bar that never turns off by itself. */
+#lock-access-bar { background: #7b3f3f; border-bottom: 1px solid #9b5252; }
 #lock-idle-bar .btn { padding: 4px 10px; }
 
 /* ── Control bar ── */
@@ -598,6 +601,17 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         Publish once they are finished, or reload to start again from what is on the screen.</span>
 </div>
 <?php endif; ?>
+<!-- Outside the read-only branch on purpose: access can be taken away from somebody
+     who was editing *and* from somebody who was only looking, and both need telling.
+     An admin revoking a grant frees the edit lock in the same write, so this page has
+     already stopped holding the display by the time it reads this — and if it said
+     nothing, the person would carry on working and find out at the publish. -->
+<div id="lock-access-bar">
+    <span><strong>Your access to this display has been removed.</strong>
+        An admin has taken it off your list, so nothing here can be published any more and the
+        display has been released for somebody else. What you have done is still on this screen —
+        copy anything you need before you leave the page. Ask an admin if this was not expected.</span>
+</div>
 
 <!-- ── Control bar ── -->
 <div id="control-bar">
@@ -2375,13 +2389,17 @@ function publishCanvas() {
                 showToast('Published to ' + DISPLAY_TITLE + ' (' + DISPLAY_TAG + '). '
                           + 'That screen updates within 30 seconds.');
                 loadAssets();
-            } else if (res.reason === 'stale' || res.reason === 'locked' || res.reason === 'mismatch') {
+            } else if (res.reason === 'stale' || res.reason === 'locked'
+                       || res.reason === 'mismatch' || res.reason === 'forbidden') {
                 // Nothing was saved, and none of these refusals may be glimpsed and
                 // missed: the layout on screen is still the editor's, and what to do
                 // next differs — reload for a stale stamp, wait for somebody else's
                 // edit lock, reload for a screen name tag that moved to another
-                // display. The message says which.
-                if (res.reason === 'locked') { lockLost = true; renderLockBars(); }
+                // display, ask an admin for a display that is no longer yours. The
+                // message says which. `forbidden` used to be a toast, which is the one
+                // of the four that never comes back on its own.
+                if (res.reason === 'locked')    { lockLost = true; renderLockBars(); }
+                if (res.reason === 'forbidden') { noteAccessLost(); }
                 alert(res.message);
             } else { showToast(res.message||'Publish failed.', true); }
         })
@@ -2410,6 +2428,11 @@ var LOCK_POLL_MS = 30000;   // read-only: how often we check whether it has free
 var lastInteraction = Date.now();
 var lastBeatAt      = Date.now();
 var lockLost        = false;   // somebody else holds it — never claim again
+// Not the same thing, and kept apart on purpose: the lock can come back on its own,
+// a revoked grant cannot. An admin unticking this display in the access matrix frees
+// the lock in the same write, so the server has already stopped believing this page
+// holds it — and every further beat would be refused for the rest of the day.
+var accessLost      = false;
 
 // The server's own idea of how idle this lock is, and when it said so. It knows
 // about every tab this account has open on this Display, which this tab does not:
@@ -2468,7 +2491,7 @@ function lockTick() {
 
 /** Take the lock, keep it, or take it back — one endpoint, as one question. */
 function holdLock() {
-    if (READ_ONLY || lockLost) { return; }
+    if (READ_ONLY || lockLost || accessLost) { return; }
     lastBeatAt = Date.now();
     var fd = new FormData();
     fd.append('csrf_token', CSRF_TOKEN);
@@ -2484,7 +2507,15 @@ function holdLock() {
 }
 
 function applyLockAnswer(res) {
-    if (!res || res.status !== 'success') { return; }
+    if (!res) { return; }
+    if (res.status !== 'success') {
+        // A failed beat is normally nothing to act on — the next one covers it. One
+        // refusal is not: `forbidden` means this account no longer holds this display,
+        // and no later beat will ever succeed. Swallowing it left somebody editing a
+        // sign they had already lost, with the first word of it coming at the publish.
+        if (res.reason === 'forbidden') { noteAccessLost(); }
+        return;
+    }
 
     if (res.held_by_me) {
         serverIdle       = res.idle_seconds || 0;
@@ -2499,6 +2530,25 @@ function applyLockAnswer(res) {
     renderLockBars();
 }
 
+/**
+ * The grant for this display is gone. Say so, and stop asking for the lock.
+ *
+ * The canvas is left alone, exactly as ADR-0007 leaves it when the lock moves on:
+ * pulling the editor apart under somebody would lose work that is still on screen and
+ * still theirs to copy out. What stops is the claiming — every beat from here would be
+ * refused, and a page that keeps politely asking is a page that never says anything.
+ */
+function noteAccessLost() {
+    if (accessLost) { return; }
+    accessLost = true;
+    // On a read-only page the banner above says somebody else is editing and offers a
+    // reload once it frees up. Both were true a moment ago and neither is now, so it
+    // goes: an offer to reload into a refusal is worse than no offer.
+    var banner = document.getElementById('lock-banner');
+    if (banner) { banner.style.display = 'none'; }
+    renderLockBars();
+}
+
 /** The one click that keeps the lock, from the idle warning. */
 function keepEditing() {
     lastInteraction = Date.now();
@@ -2506,12 +2556,17 @@ function keepEditing() {
     renderLockBars();
 }
 
-/** Which of the three bars belongs on screen, decided from the local idle age. */
+/** Which of the four bars belongs on screen, decided from the local idle age. */
 function renderLockBars() {
     var idle = lockIdleSeconds();
-    showLockBar('lock-lost-bar',   lockLost);
-    showLockBar('lock-lapsed-bar', !lockLost && idle >= LOCK_LAPSE_SECONDS);
-    showLockBar('lock-idle-bar',   !lockLost && idle >= LOCK_WARN_SECONDS && idle < LOCK_LAPSE_SECONDS);
+    // Access first, and it hides the other three: "you have lost this display" and
+    // "it will be released in two minutes" are both true once a grant is revoked, and
+    // only one of them is worth reading. The lost bar in particular would name a
+    // holder there is not one of.
+    showLockBar('lock-access-bar', accessLost);
+    showLockBar('lock-lost-bar',   !accessLost && lockLost);
+    showLockBar('lock-lapsed-bar', !accessLost && !lockLost && idle >= LOCK_LAPSE_SECONDS);
+    showLockBar('lock-idle-bar',   !accessLost && !lockLost && idle >= LOCK_WARN_SECONDS && idle < LOCK_LAPSE_SECONDS);
     var mins = document.getElementById('lock-idle-mins');
     if (mins) { mins.textContent = Math.max(1, Math.round((LOCK_LAPSE_SECONDS - idle) / 60)); }
 }
@@ -2527,7 +2582,14 @@ function pollLockState() {
           + '&display_id=' + DISPLAY_ID)
         .then(function(r){ return r.json(); })
         .then(function(res) {
-            if (!res || res.status !== 'success') { return; }
+            if (!res) { return; }
+            if (res.status !== 'success') {
+                // Somebody watching a display can lose access to it as easily as
+                // somebody editing one, and the offer to reload would then be an
+                // offer to be refused. Same bar, same sentence.
+                if (res.reason === 'forbidden') { noteAccessLost(); }
+                return;
+            }
             // Shown when free and taken away again if somebody else starts, so the
             // offer to reload means what it says at the moment it is read.
             var hint = document.getElementById('lock-free-hint');
@@ -2545,7 +2607,9 @@ function pollLockState() {
  * nothing at all, which is what the idle window is there for.
  */
 function releaseLockOnLeave() {
-    if (READ_ONLY || lockLost || !navigator.sendBeacon) { return; }
+    // accessLost included: the revoke already released it, and this beacon would be
+    // refused by the same seam that refused the beat.
+    if (READ_ONLY || lockLost || accessLost || !navigator.sendBeacon) { return; }
     var fd = new FormData();
     fd.append('csrf_token', CSRF_TOKEN);
     fd.append('display', DISPLAY_TAG);

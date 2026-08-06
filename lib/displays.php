@@ -647,12 +647,38 @@ class DisplayStore
      */
     public function releaseLock(Display $display, $accountId)
     {
-        $this->pdo->prepare(
+        $this->releaseLockOn($display->id(), $accountId);
+        return $this->forId($display->id());
+    }
+
+    /**
+     * The same release, by id, answering whether there was one to release.
+     *
+     * Two callers want different things from it. The Builder leaving a page wants
+     * the Display back to re-read its lock state, which is what releaseLock()
+     * above returns. An admin taking somebody's access away wants to know whether
+     * a lock was actually freed, because that decides what the panel tells them —
+     * and it is holding a transaction, where re-reading a row through forId() would
+     * be a query whose answer nobody uses.
+     *
+     * Naming the holder in the WHERE clause matters here as much as there: revoking
+     * one person's grant must not free the lock a *colleague* is working under on
+     * the same Display.
+     *
+     * @return bool whether this account was holding it
+     */
+    public function releaseLockOn($displayId, $accountId)
+    {
+        $stmt = $this->pdo->prepare(
             "UPDATE displays
                 SET lock_holder_id = NULL, lock_taken_at = NULL, lock_activity_at = NULL
               WHERE id = ? AND lock_holder_id = ?"
-        )->execute([$display->id(), intval($accountId)]);
-        return $this->forId($display->id());
+        );
+        $stmt->execute([intval($displayId), intval($accountId)]);
+        // rowCount() is safe to read here on both engines: the WHERE clause requires
+        // a non-null holder, so a matched row always has lock_holder_id changing to
+        // NULL — MySQL's "rows changed" and SQLite's "rows matched" cannot disagree.
+        return $stmt->rowCount() > 0;
     }
 
     /**

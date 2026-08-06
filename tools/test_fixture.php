@@ -120,16 +120,22 @@ function newTestDb()
     // password_hash is here because a password reset writes it, and a fixture
     // without it cannot tell a reset that changed the password from one that only
     // said it had.
+    // username and email are UNIQUE because they are UNIQUE on the live table, and
+    // one use case depends on it: AccountAdmin::edit() reports the whole change as
+    // failed when the email is already somebody else's, and it has to be able to
+    // *fail* to prove that the role and the grants went back with it. A fixture
+    // without the constraint would have made that check assert a rollback that never
+    // had anything to roll back.
     $pdo->exec("CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT NOT NULL,
+        username TEXT NOT NULL UNIQUE,
         password_hash TEXT NOT NULL DEFAULT '',
         role TEXT NOT NULL DEFAULT 'basic',
         is_active INTEGER NOT NULL DEFAULT 1,
         failed_attempts INTEGER NOT NULL DEFAULT 0,
         last_failed_at TEXT DEFAULT NULL,
         locked_until TEXT DEFAULT NULL,
-        email TEXT NOT NULL DEFAULT '',
+        email TEXT NOT NULL DEFAULT '' UNIQUE,
         closed_at TEXT DEFAULT NULL
     )");
 

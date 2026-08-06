@@ -56,13 +56,13 @@ Design rules, applied to every module added by this build:
 | `schema.php` | `ensureSignageSchema(PDO): void`, plus the three pieces it is made of: `readSchemaFacts(PDO) → SchemaFacts`, `signageSchemaPlan(SchemaFacts) → array`, `runSchemaPlan(PDO, array) → array` | Every idempotent `ALTER`/`CREATE`, the `displays` and `display_permissions` tables, `display_id` + backfill + index + FK, the drive-thru seed, the Brand Standards row seed, the "run at most once per request" latch — and **whether any of it needs to run at all**. The one place in the repo that reads `information_schema`; `ServerReport` asks this rather than writing its own catalogue query. `signageSchemaPlan()` is pure (facts in, ordered work out), which is the only reason this file has any automated coverage: its statements are MySQL-only and the fixture is SQLite. `runSchemaPlan()` returns the entries that failed, each with the database's own reason, and `reportSchemaFailures()` tells an admin — but only about a statement the catalogue said was missing, never about one included as a guess (invariant 20). `SchemaLatch` is the "once per request" latch, as something a test can clear. And the second door: `repairSchemaAfterFailure(PDO, &$why) → bool` is how a caller that has *already failed a query* converges, with the three refusals of invariant 21 in front of it; `schemaErrorSaysTableMissing($sqlstate, $message)` is the only thing outside this file that needs saying about a database error, and `withSchemaRepairLock()` makes convergence installation-wide single-file. |
 | `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. It decides only whether the error was the kind a repair could fix; whether repairing is *safe right now* belongs to `schema.php` (invariant 21), because that question is about DDL and transactions rather than about the `displays` table. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
-| `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the whole access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. |
+| `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. `setAccess()` takes **both** axes of the matrix the form covered — the accounts *and* the Displays — because an unticked box and a cell the form never rendered are the same absence in a POST, and only one of them means "revoke"; and a revoke frees the edit lock on the Display it takes away, by holder, inside the same transaction. |
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, `assetUsage()` — which Displays depend on a library entry — and the sweep of the library rows a publish strands, scoped to the ids that Display's own previous layout held. |
 | `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `update` / `delete` / `pool` / `pooledNotIn` / `discardPooled` | **Every** `assets` statement. The decision it holds: `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::snapshot()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
 | `upload_limits.php` | `UploadLimit::bytes` / `describe` / `describeBytes` / `bodyWasDropped` / `smallestOf` / `toBytes` | How big a file can actually reach this server — the smallest of the app's 50 MB ceiling and PHP's `upload_max_filesize` and `post_max_size`, not the app's opinion. And the silent case: exceeding `post_max_size` is not an error PHP reports, it abandons the body, so a 40 MB video was answered *"Security token mismatch. Please reload the page."* `smallestOf()` takes the ini values as an argument because both settings are PHP_INI_PERDIR and the cases worth testing are unreachable otherwise. Depends on nothing. |
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `verify` / `consume` / `redeem` / `discard`, and `PasswordResetCompletion(PDO, ResetTokenStore, AccountStore)` → `ResetOutcome` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. It is now the composition of two halves that have to fall on opposite sides of a transaction boundary: `verify()` spends the guess and must never be rolled back, `consume()` spends the code and must be. `PasswordResetCompletion` is the use case (invariant 22) — code consumed, password changed, lockout released, or nothing at all — and `ResetOutcome` has three answers rather than two, because "refused" and "the database would not take it" have to look different to the visitor and identical to a stranger probing for usernames. |
-| `accounts.php` | `AccountStore`, `AccountAdmin` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. Not a gatekeeper for all of `users`: creating accounts and role changes are still written by `admin_panel.php`, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means — plus the two `users` writes a password reset makes, `setPassword()` and `clearLoginLockout()`, which are here because the reset must make them inside one transaction and a page cannot hold a transaction over SQL it writes itself. Those two are the only methods in the class that let an exception out, deliberately: everything else answers a question, and a question is better answered "no" than not at all, but these are halves of a change that must not half-happen. `clearLoginLockout()` answers true when the three ADR-0001 columns are absent, for the same reason `isClosed()` answers false: a database without them has never locked anybody out. |
+| `accounts.php` | `AccountStore`, `AccountAdmin` — `close()` / `edit()` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. And `edit()`, the other three-table change: the role, the active flag and the email in one write, then the grants a **promotion** makes meaningless (an admin holds every Display by role, so the rows would sit there displayed nowhere and removable by nothing) and the locks a **demotion** puts out of reach (no grants left, so the account cannot even release what it is holding). Not a gatekeeper for all of `users`: creating an account and setting somebody's password from the panel are still written there, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means — plus the three `users` writes that have to happen inside somebody else's transaction, `setPassword()`, `clearLoginLockout()` and `updateProfile()`, because a page cannot hold a transaction over SQL it writes itself. Those three are the only methods in the class that let an exception out, deliberately: everything else answers a question, and a question is better answered "no" than not at all, but these are halves of a change that must not half-happen. `clearLoginLockout()` answers true when the three ADR-0001 columns are absent, for the same reason `isClosed()` answers false: a database without them has never locked anybody out. |
 | `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
 | `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. `firstInWindow()` and `stateFile()` are public for the same reason `report()` needs them: a repeated *attempt to fix* something needs the same restraint as a repeated report of it, and this module is where the state directory is decided. Depends on nothing: no database, no session, no config. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
@@ -173,6 +173,23 @@ through the app again:
    and never by a Display merely being absent from the picker. Every statement
    against `display_permissions` is inside `lib/grants.php`; every question about
    whether an account may have a Display is one call to `Actor::mayOpen()`.
+   Two consequences of the axes crossing, both of them writes that have to happen
+   somewhere. **A grant taken away frees the edit lock**, because the account can no
+   longer open the Display to release one — `DisplayAdmin::setAccess()` does it by
+   holder, in the same transaction, so a colleague on the same sign keeps theirs.
+   **A promotion to admin clears that account's grants**, because from then on
+   nothing displays them and nothing could remove them; `AccountAdmin::edit()` does
+   it, and frees the locks on the way back down. Anything new that changes what an
+   account may reach — a role, a grant, a Display going out of service — answers the
+   same question: what is that account holding right now that it will not be able to
+   let go of?
+   **And an absence is never an instruction.** The grant matrix POSTs a tick per
+   granted cell, so an unticked box, an account added since the page was rendered and
+   a Display added since the page was rendered are all the same silence. The form
+   therefore declares both of its axes — `grants_accounts[]` and `grants_displays[]` —
+   and `setAccess()` only revokes inside the part it was told the admin could see. A
+   form that submits state rather than intent has to say what it covered, or it saves
+   over work it never showed.
 9. **One filename for the Viewer.** `viewer.php` stays a single file — the
    `<Files "viewer.php">` block in `.htaccess` drops `X-Frame-Options` for the
    SmartSign2Go embed and the kiosk scroll lock rides on it. Renaming or
@@ -297,8 +314,10 @@ through the app again:
     transaction, is covered by this or it is a way back to the failure mode.
 22. **A change that spans two tables is one transaction, held by a use-case module,
     and what the person is told is what actually happened.** There are three of these
-    now — `DisplayAdmin` (a Display with its layout and its grants), `AccountAdmin`
-    (closing an account: grants, lock, `closed_at`) and `PasswordResetCompletion`
+    now — `DisplayAdmin` (a Display with its layout and its grants, and the access
+    matrix with the edit locks a revoke strands), `AccountAdmin` (closing an account:
+    grants, lock, `closed_at`; and editing one: the role, then the grants and locks
+    that role decides the meaning of) and `PasswordResetCompletion`
     (the code consumed, the password changed, the lockout released) — and they are
     all the same shape on purpose: the module holds `beginTransaction`, writes no SQL
     of its own, rolls back quietly on any failure, and returns a result object the
@@ -740,6 +759,23 @@ Known and not fixed, so nobody assumes otherwise:
   ENUM**~~ **Fixed** — see §4r. Four of its checks were weaker than they read; the
   worst printed the reassuring answer in precisely the situation that needed the
   alarming one.
+- ~~**The grant matrix treats an absent Display as "revoke", and no PRG means F5
+  replays the write**~~ **Fixed** — see §4s. Both halves were the same defect from
+  opposite ends: a form that submits *state* rather than *intent*, saved over
+  whatever it had not been shown.
+- ~~**Revoking a grant strands the edit lock on the revoked account**~~ **Fixed** —
+  see §4s. And the account could not release it even deliberately, because releasing
+  goes through the seam that had just started refusing it.
+- ~~**A granted account promoted to admin keeps an invisible, unrevocable grant
+  row**~~ **Fixed** — see §4s. The row was displayed nowhere and removable by
+  nothing, and a demotion months later handed the old access back.
+- **A lock stranded by deactivating a Display, deactivating an account, or renaming a
+  tag.** Still open, and deliberately not half-fixed while the three revoke/promote
+  paths were closed — it is the same family (a change of reach that leaves a lock
+  behind) but a separate decision, and `AccountAdmin::edit()` says so where it would
+  have been tempting. Deactivating an account is the sharper one: that account's open
+  Builder keeps beating and holds the sign, because `claimLock` never asks whether the
+  holder is still allowed to sign in.
 
 ### 4h. The tag addresses a Display; it does not identify one
 
@@ -1596,6 +1632,131 @@ Left standing:
   but if it ever grows a second write it goes through `AccountStore`, and
   `grep -rn "password_hash" --include=*.php .` in §5 is what finds it.
 
+### 4s. Three ways access changed without the app noticing
+
+Items #16–#18 of the reviewed list, and one shape underneath all three: **a change
+to what somebody may reach, decided by something other than what the person doing it
+meant.** In two of them the deciding thing was an *absence*; in the third it was a
+row that no screen displayed any more.
+
+**The grid saved what it had not been shown.** *Who can edit which display* is a
+matrix of checkboxes, and a browser posts only the ticked ones. So an unticked box, an
+account added since the page was rendered, and a Display added since the page was
+rendered all arrive as the same silence — and the save read all of it as "revoke".
+The accounts half had already been closed: the form names them in `grants_accounts[]`
+and `setAccess()` leaves anything not on the list alone. The Displays half had not, so
+this sequence lost work:
+
+1. Two admins open the Displays tab.
+2. One adds *Lobby Screen* and gives Kayla access to it.
+3. The other presses **Save access** on the page they already had open. Their form has
+   no Lobby column, so Kayla's brand-new grant is an unticked box, and it goes.
+
+Nobody is told, because from the second admin's point of view nothing was unticked.
+The fix is symmetry: the form declares its columns in `grants_displays[]`, and a
+revoke now needs three things to be true at once — the grant is held, the column was
+covered, and the box was not ticked. A tick outside the covered columns grants nothing
+either, so the two axes cannot be played against each other by a hand-built POST.
+
+**And F5 replayed it.** The page answered the POST by rendering, so the whole-matrix
+write sat in the browser's history — one reload, one refresh-to-see-if-it-saved, one
+back-button, and the *old* form state was written over a page that had moved on. It is
+the same defect from the other end, so it has the same answer: the grid redirects
+(post/redirect/get) and the sentence travels in `$_SESSION` via `flashMessage()`.
+`takeFlashMessage()` removes what it returns, so a reload of the redirected-to page
+shows the page without the sentence rather than repeating a claim about a state that
+may since have changed. This is the only form on the panel that got PRG, and
+deliberately: replaying any of the others is idempotent or self-refusing (a create
+collides on its tag, a close reports "already closed"), while this one is the one that
+rewrites a table wholesale.
+
+**A revoke stranded the edit lock.** Take a Display away from somebody who has the
+Builder open on it and the lock stayed theirs for a full fifteen-minute idle window,
+with their name on the read-only banner every colleague saw. They could not release it
+either — releasing goes through `DisplayRequest::forEditing()`, which had just started
+refusing them — so the only way back was an admin's force-unlock on a lock held by
+somebody who was not allowed near the sign. `setAccess()` now releases it in the same
+transaction, **by holder**, so a colleague editing the same Display keeps theirs; the
+count of locks actually freed is what decides which sentence the admin gets back,
+because "somebody's editing session just ended" and "nobody was in there" are
+different things to have done.
+
+*And the person is told.* The Builder heartbeats every minute, and
+`applyLockAnswer()` returned silently on anything that was not a success — correct for
+a dropped connection, which the next beat covers, and wrong for exactly one answer:
+`forbidden` never comes back. So the page carried on looking editable, the beats kept
+failing, and the first word of it was a refused publish some minutes later. There is
+now a bar for it, emitted for a read-only page as well as an editing one because access
+can be taken from somebody who was only watching, and `accessLost` is kept separate
+from `lockLost` because a lock can return on its own and a grant cannot. Losing access
+stops the heartbeat, stops the leaving-beacon (the revoke already freed it), hides the
+three lock bars — the lost-holder one in particular would name a holder there is not
+one of — and, on a read-only page, takes down the banner offering a reload once the
+display frees up, which is now an offer to be refused. A `forbidden` publish became an
+`alert` rather than a toast, for the same reason the other three refusals are: it is
+the one that does not fix itself.
+
+**A promotion left grants nothing could remove.** An admin holds every Display by
+role (ADR-0005), so a promoted account's grant rows stop being displayed — the matrix
+lists `basic` accounts only. The rows stayed. Invisible on the one screen that
+administers them, and therefore impossible to take away; demote that person in the
+autumn and the access they were given in March came back, silently, decided by a table
+nobody could see. `AccountAdmin::edit()` clears them on promotion, which makes the
+matrix the whole truth about who was given what, and says which ones went so the admin
+knows a demotion will not bring them back.
+
+That decision creates its own stranded lock, so the same method closes it: a demoted
+account holds no grants (there were none left to hold), which means it may open
+nothing — including the Display it is holding open at that moment. So a demotion frees
+that account's locks. This is why editing an account had to move off the page and into
+the module at all: it is three writes across `users`, `display_permissions` and
+`displays`, and invariant 22's point is that the sentence printed afterwards must be
+decided by what is now true rather than by which line threw.
+
+One thing moving that form into the module made possible rather than fixed: it now
+refuses a **closed** account. `is_active` back to 1 on a closed row is the only thing
+in this app that looks like an undo of a closure (invariant 14), and it was reachable
+by a hand-built POST — the panel renders no edit form for a closed account. Sign-in
+would have refused it anyway, because `login.php` asks about `closed_at` *before*
+`is_active`; the refusal is in the module so the rule does not rest on the order of two
+checks in a different file.
+
+**Seventy-five checks**, and twenty deliberate mutations, all twenty killed
+(kill counts 5, 2, 5, 1, 1, 4, 8, 5, 3, 2, 2, 5, 1, 3, 3, 3, 1, 1, 2, 1). Four are
+worth naming because they are the ones a reader would doubt:
+
+- Removing the `lock_holder_id` predicate from `releaseLockOn()` kills eight, which is
+  the check that revoking Kayla's access does not free the lock Sam is working under.
+- Freeing the lock *before* `beginTransaction()` — the tempting simplification, since
+  it needs no `Display` object — kills three, all of them the refused-revoke case where
+  the admin is told nothing changed while a sign sits unlocked.
+- Letting an empty column list fall back to "every Display" kills two. That fallback
+  looks like defensiveness and is the original defect with a friendlier face.
+- Making `applyLockAnswer()` swallow a `forbidden` beat again kills three in the
+  uploads suite, which is the only suite that runs `builder.php`'s JavaScript under the
+  premise that the page can edit.
+
+The `users` fixture gained `UNIQUE` on `username` and `email`, which the live table has
+always had. Without it the duplicate-email check would have asserted a rollback that
+never had anything to roll back — one fewer of the twelve fixture divergences the audit
+counted.
+
+Left standing, and named rather than quietly skipped:
+
+- **Deactivating an account does not free its locks**, and its open Builder keeps
+  beating: `claimLock` never asks whether the holder may still sign in. Same for
+  deactivating a Display and for renaming a tag. That is one decision of its own on
+  the reviewed list and it was left alone on purpose — the alternative was fixing a
+  third of it here, where the code makes it easy, and leaving the rest to be found by
+  whoever reads the invariant next.
+- **The other forms on the admin panel still answer a POST by rendering.** The
+  reasoning is above; the flash helper is in `auth.php` and general, so adopting it
+  elsewhere is two lines rather than a mechanism.
+- **`AccountAdmin::edit()` does not guard the last admin.** It does not need to, given
+  it refuses to demote *you* — a one-admin store has nobody else who can press the
+  button. Written down because that is a proof, not an obvious truth, and it stops
+  being one the moment somebody adds an "edit any account" path that skips the actor.
+
 ---
 
 ## 5. Verification
@@ -1669,6 +1830,29 @@ grep -rn "closed_at" --include=*.php .        # lib/accounts.php, schema.sql's D
                                               # AccountStore::isClosed() instead
 grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?displays`?" --include=*.php .  # lib/displays.php + schema.php's ALTERs
 grep -rn "INTO display_permissions\|FROM display_permissions" --include=*.php .  # only lib/grants.php, plus tools/
+grep -rn "grants_accounts\|grants_displays" --include=*.php .  # admin_panel.php only, and BOTH names must
+                                              # appear twice — once as a hidden input in the grant form,
+                                              # once being read. The form declares both axes of the matrix
+                                              # it rendered because a browser posts only ticked boxes, so an
+                                              # unticked cell and a cell that was never on the page are the
+                                              # same absence. One name here without the other is the §4s
+                                              # defect back: a save that revokes what it never showed
+grep -rn "releaseLockOn\|releaseLocksHeldBy" --include=*.php .  # lib/displays.php defines both; the callers
+                                              # are the three places a change of *reach* has to free a lock
+                                              # the account can no longer let go of — DisplayAdmin (a grant
+                                              # revoked), AccountAdmin (an account closed, an admin demoted).
+                                              # builder.php's releaseLockOnLeave is a different thing and
+                                              # only matches on the name. A new caller is fine; a change of
+                                              # reach with no call is invariant 8's second paragraph
+grep -rn "flashMessage\|takeFlashMessage" --include=*.php .  # auth.php defines them, admin_panel.php uses
+                                              # them for the grant matrix's post/redirect/get. A `flashMessage`
+                                              # with no `header('Location'` after it leaves a sentence nobody
+                                              # will ever be shown
+grep -rEn "UPDATE users SET" --include=*.php . # lib/accounts.php (four: closed_at, password_hash, role/
+                                              # is_active/email, the lockout clear), login.php's two failure
+                                              # counters, admin_panel.php:168 where an admin sets a password
+                                              # in one write, plus tools/. A fifth in a *page* means a `users`
+                                              # write beside another write again — invariant 22
 grep -rn "lock_holder_id\|lock_activity_at\|lock_taken_at" --include=*.php .  # only lib/displays.php + lib/schema.php
 grep -rn "block_styles" --include=*.php .     # only lib/brand_styles.php + schema.php's seed
 grep -rEn "WHERE +`?id`? *= *'?1'?" --include=*.php .  # must be empty — whitespace and quotes included

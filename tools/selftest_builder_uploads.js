@@ -327,11 +327,55 @@ land(FakeXhr.last);
 check(true, 'a reply arriving after the block was deselected does not throw');
 checkSame('uploads/vid_x.mp4', videoBlock.dataset.manualPath, 'and lands on the block that asked for it');
 
+section('An admin whose access to the display is taken away mid-edit');
+
+// Not an upload, but the same premise this suite exists for — a page that *can*
+// edit — and the same class of defect: a reply the page received and did nothing
+// with. A revoked grant makes every later heartbeat fail, so a page that swallows
+// the refusal carries on letting somebody work on a sign they have already lost.
+
+// Two bars would otherwise be true at once. Age this tab's last interaction past
+// the lapse window first, so the check can see the access notice win rather than
+// find it in a page where nothing else was showing anyway.
+lastInteraction = Date.now() - (LOCK_LAPSE_SECONDS + 60) * 1000;
+renderLockBars();
+checkSame('flex', document.getElementById('lock-lapsed-bar').style.display,
+          'a long quiet spell shows the lapsed notice');
+
+let beats = 0;
+global.fetch = function () { beats++; return Promise.resolve({ json: () => Promise.resolve({}) }); };
+
+applyLockAnswer({ status: 'error', reason: 'forbidden',
+                  message: 'That display has not been assigned to you.' });
+checkSame('flex', document.getElementById('lock-access-bar').style.display,
+          'a heartbeat refused as forbidden puts the access notice on screen');
+checkSame('none', document.getElementById('lock-lapsed-bar').style.display,
+          'and takes down the lapsed notice, which is no longer the thing to read');
+checkSame('none', document.getElementById('lock-lost-bar').style.display,
+          'and never shows the lost notice, which would name a holder there is not one of');
+
+holdLock();
+lockTick();
+checkSame(0, beats, 'no further heartbeat is sent, because every one of them would be refused');
+
+let beaconed = 0;
+global.navigator = { sendBeacon: function () { beaconed++; return true; } };
+releaseLockOnLeave();
+checkSame(0, beaconed, 'and no release beacon on leaving — the revoke already freed the lock');
+
+// An ordinary failed beat is still nothing to act on: the next one covers it, and a
+// notice on every dropped connection would be a notice nobody reads.
+accessLost = false;
+document.getElementById('lock-access-bar').style.display = 'none';
+applyLockAnswer({ status: 'error', reason: 'unknown', message: 'Display not found' });
+checkSame('none', document.getElementById('lock-access-bar').style.display,
+          'while any other failed heartbeat is still left for the next one to cover');
+
 // ---- Total ------------------------------------------------------------------
 
 // The expected total, for the same reason the other two suites carry one: without
 // it, deleting half this file still reports a clean run.
-const expected = 37;
+const expected = 44;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

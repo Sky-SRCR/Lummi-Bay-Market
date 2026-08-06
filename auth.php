@@ -159,6 +159,39 @@ function verifyCsrf(): void {
     }
 }
 
+// ── One sentence carried across a redirect ──────────────────
+// A page that answers a POST by rendering leaves the POST in the browser's history,
+// so F5 sends it again — and for a form that rewrites a whole table of state, that
+// is a second write nobody asked for, against a page that has since changed. The
+// answer is to redirect and let the browser GET the result (post/redirect/get), which
+// needs somewhere to leave the message the redirect would otherwise throw away.
+//
+// The session is that somewhere, and it is read exactly once: takeFlashMessage()
+// removes what it returns, so reloading the page it redirected to shows the page
+// without the sentence rather than repeating it over a state that may have moved on.
+
+/** Leave one sentence for the page this request is about to redirect to. */
+function flashMessage(string $message, string $type = 'success'): void {
+    $_SESSION['flash'] = ['message' => $message, 'type' => $type === 'error' ? 'error' : 'success'];
+}
+
+/**
+ * Take the sentence left by the last redirect, or null. Clears it either way.
+ *
+ * @return array|null ['message' => string, 'type' => 'success'|'error']
+ */
+function takeFlashMessage() {
+    if (empty($_SESSION['flash']) || !is_array($_SESSION['flash'])) { return null; }
+    $flash = $_SESSION['flash'];
+    unset($_SESSION['flash']);
+    $message = isset($flash['message']) ? (string)$flash['message'] : '';
+    if ($message === '') { return null; }
+    return [
+        'message' => $message,
+        'type'    => (isset($flash['type']) && $flash['type'] === 'error') ? 'error' : 'success',
+    ];
+}
+
 // ── Login-lockout helpers (account-keyed brute-force protection) ──
 // Failed-login state lives in three columns on `users`. A single window
 // governs BOTH how long failures stay "recent" (age-out) and how long a

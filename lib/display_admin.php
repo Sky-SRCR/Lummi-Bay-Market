@@ -331,31 +331,57 @@ class DisplayAdmin
     }
 
     /**
-     * Set exactly which Displays each of these accounts may edit.
+     * Set exactly which Displays each of these accounts may edit — within the part
+     * of the matrix the form actually covered.
      *
-     * The whole submitted matrix in one transaction: an account listed here ends up
-     * holding exactly the Displays named for it, and nothing else. Accounts *not*
-     * listed are untouched, so a form that was rendered before a new account
-     * existed cannot silently strip that account's access.
+     * **Both axes are declared, and neither is inferred from an absence.** A tick
+     * missing from the submission means "revoke" only for an account *and* a Display
+     * the form carried. That is the difference between a grid that saves what an
+     * admin saw and one that saves what they saw over the top of what they did not:
+     *
+     *   · An account the form did not list is untouched — so a page rendered before
+     *     a new account existed cannot strip the new account's access.
+     *   · A **Display** the form did not list is untouched — so a page rendered
+     *     before a new Display existed cannot silently undo the grants another admin
+     *     made on it a minute ago. This is the half that was missing: every grant on
+     *     a Display outside the submitted columns read as an unticked box.
      *
      * Ids naming a Display that does not exist are dropped rather than refused —
      * the one way to send one is a form left open while the Display was deleted,
      * and losing an unreachable grant is not worth making an admin retype the
      * matrix for.
      *
+     * A revoke also frees the edit lock, if the account it takes the Display from was
+     * holding it. Without that the sign stays locked for a full idle window to
+     * somebody who can no longer open it to release it, with their name on the
+     * banner — and only an admin's force-unlock could take it back. The lock is
+     * released *by holder*, so a colleague working on the same Display keeps theirs.
+     *
      * @param array $accountIds the accounts this write covers. The caller decides
      *                          which: grants are meaningless for an admin, who
      *                          holds every Display by role (ADR-0005), so the
      *                          panel passes `basic` accounts only.
+     * @param array $displayIds the Displays this write covers — the form's columns.
      * @param array $wanted     accountId => [displayId, …], as submitted
      */
-    public function setAccess(array $accountIds, array $wanted)
+    public function setAccess(array $accountIds, array $displayIds, array $wanted)
     {
         $exists = [];
         foreach ($this->displays->all() as $display) { $exists[] = $display->id(); }
 
+        // The columns this save is allowed to have an opinion about: what the form
+        // said it showed, narrowed to what is still there.
+        $covered = [];
+        foreach ($displayIds as $rawDisplayId) {
+            $displayId = intval($rawDisplayId);
+            if (in_array($displayId, $exists, true) && !in_array($displayId, $covered, true)) {
+                $covered[] = $displayId;
+            }
+        }
+
         $granted = 0;
         $revoked = 0;
+        $freed   = 0;
 
         try {
             $this->pdo->beginTransaction();
@@ -367,7 +393,7 @@ class DisplayAdmin
                 if (isset($wanted[$accountId]) && is_array($wanted[$accountId])) {
                     foreach ($wanted[$accountId] as $rawDisplayId) {
                         $displayId = intval($rawDisplayId);
-                        if (in_array($displayId, $exists, true) && !in_array($displayId, $want, true)) {
+                        if (in_array($displayId, $covered, true) && !in_array($displayId, $want, true)) {
                             $want[] = $displayId;
                         }
                     }
@@ -381,9 +407,12 @@ class DisplayAdmin
                     }
                 }
                 foreach ($held as $displayId) {
-                    if (!in_array($displayId, $want, true)) {
+                    // Held, covered by this form, and not ticked. All three, or it is
+                    // not a revoke — it is a column the admin was never shown.
+                    if (in_array($displayId, $covered, true) && !in_array($displayId, $want, true)) {
                         $this->grants->revoke($displayId, $accountId);
                         $revoked++;
+                        if ($this->displays->releaseLockOn($displayId, $accountId)) { $freed++; }
                     }
                 }
             }
@@ -397,11 +426,19 @@ class DisplayAdmin
             return DisplayResult::done('Access is unchanged.');
         }
 
-        // Revoking is the half worth spelling out: someone may be editing that
-        // Display right now, and what they will see is a refusal when they publish.
-        $note = $revoked > 0
-            ? ' Anyone who lost access and has the builder open cannot publish that display again.'
-            : '';
+        // Revoking is the half worth spelling out, and what to say depends on whether
+        // anybody was actually in there: a released lock means somebody's editing
+        // session just ended, and they find out from their own screen rather than
+        // from whoever pressed this button.
+        $note = '';
+        if ($freed > 0) {
+            $note = ' ' . $freed . ' display' . ($freed === 1 ? ' was' : 's were')
+                  . ' being edited by somebody who just lost access — the edit lock has been released and '
+                  . 'their builder says so within a minute. Nothing they had not published reached a screen.';
+        } elseif ($revoked > 0) {
+            $note = ' Anyone who lost access can no longer open that display, and nothing they had'
+                  . ' unpublished reaches its screen.';
+        }
         return DisplayResult::done(
             'Access updated — ' . $granted . ' display' . ($granted === 1 ? '' : 's') . ' newly assigned and '
             . $revoked . ' taken away.' . $note);

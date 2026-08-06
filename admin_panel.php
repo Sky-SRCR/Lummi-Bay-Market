@@ -18,6 +18,13 @@ $tab  = $_GET['tab'] ?? 'users';
 $msg  = '';
 $msgType = 'success';
 
+// The answer to a save that redirected rather than rendered — see the grant matrix
+// below, and flashMessage() in auth.php. Taken before the POST block so that a
+// handler on this request still has the last word, and taken exactly once so a
+// reload shows this page without the sentence rather than repeating it.
+$flash = takeFlashMessage();
+if ($flash) { $msg = $flash['message']; $msgType = $flash['type']; }
+
 // Authenticated, so this is where schema convergence belongs (BUILD-REFERENCE §2.7).
 ensureSignageSchema($pdo);
 // The reset-token table converges from the pre-auth reset page (ADR-0001's rule
@@ -128,24 +135,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tab = 'users';
     }
 
-    // Edit user (role, active status)
+    // Edit user (role, active status, email). Through AccountAdmin, because a change
+    // of role is not a change to one row: an admin holds every Display by role, so
+    // promoting somebody makes their individual grants meaningless and invisible, and
+    // demoting somebody takes away every Display including the one they may have open
+    // right now. All of it is one transaction there.
     if (isset($_POST['action_edit_user'])) {
-        $uid    = intval($_POST['edit_id'] ?? 0);
-        $role   = in_array($_POST['edit_role'] ?? '', ['admin','basic']) ? $_POST['edit_role'] : 'basic';
-        $active = isset($_POST['edit_active']) ? 1 : 0;
-        $email  = trim($_POST['edit_email'] ?? '');
-        if ($uid === $user['id'] && ($role !== 'admin' || !$active)) {
-            $msg = 'You cannot demote or deactivate your own account.'; $msgType = 'error';
-        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $email = trim($_POST['edit_email'] ?? '');
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $msg = 'Invalid email address.'; $msgType = 'error';
         } else {
-            try {
-                $pdo->prepare("UPDATE users SET role = ?, is_active = ?, email = ? WHERE id = ?")
-                    ->execute([$role, $active, $email, $uid]);
-                $msg = 'User updated.';
-            } catch (PDOException $e) {
-                $msg = 'That email is already in use.'; $msgType = 'error';
-            }
+            $res = $accountAdmin->edit(
+                intval($_POST['edit_id'] ?? 0),
+                in_array($_POST['edit_role'] ?? '', ['admin','basic']) ? $_POST['edit_role'] : 'basic',
+                isset($_POST['edit_active']),
+                $email,
+                $user['id']
+            );
+            $msg     = $res->message();
+            $msgType = $res->isOk() ? 'success' : 'error';
         }
         $tab = 'users';
     }
@@ -260,8 +268,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tab = 'displays';
     }
 
-    // Who may edit which display (ADR-0005). One save for the whole matrix, so
-    // what an admin sees on screen is exactly what ends up stored.
+    // Who may edit which display (ADR-0005). One save for the part of the matrix the
+    // form actually showed, so what an admin sees on screen is exactly what this
+    // write has an opinion about — and nothing outside it is touched.
     if (isset($_POST['action_save_grants'])) {
         // Only `basic` accounts can be granted anything: an admin already holds
         // every Display by role, so a grant on one would mean nothing. Intersecting
@@ -277,11 +286,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ? array_map('intval', $_POST['grants_accounts']) : [];
         $covered  = array_values(array_intersect($declared, $basicIds));
 
-        $res     = $displayAdmin->setAccess($covered, isset($_POST['grant']) && is_array($_POST['grant'])
-            ? $_POST['grant'] : []);
-        $msg     = $res->message();
-        $msgType = $res->isOk() ? 'success' : 'error';
-        $tab     = 'displays';
+        // And the columns. The form names the Displays it rendered, because an
+        // unticked box and a Display that was never on the page look identical in a
+        // POST — and treating the second as "revoke" is how a tab left open while a
+        // colleague added a display silently undid the grants they had just made.
+        $coveredDisplays = isset($_POST['grants_displays']) && is_array($_POST['grants_displays'])
+            ? array_map('intval', $_POST['grants_displays']) : [];
+
+        $res = $displayAdmin->setAccess($covered, $coveredDisplays,
+            isset($_POST['grant']) && is_array($_POST['grant']) ? $_POST['grant'] : []);
+
+        // Redirect rather than render (post/redirect/get). This is the one form on
+        // the page that rewrites a table of state wholesale, so a browser reload
+        // replaying it is a second whole-matrix write against a page that has since
+        // moved on — the same defect from the other end. The sentence travels in the
+        // session and is read once.
+        flashMessage($res->message(), $res->isOk() ? 'success' : 'error');
+        header('Location: admin_panel.php?tab=displays');
+        exit;
     }
 
     // Save branding (logo + colors)
@@ -963,6 +985,13 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         <?php else: ?>
         <form method="POST">
             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+            <?php foreach ($displays as $d): ?>
+                <!-- Names the displays this save covers — the columns below. A box
+                     nobody ticked and a display that was not on the page when this
+                     form was rendered are the same absence in a POST, and only one of
+                     them means "take that access away". -->
+                <input type="hidden" name="grants_displays[]" value="<?= $d->id() ?>">
+            <?php endforeach; ?>
             <div style="overflow-x:auto;">
                 <table class="grant-table">
                     <thead>
@@ -1009,8 +1038,10 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                 </table>
             </div>
             <p class="hint" style="font-size:12px;margin:12px 0;">
-                Taking a display away from someone who has the Builder open does not close it — their
-                next publish is refused instead, and nothing they had unsaved reaches the screen.
+                Taking a display away from someone who has the Builder open releases their edit lock,
+                so the sign is free for somebody else straight away. Their page tells them the access
+                was removed within a minute; nothing they had unsaved reaches the screen, and their
+                work stays on their own screen until they leave the page.
             </p>
             <button type="submit" name="action_save_grants" class="btn btn-green">Save access</button>
         </form>

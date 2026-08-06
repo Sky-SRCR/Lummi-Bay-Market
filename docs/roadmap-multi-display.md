@@ -366,10 +366,26 @@ In order, on the one visit:
     `builder.php?display=drive-thru`. It must say the display has not been assigned
     to you and offer only their own. That is the check that matters — a Display
     missing from a list proves nothing about what the API accepts.
-17. **Prove revoking reaches an open tab.** With the basic account editing its
-    Display, untick its grant as the admin and save. The open tab keeps working
-    until it publishes; the publish is refused. Nothing it had unsaved reaches the
-    screen.
+17. **Prove revoking reaches an open tab, and frees the sign.** With the basic account
+    editing its Display, untick its grant as the admin and save. Three things must
+    happen. The admin's answer says an edit lock was released. Within a minute the
+    basic account's tab shows a red bar saying its access was removed — it must not
+    have to try publishing to find out — and what it had done is still on its screen.
+    And that Display card in Admin Panel → Displays no longer says anybody has it
+    open, so the next person can start straight away rather than waiting out fifteen
+    minutes. Publishing from the stale tab is refused and nothing reaches the screen.
+    Two more things on that same screen, both of which need the second browser only
+    for setting up:
+    **the grid saves what it showed** — open the Displays tab in both browsers as the
+    admin, add a Display and grant it in one, then press *Save access* in the other;
+    the new grant must survive, because that page never showed the new column. Then
+    press F5 on the page you saved from: it must reload without re-sending the grid
+    (the success line appears once and is gone).
+    **A promotion clears the assignments** — make the basic account an admin. The
+    answer must say which displays were cleared, that account must vanish from the
+    grid, and making it a basic user again must leave it holding *nothing* rather
+    than what it had before. If it had a Display open when it was demoted, that
+    Display must be free.
 18. **Prove one editor at a time.** With the basic account editing its test Display
     in one browser, open that same Display as the admin in the other. It must come up
     **read-only**: a purple bar naming the other account and since when, no *+ block*

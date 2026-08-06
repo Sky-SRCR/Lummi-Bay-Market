@@ -63,9 +63,9 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **706 checks**. Run before pushing |
-| `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **16 checks** |
-| `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end, **37 checks** |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **781 checks**. Run before pushing |
+| `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **20 checks** |
+| `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when the display is taken off it mid-edit), **44 checks** |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data. It also publishes every element type and block subtype the schema allows and reads them back, checks that a deleted Display really cascades, and prints which of the five page-added columns landed |
 | `config.php` | Site constants (`SITE_NAME`, `MAIL_FROM`); loads `branding_config.php` |
 | `db_connect.php` | PDO `$pdo`; loads creds from `../../private/db_credentials.php` |
@@ -213,6 +213,28 @@ anything, they hold every Display by role.
   The one place it will never run is inside a publish: DDL commits an open
   transaction in MySQL, and committing half a publish and then reporting it failed is
   the worst thing this app could do to somebody's work.
+- **Taking somebody's access to a display away now frees the sign and tells them.**
+  Untick a display in *Who can edit which display* and, if that person had the Builder
+  open on it, their edit lock is released in the same write — so the next person can
+  start immediately instead of waiting out fifteen minutes for a lock held by somebody
+  who is no longer allowed near the sign. Their page shows a red bar within a minute
+  saying the access was removed; what they had done stays on their screen to be copied
+  out, and nothing unpublished reaches the display. The same bar appears for somebody
+  who was only watching it read-only.
+- **The permissions grid only changes what was on the screen you saved.** It used to
+  read "not ticked" and "not on the page" as the same thing, so a tab left open while a
+  colleague added a display and assigned it could silently undo their assignment. Two
+  admins can now work on that grid at once. It also redirects after saving, so pressing
+  F5 — or the back button — no longer re-sends the whole grid over a page that has
+  since changed. The success line appears once and is gone on reload; that is
+  deliberate, not a lost message.
+- **Making somebody an admin clears the individual displays they were given**, and
+  says which ones. An admin can edit every display, so those assignments meant nothing
+  and were shown nowhere — but they used to stay in the database, which meant making
+  that person a basic user again silently handed back whatever they had months earlier.
+  A demotion now starts from nothing (assign the displays they should have) and
+  releases any display they had open, since from that moment they cannot reach it to
+  release it themselves.
 - **A password reset now either happens or does not.** The code, the new password and
   the login-lockout clear are one transaction, so nobody is told the reset failed
   while holding a password that works, or told it succeeded when it did not. There is
@@ -259,7 +281,7 @@ staleness check, no version history), 0007 (one editor per Display).
   URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
   account, two browsers, and one unavoidable 15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 706 self-test checks against SQLite, 53 node checks over `builder.php`'s
+  `php -l`, 781 self-test checks against SQLite, 64 node checks over `builder.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare

@@ -40,6 +40,19 @@ edited in place and every change reaches the sign by hand.
   itself, rolls back quietly, and returns a result the page turns into a sentence. A
   page doing the writes itself cannot roll back what already landed, so the message it
   prints is chosen by which line threw rather than by what is now true.
+- **A form that submits state must say what it covered.** A browser posts only the
+  ticked checkboxes, so an unticked box and a row or column that was never on the page
+  are the same silence — and reading that silence as "remove it" is how the grant
+  matrix saved over work it had never shown. Both axes are declared
+  (`grants_accounts[]`, `grants_displays[]`) and the save only changes what it was told
+  was on screen. A whole-table save also redirects afterwards (`flashMessage()` in
+  `auth.php`), or F5 re-sends the old state over a page that has moved on.
+- **A change to what somebody may reach frees what they are holding.** A revoked grant,
+  a closed account and a demotion all leave an edit lock the account can no longer even
+  release — releasing goes through the seam that has just started refusing it. Free it
+  in the same transaction, by holder, so a colleague on the same sign keeps theirs. Then
+  make sure the Builder *says so*: `applyLockAnswer()` ignores a failed heartbeat on
+  purpose, and `forbidden` is the one answer that never comes back on its own.
 - **PHP 7.1-compatible syntax** — the live server's version is unverified.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.

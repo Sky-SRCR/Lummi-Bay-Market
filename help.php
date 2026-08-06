@@ -258,8 +258,11 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
             admin which display is yours.</li>
     </ul>
     <p>Publishing is part of editing: if a display is yours, you can publish it to its screen. Being
-       assigned a display is not permanent — an admin can take it back, and the next publish from a
-       builder tab that has lost access is refused.</p>
+       assigned a display is not permanent — an admin can take it back. If that happens while you have
+       the builder open, a red bar appears within a minute saying your access has been removed: nothing
+       more can be published from that page, and the display is released for somebody else. What you had
+       done stays on your screen until you leave the page, so anything you still need can be copied out
+       first.</p>
 
     <h3>One person edits a display at a time</h3>
     <p>Opening a display in the builder claims it. While you have it, anyone else who opens the same
@@ -744,6 +747,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Turn off</strong> — the screen shows a "turned off" notice instead of the layout, and the layout is kept. Use this rather than deleting when a screen is out of service.</li>
         <li><strong>Delete</strong> — permanently removes the display <em>and its whole layout</em>, with no undo. You have to type its screen name tag exactly to confirm, and any screen pointed at it goes blank. Deleting the only display is allowed and leaves the Builder with nothing to open until you add one; turning a display off is almost always what you want instead.</li>
         <li><strong>Who can edit which display</strong> — the grant matrix, <em>Who can edit which display</em>, at the bottom of the tab. Tick a basic account against a display to let it edit that display. Admins are not listed: they already hold every display. An account with no ticks is told "No displays have been assigned to you yet" when it opens the Builder.</li>
+        <li><strong>Saving the grid only changes what was on the screen you saved.</strong> An account or a display added by somebody else since you opened the page is left exactly as they set it, so two admins working at once cannot undo each other. If you take a display away from somebody who has it open in the Builder, their edit lock is released — the sign is free for the next person straight away, and their page says so within a minute.</li>
     </ul>
 
     <h3>Work Area tab</h3>
@@ -752,7 +756,15 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h3>Users tab</h3>
     <ul>
         <li><strong>Create user</strong> — add a new account with a username, email, password, and role (Admin or Basic)</li>
-        <li><strong>Edit user</strong> — change username, email, role, or active status. Leave password blank to keep it unchanged.</li>
+        <li><strong>Edit user</strong> — change email, role, or active status. The username cannot be
+            changed here. Setting a new password is the separate box below it.</li>
+        <li><strong>Making somebody an admin clears the displays they were given.</strong> An admin can
+            edit every display, so individual assignments stop meaning anything — and leaving them
+            behind meant they came back if that person was ever made a basic user again, decided by a
+            list nobody could see. So promoting says which assignments were cleared, and demoting starts
+            them from nothing: give the displays back in <em>Who can edit which display</em>. A demotion
+            also releases any display that person had open, because from that moment they cannot reach
+            it to release it themselves.</li>
         <li><strong>Deactivate / Activate</strong> — a deactivated user cannot sign in, and can be
             switched back on whenever you like. This is the one to use for someone on leave.</li>
         <li><strong>Close Account</strong> — for somebody who has left. They can never sign in again

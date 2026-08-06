@@ -52,14 +52,20 @@ class AccountResult
 /**
  * Every statement about whether an account is closed.
  *
- * Not a gatekeeper for all of `users` — creating accounts and changing a role are
- * still written by `admin_panel.php`, and sign-in is still `login.php`'s. What
- * lives here is the closure concept and the reads that depend on it, so that the
- * five files which have an opinion about a user row cannot disagree about what a
- * closed one means — plus the two writes a password reset has to make on the row
- * (`setPassword`, `clearLoginLockout`), which are here because the reset has to
- * make them inside one transaction and a page cannot hold a transaction over SQL
- * it writes itself.
+ * Not a gatekeeper for all of `users` — creating an account and setting somebody's
+ * password from the admin panel are still written there, and sign-in is still
+ * `login.php`'s. What lives here is the closure concept and the reads that depend on
+ * it, so that the five files which have an opinion about a user row cannot disagree
+ * about what a closed one means — plus the three writes that have to happen inside
+ * somebody else's transaction, because a page cannot hold a transaction over SQL it
+ * writes itself:
+ *
+ *   setPassword, clearLoginLockout — a password reset (PasswordResetCompletion)
+ *   updateProfile                  — editing an account (AccountAdmin), where a
+ *                                    change of role also changes what grants mean
+ *
+ * Those three are the only methods here that let an exception out. Everything else
+ * answers a question, and a question is better answered "no" than not at all.
  */
 class AccountStore
 {
@@ -242,6 +248,53 @@ class AccountStore
     }
 
     /**
+     * Change what an admin may change about an account: its role, whether it may
+     * sign in, and its email address.
+     *
+     * **Lets its exceptions out**, like setPassword() and for the same reason: the
+     * caller holds a transaction that also clears the account's grants, and a
+     * duplicate email has to abandon the whole change rather than leave the role
+     * moved and the grants gone. AccountAdmin turns the throw into a sentence.
+     *
+     * The role is the one field with reach beyond this row — an admin holds every
+     * Display by role (ADR-0005) — which is why this is not a method anybody may
+     * call on its own from a page.
+     *
+     * @return bool false when the id names no account
+     */
+    public function updateProfile($accountId, $role, $isActive, $email)
+    {
+        $accountId = intval($accountId);
+        // Asked first for the same reason setPassword() does: an UPDATE that changes
+        // nothing because the values already match reports zero rows on MySQL, which
+        // is indistinguishable from an id that does not exist.
+        if (!$this->rowExists($accountId)) { return false; }
+
+        $this->pdo->prepare("UPDATE users SET role = ?, is_active = ?, email = ? WHERE id = ?")
+                  ->execute([
+                      $role === 'admin' ? 'admin' : 'basic',
+                      $isActive ? 1 : 0,
+                      (string)$email,
+                      $accountId,
+                  ]);
+        return true;
+    }
+
+    /** The role this account holds now — what a change of role is measured against. */
+    public function roleOf($accountId)
+    {
+        try {
+            $stmt = $this->pdo->prepare("SELECT role FROM users WHERE id = ? LIMIT 1");
+            $stmt->execute([intval($accountId)]);
+            $row = $stmt->fetch();
+        } catch (Throwable $e) {
+            return '';
+        }
+        if (!$row) { return ''; }
+        return $row['role'] === 'admin' ? 'admin' : 'basic';
+    }
+
+    /**
      * Wipe the login lockout for one account: a completed reset and a successful
      * sign-in are the two recovery paths (ADR-0001).
      *
@@ -318,7 +371,7 @@ class AccountStore
         return $this->hasLockoutColumns;
     }
 
-    /** Does this account number exist at all? Only setPassword() needs to know. */
+    /** Does this account number exist at all? The two writes that must not guess ask. */
     private function rowExists($accountId)
     {
         $stmt = $this->pdo->prepare("SELECT 1 FROM users WHERE id = ? LIMIT 1");
@@ -328,12 +381,20 @@ class AccountStore
 }
 
 /**
- * Closing an account is three writes across three tables, and none of them is
- * useful without the others — an account marked closed that still holds a grant is
- * exactly the stale pointer this whole change exists to prevent.
+ * The two things an admin does to an account, each of which spans three tables.
  *
- * So this holds the transaction, the way DisplayAdmin does for a Display, and
- * writes no SQL of its own.
+ *   close(id, actor)                   → the account is retired for good
+ *   edit(id, role, active, email, actor) → role, sign-in, email
+ *
+ * Neither is useful in halves. Closing writes `closed_at`, revokes the grants and
+ * frees the edit lock, and an account marked closed that still holds a grant is
+ * exactly the stale pointer that change exists to prevent. Editing writes the role
+ * and then has to make the other two tables agree with it: a promotion leaves grant
+ * rows nothing will ever show again, and a demotion leaves a lock the account can no
+ * longer reach to release.
+ *
+ * So this holds the transaction, the way DisplayAdmin does for a Display, and writes
+ * no SQL of its own.
  */
 class AccountAdmin
 {
@@ -409,6 +470,116 @@ class AccountAdmin
         return AccountResult::ok(
             '"' . $name . '" is closed. They can no longer sign in and hold no display access. '
             . 'The name stays reserved, and anything they published still says who published it.');
+    }
+
+    /**
+     * Edit one account: its role, whether it may sign in, and its email.
+     *
+     * Three writes, one transaction, because a change of role changes what the other
+     * two tables mean:
+     *
+     * **Promoting to admin clears the individual grants.** An admin holds every
+     * Display by role (ADR-0005), so grants stop being shown for that account — and
+     * the rows stayed behind, invisible on the one screen that administers them and
+     * therefore impossible to take away. Demote the person a month later and the
+     * access they had in March came back, silently, decided by a table nobody could
+     * see. Clearing them makes the matrix the whole truth about who was given what.
+     *
+     * **Demoting to basic frees the edit lock.** The account keeps no grants — there
+     * were none to keep, by the rule above — so from the next request it may open
+     * nothing, which includes the Display it is holding open right now. It could not
+     * release that lock even deliberately: releasing goes through the same seam that
+     * now refuses it. The sign would sit locked for a full idle window under a name
+     * that can no longer reach it.
+     *
+     * What this does *not* do is unpick a deactivation. An account with `is_active`
+     * off can still be holding a lock, and that is a separate defect with a separate
+     * decision behind it; it is called out in BUILD-REFERENCE §4s rather than half-
+     * fixed here.
+     *
+     * @param int    $accountId       the account being edited
+     * @param string $role            'admin' or 'basic'
+     * @param bool   $isActive        may it sign in
+     * @param string $email           validated by the caller — this checks uniqueness
+     *                                only in the sense that the database does
+     * @param int    $actingAccountId the admin doing it, who may not demote themselves
+     */
+    public function edit($accountId, $role, $isActive, $email, $actingAccountId)
+    {
+        $accountId = intval($accountId);
+        $role      = ($role === 'admin') ? 'admin' : 'basic';
+        $isActive  = (bool)$isActive;
+
+        if ($accountId <= 0) {
+            return AccountResult::failed('No account was named.');
+        }
+        // The oldest guard on this form, and still the important one: an admin who
+        // demotes or deactivates themselves is locked out of the screen that would
+        // undo it, and at a one-admin store nobody can undo it at all.
+        if ($accountId === intval($actingAccountId) && ($role !== 'admin' || !$isActive)) {
+            return AccountResult::failed('You cannot demote or deactivate your own account.');
+        }
+
+        $was = $this->accounts->roleOf($accountId);
+        if ($was === '') {
+            return AccountResult::failed('That account no longer exists.');
+        }
+        // Closing is permanent (invariant 14), and this form is the one place that
+        // could look like an undo of it: `is_active` back to 1 on a closed account.
+        // Only reachable by a hand-built POST, because the panel renders no edit form
+        // for a closed account — and sign-in would still refuse it, because it asks
+        // about `closed_at` before `is_active`. Refused here anyway rather than left
+        // resting on the order of two checks in another file.
+        if ($this->accounts->isClosed($accountId)) {
+            return AccountResult::failed(
+                'That account is closed, and closing cannot be undone. Nothing was changed.');
+        }
+        $promoted = ($was !== 'admin' && $role === 'admin');
+        $demoted  = ($was === 'admin' && $role !== 'admin');
+
+        $clearedGrants = 0;
+        $freedLocks    = 0;
+
+        try {
+            $this->pdo->beginTransaction();
+
+            if (!$this->accounts->updateProfile($accountId, $role, $isActive, $email)) {
+                $this->pdo->rollBack();
+                return AccountResult::failed('That account no longer exists.');
+            }
+            if ($promoted) {
+                $clearedGrants = $this->grants->revokeAllForAccount($accountId);
+            }
+            if ($demoted) {
+                $freedLocks = $this->displays->releaseLocksHeldBy($accountId);
+            }
+
+            $this->pdo->commit();
+        } catch (Throwable $e) {
+            $this->rollBackQuietly();
+            // The one expected failure is an email another account already holds. It
+            // is reported as the whole change failing because that is what happened:
+            // nothing was written, including the role.
+            return AccountResult::failed(
+                'That account could not be updated — the email address may already be in use. '
+                . 'Nothing was changed.');
+        }
+
+        $note = '';
+        if ($promoted) {
+            $note = ' They now hold every display by role, so the individual displays they had been '
+                  . 'given were cleared'
+                  . ($clearedGrants > 0 ? ' (' . $clearedGrants . ')' : '')
+                  . ' — if you make them a basic user again you will need to give those back.';
+        } elseif ($demoted) {
+            $note = ' They hold no displays now: assign the ones they should have in "Who can edit '
+                  . 'which display" below.'
+                  . ($freedLocks > 0
+                      ? ' Any display they had open has been released, and their builder says so'
+                        . ' within a minute.'
+                      : '');
+        }
+        return AccountResult::ok('User updated.' . $note);
     }
 
     private function isOpenAdmin($accountId)

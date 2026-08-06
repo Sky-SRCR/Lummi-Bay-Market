@@ -650,27 +650,30 @@ checkSame(3, count($asAdmin->openable($store->all())), 'an admin can still open 
 $pdo->exec("UPDATE displays SET is_active = 1 WHERE tag = 'lobby'");
 
 // ---- The matrix ---------------------------------------------------------------
+// The third argument is the form's columns — the Displays it rendered. Every check
+// here submits all three, which is what the panel does when nothing changed under it.
+$allColumns = [$driveT->id(), $lobby->id(), $deli->id()];
 $grants->grant($driveT->id(), $janeId);
 
-$res = $admin->setAccess([2], [2 => [$lobby->id(), $driveT->id()]]);
+$res = $admin->setAccess([2], $allColumns, [2 => [$lobby->id(), $driveT->id()]]);
 check($res->isOk(), 'the access matrix saves');
 checkSame([$driveT->id(), $lobby->id()], (new GrantStore($pdo))->displayIdsFor(2),
           'the account ends up holding exactly what was ticked');
 checkSame([$driveT->id()], (new GrantStore($pdo))->displayIdsFor($janeId),
           'and an account the save did not cover keeps what it had');
 
-$res = $admin->setAccess([2], [2 => [$lobby->id(), $driveT->id()]]);
+$res = $admin->setAccess([2], $allColumns, [2 => [$lobby->id(), $driveT->id()]]);
 check($res->isOk() && strpos($res->message(), 'unchanged') !== false,
       'saving the same matrix again says nothing changed');
 checkSame(3, count(allGrants($pdo)), 'and does not duplicate a grant');
 
-$res = $admin->setAccess([2], [2 => [$lobby->id(), 99999]]);
+$res = $admin->setAccess([2], $allColumns, [2 => [$lobby->id(), 99999]]);
 check($res->isOk(), 'an id naming no Display is dropped rather than failing the whole save');
 checkSame([$lobby->id()], (new GrantStore($pdo))->displayIdsFor(2), 'the real one is kept');
-check(strpos($res->message(), 'cannot publish') !== false,
-      'and a revoke warns that whoever lost access cannot publish that display again');
+check(strpos($res->message(), 'no longer open that display') !== false,
+      'and a revoke says that whoever lost access can no longer open that display');
 
-$res = $admin->setAccess([2], []);
+$res = $admin->setAccess([2], $allColumns, []);
 check($res->isOk(), 'an account with nothing ticked is allowed');
 checkSame([], (new GrantStore($pdo))->displayIdsFor(2), 'and holds nothing');
 $r = DisplayRequest::forEditing($store, ['display' => 'lobby'], newTestActor($pdo, 2, 'basic'));
@@ -678,7 +681,7 @@ checkSame(DisplayResolution::FORBIDDEN, $r->kind(), 'so the Display it was editi
 
 // An admin can never be granted anything through this path — the panel passes
 // `basic` accounts only, and nothing here would make a difference if it did.
-$res = $admin->setAccess([1], [1 => [$lobby->id()]]);
+$res = $admin->setAccess([1], $allColumns, [1 => [$lobby->id()]]);
 check($res->isOk(), 'granting an admin is accepted');
 checkSame(true, newTestActor($pdo, 1, 'admin')->mayEdit($deli),
           'and changes nothing: an admin already held every Display');
@@ -1956,6 +1959,278 @@ checkSame(false, (new AccountAdmin($oldPdo, $oldStore, new GrantStore($oldPdo), 
           'and closing refuses rather than half-doing it');
 
 // ─────────────────────────────────────────────────────────────
+section('Taking access away, and what it takes with it');
+
+// Three defects, one shape: a change of access that was decided by an *absence*.
+//
+//   · A Display missing from the submitted matrix meant "revoke", so a form rendered
+//     before that Display existed silently undid grants another admin had just made.
+//   · A revoked grant left the edit lock behind, on an account that could no longer
+//     open the Display to release it — so the sign stayed locked for a quarter of an
+//     hour to somebody who was not allowed near it.
+//   · A promotion to admin left the grant rows in place, invisible on the one screen
+//     that administers them, and a demotion months later handed the old access back.
+
+/** A GrantStore whose revoke fails — so a half-written matrix can be looked for. */
+class RefusingGrantStore extends GrantStore
+{
+    public function revoke($displayId, $accountId)
+    {
+        throw new RuntimeException('revoke refused');
+    }
+}
+
+$xPdo    = newTestDb();
+$xStore  = new TestDisplayStore($xPdo);
+$xAdmin  = newTestDisplayAdmin($xPdo);
+$xGrants = new GrantStore($xPdo);
+
+$xDrive = makeTestDisplay($xPdo, 'drive-thru', 'Drive-Thru');
+$xLobby = makeTestDisplay($xPdo, 'lobby', 'Lobby');
+$xDeli  = makeTestDisplay($xPdo, 'deli', 'Deli Case');
+$xJane  = makeTestAccount($xPdo, 'jane');       // a second basic account
+
+// ---- Only the part of the matrix the form covered (#16) ------------------------
+
+$xGrants->grant($xLobby->id(), 2);
+$xGrants->grant($xDeli->id(),  2);
+
+// The stale form: rendered when only two Displays existed, submitted after a
+// colleague added the third and granted it. Its columns are the two it showed.
+$res = $xAdmin->setAccess([2], [$xDrive->id(), $xLobby->id()], [2 => [$xLobby->id()]]);
+check($res->isOk(), 'a save covering some of the displays is accepted');
+checkSame([$xLobby->id(), $xDeli->id()], $xGrants->displayIdsFor(2),
+          'a grant on a display the form never showed survives it');
+check(strpos($res->message(), 'unchanged') !== false,
+      'and with nothing else to do, the save says nothing changed');
+
+// A tick is no more powerful than a column: the two axes are declared together, so a
+// hand-built POST cannot grant through a column the form did not carry.
+$res = $xAdmin->setAccess([2], [$xLobby->id()], [2 => [$xLobby->id(), $xDrive->id()]]);
+checkSame([$xLobby->id(), $xDeli->id()], $xGrants->displayIdsFor(2),
+          'a tick outside the covered columns grants nothing');
+
+// And with the column covered, an unticked box still means revoke — the whole point
+// of the grid. This is the check that would pass on the unfixed code as well; it is
+// here so that "covered" cannot be quietly widened into "never revokes".
+$res = $xAdmin->setAccess([2], [$xLobby->id(), $xDeli->id()], [2 => [$xLobby->id()]]);
+check($res->isOk(), 'a save covering both columns is accepted');
+checkSame([$xLobby->id()], $xGrants->displayIdsFor(2), 'and the unticked one is taken away');
+
+// A form covering nothing changes nothing. Reachable: a POST built by hand, or the
+// grid submitted from a page where every Display had been deleted.
+$res = $xAdmin->setAccess([2], [], [2 => []]);
+check($res->isOk() && strpos($res->message(), 'unchanged') !== false,
+      'a save that covers no displays at all reports nothing changed');
+checkSame([$xLobby->id()], $xGrants->displayIdsFor(2), 'and takes nothing away');
+
+// A column naming a Display that has since been deleted is dropped, not fatal —
+// the same rule the ticks already followed.
+$res = $xAdmin->setAccess([2], [$xLobby->id(), 99999], [2 => [$xLobby->id()]]);
+check($res->isOk(), 'a column naming no display is dropped rather than failing the save');
+checkSame([$xLobby->id()], $xGrants->displayIdsFor(2), 'leaving the real one alone');
+
+// ---- Revoking frees the edit lock, by holder (#17) -----------------------------
+
+$xGrants->grant($xDeli->id(),  2);
+$xGrants->grant($xDrive->id(), 2);
+$xGrants->grant($xDeli->id(),  $xJane);
+
+$xStore->claimLock($xLobby, 2);
+$xStore->claimLock($xDrive, 2);
+$xStore->claimLock($xDeli,  $xJane);
+checkSame(true, $xStore->forId($xLobby->id())->lockState()->heldBy(2),
+          'the clerk is holding the lobby sign');
+checkSame(true, $xStore->forId($xDeli->id())->lockState()->heldBy($xJane),
+          'and jane is holding the deli case');
+
+// Take the lobby and the deli away from the clerk. Jane is holding the deli.
+$res = $xAdmin->setAccess([2], [$xDrive->id(), $xLobby->id(), $xDeli->id()],
+                          [2 => [$xDrive->id()]]);
+check($res->isOk(), 'taking two displays away is accepted');
+checkSame(false, $xStore->forId($xLobby->id())->lockState()->isHeld(),
+          'the display the revoked account was editing is released');
+checkSame(true, $xStore->forId($xDeli->id())->lockState()->heldBy($xJane),
+          'but a colleague\'s lock on another revoked display is left alone');
+checkSame(true, $xStore->forId($xDrive->id())->lockState()->heldBy(2),
+          'and so is their own lock on a display they still hold');
+check(strpos($res->message(), 'edit lock has been released') !== false,
+      'and the answer says a lock was released, because somebody\'s session just ended');
+check(strpos($res->message(), '1 display was') !== false,
+      'counting the one that was actually being edited, not the two that were revoked');
+
+// The two halves of #17 meeting: the seam now refuses that account, which is the
+// `forbidden` the Builder's heartbeat turns into its own notice.
+$r = DisplayRequest::forEditing($xStore, ['display' => 'lobby'], newTestActor($xPdo, 2, 'basic'));
+checkSame(DisplayResolution::FORBIDDEN, $r->kind(),
+          'the revoked account\'s next heartbeat for that display is refused');
+
+// And the sign is genuinely free, not just unheld by them: the next person can start
+// without waiting out the idle window.
+$xGrants->grant($xLobby->id(), $xJane);
+$xStore->claimLock(loadTestDisplay($xPdo, $xLobby->id()), $xJane);
+checkSame(true, $xStore->forId($xLobby->id())->lockState()->heldBy($xJane),
+          'and somebody else can pick it up immediately');
+
+// A revoke with nobody in there says the other sentence, and never claims a lock
+// was released. The clerk leaves the drive-thru sign first, so this is the same
+// revoke against a Display nobody is holding.
+$xStore->releaseLockOn($xDrive->id(), 2);
+$res = $xAdmin->setAccess([2], [$xDrive->id()], [2 => []]);
+check(strpos($res->message(), 'no longer open that display') !== false,
+      'a revoke of a display nobody was editing says just that it is no longer theirs');
+check(strpos($res->message(), 'edit lock') === false,
+      'and does not mention a lock it did not release');
+
+// releaseLockOn answers whether there was one, which is what the count above is made
+// of — and it never touches a lock held by somebody else.
+$xStore->claimLock(loadTestDisplay($xPdo, $xDrive->id()), $xJane);
+checkSame(false, $xStore->releaseLockOn($xDrive->id(), 2),
+          'releasing a lock this account does not hold reports nothing released');
+checkSame(true, $xStore->forId($xDrive->id())->lockState()->heldBy($xJane),
+          'and leaves the holder holding it');
+checkSame(true, $xStore->releaseLockOn($xDrive->id(), $xJane),
+          'releasing the holder\'s own lock reports it released');
+checkSame(false, $xStore->forId($xDrive->id())->lockState()->isHeld(), 'and frees the display');
+
+// ---- The lock release is inside the transaction --------------------------------
+// The point of invariant 22: if the revoke fails, the freed lock has to come back
+// with it, or the admin is told nothing changed while a sign sits unlocked.
+$yPdo   = newTestDb();
+$yStore = new TestDisplayStore($yPdo);
+$yLobby = makeTestDisplay($yPdo, 'lobby', 'Lobby');
+$yDeli  = makeTestDisplay($yPdo, 'deli', 'Deli Case');
+$yBreak = new DisplayAdmin($yPdo, $yStore, newTestLayoutStore($yPdo), new RefusingGrantStore($yPdo));
+grantTestAccess($yPdo, $yLobby->id(), 2);
+$yStore->claimLock($yLobby, 2);
+
+$res = $yBreak->setAccess([2], [$yLobby->id(), $yDeli->id()], [2 => [$yDeli->id()]]);
+checkSame(false, $res->isOk(), 'a matrix save whose revoke fails is reported as failed');
+check(strpos($res->message(), 'Nothing was changed') !== false, 'and says nothing was changed');
+checkSame([$yLobby->id()], (new GrantStore($yPdo))->displayIdsFor(2),
+          'the grant it had already added in the same save is rolled back');
+checkSame(true, $yStore->forId($yLobby->id())->lockState()->heldBy(2),
+          'and the edit lock it had already freed is back where it was');
+checkSame(false, $yPdo->inTransaction(), 'with no transaction left open');
+
+// ---- Promotion clears the grants; demotion frees the locks (#18) ---------------
+
+$zPdo   = newTestDb();
+$zStore = new TestDisplayStore($zPdo);
+$zAcc   = new AccountStore($zPdo);
+$zAdmin = newTestAccountAdmin($zPdo);
+$zLobby = makeTestDisplay($zPdo, 'lobby', 'Lobby');
+$zDeli  = makeTestDisplay($zPdo, 'deli', 'Deli Case');
+grantTestAccess($zPdo, $zLobby->id(), 2);
+$zStore->claimLock($zLobby, 2);
+
+$res = $zAdmin->edit(2, 'admin', true, 'clerk@example.test', 1);
+checkSame(true, $res->isOk(), 'a basic account can be promoted to admin');
+checkSame('admin', $zAcc->roleOf(2), 'the row says admin');
+checkSame([], (new GrantStore($zPdo))->displayIdsFor(2),
+          'and the individual grants are gone, so the matrix is the whole truth about them');
+check(strpos($res->message(), 'cleared') !== false, 'the answer says they were cleared');
+check(strpos($res->message(), 'give those back') !== false,
+      'and warns that a demotion will not bring them back');
+checkSame(true, newTestActor($zPdo, 2, 'admin')->mayEdit($zDeli),
+          'they now hold every display by role instead');
+checkSame(true, $zStore->forId($zLobby->id())->lockState()->heldBy(2),
+          'and the display they were editing is still theirs to finish — a promotion takes nothing away');
+
+// The defect this closes, stated as a check: demote them and the March access must
+// not come back.
+$res = $zAdmin->edit(2, 'basic', true, 'clerk@example.test', 1);
+checkSame(true, $res->isOk(), 'and can be demoted again');
+checkSame([], (new GrantStore($zPdo))->displayIdsFor(2),
+          'the old access does not silently return');
+checkSame(false, $zStore->forId($zLobby->id())->lockState()->isHeld(),
+          'and the lock they can no longer reach to release is freed for them');
+check(strpos($res->message(), 'hold no displays now') !== false,
+      'the answer says they hold nothing and where to fix that');
+check(strpos($res->message(), 'has been released') !== false,
+      'and that the display they had open was let go');
+
+// A save that changes neither role nor anything else touches neither table.
+grantTestAccess($zPdo, $zLobby->id(), 2);
+$zStore->claimLock(loadTestDisplay($zPdo, $zLobby->id()), 2);
+$res = $zAdmin->edit(2, 'basic', true, 'clerk@example.test', 1);
+checkSame(true, $res->isOk(), 'saving an account with no change of role is accepted');
+checkSame([$zLobby->id()], (new GrantStore($zPdo))->displayIdsFor(2), 'the grants are untouched');
+checkSame(true, $zStore->forId($zLobby->id())->lockState()->heldBy(2), 'and so is the edit lock');
+checkSame('User updated.', $res->message(), 'and it says nothing about access, because nothing happened to it');
+
+// Email and the active flag still work, and still go through the one transaction.
+$res = $zAdmin->edit(2, 'basic', false, 'clerk2@example.test', 1);
+checkSame(true, $res->isOk(), 'the email and the active flag can be changed');
+$row = $zPdo->query("SELECT email, is_active FROM users WHERE id = 2")->fetch();
+checkSame('clerk2@example.test', $row['email'], 'the new email is stored');
+checkSame(0, intval($row['is_active']), 'and the account is deactivated');
+checkSame([$zLobby->id()], (new GrantStore($zPdo))->displayIdsFor(2),
+          'deactivating does not clear grants — closing an account is the permanent one');
+
+// An email another account already holds fails the *whole* change, including the
+// role and the grants. This is invariant 22 from the other side: the message is
+// decided by what is now true, not by which statement threw.
+makeTestAccount($zPdo, 'taken');                       // taken@example.test
+$res = $zAdmin->edit(2, 'admin', true, 'taken@example.test', 1);
+checkSame(false, $res->isOk(), 'an email another account holds fails the save');
+check(strpos($res->message(), 'Nothing was changed') !== false, 'and says nothing was changed');
+checkSame('basic', $zAcc->roleOf(2), 'the role really did not move');
+checkSame([$zLobby->id()], (new GrantStore($zPdo))->displayIdsFor(2),
+          'and the promotion did not take the grants with it on the way out');
+checkSame(false, $zPdo->inTransaction(), 'with no transaction left open');
+
+// The two refusals that were on the page before this module existed, kept here.
+$res = $zAdmin->edit(1, 'basic', true, 'sky@example.test', 1);
+checkSame(false, $res->isOk(), 'an admin cannot demote their own account');
+checkSame('admin', $zAcc->roleOf(1), 'and the row is untouched');
+checkSame(false, $zAdmin->edit(1, 'admin', false, 'sky@example.test', 1)->isOk(),
+          'nor deactivate it');
+checkSame(false, $zAdmin->edit(999, 'basic', true, 'nobody@example.test', 1)->isOk(),
+          'editing an account that does not exist is refused');
+checkSame(false, $zAdmin->edit(0, 'basic', true, 'nobody@example.test', 1)->isOk(),
+          'and so is editing nothing at all');
+
+// And a closed one, because this form's `is_active` is the only thing in the app that
+// could look like an undo of a closure (invariant 14). Only a hand-built POST gets
+// here — the panel renders no edit form for a closed account.
+makeTestAccount($zPdo, 'gone');
+$goneId = intval($zPdo->query("SELECT id FROM users WHERE username = 'gone'")->fetchColumn());
+checkSame(true, $zAdmin->close($goneId, 1)->isOk(), 'an account can be closed');
+checkSame(false, $zAdmin->edit($goneId, 'admin', true, 'gone@example.test', 1)->isOk(),
+          'editing a closed account is refused, whatever the form said');
+$goneRow = $zPdo->query("SELECT role, is_active FROM users WHERE username = 'gone'")->fetch();
+checkSame(0, intval($goneRow['is_active']), 'and it is still shut out');
+checkSame('basic', $goneRow['role'], 'with the role it held when it closed');
+
+// The store's own write, which the use case is not allowed to guess about.
+checkSame(false, $zAcc->updateProfile(999, 'basic', true, 'nobody2@example.test'),
+          'updateProfile reports false for an id that names no account');
+checkSame(true,  $zAcc->updateProfile(2, 'basic', true, 'clerk2@example.test'),
+          'and true for a write that changed nothing, because the row is there');
+
+// ---- The sentence that survives a redirect (#16) -------------------------------
+// The grid redirects after saving so that F5 cannot replay a whole-matrix write.
+// That needs the answer to outlive the redirect, and to be read exactly once.
+$_SESSION = [];
+checkSame(null, takeFlashMessage(), 'with nothing left behind, there is no message to show');
+flashMessage('Access updated.', 'success');
+$flash = takeFlashMessage();
+checkSame('Access updated.', $flash['message'], 'a message left for a redirect is read back');
+checkSame('success', $flash['type'], 'with the kind it was left as');
+checkSame(null, takeFlashMessage(),
+          'and reading it removes it, so a reload shows the page without repeating it');
+flashMessage('Access could not be changed.', 'error');
+checkSame('error', takeFlashMessage()['type'], 'an error keeps its kind');
+flashMessage('Something', 'nonsense');
+checkSame('success', takeFlashMessage()['type'], 'and an unknown kind reads as success rather than shouting');
+flashMessage('', 'error');
+checkSame(null, takeFlashMessage(), 'an empty message is no message');
+$_SESSION['flash'] = 'not an array';
+checkSame(null, takeFlashMessage(), 'and a session field of the wrong shape is ignored, not rendered');
+$_SESSION = [];
+
+// ─────────────────────────────────────────────────────────────
 section('What a visitor is told when something breaks');
 
 // ErrorPolicy::install() is deliberately NOT called here: it would replace this
@@ -2673,4 +2948,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(706);
+reportChecks(781);

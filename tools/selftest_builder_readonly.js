@@ -53,6 +53,16 @@ async function survives(label, fn) {
 
 function section(title) { console.log('\n' + title); }
 
+/**
+ * Let a stubbed fetch chain finish.
+ *
+ * The page's handlers do not return their promises — nothing in a browser would want
+ * them — so awaiting the call proves only that its synchronous part did not throw.
+ * `setTimeout` is stubbed out to a no-op here, which leaves draining the microtask
+ * queue as the way to reach a `.then` two links down.
+ */
+async function settle() { for (let i = 0; i < 10; i++) { await Promise.resolve(); } }
+
 // ---- The source, and what it promises ---------------------------------------
 
 const php = fs.readFileSync(BUILDER, 'utf8');
@@ -89,8 +99,12 @@ check(emittedOnlyWhenEditable('<div id="table-modal-overlay">'),    'so is the t
 
 // The ids builder.php still renders when $readOnly is true and the account is
 // basic. Everything else resolves to null, which is what the browser will do.
+// `lock-access-bar` is here and the other three lock bars are not, which is the
+// point of this list: those are emitted only for the holder, while losing *access*
+// can happen to somebody who is only watching. A read-only page has the access bar
+// and the banner above it, and nothing else the lock uses.
 const PRESENT = new Set([
-    'lock-banner', 'lock-idle-bar', 'lock-lapsed-bar', 'lock-lost-bar', 'lock-holder',
+    'lock-banner', 'lock-access-bar', 'lock-holder',
     'control-bar', 'zoom-readout', 'editor-frame', 'canvas-sizer', 'builder-canvas',
     'toast', 'resize-label', 'display-off-banner', 'top-nav'
 ]);
@@ -190,9 +204,32 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     await survives('delete finds nothing to delete',  () => deleteSelected());
     await survives('publish refuses instead of posting', () => publishCanvas());
 
+    section('Losing access to a display you could only look at');
+
+    // The read-only page's one repeating call is the lock poll, and it used to return
+    // silently on anything that was not a success. `forbidden` is the one answer that
+    // never comes back: an admin has taken this display off this account, so the
+    // banner's offer to reload once the lock frees up is now an offer to be refused.
+    // Everything the notice needs is null on this page except the two ids below,
+    // which is exactly why it is checked here rather than only on an editing page.
+    const accessBar = document.getElementById('lock-access-bar');
+    check(accessBar.style.display !== 'flex', 'the access notice starts hidden');
+
+    global.fetch = () => Promise.resolve({
+        json: () => Promise.resolve({ status: 'error', reason: 'forbidden',
+                                      message: 'That display has not been assigned to you.' })
+    });
+    await survives('a lock poll refused as forbidden does not throw', async () => {
+        pollLockState();
+        await settle();
+    });
+    check(accessBar.style.display === 'flex', 'and the access notice is put on screen');
+    check(document.getElementById('lock-banner').style.display === 'none',
+          'while the banner offering a reload once it frees up is taken down');
+
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 16;
+    const expected = 20;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }
