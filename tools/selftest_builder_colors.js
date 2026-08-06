@@ -291,6 +291,7 @@ applyStoredColor(unreadable, 'puce');
 canvasBlocks.push(unreadable);
 
 published = null;
+endPublish();   // release the in-flight guard (§4ak): no reply is delivered here
 publishCanvas();
 check(published !== null, 'a publish is sent');
 let sent = JSON.parse(published.layout_data);
@@ -306,6 +307,7 @@ activeBlock = unreadable;
 updateStyle('color', '#336699');
 checkSame(undefined, unreadable.dataset.colorUnread, 'picking a colour clears the marker');
 published = null;
+endPublish();   // release the in-flight guard (§4ak): no reply is delivered here
 publishCanvas();
 sent = JSON.parse(published.layout_data);
 checkSame('#336699', sent[0].font_color, 'and the publish then carries the chosen colour');
@@ -317,6 +319,7 @@ canvasBlocks.length = 0;
 const plain = textBlock('p2');
 canvasBlocks.push(plain);
 published = null;
+endPublish();   // release the in-flight guard (§4ak): no reply is delivered here
 publishCanvas();
 sent = JSON.parse(published.layout_data);
 checkSame('#000000', sent[0].font_color, 'a block that never had a colour publishes black, as before');
@@ -329,6 +332,7 @@ const kept = textBlock('p3');
 applyStoredColor(kept, '#abcdef');
 canvasBlocks.push(kept);
 published = null;
+endPublish();   // release the in-flight guard (§4ak): no reply is delivered here
 publishCanvas();
 sent = JSON.parse(published.layout_data);
 checkSame('#abcdef', sent[0].font_color, 'and a real stored colour survives the round trip unchanged');

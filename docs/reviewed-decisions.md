@@ -76,7 +76,7 @@ written down rather than remembered:
 | 36 | The branding file was written in place with no locking, so a short write took the whole app down. | Write a temporary file, then swap it in. | **Done** | §4y |
 | 37 | The asset editor read the file type from a hidden form field instead of the stored record. | Read it from the record. | **Done** | §4w |
 | 38 | Two login problems: a secure-cookie setting causes an invisible sign-in loop on plain HTTP, and the suspended-account message tells a guesser the password was right. | Fix both. | **Done** | §4u, §4v |
-| 39 | Double-clicking Publish produced a success message and a stale-sign warning together. | Ignore the second while the first is still running. | Open | — |
+| 39 | Double-clicking Publish produced a success message and a stale-sign warning together. | Ignore the second while the first is still running. | **Done** | §4ak |
 | 40 | A basic account with the sign open read-only threw an error on every canvas click. | Guard the lookup. | **Done** — the click-path lookup was settled by #3; the same banner's second lookup, the one at page load, was guarded to match. | §4j |
 | 41 | An unreadable stored colour round-tripped through the colour picker and published back as black. | Validate on the way in and on the way out. | **Done** — taken with #21. Out: the Builder keeps a stored colour it cannot read instead of publishing `#000000` over it, and says so in the inspector. In: the publish path refuses one and names the block. **Since:** refusing at the door made the rows already stored worse to hold — one of them makes its Display refuse every publish — so `tools/audit_colors.php` finds them, read-only, against the live database. It also turned up a third case with no refusal in front of it at all: a hand-edited `block_styles` colour renders on every sign, because BrandStyles cleans on the way in and not on the way out. | §4ac |
 | 42 | Six smaller Builder rough edges: section minimum size measured in screen pixels, Fit cannot fit a very large canvas, no way to unhide a section, deleting a slide field cannot be undone, marquee "Transparent" loses the colour, and dead code. | All six. | Open | — |
@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**44 done, 1 part done (#49), 5 open** — counted off the Status column above, which
+**45 done, 1 part done (#49), 4 open** — counted off the Status column above, which
 is 50 rows because there is no #47. The 51st item is the unnumbered policy named at
 the top; it has no row and therefore no status, and two branches counting the same
 table have each quietly folded it into a different total. It is counted here as

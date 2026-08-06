@@ -159,6 +159,15 @@ through the app again:
    *decode* is not an empty layout: `PublishRequest::fromPostedJson()` refuses it,
    because publishing an empty layout deletes every element and the old
    `json_decode(...) ?: []` read an unreadable request as exactly that.
+   **The other half is the client's, because the server cannot do it.** A second
+   publish on an already-spent stamp is indistinguishable, from the server, from a
+   colleague's — so it is refused, correctly, and a double-click therefore earned a
+   green success and a "somebody else changed this sign, reload" alert at once, with
+   the alert being the one acted on and reloading being what discards unpublished
+   work. Only the tab that sent both requests can tell a duplicate from a conflict.
+   `publishInFlight` in `builder.php` is where it does, and anything else added that
+   writes on a stamp — a save button, a keyboard shortcut, an autosave — needs the
+   same guard or it manufactures the same false conflict.
 6. **Text-block content is plain text** (ADR-0002). `toPlainText()` on save for
    `type = 'text'` only; render with `textContent`. Never `innerHTML`, never
    strip carousel/table/marquee JSON or media paths.
@@ -2678,358 +2687,6 @@ Left standing, and named rather than skipped:
   `../../private/` layout and the drive-thru sign. Moving the app makes it prose to
   re-derive, not prose to trust.
 
----
-
-## 5. Verification
-
-There is no deploy pipeline — every change reaches the sign by hand — but as of
-#48 and #51 CI runs everything below except the two things that need a browser or
-a copy of live data. It runs on PHP 8.2, against two engines: SQLite and a real
-MySQL 5.7 service. That 8.2 is now also the repo's declared floor — the store owner
-stated the host runs it (§4k) — so the pin enforces the target rather than merely
-accepting everything the target forbids. It remains a *statement*, not something this
-repo has measured; confirming it on Settings → This Server is a deploy-day step. Run
-the suite locally before every push anyway; the loop is faster than a push.
-
-```
-php -l <every touched .php>              # syntax; also in CI, on 8.2
-php tools/check_invariants.php           # the greps below, run rather than read —
-                                         # comment-aware, so a module documenting a
-                                         # rule does not fail it
-php tools/selftest_layout.php            # the real modules, in-memory SQLite
-node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
-                                         # that has only what a read-only page emits
-node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an
-                                         # admin who can edit — driving a stubbed
-                                         # XMLHttpRequest through every way an upload ends
-node tools/selftest_builder_colors.js    # the same JS again, against a Display whose
-                                         # stored data is already wrong, through a `style`
-                                         # that discards and normalises as a browser does
-node tools/selftest_viewer.js            # viewer.php's poll loop, against a fetch this
-                                         # test controls: the sign must not blank for one
-                                         # dropped packet, and must not stay up for an
-                                         # hour of them (§4af)
-```
-
-And, with a MySQL to point at — the same suite, with nothing stubbed:
-
-```
-SELFTEST_MYSQL_DSN='mysql:host=127.0.0.1;dbname=lbm_selftest;charset=utf8mb4' \
-SELFTEST_MYSQL_USER=... SELFTEST_MYSQL_PASS=... php tools/selftest_layout.php
-```
-
-On MySQL the fixture is built by running `schema.sql`, the `FOR UPDATE` stub is
-gone, and twenty-three further checks run that SQLite cannot be asked — see §4aa.
-Eight of those are the publish collision (§4ab), which needs two database sessions
-and so cannot exist on an in-memory fixture at all.
-
-**The greps below are what `tools/check_invariants.php` automates.** They are kept
-here because the annotations are the reasoning, and because five of them cannot be
-decided by pattern and are still yours to read: `canvas_elements` (the endpoint
-name `get_canvas_elements` is indistinguishable from the table), `ErrorPolicy::report`
-callers (a new one is allowed but has to be read for whether it can repeat),
-the *position* of `ensureSignageSchema()` calls, and the `grants_accounts` /
-`grants_displays` pairing. The checker prints that list on every run so nobody
-mistakes it for total coverage. `schema.sql` against `lib/schema.php` used to be a
-sixth; the MySQL run now asserts convergence has nothing left to do against a
-database built from that file, which is the same property mechanised.
-
-```
-grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
-                                              # the get_canvas_elements endpoint NAME, and
-                                              # server_report.php's expected-column list
-grep -rn "information_schema\." --include=*.php lib/  # only lib/schema.php: the three reads
-                                              # plus one comment. server_report.php asks
-                                              # readSchemaFacts() instead of writing a fourth
-                                              # query, so there is one answer to "which columns
-                                              # exist". A new hit in lib/ is a second opinion —
-                                              # put the question on SchemaFacts instead.
-                                              # (tools/ has its own: rehearse_phase1.php reads
-                                              # KEY_COLUMN_USAGE against real MySQL, and
-                                              # test_fixture.php *builds* a fake catalogue)
-grep -rn "schemaTry(\$pdo" --include=*.php .   # only lib/schema.php, and only from inside the
-                                              # named steps. A statement added anywhere else
-                                              # bypasses signageSchemaPlan() and is therefore
-                                              # ungated and untested — invariant 19
-grep -rn "json_encode(" --include=*.php .      # lib/http_reply.php, which owns it; the one in
-                                              # lib/error_policy.php, which is the last-resort
-                                              # notice and so cannot route through it (and has
-                                              # checked for false since it was written); and the
-                                              # self-test. Anywhere else is a reply that can
-                                              # leave as zero bytes behind a 200, or a
-                                              # `var X = ;` that takes a whole script block
-                                              # down — §4af
-grep -rn "ErrorPolicy::report" --include=*.php .  # api.php (an upload the server refused),
-                                              # lib/schema.php (a schema statement it refused),
-                                              # and one check in the self-test. A new caller is
-                                              # a new thing an admin gets emailed about: check
-                                              # it cannot fire on a condition the app expected,
-                                              # and give it a window if it can repeat on its
-                                              # own — invariant 20
-grep -rn "ensureSignageSchema(\$pdo)" --include=*.php .  # four entry points — admin_panel.php,
-                                              # builder.php, crud.php, api.php — each within the
-                                              # first ~25 lines, before any transaction exists; plus
-                                              # tools/, one comment, and the call inside
-                                              # repairSchemaAfterFailure(). That *position* is the
-                                              # invariant, not the call: DDL commits an open
-                                              # transaction in MySQL silently. A call deeper into a
-                                              # file wants the guarded door instead — invariant 21
-grep -rn "repairSchemaAfterFailure" --include=*.php .  # lib/schema.php defines it and lib/displays.php
-                                              # is the one place that *calls* it; the rest are the
-                                              # self-test and comments in api.php/viewer.php pointing
-                                              # here. A second caller is fine, a second *door* is not:
-                                              # anything converging off a failure asks this, or it has
-                                              # none of the three refusals
-grep -rn "DELETE FROM users" --include=*.php . # nothing outside tools/ (invariant 14). Accounts
-                                              # are closed, never deleted, so a freed id can
-                                              # never be handed to somebody new
-grep -rn "SET password_hash" --include=*.php . # exactly two: lib/accounts.php (setPassword, which the
-                                              # reset goes through) and admin_panel.php:160, where an
-                                              # admin sets somebody's password in one write with
-                                              # nothing to be atomic with. A third means a page is
-                                              # changing a password beside another write again — the
-                                              # defect invariant 22 exists for
-grep -rn "ensureLockoutColumns\|clearLockout" --include=*.php .  # must be empty of *calls*: both helpers
-                                              # are gone. The three lockout ALTERs are gated plan entries
-                                              # (§4v) and the clear goes straight to AccountStore. A hit
-                                              # outside a comment is pre-auth DDL back on the login page —
-                                              # the one piece of it a bot could reach
-grep -rn "csrf_token" login.php               # twice: the hidden input the form emits, and csrfOk()
-                                              # reading it. The gate must sit ABOVE `new LoginAttempt`,
-                                              # or a request with no token can still run somebody's
-                                              # failed-attempt counter up to the lockout (§4v)
-grep -rEn "\bdate\('Y-m-d" --include=*.php lib/  # must be empty — the word boundary matters, or every
-                                              # gmdate() matches too. Every *stored* moment in lib/ is UTC,
-                                              # written with gmdate() and read back with a ' UTC' suffix.
-                                              # Local wall-clock is not monotonic: the autumn fall-back
-                                              # replays an hour, and both the edit lock (§4t) and the login
-                                              # lockout (§4v) compare stored moments as absolute. Plain
-                                              # date() is fine for *printing* one — `\bdate(` alone finds
-                                              # the three that do, and all three are words for a person
-grep -rn "closed_at" --include=*.php .        # lib/accounts.php, schema.sql's DDL, the fixture,
-                                              # lib/schema.php's ALTER (§4v — it used to be an ungated
-                                              # one on every admin-panel load), lib/server_report.php
-                                              # naming it as a column that should exist, and ONE render
-                                              # in admin_panel.php that prints the date. Everything else
-                                              # is a comment. A hit that *decides* something is a second
-                                              # opinion about what closed means — ask
-                                              # AccountStore::isClosed() instead
-grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?displays`?" --include=*.php .  # lib/displays.php + schema.php's ALTERs
-grep -rn "INTO display_permissions\|FROM display_permissions" --include=*.php .  # only lib/grants.php, plus tools/
-grep -rn "grants_accounts\|grants_displays" --include=*.php .  # admin_panel.php only, and BOTH names must
-                                              # appear twice — once as a hidden input in the grant form,
-                                              # once being read. The form declares both axes of the matrix
-                                              # it rendered because a browser posts only ticked boxes, so an
-                                              # unticked cell and a cell that was never on the page are the
-                                              # same absence. One name here without the other is the §4s
-                                              # defect back: a save that revokes what it never showed
-grep -rn "releaseLockOn\|releaseLocksHeldBy" --include=*.php .  # lib/displays.php defines both; the callers
-                                              # are every place a change of *reach* has to free a lock the
-                                              # account can no longer let go of — DisplayAdmin twice (a grant
-                                              # revoked, a Display turned off) and AccountAdmin twice (an
-                                              # account closed; demoted or suspended). builder.php's
-                                              # releaseLockOnLeave is a different thing and only matches on
-                                              # the name. A new caller is fine; a change of reach with NO
-                                              # call is invariant 8's second paragraph
-grep -rn "holderActive\|lock_holder_active" --include=*.php .  # lib/displays.php only, and it must appear on
-                                              # both sides: the join that fetches it and LockState::isHeld
-                                              # that acts on it. The same rule is spelled `users.is_active = 1`
-                                              # inside claimLock's WHERE — a read and a write that disagree
-                                              # about who holds a sign disagree silently (§4t)
-grep -rn "LOCK_TERMINAL\|isTerminalLockReason" --include=*.php .  # builder.php only. The map, and three call
-                                              # sites: the heartbeat, the read-only poll, the publish refusal.
-                                              # A refusal that ends a session and is acted on in only two of
-                                              # the three leaves one kind of page silent, which is the whole
-                                              # §4t defect in miniature. `res.reason ===` next to one of them
-                                              # is the old shape coming back
-grep -rn "flashMessage\|takeFlashMessage" --include=*.php .  # auth.php defines them, admin_panel.php uses
-                                              # them for the grant matrix's post/redirect/get. A `flashMessage`
-                                              # with no `header('Location'` after it leaves a sentence nobody
-                                              # will ever be shown
-grep -rEn "UPDATE users SET" --include=*.php . # lib/accounts.php (five: closed_at, password_hash, role/
-                                              # is_active/email, the lockout clear, and the failure counter
-                                              # a refused sign-in writes), admin_panel.php:168 where an admin
-                                              # sets a password in one write, plus tools/. **No page may
-                                              # appear here but that one**: login.php's two lockout UPDATEs
-                                              # moved into the store in §4u, and a `users` write in a page
-                                              # beside another write is invariant 22 again
-grep -rn "lock_holder_id\|lock_activity_at\|lock_taken_at" --include=*.php .  # SQL against them only in
-                                              # lib/displays.php. lib/schema.php and lib/server_report.php
-                                              # name them as *catalogue entries* — a column this database
-                                              # should have — which is not a read of the table
-grep -rn "block_styles" --include=*.php .     # only lib/brand_styles.php + schema.php's seed
-grep -rEn "WHERE +`?id`? *= *'?1'?" --include=*.php .  # must be empty — whitespace and quotes included
-grep -rn "1920\|1080" --include=*.php .        # admin size presets, the seed, tools/, and prose
-grep -rn "viewer.php\"\|viewer.php'" --include=*.php .  # every link must carry ?display=
-grep -rn "catch (Exception" --include=*.php lib/  # must be empty: a TypeError is an Error, not an Exception
-grep -rn "display_errors\|error_reporting(\|set_exception_handler\|register_shutdown" --include=*.php .
-                                              # lib/error_policy.php owns all of it, plus tools/ (the
-                                              # self-test harness has handlers of its own on purpose).
-                                              # A second file setting any of these is a second opinion
-                                              # about what a visitor sees when something breaks —
-                                              # invariant 16
-grep -rn "hash_equals(" --include=*.php .     # auth.php's csrfOk(), which fails closed on an empty token,
-                                              # and the passcode comparison in lib/password_resets.php
-grep -rEn "(INTO|UPDATE|FROM|TABLE) +password_resets|reset_attempts" --include=*.php .
-                                              # only lib/password_resets.php, plus tools/. A statement in
-                                              # reset_password.php means the token table grew a second
-                                              # writer; `reset_attempts` anywhere means the guess budget
-                                              # crept back into the session — invariant 13's whole point
-grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?assets`?" --include=*.php .
-                                              # only lib/assets.php, plus schema.php's ALTER and the
-                                              # fixture — with ONE standing exception: the LEFT JOIN in
-                                              # LayoutStore::snapshot(), read-only and on the path a
-                                              # Screen polls every 30 seconds. A second writer here is
-                                              # how row sharing came back — invariant 17
-grep -rn "edit_type" --include=*.php .        # prose in crud.php and lib/assets.php naming the field that
-                                              # used to be here, plus the two self-test checks that read
-                                              # crud.php's source for it. No hit may be code: a
-                                              # `'edit_type'` string or a `name="edit_type"` input is the
-                                              # §4w defect back — the row's type stated by the request,
-                                              # and with it which rule an edit has to pass
-grep -rn "isValidColor\|DEFAULT_COLOR" --include=*.php .  # lib/displays.php defines both on Background;
-                                              # lib/layout_store.php quotes the default in the refusal;
-                                              # lib/display_admin.php's cleanColor asks rather than
-                                              # restating. A `preg_match` against a hash and hex digits
-                                              # anywhere else is a second opinion about what a background
-                                              # colour is — and the door holding it will accept values the
-                                              # store then declines to write, saying it saved (§4x).
-                                              # BrandStyles::cleanColor is a different table's rule
-grep -rn "IMAGE_EXTENSIONS\|isAllowedImageRef" --include=*.php .  # lib/assets.php defines both; crud.php
-                                              # asks for the add form and for the upload MIME/extension
-                                              # check. A literal list of image extensions in any other
-                                              # file is a fourth opinion about what an image entry may
-                                              # point at — the three that existed disagreed by omission
-grep -rn "auto_pooled\|Auto: " --include=*.php .  # lib/assets.php owns the marker; schema.php backfills
-                                              # it; crud.php renders a badge and warns in the label hint.
-                                              # Anything that *decides* whether a row may be deleted
-                                              # belongs in discardPooled(), not in a caller
-grep -rn "post_max_size\|upload_max_filesize\|MAX_BYTES" --include=*.php .
-                                              # lib/upload_limits.php and the one row in
-                                              # server_report.php that prints its answer. A number in
-                                              # any other file is an opinion about a limit it cannot
-                                              # see — invariant 18
-grep -rn "php://input" --include=*.php .      # must be empty: UploadLimit::bodyWasDropped() infers the
-                                              # post_max_size case from an empty $_POST, which only
-                                              # holds while nothing reads the raw body
-grep -rn "branding_config" --include=*.php .  # lib/branding.php owns the name, and after §4y it is
-                                              # the ONLY .php file that spells it — plus tools/ and
-                                              # prose. config.php reaches the file through
-                                              # BrandingConfig::apply(); login.php, builder.php,
-                                              # help.php and admin_panel.php do not reach it at all.
-                                              # A page requiring it directly is four copies of the
-                                              # defaults growing back; a second *writer* is invariant
-                                              # 23 undone, and the file it would half-write is the one
-                                              # every page of the app loads
-grep -rn "define('BRAND_" --include=*.php .   # the generated branding_config.php, one line of prose in
-                                              # lib/branding.php, and the two self-test checks that read
-                                              # the page sources for it. No *page* may appear: a page
-                                              # declaring one of these names has its own opinion about
-                                              # what colour the nav bar is, and it will differ from the
-                                              # Admin Panel's the first time somebody changes one
-grep -rn "file_put_contents" --include=*.php .  # lib/error_policy.php (the log, appended under LOCK_EX,
-                                              # and the state-dir guards), lib/alerts.php (the recipient
-                                              # cache and the rate-limit stamps), lib/branding.php's
-                                              # putTemp — and tools/. Never a page. A generated file
-                                              # something else loads is written to a temporary path and
-                                              # renamed over, never opened with O_TRUNC where a reader
-                                              # can find it half-done (invariant 24, §4y)
-grep -rn "file_put_contents" --include=*.php . | grep -v "^./lib/\|^./tools/"
-                                              # must be EMPTY. This is the membership test for group A of
-                                              # docs/DEPLOY-SKIP.md — a repo-tracked file the running app
-                                              # rewrites, so uploading the repo's copy reverts live state.
-                                              # It was written expecting exactly one hit, admin_panel.php's
-                                              # branding writer, from a branch cut before §4y moved that
-                                              # write into lib/branding.php. There has been nothing to find
-                                              # since, so the number was wrong the day it landed — a grep
-                                              # whose stated answer cannot occur reads as covering
-                                              # something (#50's shape). Empty is the real rule, and a
-                                              # root-level hit now means a page has started writing a file
-                                              # an upload would revert: put it on that list in the same
-                                              # commit. The lib/ writers are excluded on purpose — they all
-                                              # write into the state directory, which is not in the repo,
-                                              # and lib/branding.php writes a temp file it renames (§4y, §4z)
-grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
-                                              # DISPLAY_ID / waDisplayId() with it (invariant 12), which
-                                              # omission silently opts out of. viewer.php is the one
-                                              # exception: a Screen sends the tag alone (ADR-0003)
-grep -rn "htmlspecialchars(" --include=*.php . # lib/markup.php, which names both flags, and
-                                              # lib/error_policy.php's last-resort notice, which cannot
-                                              # depend on it and passes them in full. Anywhere else is a
-                                              # call whose behaviour depends on the host's PHP version —
-                                              # §4ah
-grep -rn "BRAND_NAV_BG\|BRAND_NAV_BORDER\|BRAND_ACCENT\|BRAND_TEXT" --include=*.php .
-                                              # branding_config.php is the file; admin_panel.php writes
-                                              # it; lib/brand.php is the only reader. A page naming one
-                                              # is a page interpolating whatever the config holds into
-                                              # its own <style> block, where escaping is not what makes
-                                              # a value safe — §4ai
-```
-
-**Three of the checks are not greps and cannot be written as one**, so they live only
-in `tools/check_invariants.php`: whether an escaped value lands inside a `<script>`
-(the same call is right or wrong depending on the element, and a regex looking for
-`<script` is fooled by `admin_panel.php` mentioning one in a PHP comment — only
-`T_INLINE_HTML` may move that state); whether every echo on a page is one of the five
-shapes safe by construction; and whether a class constant's *declared value* is a
-number. All three read the token stream.
-
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3400 lines of it.
-Anything touching that file needs reading, not linting. `node --check` over the
-extracted `<script>` body proves it parses; the three node suites go further and
-*run* it. `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only
-page emits, which is the only automated way to catch a lookup reaching for a control
-the lock took away. `selftest_builder_uploads.js` takes the opposite premise — an
-admin who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the
-only way to see a missing `.catch()`: the file parses perfectly without one.
-`selftest_builder_colors.js` takes a third — an admin opening a Display whose stored
-data is already wrong — and is the one place where the *stub itself* is load-bearing:
-its `style` is a Proxy that discards an unparseable colour and normalises a parseable
-one, exactly as the CSSOM does. A stub that stored whatever it was given would make
-that whole suite pass against the defect it exists for, so the fidelity of the stub
-is asserted before anything is asserted through it.
-
-`schema.sql` has no automated check at all — nothing reads it, so a column missing
-from it fails silently on a future rebuild and nowhere else. Diff it against
-`lib/schema.php` by eye whenever either changes (invariant 15), and use
-`tools/rehearse_phase1.php` on a copy of live data to see what MySQL actually ends
-up with.
-
-On a server with a **copy** of live data — never the live database:
-
-```
-php tools/rehearse_phase1.php            # converge schema, prove scoping, publish twice
-```
-
-And on the **live** database, where this one is safe and its neighbour is not:
-
-```
-php tools/audit_colors.php               # every stored colour, read-only
-```
-
-Every statement it runs is a `SELECT`. It exists because #41 left a consequence
-only live data can hold — see §4ac — and it is the one tool here with no
-`--confirm-copy`, which is exactly why its header says so at length.
-
-CI runs the rehearsal too, but against a database built from `schema.sql` rather
-than a copy of live data, and the difference is the whole remaining point of doing
-it by hand.
-A schema.sql database is already converged, so the run proves the round trip —
-both widened ENUMs, the cascade rules, publish-and-republish scoping, DDL
-committing an open transaction — and cannot prove the one thing the tool was
-written for: that the idempotent statements apply to the live table **as it
-stands**. That still needs a copy, and is still a deploy-day step.
-
-Then in a real browser: sign in → edit → publish → the Screen updates within
-30s; publish again from a second stale tab → refused with a named holder;
-`api.php?action=get_layout` with no session still returns the drive-thru layout.
-
-Phases 4–5 additionally need two accounts (one admin, one `basic` with a single
-grant) and, for the lock, two browsers. Phase 2 needs a genuinely
-different-shaped Display, including a portrait one.
-
----
-
 ### 4aa. The suite had never met the database it is about (#48, #51)
 
 Two decisions, one subject: what the tests were actually running against, and how
@@ -4191,6 +3848,428 @@ Display's id, and the leave-it-out delete really deleting. Three existing checks
 their payloads rather than their assertions: `basicLayoutFor()` gives a clerk's layout a
 real section `db_id`, which is what a clerk's Builder actually sends, and the admin
 shape `layoutWith()` stays as it was.
+
+---
+
+### 4ak. Two clicks, two answers, and the wrong one was the loud one
+
+Decision `#39`. Publish had no in-flight guard, so two clicks were two requests —
+and both carried `LAYOUT_STAMP` as it stood when the *first* was assembled, because
+the second was built before any reply could update it. The server takes the row
+lock, commits the first, and refuses the second as stale (ADR-0006).
+
+That refusal is correct and must stay correct. From the server, a second publish on
+a spent stamp is indistinguishable from a colleague's, and the alternative —
+guessing — is guessing about somebody's work in an app with no undo. What was wrong
+was upstream of it: the page raised **both answers at once**, a green *Published to
+Deli Board* toast and a modal alert saying the sign had changed underneath them and
+this page should be reloaded. Both were about their own click. The alert is the one
+that gets acted on, because it is the one that blocks, and reloading is precisely
+what throws away everything on the canvas that had not been published.
+
+**The guard goes where the duplicate can be recognised**, which is the only place it
+can be: the tab that sent both requests. `publishInFlight` is raised after the last
+refusal that returns without sending — a background image over the server's limit
+must not leave Publish dead for the session — and dropped by `endPublish()` on every
+ending. The button is disabled and reads *Publishing…* while it runs, which is what
+actually prevents the second click; the flag is what catches the one that happens
+anyway, and the second click gets a plain toast rather than a red one, because they
+asked for something that is already happening.
+
+Three details that are decisions rather than mechanics:
+
+- **The stamp is adopted before the guard comes off.** Otherwise the click landing
+  the instant Publish is usable again would carry the stamp this publish just
+  replaced — the same false conflict, one line later.
+- **`endPublish()` has no latch.** Both endings can arrive for one request, so it is
+  written as assignments rather than toggles and costs nothing when called twice.
+  A latch would be a line no test could fail on, which is decision `#50`'s complaint
+  about this suite, and it was caught by exactly that: the mutation removing it
+  killed nothing.
+- **`.catch()` no longer says "Network error."** Two endings reach it and neither is
+  only a dropped connection: the other is `r.json()` rejecting, which is what a reply
+  with anything printed above the JSON does — the §4n failure, on the one path still
+  using `fetch`. Neither knows whether the publish landed, so the message says to
+  check the sign rather than claiming either way. It also returns early when the
+  reply was already acted on: a throw in the success branch would otherwise print a
+  connection failure over the green toast it had just written, which is this very
+  defect wearing a different hat.
+
+**Twenty-six checks** across the two node suites (23 + 3), and nine deliberate
+mutations, all nine killed (4, 3, 1, 2, 1, 2, 1, 1, 1). The guard itself is invisible
+to `php -l` and to `node --check` — a page with no guard parses perfectly — so these
+run the handler with a second click landing mid-flight and read what is on screen
+afterwards, which is the same premise `selftest_builder_uploads.js` was built on.
+The read-only suite gets three of them because the guard hangs off a button that
+page does not emit: an unguarded lookup in `setPublishBusy()` would be a TypeError
+on the one publish path a read-only page still runs.
+
+Left standing, and worth knowing:
+
+- **Publishing while an upload is still in flight is not guarded.** An admin who
+  picks an image and clicks Publish before it finishes publishes a block with no
+  path in it. `uploadsInFlight` already counts them, so the guard is cheap — but it
+  is a different defect from this one and belongs with whoever takes it.
+- **Nothing cancels a publish.** The button is out of service until the request
+  ends, and on shop Wi-Fi with a background image that can be minutes. Reloading the
+  page is the only way out, and it costs the unpublished canvas.
+
+---
+
+## 5. Verification
+
+There is no deploy pipeline — every change reaches the sign by hand — but as of
+#48 and #51 CI runs everything below except the two things that need a browser or
+a copy of live data. It runs on PHP 8.2, against two engines: SQLite and a real
+MySQL 5.7 service. That 8.2 is now also the repo's declared floor — the store owner
+stated the host runs it (§4k) — so the pin enforces the target rather than merely
+accepting everything the target forbids. It remains a *statement*, not something this
+repo has measured; confirming it on Settings → This Server is a deploy-day step. Run
+the suite locally before every push anyway; the loop is faster than a push.
+
+```
+php -l <every touched .php>              # syntax; also in CI, on 8.2
+php tools/check_invariants.php           # the greps below, run rather than read —
+                                         # comment-aware, so a module documenting a
+                                         # rule does not fail it
+php tools/selftest_layout.php            # the real modules, in-memory SQLite
+node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
+                                         # that has only what a read-only page emits
+node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an
+                                         # admin who can edit — driving a stubbed
+                                         # XMLHttpRequest through every way an upload ends
+node tools/selftest_builder_colors.js    # the same JS again, against a Display whose
+                                         # stored data is already wrong, through a `style`
+                                         # that discards and normalises as a browser does
+node tools/selftest_viewer.js            # viewer.php's poll loop, against a fetch this
+                                         # test controls: the sign must not blank for one
+                                         # dropped packet, and must not stay up for an
+                                         # hour of them (§4af)
+```
+
+And, with a MySQL to point at — the same suite, with nothing stubbed:
+
+```
+SELFTEST_MYSQL_DSN='mysql:host=127.0.0.1;dbname=lbm_selftest;charset=utf8mb4' \
+SELFTEST_MYSQL_USER=... SELFTEST_MYSQL_PASS=... php tools/selftest_layout.php
+```
+
+On MySQL the fixture is built by running `schema.sql`, the `FOR UPDATE` stub is
+gone, and twenty-three further checks run that SQLite cannot be asked — see §4aa.
+Eight of those are the publish collision (§4ab), which needs two database sessions
+and so cannot exist on an in-memory fixture at all.
+
+**The greps below are what `tools/check_invariants.php` automates.** They are kept
+here because the annotations are the reasoning, and because five of them cannot be
+decided by pattern and are still yours to read: `canvas_elements` (the endpoint
+name `get_canvas_elements` is indistinguishable from the table), `ErrorPolicy::report`
+callers (a new one is allowed but has to be read for whether it can repeat),
+the *position* of `ensureSignageSchema()` calls, and the `grants_accounts` /
+`grants_displays` pairing. The checker prints that list on every run so nobody
+mistakes it for total coverage. `schema.sql` against `lib/schema.php` used to be a
+sixth; the MySQL run now asserts convergence has nothing left to do against a
+database built from that file, which is the same property mechanised.
+
+```
+grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
+                                              # the get_canvas_elements endpoint NAME, and
+                                              # server_report.php's expected-column list
+grep -rn "information_schema\." --include=*.php lib/  # only lib/schema.php: the three reads
+                                              # plus one comment. server_report.php asks
+                                              # readSchemaFacts() instead of writing a fourth
+                                              # query, so there is one answer to "which columns
+                                              # exist". A new hit in lib/ is a second opinion —
+                                              # put the question on SchemaFacts instead.
+                                              # (tools/ has its own: rehearse_phase1.php reads
+                                              # KEY_COLUMN_USAGE against real MySQL, and
+                                              # test_fixture.php *builds* a fake catalogue)
+grep -rn "schemaTry(\$pdo" --include=*.php .   # only lib/schema.php, and only from inside the
+                                              # named steps. A statement added anywhere else
+                                              # bypasses signageSchemaPlan() and is therefore
+                                              # ungated and untested — invariant 19
+grep -rn "json_encode(" --include=*.php .      # lib/http_reply.php, which owns it; the one in
+                                              # lib/error_policy.php, which is the last-resort
+                                              # notice and so cannot route through it (and has
+                                              # checked for false since it was written); and the
+                                              # self-test. Anywhere else is a reply that can
+                                              # leave as zero bytes behind a 200, or a
+                                              # `var X = ;` that takes a whole script block
+                                              # down — §4af
+grep -rn "ErrorPolicy::report" --include=*.php .  # api.php (an upload the server refused),
+                                              # lib/schema.php (a schema statement it refused),
+                                              # and one check in the self-test. A new caller is
+                                              # a new thing an admin gets emailed about: check
+                                              # it cannot fire on a condition the app expected,
+                                              # and give it a window if it can repeat on its
+                                              # own — invariant 20
+grep -rn "ensureSignageSchema(\$pdo)" --include=*.php .  # four entry points — admin_panel.php,
+                                              # builder.php, crud.php, api.php — each within the
+                                              # first ~25 lines, before any transaction exists; plus
+                                              # tools/, one comment, and the call inside
+                                              # repairSchemaAfterFailure(). That *position* is the
+                                              # invariant, not the call: DDL commits an open
+                                              # transaction in MySQL silently. A call deeper into a
+                                              # file wants the guarded door instead — invariant 21
+grep -rn "repairSchemaAfterFailure" --include=*.php .  # lib/schema.php defines it and lib/displays.php
+                                              # is the one place that *calls* it; the rest are the
+                                              # self-test and comments in api.php/viewer.php pointing
+                                              # here. A second caller is fine, a second *door* is not:
+                                              # anything converging off a failure asks this, or it has
+                                              # none of the three refusals
+grep -rn "DELETE FROM users" --include=*.php . # nothing outside tools/ (invariant 14). Accounts
+                                              # are closed, never deleted, so a freed id can
+                                              # never be handed to somebody new
+grep -rn "SET password_hash" --include=*.php . # exactly two: lib/accounts.php (setPassword, which the
+                                              # reset goes through) and admin_panel.php:160, where an
+                                              # admin sets somebody's password in one write with
+                                              # nothing to be atomic with. A third means a page is
+                                              # changing a password beside another write again — the
+                                              # defect invariant 22 exists for
+grep -rn "ensureLockoutColumns\|clearLockout" --include=*.php .  # must be empty of *calls*: both helpers
+                                              # are gone. The three lockout ALTERs are gated plan entries
+                                              # (§4v) and the clear goes straight to AccountStore. A hit
+                                              # outside a comment is pre-auth DDL back on the login page —
+                                              # the one piece of it a bot could reach
+grep -rn "csrf_token" login.php               # twice: the hidden input the form emits, and csrfOk()
+                                              # reading it. The gate must sit ABOVE `new LoginAttempt`,
+                                              # or a request with no token can still run somebody's
+                                              # failed-attempt counter up to the lockout (§4v)
+grep -rEn "\bdate\('Y-m-d" --include=*.php lib/  # must be empty — the word boundary matters, or every
+                                              # gmdate() matches too. Every *stored* moment in lib/ is UTC,
+                                              # written with gmdate() and read back with a ' UTC' suffix.
+                                              # Local wall-clock is not monotonic: the autumn fall-back
+                                              # replays an hour, and both the edit lock (§4t) and the login
+                                              # lockout (§4v) compare stored moments as absolute. Plain
+                                              # date() is fine for *printing* one — `\bdate(` alone finds
+                                              # the three that do, and all three are words for a person
+grep -rn "closed_at" --include=*.php .        # lib/accounts.php, schema.sql's DDL, the fixture,
+                                              # lib/schema.php's ALTER (§4v — it used to be an ungated
+                                              # one on every admin-panel load), lib/server_report.php
+                                              # naming it as a column that should exist, and ONE render
+                                              # in admin_panel.php that prints the date. Everything else
+                                              # is a comment. A hit that *decides* something is a second
+                                              # opinion about what closed means — ask
+                                              # AccountStore::isClosed() instead
+grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?displays`?" --include=*.php .  # lib/displays.php + schema.php's ALTERs
+grep -rn "INTO display_permissions\|FROM display_permissions" --include=*.php .  # only lib/grants.php, plus tools/
+grep -rn "grants_accounts\|grants_displays" --include=*.php .  # admin_panel.php only, and BOTH names must
+                                              # appear twice — once as a hidden input in the grant form,
+                                              # once being read. The form declares both axes of the matrix
+                                              # it rendered because a browser posts only ticked boxes, so an
+                                              # unticked cell and a cell that was never on the page are the
+                                              # same absence. One name here without the other is the §4s
+                                              # defect back: a save that revokes what it never showed
+grep -rn "releaseLockOn\|releaseLocksHeldBy" --include=*.php .  # lib/displays.php defines both; the callers
+                                              # are every place a change of *reach* has to free a lock the
+                                              # account can no longer let go of — DisplayAdmin twice (a grant
+                                              # revoked, a Display turned off) and AccountAdmin twice (an
+                                              # account closed; demoted or suspended). builder.php's
+                                              # releaseLockOnLeave is a different thing and only matches on
+                                              # the name. A new caller is fine; a change of reach with NO
+                                              # call is invariant 8's second paragraph
+grep -rn "holderActive\|lock_holder_active" --include=*.php .  # lib/displays.php only, and it must appear on
+                                              # both sides: the join that fetches it and LockState::isHeld
+                                              # that acts on it. The same rule is spelled `users.is_active = 1`
+                                              # inside claimLock's WHERE — a read and a write that disagree
+                                              # about who holds a sign disagree silently (§4t)
+grep -rn "LOCK_TERMINAL\|isTerminalLockReason" --include=*.php .  # builder.php only. The map, and three call
+                                              # sites: the heartbeat, the read-only poll, the publish refusal.
+                                              # A refusal that ends a session and is acted on in only two of
+                                              # the three leaves one kind of page silent, which is the whole
+                                              # §4t defect in miniature. `res.reason ===` next to one of them
+                                              # is the old shape coming back
+grep -rn "flashMessage\|takeFlashMessage" --include=*.php .  # auth.php defines them, admin_panel.php uses
+                                              # them for the grant matrix's post/redirect/get. A `flashMessage`
+                                              # with no `header('Location'` after it leaves a sentence nobody
+                                              # will ever be shown
+grep -rEn "UPDATE users SET" --include=*.php . # lib/accounts.php (five: closed_at, password_hash, role/
+                                              # is_active/email, the lockout clear, and the failure counter
+                                              # a refused sign-in writes), admin_panel.php:168 where an admin
+                                              # sets a password in one write, plus tools/. **No page may
+                                              # appear here but that one**: login.php's two lockout UPDATEs
+                                              # moved into the store in §4u, and a `users` write in a page
+                                              # beside another write is invariant 22 again
+grep -rn "lock_holder_id\|lock_activity_at\|lock_taken_at" --include=*.php .  # SQL against them only in
+                                              # lib/displays.php. lib/schema.php and lib/server_report.php
+                                              # name them as *catalogue entries* — a column this database
+                                              # should have — which is not a read of the table
+grep -rn "block_styles" --include=*.php .     # only lib/brand_styles.php + schema.php's seed
+grep -rEn "WHERE +`?id`? *= *'?1'?" --include=*.php .  # must be empty — whitespace and quotes included
+grep -rn "1920\|1080" --include=*.php .        # admin size presets, the seed, tools/, and prose
+grep -rn "viewer.php\"\|viewer.php'" --include=*.php .  # every link must carry ?display=
+grep -rn "catch (Exception" --include=*.php lib/  # must be empty: a TypeError is an Error, not an Exception
+grep -rn "display_errors\|error_reporting(\|set_exception_handler\|register_shutdown" --include=*.php .
+                                              # lib/error_policy.php owns all of it, plus tools/ (the
+                                              # self-test harness has handlers of its own on purpose).
+                                              # A second file setting any of these is a second opinion
+                                              # about what a visitor sees when something breaks —
+                                              # invariant 16
+grep -rn "hash_equals(" --include=*.php .     # auth.php's csrfOk(), which fails closed on an empty token,
+                                              # and the passcode comparison in lib/password_resets.php
+grep -rEn "(INTO|UPDATE|FROM|TABLE) +password_resets|reset_attempts" --include=*.php .
+                                              # only lib/password_resets.php, plus tools/. A statement in
+                                              # reset_password.php means the token table grew a second
+                                              # writer; `reset_attempts` anywhere means the guess budget
+                                              # crept back into the session — invariant 13's whole point
+grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?assets`?" --include=*.php .
+                                              # only lib/assets.php, plus schema.php's ALTER and the
+                                              # fixture — with ONE standing exception: the LEFT JOIN in
+                                              # LayoutStore::snapshot(), read-only and on the path a
+                                              # Screen polls every 30 seconds. A second writer here is
+                                              # how row sharing came back — invariant 17
+grep -rn "edit_type" --include=*.php .        # prose in crud.php and lib/assets.php naming the field that
+                                              # used to be here, plus the two self-test checks that read
+                                              # crud.php's source for it. No hit may be code: a
+                                              # `'edit_type'` string or a `name="edit_type"` input is the
+                                              # §4w defect back — the row's type stated by the request,
+                                              # and with it which rule an edit has to pass
+grep -rn "isValidColor\|DEFAULT_COLOR" --include=*.php .  # lib/displays.php defines both on Background;
+                                              # lib/layout_store.php quotes the default in the refusal;
+                                              # lib/display_admin.php's cleanColor asks rather than
+                                              # restating. A `preg_match` against a hash and hex digits
+                                              # anywhere else is a second opinion about what a background
+                                              # colour is — and the door holding it will accept values the
+                                              # store then declines to write, saying it saved (§4x).
+                                              # BrandStyles::cleanColor is a different table's rule
+grep -rn "IMAGE_EXTENSIONS\|isAllowedImageRef" --include=*.php .  # lib/assets.php defines both; crud.php
+                                              # asks for the add form and for the upload MIME/extension
+                                              # check. A literal list of image extensions in any other
+                                              # file is a fourth opinion about what an image entry may
+                                              # point at — the three that existed disagreed by omission
+grep -rn "auto_pooled\|Auto: " --include=*.php .  # lib/assets.php owns the marker; schema.php backfills
+                                              # it; crud.php renders a badge and warns in the label hint.
+                                              # Anything that *decides* whether a row may be deleted
+                                              # belongs in discardPooled(), not in a caller
+grep -rn "post_max_size\|upload_max_filesize\|MAX_BYTES" --include=*.php .
+                                              # lib/upload_limits.php and the one row in
+                                              # server_report.php that prints its answer. A number in
+                                              # any other file is an opinion about a limit it cannot
+                                              # see — invariant 18
+grep -rn "php://input" --include=*.php .      # must be empty: UploadLimit::bodyWasDropped() infers the
+                                              # post_max_size case from an empty $_POST, which only
+                                              # holds while nothing reads the raw body
+grep -rn "branding_config" --include=*.php .  # lib/branding.php owns the name, and after §4y it is
+                                              # the ONLY .php file that spells it — plus tools/ and
+                                              # prose. config.php reaches the file through
+                                              # BrandingConfig::apply(); login.php, builder.php,
+                                              # help.php and admin_panel.php do not reach it at all.
+                                              # A page requiring it directly is four copies of the
+                                              # defaults growing back; a second *writer* is invariant
+                                              # 23 undone, and the file it would half-write is the one
+                                              # every page of the app loads
+grep -rn "define('BRAND_" --include=*.php .   # the generated branding_config.php, one line of prose in
+                                              # lib/branding.php, and the two self-test checks that read
+                                              # the page sources for it. No *page* may appear: a page
+                                              # declaring one of these names has its own opinion about
+                                              # what colour the nav bar is, and it will differ from the
+                                              # Admin Panel's the first time somebody changes one
+grep -rn "file_put_contents" --include=*.php .  # lib/error_policy.php (the log, appended under LOCK_EX,
+                                              # and the state-dir guards), lib/alerts.php (the recipient
+                                              # cache and the rate-limit stamps), lib/branding.php's
+                                              # putTemp — and tools/. Never a page. A generated file
+                                              # something else loads is written to a temporary path and
+                                              # renamed over, never opened with O_TRUNC where a reader
+                                              # can find it half-done (invariant 24, §4y)
+grep -rn "file_put_contents" --include=*.php . | grep -v "^./lib/\|^./tools/"
+                                              # must be EMPTY. This is the membership test for group A of
+                                              # docs/DEPLOY-SKIP.md — a repo-tracked file the running app
+                                              # rewrites, so uploading the repo's copy reverts live state.
+                                              # It was written expecting exactly one hit, admin_panel.php's
+                                              # branding writer, from a branch cut before §4y moved that
+                                              # write into lib/branding.php. There has been nothing to find
+                                              # since, so the number was wrong the day it landed — a grep
+                                              # whose stated answer cannot occur reads as covering
+                                              # something (#50's shape). Empty is the real rule, and a
+                                              # root-level hit now means a page has started writing a file
+                                              # an upload would revert: put it on that list in the same
+                                              # commit. The lib/ writers are excluded on purpose — they all
+                                              # write into the state directory, which is not in the repo,
+                                              # and lib/branding.php writes a temp file it renames (§4y, §4z)
+grep -rn "publishInFlight\|endPublish" --include=*.php .  # builder.php only, and both must appear on
+                                              # every ending: raised once after the last refusal that
+                                              # sends nothing, dropped in the reply handler AND in the
+                                              # catch. A raise with one release is Publish out of service
+                                              # for the session, on the page whose whole job is
+                                              # publishing — see invariant 5's second half for why the
+                                              # guard cannot live on the server
+grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
+                                              # DISPLAY_ID / waDisplayId() with it (invariant 12), which
+                                              # omission silently opts out of. viewer.php is the one
+                                              # exception: a Screen sends the tag alone (ADR-0003)
+grep -rn "htmlspecialchars(" --include=*.php . # lib/markup.php, which names both flags, and
+                                              # lib/error_policy.php's last-resort notice, which cannot
+                                              # depend on it and passes them in full. Anywhere else is a
+                                              # call whose behaviour depends on the host's PHP version —
+                                              # §4ah
+grep -rn "BRAND_NAV_BG\|BRAND_NAV_BORDER\|BRAND_ACCENT\|BRAND_TEXT" --include=*.php .
+                                              # branding_config.php is the file; admin_panel.php writes
+                                              # it; lib/brand.php is the only reader. A page naming one
+                                              # is a page interpolating whatever the config holds into
+                                              # its own <style> block, where escaping is not what makes
+                                              # a value safe — §4ai
+```
+
+**Three of the checks are not greps and cannot be written as one**, so they live only
+in `tools/check_invariants.php`: whether an escaped value lands inside a `<script>`
+(the same call is right or wrong depending on the element, and a regex looking for
+`<script` is fooled by `admin_panel.php` mentioning one in a PHP comment — only
+`T_INLINE_HTML` may move that state); whether every echo on a page is one of the five
+shapes safe by construction; and whether a class constant's *declared value* is a
+number. All three read the token stream.
+
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3400 lines of it.
+Anything touching that file needs reading, not linting. `node --check` over the
+extracted `<script>` body proves it parses; the three node suites go further and
+*run* it. `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only
+page emits, which is the only automated way to catch a lookup reaching for a control
+the lock took away. `selftest_builder_uploads.js` takes the opposite premise — an
+admin who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the
+only way to see a missing `.catch()`: the file parses perfectly without one.
+`selftest_builder_colors.js` takes a third — an admin opening a Display whose stored
+data is already wrong — and is the one place where the *stub itself* is load-bearing:
+its `style` is a Proxy that discards an unparseable colour and normalises a parseable
+one, exactly as the CSSOM does. A stub that stored whatever it was given would make
+that whole suite pass against the defect it exists for, so the fidelity of the stub
+is asserted before anything is asserted through it.
+
+`schema.sql` has no automated check at all — nothing reads it, so a column missing
+from it fails silently on a future rebuild and nowhere else. Diff it against
+`lib/schema.php` by eye whenever either changes (invariant 15), and use
+`tools/rehearse_phase1.php` on a copy of live data to see what MySQL actually ends
+up with.
+
+On a server with a **copy** of live data — never the live database:
+
+```
+php tools/rehearse_phase1.php            # converge schema, prove scoping, publish twice
+```
+
+And on the **live** database, where this one is safe and its neighbour is not:
+
+```
+php tools/audit_colors.php               # every stored colour, read-only
+```
+
+Every statement it runs is a `SELECT`. It exists because #41 left a consequence
+only live data can hold — see §4ac — and it is the one tool here with no
+`--confirm-copy`, which is exactly why its header says so at length.
+
+CI runs the rehearsal too, but against a database built from `schema.sql` rather
+than a copy of live data, and the difference is the whole remaining point of doing
+it by hand.
+A schema.sql database is already converged, so the run proves the round trip —
+both widened ENUMs, the cascade rules, publish-and-republish scoping, DDL
+committing an open transaction — and cannot prove the one thing the tool was
+written for: that the idempotent statements apply to the live table **as it
+stands**. That still needs a copy, and is still a deploy-day step.
+
+Then in a real browser: sign in → edit → publish → the Screen updates within
+30s; publish again from a second stale tab → refused with a named holder;
+`api.php?action=get_layout` with no session still returns the drive-thru layout.
+
+Phases 4–5 additionally need two accounts (one admin, one `basic` with a single
+grant) and, for the lock, two browsers. Phase 2 needs a genuinely
+different-shaped Display, including a portrait one.
 
 ---
 

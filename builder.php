@@ -198,6 +198,10 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
             font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
             text-transform: uppercase; }
 .btn.publish-btn { background: <?= Brand::accent() ?>; }
+/* While a publish is in flight. The button being visibly out of action is what
+   stops the second click happening at all; the guard in publishCanvas() is what
+   catches the one that happens anyway. */
+.btn.publish-btn:disabled { opacity: .55; cursor: progress; }
 
 /* Which sign am I editing? Never left to be inferred from the canvas shape. */
 #top-nav .display-badge { margin-left: 18px; display: flex; align-items: center; gap: 7px;
@@ -654,7 +658,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <span id="zoom-readout" style="font-size:11px; color:#bdc3c7; min-width:34px; text-align:right;">100%</span>
 
     <?php if (!$readOnly): ?>
-    <button class="btn publish-btn" style="margin-left:12px;" onclick="publishCanvas()">&#10003; Publish</button>
+    <button id="publish-btn" class="btn publish-btn" style="margin-left:12px;" onclick="publishCanvas()">&#10003; Publish</button>
     <?php endif; ?>
 </div>
 
@@ -2388,13 +2392,70 @@ function deleteSelected() {
 }
 
 // ============================================================
-// PUBLISH
+// PUBLISH — once at a time, whatever the mouse does
 // ============================================================
+// Two clicks on Publish were two requests, and both carried the layout stamp this
+// editor loaded: the second was assembled before the first's reply could update it.
+// The server commits the first and refuses the second as stale (ADR-0006), which is
+// exactly right — from over there a second publish on an old stamp is
+// indistinguishable from a colleague's, and guessing would be guessing about
+// somebody's work with no undo behind it.
+//
+// What the person saw was both answers at once: a green "Published to Deli Board"
+// and an alert saying the sign had changed underneath them and this page should be
+// reloaded. Both were about their own click. The alert is the one that gets acted
+// on, and reloading throws away everything on the canvas that had not been
+// published — which, after a double-click, is nothing, but they have no way to know
+// that and every reason to believe otherwise.
+//
+// Here is the one place a duplicate *can* be told apart from a conflict: this tab
+// knows it is already publishing. So the second click is dropped, and the button
+// says why for as long as the first is running — a publish can carry a background
+// image with it, so "as long as" is sometimes minutes on shop Wi-Fi.
+
+/** The publish in flight, if there is one. Nothing else may start while it is true. */
+var publishInFlight = false;
+
+/**
+ * Put the Publish button in or out of service.
+ *
+ * Guarded like every other lookup in this file: a read-only page emits no Publish
+ * button at all, and the publish path still has to run there — as far as its own
+ * refusal, which is the whole of what it does on that page.
+ */
+function setPublishBusy(busy) {
+    var btn = document.getElementById('publish-btn');
+    if (!btn) { return; }
+    if (btn._label === undefined) { btn._label = btn.textContent; }
+    btn.disabled    = !!busy;
+    btn.textContent = busy ? 'Publishing…' : btn._label;
+}
+
+/**
+ * The publish is over, however it ended.
+ *
+ * Both endings can arrive for one request — the reply handler runs, throws, and the
+ * `.catch()` behind it runs too — so this is written as assignments rather than
+ * toggles and costs nothing when called twice. A latch here would be a line no test
+ * could ever fail on, which is its own kind of defect (decision #50).
+ */
+function endPublish() {
+    publishInFlight = false;
+    setPublishBusy(false);
+}
+
 function publishCanvas() {
     // There is no Publish button on a read-only page. The server refuses this
     // anyway (LayoutStore checks the lock inside the publish transaction) — this is
     // just not making the round trip to be told so.
     if (READ_ONLY) { showToast(LOCK_HOLDER + ' is editing this display — nothing can be published from here.', true); return; }
+
+    if (publishInFlight) {
+        // Not an error: they asked for something that is already happening. A red
+        // toast here would read as a refusal of the work rather than of the click.
+        showToast('Still publishing to ' + DISPLAY_TITLE + ' — one moment.');
+        return;
+    }
 
     var canvas   = document.getElementById('builder-canvas');
     var elements = [];
@@ -2509,13 +2570,30 @@ function publishCanvas() {
         if (bgFile) fd.append('bg_file', bgFile);
     }
 
+    // Set here and not a line earlier: every refusal above returns without sending
+    // anything, and a flag raised before them would leave the button dead for the
+    // rest of the session over a background image somebody can simply swap out.
+    publishInFlight = true;
+    setPublishBusy(true);
+
+    // Whether a reply arrived and was acted on. The catch below speaks only for a
+    // request that never produced one.
+    var answered = false;
+
     fetch('api.php?action=publish', {method:'POST', body:fd})
         .then(function(r){ return r.json(); })
         .then(function(res) {
+            answered = true;
             if (res.status === 'success') {
-                // Adopt the stamp this publish created, so a second publish from
-                // this same tab is not mistaken for a stale one.
+                // Adopted *before* the guard comes off, so the click that lands the
+                // instant Publish is usable again carries the stamp this publish
+                // created rather than the one it replaced — which is the refusal
+                // this whole section exists to stop.
                 LAYOUT_STAMP = res.layout_stamp || LAYOUT_STAMP;
+            }
+            endPublish();
+
+            if (res.status === 'success') {
                 // Named, because there is more than one sign now and "published!"
                 // does not tell you which one you just changed.
                 showToast('Published to ' + DISPLAY_TITLE + ' (' + DISPLAY_TAG + '). '
@@ -2548,7 +2626,21 @@ function publishCanvas() {
                 alert(res.message);
             } else { showToast(res.message||'Publish failed.', true); }
         })
-        .catch(function(){ showToast('Network error.', true); });
+        .catch(function() {
+            endPublish();
+            // A throw inside the branches above has already put words on the screen —
+            // printing "network error" over the green toast it just wrote would be the
+            // defect this section is named for, wearing a different hat.
+            if (answered) { return; }
+            // Two endings arrive here and neither is only a dropped connection: the
+            // other is `r.json()` rejecting, which is what a reply with anything
+            // printed above the JSON does — the §4n failure, on the one path that
+            // still used fetch. Neither knows whether the publish landed, so the
+            // message does not claim it did or did not.
+            showToast('The publish did not complete — the connection dropped, or the '
+                    + 'server\'s reply could not be read. Check the sign before '
+                    + 'publishing again.', true);
+        });
 }
 
 // ============================================================

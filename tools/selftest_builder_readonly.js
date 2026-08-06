@@ -94,6 +94,7 @@ check(emittedOnlyWhenEditable('<div id="align-bar">'),              'the align b
 check(emittedOnlyWhenEditable('<div id="inspector">'),              'so is the inspector');
 check(emittedOnlyWhenEditable('<div id="carousel-modal-overlay">'), 'so is the carousel editor');
 check(emittedOnlyWhenEditable('<div id="table-modal-overlay">'),    'so is the table editor');
+check(emittedOnlyWhenEditable('<button id="publish-btn"'),          'and so is the Publish button, which is why setPublishBusy has to cope without one');
 
 // ---- A DOM with only what that page emits -----------------------------------
 
@@ -374,6 +375,13 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     await survives('delete finds nothing to delete',  () => deleteSelected());
     await survives('publish refuses instead of posting', () => publishCanvas());
 
+    // The in-flight guard added for decision #39 hangs off a button this page does
+    // not have. An unguarded lookup there would be a TypeError on the one path a
+    // read-only page still runs — the refusal above — leaving nothing on screen.
+    await survives('taking a Publish button that is not there out of service does nothing',
+                   () => { setPublishBusy(true); setPublishBusy(false); });
+    check(publishInFlight === false, 'and a read-only page never has a publish in flight to release');
+
     section('Losing access to a display you could only look at');
 
     // The read-only page's one repeating call is the lock poll, and it used to return
@@ -438,7 +446,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 39;
+    const expected = 42;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }
