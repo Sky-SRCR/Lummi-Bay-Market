@@ -58,7 +58,7 @@ Design rules, applied to every module added by this build:
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. `setAccess()` takes **both** axes of the matrix the form covered — the accounts *and* the Displays — because an unticked box and a cell the form never rendered are the same absence in a POST, and only one of them means "revoke"; and a revoke frees the edit lock on the Display it takes away, by holder, inside the same transaction. |
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, `assetUsage()` — which Displays depend on a library entry — and the sweep of the library rows a publish strands, scoped to the ids that Display's own previous layout held. |
-| `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `update` / `delete` / `pool` / `pooledNotIn` / `discardPooled` | **Every** `assets` statement. The decision it holds: `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::snapshot()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
+| `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `saveEdit` → `AssetEdit` / `delete` / `pool` / `pooledNotIn` / `discardPooled`, plus `isUsableRef` | **Every** `assets` statement. Two decisions it holds. `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. And **a row's type is read from the row**: `saveEdit()` takes no type argument (invariant 23), so nothing can be talked into stripping markup off a path or storing an `.svg` where a Screen will fetch it, and the raw `UPDATE` is private behind it. `isUsableRef()` is the one allow-list for what a stored reference may point at, used by the create path and the edit path alike. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::snapshot()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
 | `upload_limits.php` | `UploadLimit::bytes` / `describe` / `describeBytes` / `bodyWasDropped` / `smallestOf` / `toBytes` | How big a file can actually reach this server — the smallest of the app's 50 MB ceiling and PHP's `upload_max_filesize` and `post_max_size`, not the app's opinion. And the silent case: exceeding `post_max_size` is not an error PHP reports, it abandons the body, so a 40 MB video was answered *"Security token mismatch. Please reload the page."* `smallestOf()` takes the ini values as an argument because both settings are PHP_INI_PERDIR and the cases worth testing are unreachable otherwise. Depends on nothing. |
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `verify` / `consume` / `redeem` / `discard`, and `PasswordResetCompletion(PDO, ResetTokenStore, AccountStore)` → `ResetOutcome` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. It is now the composition of two halves that have to fall on opposite sides of a transaction boundary: `verify()` spends the guess and must never be rolled back, `consume()` spends the code and must be. `PasswordResetCompletion` is the use case (invariant 22) — code consumed, password changed, lockout released, or nothing at all — and `ResetOutcome` has three answers rather than two, because "refused" and "the database would not take it" have to look different to the visitor and identical to a stranger probing for usernames. |
@@ -340,6 +340,20 @@ through the app again:
     one can fail after the first has landed, and the message printed then is decided
     by which line threw rather than by what is now true. With no undo anywhere,
     somebody acting on that message is the whole problem.
+23. **What a stored row *is* comes from the row, never from the request editing it.**
+    `assets.content` means words a sign prints or a path a sign fetches, and only
+    `assets.type` says which — so the type decides whether markup is stripped, whether
+    an extension is checked, and whether a file may be uploaded into the row at all.
+    The Library's edit form used to send the type back in a hidden field, which let a
+    POST pick the rules applied to a row it was not describing: markup into a text row,
+    an `.svg` into an image row, an uploaded path into a row a Screen prints as words.
+    `AssetLibrary::saveEdit()` therefore takes no type argument — it reads the row — and
+    the raw write is private behind it. The general rule, for anything added later:
+    an identifier may come from a form, because the record is looked up by it and
+    disagreement is impossible; a *property of the record* may not, because nothing
+    checks it. Invariant 12 is this same rule one level up, where a tag names a
+    Display and the id proves which one — there, the pair is sent precisely so they
+    can be caught disagreeing.
 
 ---
 
@@ -1839,6 +1853,88 @@ Left standing, and named rather than skipped:
   than by name. A future state that shuts an account out *without* clearing `is_active`
   would strand locks again, and the fix would belong in `LockState`.
 
+### 4u. The form told the page what kind of row it was editing
+
+Decision `#37`. The Library's edit form carried the row's type back in a hidden
+field, and the page believed it:
+
+```php
+$type = $_POST['edit_type'] ?? '';
+$content = ($type === 'text') ? toPlainText(...) : trim(...);
+```
+
+Everything downstream hung off that one line. `content` means two entirely
+different things depending on `type` — words a sign prints, or a path a sign
+fetches — so the type is what decides whether markup is stripped, whether an
+extension is checked, and whether a file may be uploaded into the row at all. A
+field the browser sends is not the row saying what it is; it is the *request*
+choosing which rules apply to it.
+
+Three writes got through that, and none of them needs a hostile author — the first
+is what a form replayed from a stale tab or rewritten by an extension does:
+
+- **`edit_type=image` on a text row.** `toPlainText()` skipped, so markup is stored
+  in a row a Screen renders as words (invariant 6). It renders literally, because
+  the Viewer uses `textContent` — so the sign shows a customer `<b>SALE</b>`.
+- **`edit_type=text` on an image row.** The extension allow-list skipped, so
+  `uploads/evil.svg` becomes the row's content and the sign fetches it as
+  `<img src>`. The upload path has always refused SVG by MIME; this is the same
+  door with nobody on it.
+- **A file uploaded against a text row.** The upload branch ran before anything
+  looked at the type, so `content` became `uploads/…` on a row still typed `text`.
+  The sign prints the path.
+
+**The type is now read from the record, and there is no way to state one.**
+`AssetLibrary::saveEdit()` is the only way to change a row and takes no type
+argument: it fetches the row, and the row decides. `update()` is gone — the raw
+write is private behind it, so a future caller cannot get at the version that
+believed whatever it was handed. The hidden field is deleted from the form, which
+is why the §5 grep for it must come back empty rather than "empty apart from".
+
+Four details that are decisions rather than mechanics:
+
+- **`AssetEdit` is a result object, not a bool**, the same shape as `DisplayResult`
+  (invariant 22's reasoning, one table short of needing the transaction). The page
+  prints `message()`; it does not compose an explanation from which branch it took.
+  A refusal has to say *which* rule refused, because "that asset could not be
+  updated" is the same sentence for an SVG, a blank field and a dead database.
+- **The extension rule moved into the module.** The page had its own copy
+  (`isAllowedImageRef`) and its own extension list, and the create path and the edit
+  path were free to drift over what `.svg` meant. One rule, `isUsableRef()`, used by
+  both, with the `|fit` suffix and any query string stripped before the extension is
+  read — both are ordinary in a stored reference and neither is part of the filename.
+- **`video` is edited under its own rule, not treated as "not text".** `assets.type`
+  is `ENUM('text','image','video')`; nothing in the Library creates a video row, but a
+  database that has one must still let an admin correct it — and folding it in with
+  images would demand a `.jpg` where a `.mp4` belongs and lock the row instead. The
+  form draws no preview and no upload field for one, because it could never accept
+  either.
+- **`$content === ''` replaced `!empty($content)`.** The old guard refused to save a
+  text entry reading exactly `0` — falsy in PHP — and printed *nothing at all* while
+  refusing, because both the failure branch and the success branch were gated on the
+  same `!empty`. This is the `$manual ?: null` trap from `insertContent()`, in a
+  second file. Blank content is still refused, now out loud: it blanks that line on
+  every block reading from the row, and there is no undo.
+
+**Twenty-eight checks**, and nine deliberate mutations, all nine killed (kill counts
+4, 1, 4, 1, 2, 2, 1, 1, 1). The one worth naming: allowing an upload against any
+row kills only one check, because with the guard gone a text row *silently ignores*
+the file and saves the posted text instead. One check is the whole difference
+between "we refused you" and "we did something else and said it worked".
+
+Left standing, and worth knowing:
+
+- **`pool()` still writes whatever element type it is given.** `insertContent()`
+  passes the *element's* type, which can be `carousel` or `marquee` — outside the
+  ENUM. On strict MySQL that write fails and the words stay on the block (which is
+  the safe direction, §4n); on a non-strict host it lands as `''`. Constraining it
+  would touch the publish path, so it was left; `create()` now refuses a type the
+  Library cannot edit, which closes the same hole on the path a person uses.
+- **`crud.php` calls `mb_strimwidth()`** for the table's text preview, and mbstring
+  is not assumed present on the live host — the reason `AssetLibrary::firstCharacters()`
+  has a fallback at all. Unrelated to `#37` and not touched here, but it is a fatal on
+  the Library page rather than a bad preview.
+
 ---
 
 ## 5. Verification
@@ -1974,7 +2070,24 @@ grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?assets`?" --include=*.php .
                                               # fixture — with ONE standing exception: the LEFT JOIN in
                                               # LayoutStore::snapshot(), read-only and on the path a
                                               # Screen polls every 30 seconds. A second writer here is
-                                              # how row sharing came back — invariant 17
+                                              # how row sharing came back — invariant 17.
+                                              # tools/ reads the table all over, and writes it once: the
+                                              # self-test INSERTs a `video` row, because create() refuses
+                                              # a type the Library has no way to edit and §4u still has
+                                              # to prove editing one works
+grep -rn "edit_type\|isAllowedImageRef" --include=*.php .  # must be empty. The first was a hidden field
+                                              # telling the page what kind of row it was saving, which
+                                              # let a POST choose the rules applied to a row it was not
+                                              # describing (invariant 23); the second was the page's own
+                                              # copy of the extension allow-list, which is how the create
+                                              # path and the edit path came to disagree about .svg.
+                                              # AssetLibrary::saveEdit() reads the type from the row and
+                                              # AssetLibrary::isUsableRef() is the one allow-list
+grep -rn "AssetLibrary::IMAGE_EXTENSIONS\|IMG_EXT" --include=*.php .  # crud.php takes its list from the
+                                              # module; api.php still defines IMG_EXT/VID_EXT for the
+                                              # Builder's uploads, which is a MIME-checked path of its
+                                              # own. A third list anywhere is a third opinion about what
+                                              # a sign may be pointed at
 grep -rn "auto_pooled\|Auto: " --include=*.php .  # lib/assets.php owns the marker; schema.php backfills
                                               # it; crud.php renders a badge and warns in the label hint.
                                               # Anything that *decides* whether a row may be deleted

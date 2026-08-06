@@ -1208,7 +1208,7 @@ check($library->forId($mine) !== null,
 
 // A row somebody has renamed is theirs, whatever created it.
 $autoId = intval($pdo->query("SELECT id FROM assets WHERE auto_pooled = 1")->fetchColumn());
-$library->update($autoId, 'Sockeye price', 'Sockeye  22.99');
+$library->saveEdit($autoId, 'Sockeye price', 'Sockeye  22.99');
 checkSame(0, intval($pdo->query("SELECT auto_pooled FROM assets WHERE id = " . $autoId)->fetchColumn()),
           'naming an auto-saved entry makes it yours');
 $fresh = $store->forId($sign->id());
@@ -1314,6 +1314,108 @@ checkSame(true, $result->isOk(), 'the publish still succeeds');
 $kept = $noLib->query("SELECT manual_content, asset_id FROM canvas_elements")->fetch();
 checkSame('Sockeye  18.99', $kept['manual_content'], 'and the words stay on the block, where they render');
 checkSame(null, $kept['asset_id'],   'pointing at nothing at all rather than at a row that does not exist');
+
+// ─────────────────────────────────────────────────────────────
+section('The row says what it is; the form does not get a vote');
+
+// Decision #37. The Library's edit form carried the row's type back in a hidden
+// field and the page believed it, so a POST could pick which rules applied to a
+// row it was not describing. `saveEdit()` has no argument naming a type — it reads
+// the row — and these are the three writes that used to get through.
+$pdo     = newTestDb();
+$library = new AssetLibrary($pdo);
+
+$words = $library->create('text',  'OPEN 7 DAYS',       'Opening hours');
+$pic   = $library->create('image', 'uploads/promo.jpg', 'Summer Promo Banner');
+check($words > 0 && $pic > 0, 'a text entry and an image entry exist to edit');
+
+$contentOf = function ($id) use ($pdo) {
+    $stmt = $pdo->prepare("SELECT content FROM assets WHERE id = ?");
+    $stmt->execute([$id]);
+    return $stmt->fetchColumn();
+};
+
+// 1. A text row is plain text however the content arrives (invariant 6). The old
+//    page only stripped markup on the branch the hidden type field selected.
+$saved = $library->saveEdit($words, 'Opening hours', '<img src=x onerror="steal()">OPEN 7 DAYS');
+checkSame(true, $saved->isOk(),            'a text entry saves');
+checkSame('OPEN 7 DAYS', $contentOf($words), 'and its markup is stripped because the row is text, not because the form said so');
+
+// 2. A file uploaded into a text row is refused outright. Writing the path would
+//    leave `type = text` pointing at `uploads/…`, which a sign prints as words.
+$refused = $library->saveEdit($words, 'Opening hours', 'OPEN 7 DAYS', 'uploads/sneaked.jpg');
+checkSame(AssetEdit::REFUSED, $refused->kind(), 'a file uploaded into a text entry is refused');
+checkSame('OPEN 7 DAYS', $contentOf($words),    'and the words are still the words');
+
+// 3. An image row is held to the image extensions whatever the form claimed. This
+//    is the one with teeth: an `.svg` reaches a sign as `<img src>`, which is a
+//    script the TV runs, and the upload path has always blocked it.
+$svg = $library->saveEdit($pic, 'Summer Promo Banner', 'uploads/evil.svg');
+checkSame(AssetEdit::REFUSED, $svg->kind(),  'an svg typed into an image entry is refused');
+checkSame('uploads/promo.jpg', $contentOf($pic), 'and the entry still points at the image it did');
+checkMentions($svg->message(), 'SVG', 'and the refusal says which types are allowed');
+
+checkSame(true, $library->saveEdit($pic, 'Summer Promo Banner', 'uploads/promo2.png')->isOk(),
+          'a real image path saves');
+checkSame('uploads/promo2.png', $contentOf($pic), 'and lands');
+
+// An upload beats the text field, and is held to the same rule — the page checks
+// the file's MIME before it moves it, but a module that trusted the path would be
+// one caller away from not checking at all.
+checkSame(true, $library->saveEdit($pic, 'Summer Promo Banner', 'uploads/promo2.png', 'uploads/fresh.webp')->isOk(),
+          'an uploaded file replaces the path in the text field');
+checkSame('uploads/fresh.webp', $contentOf($pic), 'with the file that was uploaded');
+checkSame(AssetEdit::REFUSED,
+          $library->saveEdit($pic, 'Summer Promo Banner', '', 'uploads/fresh.svg')->kind(),
+          'an upload whose path is not an image is refused too');
+
+// 4. Blank content is refused rather than written. It blanks that line on every
+//    block reading from the row, and there is no undo.
+$blank = $library->saveEdit($words, 'Opening hours', '   ');
+checkSame(AssetEdit::REFUSED, $blank->kind(), 'an entry cannot be saved empty');
+checkSame('OPEN 7 DAYS', $contentOf($words),  'so the sign keeps its line');
+
+// …but "0" is content. `!empty()` here refused to save a price of exactly 0 and
+// printed nothing at all while doing it — the same PHP trap as `$manual ?: null`.
+checkSame(true, $library->saveEdit($words, 'Zero', '0')->isOk(), 'a text entry reading exactly "0" saves');
+checkSame('0', $contentOf($words), 'and it is stored');
+
+// 5. An id naming no row is answered, not written to.
+$gone = $library->saveEdit(999999, 'Ghost', 'anything');
+checkSame(AssetEdit::MISSING, $gone->kind(), 'an entry that is not there cannot be edited');
+checkSame(2, intval($pdo->query("SELECT COUNT(*) FROM assets")->fetchColumn()),
+          'and no row was created by asking');
+
+// 6. `assets.type` allows `video`, and nothing in the Library creates one — but a
+//    database that has one must still let an admin correct it, under its own rule.
+//    Inserted directly because create() refuses a type this page cannot edit.
+$pdo->exec("INSERT INTO assets (type, content, label) VALUES ('video', 'uploads/clip.mp4', 'Loop')");
+$clip = intval($pdo->lastInsertId());
+checkSame(AssetEdit::REFUSED, $library->saveEdit($clip, 'Loop', 'uploads/evil.svg')->kind(),
+          'a video entry will not take an svg either');
+checkSame(true, $library->saveEdit($clip, 'Loop', 'uploads/clip2.webm')->isOk(),
+          'and takes a video it can play');
+checkSame(AssetEdit::REFUSED, $library->saveEdit($clip, 'Loop', 'uploads/clip.mp4', 'uploads/still.jpg')->kind(),
+          'an image uploaded into a video entry is refused, like any other type mismatch');
+
+// 7. A type the Library cannot edit is a row nobody could ever correct — and on
+//    MySQL an ENUM outside the three is a strict-mode error reported as nothing
+//    more than "could not be saved".
+checkSame(0, $library->create('carousel', '[]', 'Slides'),
+          'the Library refuses to create a type it has no way to edit');
+
+// 8. What gets stripped before an extension is read. Both are ordinary here: the
+//    `|fit` suffix a background carries, and a query string on a URL.
+check(AssetLibrary::isUsableRef('uploads/deli.jpg|contain', AssetLibrary::IMAGE_EXTENSIONS),
+      'a |fit suffix is not part of the filename');
+check(AssetLibrary::isUsableRef('https://example.test/a/b.png?v=2#top', AssetLibrary::IMAGE_EXTENSIONS),
+      'nor is a query string or fragment');
+check(!AssetLibrary::isUsableRef('uploads/promo', AssetLibrary::IMAGE_EXTENSIONS),
+      'a reference with no extension at all is not an image');
+check(!AssetLibrary::isUsableRef('', AssetLibrary::IMAGE_EXTENSIONS),
+      'and neither is nothing');
+check(AssetLibrary::isUsableRef('UPLOADS/PROMO.JPG', AssetLibrary::IMAGE_EXTENSIONS),
+      'the extension is read case-insensitively, the way a web server serves it');
 
 // ─────────────────────────────────────────────────────────────
 section('A reset code gets five guesses in total, not five per browser');
@@ -1766,7 +1868,7 @@ $aPdo = newTestDb();
 $lib  = new AssetLibrary($aPdo);
 $pooledId = $lib->pool('text', 'OPEN 7 DAYS');
 check($pooledId > 0, 'a published text block leaves a marked row in the library');
-$lib->update($pooledId, 'Auto: OPEN 7 DAYS', 'OPEN 7 DAYS');   // adopted; label left alone
+$lib->saveEdit($pooledId, 'Auto: OPEN 7 DAYS', 'OPEN 7 DAYS');   // adopted; label left alone
 $marked = function () use ($aPdo, $pooledId) {
     $stmt = $aPdo->prepare("SELECT auto_pooled FROM assets WHERE id = ?");
     $stmt->execute([$pooledId]);
@@ -3147,4 +3249,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(826);
+reportChecks(854);

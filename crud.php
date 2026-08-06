@@ -29,7 +29,10 @@ $signs   = new DisplayStore($pdo);
 $layouts = new LayoutStore($pdo, $signs);
 
 // ---- File upload validation ----
-$allowedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+// The extension list is AssetLibrary's, not this page's: the same rule decides
+// what an upload may be and what a typed-in path may be, and the two used to be
+// separate lists that could drift.
+$allowedExtensions = AssetLibrary::IMAGE_EXTENSIONS;
 $allowedMimeTypes  = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
 function validateImageFile(array $file, array $allowed_ext, array $allowed_mime): array {
@@ -52,16 +55,6 @@ function validateImageFile(array $file, array $allowed_ext, array $allowed_mime)
 
 function ensureUploadsDir(): void {
     if (!is_dir('uploads')) { mkdir('uploads', 0755, true); }
-}
-
-// Validate an image referenced by URL/path (the "image URL" field) against the
-// same extension allow-list as uploads, so SVG and other non-image types can't
-// be inserted by reference — the file-upload path already blocks them.
-function isAllowedImageRef(string $ref, array $allowed_ext): bool {
-    $path = explode('|', $ref)[0];          // drop any |fit suffix (e.g. |contain)
-    $path = strtok($path, '?#');            // drop query string / fragment
-    $ext  = strtolower(pathinfo((string)$path, PATHINFO_EXTENSION));
-    return in_array($ext, $allowed_ext, true);
 }
 
 $message  = '';
@@ -95,7 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create'])) {
             }
         } else {
             $content = trim($_POST['image_url'] ?? '');
-            if ($content !== '' && !isAllowedImageRef($content, $allowedExtensions)) {
+            if ($content !== '' && !AssetLibrary::isUsableRef($content, $allowedExtensions)) {
                 $message  = 'Only JPG, PNG, GIF and WEBP images are allowed — SVG and other types are blocked.';
                 $msgClass = 'error';
                 $content  = '';
@@ -124,62 +117,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_update'])) {
         $message  = 'Only admins can edit assets.';
         $msgClass = 'error';
     } else {
-    $id      = intval($_POST['edit_id'] ?? 0);
-    $type    = $_POST['edit_type']  ?? '';
-    $label   = trim($_POST['edit_label']  ?? '');
-    $content = ($type === 'text')
-        ? toPlainText($_POST['edit_content'] ?? '')   // plain text only
-        : trim($_POST['edit_content'] ?? '');
+        // The type comes from the stored row, never from the form. It used to ride
+        // along in a hidden field and decide which rules applied — which meant a
+        // POST could pick them: markup into a text row, an `.svg` into an image row,
+        // an uploaded path into a row a sign prints as words. That field is gone;
+        // `edit_id` names the row, and the row says what it is.
+        $id  = intval($_POST['edit_id'] ?? 0);
+        $row = $id > 0 ? $library->forId($id) : null;
 
-    if (!empty($_FILES['edit_image_file']['name'])) {
-        $check = validateImageFile($_FILES['edit_image_file'], $allowedExtensions, $allowedMimeTypes);
-        if ($check['ok']) {
-            ensureUploadsDir();
-            $fileName = 'crud_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $check['ext'];
-            if (move_uploaded_file($_FILES['edit_image_file']['tmp_name'], 'uploads/' . $fileName)) {
-                $content = 'uploads/' . $fileName;
-            }
-        } else {
-            $message  = $check['msg'];
+        if (!$row) {
+            $message  = 'That library entry could not be found, so nothing was changed.';
             $msgClass = 'error';
+        } else {
+            $label = trim($_POST['edit_label'] ?? '');
+
+            // null means "no file was sent" — distinct from one that failed, which
+            // must not fall through to writing whatever the text field held.
+            $uploaded = null;
+
+            if (!empty($_FILES['edit_image_file']['name'])) {
+                if ($row['type'] !== 'image') {
+                    // The form only draws a file input on an image entry, so this is
+                    // a POST this page never rendered. Refused before the file is
+                    // moved: the alternative is an `uploads/…` path stored in a text
+                    // row, which a sign shows to a customer as its own words.
+                    $message  = 'That entry does not hold an image, so a file cannot be'
+                              . ' uploaded into it. Nothing was changed.';
+                    $msgClass = 'error';
+                } else {
+                    $check = validateImageFile($_FILES['edit_image_file'], $allowedExtensions, $allowedMimeTypes);
+                    if (!$check['ok']) {
+                        $message  = $check['msg'];
+                        $msgClass = 'error';
+                    } else {
+                        ensureUploadsDir();
+                        $fileName = 'crud_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $check['ext'];
+                        if (move_uploaded_file($_FILES['edit_image_file']['tmp_name'], 'uploads/' . $fileName)) {
+                            $uploaded = 'uploads/' . $fileName;
+                        } else {
+                            // Said out loud. The old code left $content as the posted
+                            // text and saved that, so a failed upload read as a
+                            // successful save of the path already there.
+                            $message  = 'Could not save the uploaded file. Nothing was changed.';
+                            $msgClass = 'error';
+                        }
+                    }
+                }
+            }
+
+            if ($message === '') {
+                $edit = $library->saveEdit($id, $label, $_POST['edit_content'] ?? '', $uploaded);
+
+                if (!$edit->isOk()) {
+                    // Reported rather than swallowed, and in the module's words: a
+                    // page that composes its own explanation from which branch it took
+                    // describes something other than what is now true.
+                    $message  = $edit->message();
+                    $msgClass = 'error';
+                } else {
+                    // Editing a library entry changes every sign that draws on it, on
+                    // the next 30-second poll, with nobody publishing anything. Advance
+                    // those Displays' stamps so a Builder that is open on one is refused
+                    // rather than quietly republishing the text that was here a moment
+                    // ago (ADR-0006).
+                    $usage = $layouts->assetUsage($id);
+                    foreach ($usage['displays'] as $displayId) {
+                        $d = $signs->forId($displayId);
+                        if ($d) { $signs->advanceLayoutRevision($d); }
+                    }
+
+                    $message = $usage['elements']
+                        ? 'Asset updated. It is used by ' . $usage['elements'] . ' block'
+                          . ($usage['elements'] === 1 ? '' : 's') . ' on ' . count($usage['displays'])
+                          . ' display' . (count($usage['displays']) === 1 ? '' : 's')
+                          . ', which will show the new content within 30 seconds.'
+                        : 'Asset updated successfully.';
+                }
+            }
         }
-    }
-
-    // Block SVG / non-image references entered via the URL field on edit too.
-    if (empty($message) && $type === 'image' && $content !== '' && !isAllowedImageRef($content, $allowedExtensions)) {
-        $message  = 'Only JPG, PNG, GIF and WEBP images are allowed — SVG and other types are blocked.';
-        $msgClass = 'error';
-    }
-
-    // `!empty($content)` guards the write, not just the message: an empty content
-    // field means the form arrived without one, and writing it would blank the row —
-    // which blanks the line on every sign reading from it, with no undo.
-    if (empty($message) && $id > 0 && !empty($content) && !$library->update($id, $label, $content)) {
-        // Reported rather than swallowed. The raw statement this replaced would have
-        // thrown and produced a 500; a module that returns false instead must not
-        // let the page print "Asset updated" over a write that did not happen.
-        $message  = 'That asset could not be updated. Nothing was changed.';
-        $msgClass = 'error';
-    }
-
-    if (empty($message) && $id > 0 && !empty($content)) {
-        // Editing a library entry changes every sign that draws on it, on the next
-        // 30-second poll, with nobody publishing anything. Advance those Displays'
-        // stamps so a Builder that is open on one is refused rather than quietly
-        // republishing the text that was here a moment ago (ADR-0006).
-        $usage = $layouts->assetUsage($id);
-        foreach ($usage['displays'] as $displayId) {
-            $d = $signs->forId($displayId);
-            if ($d) { $signs->advanceLayoutRevision($d); }
-        }
-
-        $message = $usage['elements']
-            ? 'Asset updated. It is used by ' . $usage['elements'] . ' block'
-              . ($usage['elements'] === 1 ? '' : 's') . ' on ' . count($usage['displays'])
-              . ' display' . (count($usage['displays']) === 1 ? '' : 's')
-              . ', which will show the new content within 30 seconds.'
-            : 'Asset updated successfully.';
-    }
     } // end isAdmin check
 }
 
@@ -391,8 +406,10 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
         <form method="POST" action="crud.php" enctype="multipart/form-data">
             <input type="hidden" name="action_update" value="1">
             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+            <!-- The id, and nothing else that identifies the row. What kind of entry
+                 this is comes from the record when the save is handled; a hidden
+                 field saying so was a form choosing which rules applied to it. -->
             <input type="hidden" name="edit_id"   value="<?= intval($editAsset['id']) ?>">
-            <input type="hidden" name="edit_type"  value="<?= htmlspecialchars($editAsset['type']) ?>">
 
             <div class="form-group">
                 <label>Type</label>
@@ -415,7 +432,7 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
                 <label>Text Content</label>
                 <textarea name="edit_content" rows="5"><?= htmlspecialchars($editAsset['content']) ?></textarea>
             </div>
-            <?php else: ?>
+            <?php elseif ($editAsset['type'] === 'image'): ?>
             <div class="form-group">
                 <label>Current Image</label>
                 <img src="<?= htmlspecialchars($editAsset['content']) ?>"
@@ -428,6 +445,20 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
             <div class="form-group">
                 <label>Or update path / URL</label>
                 <input type="text" name="edit_content" value="<?= htmlspecialchars($editAsset['content']) ?>" placeholder="uploads/image.jpg">
+            </div>
+            <?php else: ?>
+            <!-- Anything that is neither text nor an image: `assets.type` allows
+                 `video`, and nothing here creates one, but a database that has one
+                 must still let an admin correct it. No image preview and no upload
+                 field — this form has never been able to accept either for a row
+                 like this, and offering one would only earn a refusal. -->
+            <div class="form-group">
+                <label>Stored path</label>
+                <input type="text" name="edit_content" value="<?= htmlspecialchars($editAsset['content']) ?>" placeholder="uploads/clip.mp4">
+                <small style="display:block; margin-top:4px; color:#7f8c8d; font-size:11px;">
+                    This entry holds a <?= htmlspecialchars($editAsset['type']) ?> file. Its name and
+                    path can be changed here; to replace the file itself, add a new entry.
+                </small>
             </div>
             <?php endif; ?>
 

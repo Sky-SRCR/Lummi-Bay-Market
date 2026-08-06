@@ -65,6 +65,62 @@
 // query that fetches the element. It stays there deliberately: it is read-only,
 // it is on the path a Screen polls every thirty seconds, and splitting it would
 // mean one extra query per block on every sign in the building.
+//
+// **A row's type is a fact about the row, never something a form states.**
+//
+// `content` means completely different things depending on `type`: words a sign
+// prints, or a path a sign fetches. Everything that decides what may be written —
+// whether to strip markup, whether an extension is allowed, whether a file may be
+// uploaded into it at all — hangs off that one column. The Library's edit form used
+// to carry the type back in a hidden field and the page believed it, which meant a
+// POST could pick which rules applied to a row it was not describing: markup into a
+// text row, an `.svg` into an image row, an uploaded image path into a text row that
+// a sign would then print as words. None of those need a hostile author; the first
+// one is what a browser extension replaying a form does.
+//
+// So the type is read here, from the row, and `saveEdit()` is the only way to change
+// one. There is no argument to it that names a type.
+
+require_once __DIR__ . '/plain_text.php';
+
+/**
+ * What happened to an edit made in the Library, as a value.
+ *
+ * The page branches on isOk() and prints message(); it never works out what
+ * happened by reading the sentence. Same shape as DisplayResult — see
+ * lib/display_admin.php — because a page that composes its own explanation from
+ * which line failed ends up describing something other than what is now true.
+ */
+class AssetEdit
+{
+    const OK      = 'ok';
+    const MISSING = 'missing';   // no such row, or it could not be read
+    const REFUSED = 'refused';   // the content does not belong in a row of this type
+    const FAILED  = 'failed';    // the database refused; nothing was changed
+
+    private $kind;
+    private $type;
+    private $message;
+
+    private function __construct($kind, $type, $message)
+    {
+        $this->kind    = $kind;
+        $this->type    = $type;
+        $this->message = $message;
+    }
+
+    public static function saved($type)            { return new self(self::OK, $type, ''); }
+    public static function missing($message)       { return new self(self::MISSING, '', $message); }
+    public static function refused($type, $msg)    { return new self(self::REFUSED, $type, $msg); }
+    public static function failed($type, $message) { return new self(self::FAILED, $type, $message); }
+
+    public function isOk()    { return $this->kind === self::OK; }
+    public function kind()    { return $this->kind; }
+    public function message() { return $this->message; }
+
+    /** The row's stored type, which is what decided the outcome. Empty if it had none. */
+    public function type()    { return $this->type; }
+}
 
 class AssetLibrary
 {
@@ -79,6 +135,20 @@ class AssetLibrary
 
     /** How much of the content goes into a pooled row's label. */
     const LABEL_CHARS = 20;
+
+    /**
+     * The two types a person may create here, and what a stored reference of each
+     * kind may end in.
+     *
+     * `assets.type` is `ENUM('text','image','video')`, so a `video` row can exist
+     * on a database that has one even though nothing in the Library makes one —
+     * which is why editing knows the extensions for it. The list is the same one
+     * the upload check uses; keeping a second copy in the page is how the create
+     * path and the edit path came to disagree about `.svg` in the first place.
+     */
+    const CREATABLE_TYPES  = ['text', 'image'];
+    const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+    const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogv', 'ogg'];
 
     private $pdo;
 
@@ -142,10 +212,17 @@ class AssetLibrary
      * sweep can ever remove it — an image in the library that is not on a sign yet
      * is somebody's next job, not junk.
      *
+     * The type is the one argument here a caller legitimately supplies: the row
+     * does not exist yet, so there is nothing else to ask. It is checked against
+     * the two the Library offers, because a type nothing can edit is a row nobody
+     * can ever correct — and on MySQL an ENUM outside the three is a strict-mode
+     * error that would surface as "could not be saved" with no reason given.
+     *
      * Returns the new id, or 0 if the row could not be written.
      */
     public function create($type, $content, $label)
     {
+        if (!in_array((string)$type, self::CREATABLE_TYPES, true)) { return 0; }
         try {
             $this->insert((string)$type, (string)$content, (string)$label, false);
             return intval($this->pdo->lastInsertId());
@@ -155,15 +232,76 @@ class AssetLibrary
     }
 
     /**
-     * Change a row's label and content.
+     * Apply an edit to a row, with the row's own type deciding what the content is.
      *
-     * Editing is how a pooled row stops being pooled: somebody who renames
-     * "Auto: Open 7 days" to "Opening hours" has adopted it, and a row a person
-     * has named must survive every sweep. That is why the marker is cleared here
-     * rather than left alone — leaving it would let the tidy button remove
-     * something an admin had just finished naming.
+     * The only way to change a library entry. There is deliberately no argument
+     * naming a type: the caller has a form, and a form can say anything — see the
+     * header for what a page that believed one could be made to write.
+     *
+     * `$uploadedPath` is the file the page has already accepted and moved, or null
+     * for "no file was sent". It is only meaningful on an image row; anywhere else
+     * it is a POST the Library never drew, and the answer is no rather than a path
+     * written into a row a sign renders as words.
+     *
+     * Editing is also how a pooled row stops being pooled: somebody who renames
+     * "Auto: Open 7 days" to "Opening hours" has adopted it, and a row a person has
+     * named must survive every sweep. The marker is cleared here rather than left
+     * alone, or the tidy button could remove something an admin just finished naming.
      */
-    public function update($assetId, $label, $content)
+    public function saveEdit($assetId, $label, $postedContent, $uploadedPath = null)
+    {
+        $row = $this->forId($assetId);
+        if (!$row) {
+            return AssetEdit::missing(
+                'That library entry could not be loaded, so nothing was changed.'
+                . ' It may have been deleted while this page was open.');
+        }
+
+        $type = (string)$row['type'];
+
+        if ($uploadedPath !== null && $type !== 'image') {
+            return AssetEdit::refused($type,
+                'That entry does not hold an image, so a file cannot be uploaded into it.'
+                . ' Nothing was changed.');
+        }
+
+        if ($type === 'text') {
+            // Invariant 6: a text block's content is plain text, decided by the row
+            // rather than by which branch the page happened to take.
+            $content = toPlainText((string)$postedContent);
+        } elseif ($uploadedPath !== null) {
+            $content = (string)$uploadedPath;
+        } else {
+            $content = trim((string)$postedContent);
+        }
+
+        // `=== ''` rather than empty(): a price block reading exactly "0" is falsy in
+        // PHP, and the old guard refused to save one while saying nothing at all.
+        if ($content === '') {
+            return AssetEdit::refused($type,
+                'Nothing was saved: an entry with no content blanks that line on every'
+                . ' block reading from it, and there is no undo.');
+        }
+
+        if ($type === 'image' && !self::isUsableRef($content, self::IMAGE_EXTENSIONS)) {
+            return AssetEdit::refused($type,
+                'Only JPG, PNG, GIF and WEBP images are allowed — SVG and other types are'
+                . ' blocked. Nothing was changed.');
+        }
+        if ($type === 'video' && !self::isUsableRef($content, self::VIDEO_EXTENSIONS)) {
+            return AssetEdit::refused($type,
+                'Only MP4, WEBM and OGG video files are allowed. Nothing was changed.');
+        }
+
+        if (!$this->writeEdit($assetId, $label, $content)) {
+            return AssetEdit::failed($type,
+                'That entry could not be updated. Nothing was changed.');
+        }
+        return AssetEdit::saved($type);
+    }
+
+    /** The write itself, once saveEdit() has established what may be written. */
+    private function writeEdit($assetId, $label, $content)
     {
         try {
             $sql = $this->markerExists()
@@ -251,6 +389,36 @@ class AssetLibrary
             }
         }
         return $gone;
+    }
+
+    // ---- What a stored reference may be -------------------------------------
+
+    /**
+     * Does this path or URL end in one of the given extensions?
+     *
+     * The check the file-upload path already does by MIME, applied to the other way
+     * a file gets into the library: somebody typing a path. Without it an `.svg`
+     * goes in by reference and reaches a sign as `<img src>`, which is a script the
+     * TV runs — and the upload path blocks exactly that, so the two ways in
+     * disagreed.
+     *
+     * Two things get stripped before the extension is read, because both are
+     * ordinary here and neither is part of the filename: the `|fit` suffix a
+     * background carries (`uploads/deli.jpg|contain`), and a query string or
+     * fragment on a URL.
+     */
+    public static function isUsableRef($ref, array $extensions)
+    {
+        return in_array(self::refExtension($ref), $extensions, true);
+    }
+
+    /** The lower-cased extension of a stored reference, or '' if it has none. */
+    public static function refExtension($ref)
+    {
+        $path = explode('|', (string)$ref)[0];   // drop any |fit suffix (e.g. |contain)
+        $path = strtok($path, '?#');             // drop query string / fragment
+        if ($path === false || $path === '') { return ''; }
+        return strtolower(pathinfo($path, PATHINFO_EXTENSION));
     }
 
     // ---- Internals ----------------------------------------------------------
