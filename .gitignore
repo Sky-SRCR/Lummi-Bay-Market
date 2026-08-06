@@ -21,5 +21,8 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Logs
+# Logs. The error log lives outside the webroot when the server allows it; this
+# is the in-app fallback directory ErrorPolicy creates when it does not, and it
+# holds the alert rate-limiter's stamps as well as the log itself.
 *.log
+logs/

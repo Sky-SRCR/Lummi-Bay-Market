@@ -1,7 +1,8 @@
 <?php
 require_once 'auth.php';
 require_once 'db_connect.php';
-requireLogin();
+require_once __DIR__ . '/lib/upload_limits.php';
+requireCurrentAccount($pdo);
 $me      = currentUser();
 $isAdmin = isAdmin();
 
@@ -149,7 +150,9 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <a href="setup_branding.php">Branding</a>
     <?php endif; ?>
     <a href="help.php" class="active">Help</a>
-    <a href="viewer.php" target="_blank">View Display ↗</a>
+    <?php /* No "View Display" link here: every display has its own address, and this
+             page is not about one of them. The Builder links to the display it is
+             editing, and Admin Panel → Displays lists every address. */ ?>
     <span style="font-size:12px; color:#bdc3c7;">
         <?= htmlspecialchars($me['username']) ?>
         <span class="role-tag"><?= $isAdmin ? 'ADMIN' : 'USER' ?></span>
@@ -204,14 +207,16 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 <!-- ════════════════════════════════════════════════════════ -->
 <div class="help-section" id="overview">
     <h2>System Overview</h2>
-    <p>This system lets you design a full-screen display (1920 × 1080 px) for a TV or kiosk at your store. You build layouts in the <strong>Builder</strong>, publish them with one click, and a dedicated <strong>Viewer</strong> page — open on your TV or screen — automatically shows the latest published layout within 30 seconds.</p>
-    <p>All content is stored in a database. Changes you publish are instantly live — no FTP, no page refresh needed on the display.</p>
+    <p>This system lets you design full-screen layouts for the TVs and kiosks at your store. You build a layout in the <strong>Builder</strong>, publish it with one click, and the <strong>Viewer</strong> page — open on the screen itself — shows the latest published layout within 30 seconds.</p>
+    <p>Each screen you drive is a <strong>display</strong>, with its own size, its own layout, and its own list of people allowed to edit it. Sizes are set when a display is created and can be anything, including tall portrait screens — so what you see on the canvas is the shape of that particular screen, not a fixed 1920 × 1080.</p>
+    <p>Every display also has its own <strong>address</strong> — the screen name tag in its Viewer link, like <code>viewer.php?display=drive-thru</code>. That address is what you point a TV or a signage widget at, and it is the one thing that decides which layout appears there.</p>
+    <p>All content is stored in a database. Changes you publish are live within 30 seconds — no FTP, and nobody has to touch the screen.</p>
 
     <div class="feat-grid">
-        <div class="feat-card"><div class="icon">🎨</div><h4>Builder</h4><p>Drag-and-drop canvas editor for designing your display layout.</p></div>
-        <div class="feat-card"><div class="icon">📺</div><h4>Viewer</h4><p>Full-screen display page that auto-refreshes every 30 seconds.</p></div>
-        <div class="feat-card"><div class="icon">🗂️</div><h4>Asset Library</h4><p>Reusable pool of text, images, and video that can be linked to blocks.</p></div>
-        <div class="feat-card"><div class="icon">⚙️</div><h4>Admin Panel</h4><p>Manage user accounts, reset passwords, and set roles.</p></div>
+        <div class="feat-card"><div class="icon">🎨</div><h4>Builder</h4><p>Drag-and-drop canvas editor for designing one display's layout.</p></div>
+        <div class="feat-card"><div class="icon">📺</div><h4>Viewer</h4><p>Full-screen page for one display, auto-refreshing every 30 seconds.</p></div>
+        <div class="feat-card"><div class="icon">🗂️</div><h4>Asset Library</h4><p>Reusable pool of text, images, and video, shared by every display.</p></div>
+        <div class="feat-card"><div class="icon">⚙️</div><h4>Admin Panel</h4><p>Add and remove displays, decide who may edit which, manage accounts.</p></div>
     </div>
 </div>
 
@@ -226,7 +231,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li>Add any block type: Image, Carousel, Marquee, Video</li>
         <li>Edit font styles, block dimensions, canvas background</li>
         <li>Manage Brand Standards via the Branding page (global font/color styles for branded blocks)</li>
-        <li>Delete blocks, manage users, configure store branding</li>
+        <li>Delete blocks, manage accounts, configure store branding</li>
         <li>Publish the layout to the display</li>
     </ul>
 
@@ -240,6 +245,52 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     </ul>
 
     <div class="admin-only"><strong>Admin-only features</strong> are marked with a red ADMIN tag throughout the builder interface.</div>
+
+    <h3>Which displays you can edit</h3>
+    <p>Your role decides <em>what</em> you can change; which <strong>displays</strong> you can change it
+       on is separate. An admin can edit every display. A basic user is assigned displays one at a time,
+       in Admin Panel → Displays → <em>Who can edit which display</em>.</p>
+    <ul>
+        <li>Assigned one display — the builder opens straight into it.</li>
+        <li>Assigned more than one — you choose which to edit, and the builder returns you to the last
+            one you had open.</li>
+        <li>Assigned none — the builder says <em>"No displays have been assigned to you yet"</em>. Ask an
+            admin which display is yours.</li>
+    </ul>
+    <p>Publishing is part of editing: if a display is yours, you can publish it to its screen. Being
+       assigned a display is not permanent — an admin can take it back. If that happens while you have
+       the builder open, a red bar appears within a minute saying your access has been removed: nothing
+       more can be published from that page, and the display is released for somebody else. What you had
+       done stays on your screen until you leave the page, so anything you still need can be copied out
+       first.</p>
+    <p><strong>There are five things that can end a builder session that way</strong>, and the red bar
+       always says which. Your access to the display was taken away; the display was turned off; its
+       screen name tag was renamed, so the page's address no longer finds it; that tag was given to a
+       different sign; or your own account was suspended. In every case the bar arrives within a minute,
+       nothing you had not published has reached a screen, and your work stays on your screen to be
+       copied out. Only one of the five needs an admin: a renamed tag just needs the page reloading, and
+       the display is still yours.</p>
+
+    <h3>One person edits a display at a time</h3>
+    <p>Opening a display in the builder claims it. While you have it, anyone else who opens the same
+       display sees it <strong>read-only</strong> — a purple bar at the top names you, and none of the
+       editing controls are there. Different displays can be worked on at the same time by different
+       people; it is only the same display that is one at a time.</p>
+    <ul>
+        <li><strong>You keep it while you are working.</strong> Clicks, typing and dragging all count.
+            Simply having the tab open does not.</li>
+        <li><strong>After 15 minutes with nothing happening it is released</strong>, even with the tab
+            open, so a builder left open on a back-office screen does not block anyone. You get a
+            warning bar with a <em>Keep editing</em> button two minutes before that.</li>
+        <li><strong>Coming back after a break is fine.</strong> Change anything and the display is
+            yours again — unless somebody else started in the meantime, in which case a red bar says
+            so and your publish is refused. Your work stays on the screen either way.</li>
+        <li><strong>Leaving the builder releases it immediately</strong>, so the next person does not
+            wait out the 15 minutes.</li>
+    </ul>
+    <div class="admin-only"><strong>Admins</strong> can take a display off whoever has it: open it in
+       the builder and click <em>Take over editing</em>. The confirm says what it costs — the other
+       person keeps what is on their screen but can no longer publish it.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -271,14 +322,15 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 <div class="help-section" id="builder-intro">
     <h2>Builder Overview</h2>
     <a href="#" class="back-top">↑ Top</a>
-    <p>The Builder is the main design tool. The canvas represents a <strong>1920 × 1080 px</strong> screen — what your TV or kiosk will show. Everything on the canvas is positioned absolutely using X and Y coordinates from the top-left corner.</p>
+    <p>The Builder is the main design tool, and it edits <strong>one display at a time</strong>. The display's title, its screen name tag, and its size are shown in the top-left of the nav bar — for example <strong>Drive-Thru</strong> · <code>drive-thru</code> · 1920 × 1080. The canvas is that display's size, so what you arrange is exactly what its screen shows. Everything is positioned absolutely, using X and Y coordinates from the top-left corner of the canvas.</p>
     <p>The interface has three main areas:</p>
     <ul>
-        <li><strong>Top control bar</strong> — buttons for adding content, changing the background, and publishing</li>
+        <li><strong>Top control bar</strong> — buttons for adding content, changing the background, zoom, and publishing</li>
         <li><strong>Canvas (centre)</strong> — the design area where you place and arrange content blocks</li>
         <li><strong>Inspector panel (right)</strong> — appears when a block is selected; shows position, size, and content options</li>
     </ul>
-    <div class="tip"><strong>Tip:</strong> The canvas is 1920 px wide and may be wider than your screen. Scroll horizontally inside the canvas area to reach the right side. Use your browser zoom (Ctrl/Cmd + scroll) to zoom out and see the whole canvas at once.</div>
+    <p>If you can edit more than one display, <strong>Switch display ⇄</strong> in the nav bar lists the ones available to you; going straight to <code>builder.php</code> with no display named shows the same list.</p>
+    <div class="tip"><strong>Tip:</strong> A canvas is usually bigger than the window it is being edited in — a portrait screen especially. Use the <strong>Zoom</strong> buttons in the control bar: <strong>Fit</strong> shows the whole canvas at once, <strong>100%</strong> is actual size, and <strong>−</strong> / <strong>+</strong> step between them. The percentage next to them is the current zoom. The Builder opens at Fit. Use these rather than your browser's own zoom, so the X and Y numbers in the Inspector keep matching what you see.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -370,13 +422,13 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
     <h3>Image blocks</h3>
     <ul>
-        <li><strong>Upload Image</strong> — JPG, PNG, GIF, WEBP. Max 10 MB.</li>
+        <li><strong>Upload Image</strong> — JPG, PNG, GIF, WEBP. Max <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?>.</li>
         <li><strong>Image Fit</strong> — controls how the image fills the block (see Image Blocks section below)</li>
     </ul>
 
     <h3>Video blocks (admin only)</h3>
     <ul>
-        <li><strong>Upload Video</strong> — MP4, WebM, or OGV. Max 50 MB. Videos auto-play, loop, and are muted.</li>
+        <li><strong>Upload Video</strong> — MP4, WebM, or OGV. Max <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?>. Videos auto-play, loop, and are muted.</li>
     </ul>
 
     <h3>Carousel blocks (admin only)</h3>
@@ -451,6 +503,16 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><span>A success message appears. The display viewer will show the new layout within 30 seconds.</span></li>
     </ol>
     <div class="note"><strong>Important:</strong> Unpublished changes exist only in your browser tab. If you close the tab or navigate away <em>without</em> publishing, your changes are lost. Always publish before leaving the builder.</div>
+    <p>A publish can be <strong>refused</strong>, and nothing is saved when it is. There are two reasons,
+       and the message says which:</p>
+    <ul>
+        <li><em>"This display changed since you opened it"</em> — somebody published, or an element was
+            hidden or deleted, while your tab was open. Reload and re-apply your change, so you do not
+            overwrite their work.</li>
+        <li><em>"Someone else is editing this display now"</em> — the display was released while you were
+            idle and somebody took it, or an admin took over. Your work is still on screen; publish again
+            once they have finished.</li>
+    </ul>
     <div class="tip"><strong>Tip:</strong> The viewer auto-polls every 30 seconds. You don't need to refresh the TV browser — just publish and wait.</div>
 </div>
 
@@ -497,7 +559,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <ol class="steps">
         <li><span>Click <strong>+ Image</strong> in the control bar.</span></li>
         <li><span>Click the block to select it — the Inspector panel opens on the right.</span></li>
-        <li><span>Under <strong>Upload Image</strong>, click the file picker and choose an image (JPG, PNG, GIF, WEBP — max 10 MB).</span></li>
+        <li><span>Under <strong>Upload Image</strong>, click the file picker and choose an image (JPG, PNG, GIF, WEBP — max <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?>).</span></li>
         <li><span>The image appears in the block immediately.</span></li>
         <li><span>Choose an <strong>Image Fit</strong> mode (see below).</span></li>
         <li><span>Publish when ready.</span></li>
@@ -544,10 +606,18 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <ol class="steps">
         <li><span>Click <strong>+ Video</strong> in the control bar.</span></li>
         <li><span>Select the block and click <strong>Upload Video</strong> in the Inspector.</span></li>
-        <li><span>Choose an MP4, WebM, or OGV file (max 50 MB).</span></li>
+        <li><span>Choose an MP4, WebM, or OGV file (max <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?>).</span></li>
         <li><span>The video begins playing in the builder preview.</span></li>
         <li><span>Resize the block to fit your layout. Publish when ready.</span></li>
     </ol>
+    <div class="note"><strong>If an upload fails, it says so.</strong> A bar at the bottom of the
+       screen shows the percentage while a file is going up, and stays there until it finishes.
+       If the connection drops, the file is too large, or the server refuses it, you get a
+       message saying which — and nothing on the block changes. Just pick the file again; there
+       is no need to reload the page. A file bigger than
+       <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?> is refused
+       immediately, before any of it is sent, so you are not left waiting for a file that could
+       never arrive.</div>
     <div class="tip"><strong>Tip:</strong> MP4 (H.264) has the broadest browser support. Keep videos short and loopable — 5–15 seconds works well for in-store displays.</div>
 </div>
 
@@ -613,6 +683,23 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     </ol>
 
     <div class="tip"><strong>Tip:</strong> Link your price blocks to price assets. When a price changes, update the asset once — then publish — and every block showing that price updates at the same time.</div>
+
+    <h3>&ldquo;Auto:&rdquo; entries, and the Tidy up button</h3>
+    <p>Publishing keeps a copy of every text block's words in this library, so you will see
+       entries labelled <strong>Auto: &hellip;</strong> that nobody added by hand. They carry an
+       <strong>auto</strong> badge. Each one belongs to the single block that created it, so
+       editing or deleting one can only ever affect one sign.</p>
+    <p>Because publishing replaces the layout, editing the same block and publishing again
+       leaves the earlier copy behind with nothing using it. Most of the time the app clears
+       those up as you publish. What it cannot see is a block you removed in the Admin Panel's
+       Work Area, so those collect — and when there are any, a <strong>Tidy up</strong> button
+       appears at the top of the list saying how many. Pressing it removes only auto entries no
+       sign is using, and changes nothing on any sign.</p>
+    <div class="note"><strong>Anything you add yourself is kept forever</strong>, even if no
+       sign uses it — an image uploaded ready for next week is not junk. The same goes for an
+       auto entry you rename: giving it a name of your own makes it yours, and Tidy up will
+       never remove it. The one thing to avoid is starting your own labels with
+       &ldquo;Auto:&rdquo;, which is how the app marks its own copies.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -620,17 +707,17 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h2>Brand Standards</h2>
     <a href="#" class="back-top">↑ Top</a>
     <div class="admin-only"><strong>Admin only.</strong></div>
-    <p>Brand Standards define the default font family, size, colour, weight, and line height for each of the four branded text block types: Section Header, Item Title, Price, and Description.</p>
+    <p>Brand Standards define the default font family, size, colour, weight, and line height for each of the six branded text block types: Section Header, Item Title, Item Title 2, Price, Price 2, and Description.</p>
 
     <h3>Changing brand styles</h3>
     <ol class="steps">
         <li><span>Go to <strong>Branding</strong> (top nav → Branding) and scroll to the Brand Standards section.</span></li>
-        <li><span>A table shows each block type's current settings. Edit any field.</span></li>
-        <li><span>Click <strong>Save Brand Standards</strong>. Changes take effect on the next publish.</span></li>
-        <li><span>Return to the builder and publish to make the changes live on the display.</span></li>
+        <li><span>A table shows each block type's current settings, with a live preview. Edit any field.</span></li>
+        <li><span>Click <strong>Save Brand Standards</strong>.</span></li>
     </ol>
 
-    <div class="note"><strong>Note:</strong> Brand Standards only affect <em>branded</em> text blocks (Section Header, Item Title, Price, Description).</div>
+    <div class="note"><strong>Note:</strong> Brand Standards only affect <em>branded</em> text blocks — not free text blocks, where you set the font yourself in the Inspector.</div>
+    <div class="tip"><strong>These reach the screens on their own.</strong> Every screen reads this typography each time it polls, so a saved change appears within 30 seconds on <em>every</em> display, with no publishing needed. That also makes it the one change you can make without opening the Builder. Because it lands on every sign at once, it is refused while <em>anyone</em> is editing <em>any</em> display — the message names who, and you can save once they are finished or once their editing lock lapses after 15 idle minutes.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -655,21 +742,87 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h2>Admin Panel</h2>
     <a href="#" class="back-top">↑ Top</a>
     <div class="admin-only"><strong>Admin only.</strong></div>
-    <p>The <a href="admin_panel.php" style="color:#3498db;">Admin Panel</a> has two tabs:</p>
+    <p>The <a href="admin_panel.php" style="color:#3498db;">Admin Panel</a> has tabs for user accounts, displays, branding, settings, and the work area.</p>
+
+    <h3>Displays tab</h3>
+    <p>Everything about the screens this system drives.</p>
+    <ul>
+        <li><strong>Add a display</strong> — you choose its size first (a preset, or type any width and height), then its title, its <strong>screen name tag</strong>, and an optional location. You can start it blank or as <em>a copy of an existing display's layout</em> — only displays of exactly the same size are offered as a source.</li>
+        <li><strong>The size cannot be changed afterwards.</strong> Every block sits at a fixed position on that canvas, and there is no undo, so a smaller canvas would quietly hide blocks that still exist. A differently shaped screen means a new display built at that shape.</li>
+        <li><strong>Each display's card</strong> shows its tag, size and shape, how many elements it holds, its location, when it was last published and by whom, which accounts it is assigned to, its full screen address ready to copy for the TV or signage widget, and whether someone has it open in the Builder right now.</li>
+        <li><strong>Edit</strong> — title, tag, location, and background. Changing the tag changes the display's address, so any screen pointed at the old one must be re-pointed. If somebody has the display open in the Builder, their page asks them to reload within a minute; they keep the display and their work, because a rename changes where the sign answers and not who may edit it.</li>
+        <li><strong>Turn off</strong> — the screen shows a "turned off" notice instead of the layout, and the layout is kept. Use this rather than deleting when a screen is out of service. A display that is off <em>stays editable by admins</em> and stops being editable by anybody else, so if a basic account had it open their edit lock is released and their page says the display was turned off. The message you get says whether that happened, so you know whether you just ended somebody's session.</li>
+        <li><strong>Delete</strong> — permanently removes the display <em>and its whole layout</em>, with no undo. You have to type its screen name tag exactly to confirm, and any screen pointed at it goes blank. Deleting the only display is allowed and leaves the Builder with nothing to open until you add one; turning a display off is almost always what you want instead.</li>
+        <li><strong>Who can edit which display</strong> — the grant matrix, <em>Who can edit which display</em>, at the bottom of the tab. Tick a basic account against a display to let it edit that display. Admins are not listed: they already hold every display. An account with no ticks is told "No displays have been assigned to you yet" when it opens the Builder.</li>
+        <li><strong>Saving the grid only changes what was on the screen you saved.</strong> An account or a display added by somebody else since you opened the page is left exactly as they set it, so two admins working at once cannot undo each other. If you take a display away from somebody who has it open in the Builder, their edit lock is released — the sign is free for the next person straight away, and their page says so within a minute.</li>
+    </ul>
+
+    <h3>Work Area tab</h3>
+    <p>Lists the published elements of one display — choose which with the <strong>Display</strong> selector at the top — so you can hide or delete a single block without opening the Builder. <strong>Hide</strong> takes it off that screen within 30 seconds while keeping it in the layout, ready to un-hide; <strong>Delete</strong> removes it for good. Neither needs a publish, and both mean that any Builder tab opened before the change has to reload before it can publish.</p>
 
     <h3>Users tab</h3>
     <ul>
         <li><strong>Create user</strong> — add a new account with a username, email, password, and role (Admin or Basic)</li>
-        <li><strong>Edit user</strong> — change username, email, role, or active status. Leave password blank to keep it unchanged.</li>
-        <li><strong>Deactivate / Activate</strong> — a deactivated user cannot sign in</li>
-        <li><strong>Delete</strong> — permanently removes the account</li>
+        <li><strong>Edit user</strong> — change email, role, or active status. The username cannot be
+            changed here. Setting a new password is the separate box below it.</li>
+        <li><strong>Making somebody an admin clears the displays they were given.</strong> An admin can
+            edit every display, so individual assignments stop meaning anything — and leaving them
+            behind meant they came back if that person was ever made a basic user again, decided by a
+            list nobody could see. So promoting says which assignments were cleared, and demoting starts
+            them from nothing: give the displays back in <em>Who can edit which display</em>. A demotion
+            also releases any display that person had open, because from that moment they cannot reach
+            it to release it themselves.</li>
+        <li><strong>Deactivate / Activate</strong> — a deactivated user cannot sign in, and can be
+            switched back on whenever you like. This is the one to use for someone on leave. Their
+            assignments are kept, so activating them again gives back exactly what they had. Any display
+            they had open is released as you save, and their page says they have been signed out — so a
+            colleague can pick that sign up straight away instead of waiting the lock out.</li>
+        <li><strong>Close Account</strong> — for somebody who has left. They can never sign in again
+            and lose access to every display, but their record is kept, so anything they published
+            still says who published it. <strong>This cannot be undone</strong>, and their username
+            and email stay reserved so nobody else can be given the same name. Closed accounts are
+            listed further down the tab. If someone comes back, make them a new account.</li>
         <li><strong>Reset password</strong> — sends a password reset email to the user</li>
     </ul>
 
     <h3>Assets tab</h3>
-    <p>Shows all entries in the Asset Library with the option to view, edit, or delete them. Deleting an asset that is linked to a canvas block sets those blocks to show no content until re-linked or manually filled.</p>
+    <p>Shows all entries in the Asset Library with the option to view, edit, or delete them.
+       Deleting an entry a block is using is <em>refused</em>, and the message says how many
+       blocks on how many displays would have been left blank — edit it instead, or remove those
+       blocks first. Editing one changes what the sign shows within 30 seconds, with no
+       publishing needed, and any Builder already open on that display will be asked to reload
+       rather than allowed to publish over it.</p>
 
-    <div class="note"><strong>Note:</strong> You cannot delete your own account from the Admin Panel. An admin must always exist.</div>
+    <h3>Settings tab — This Server, Database Structure, Errors and Alerts</h3>
+    <p>Three read-only readouts at the bottom of the Settings tab. Nothing on them can be
+       changed from this page; they are there so nobody has to guess.</p>
+    <ul>
+        <li><strong>This Server</strong> — the PHP and MySQL versions, the time zone, and whether
+            the sign-in cookie's protections applied. If you are ever asked what version of PHP
+            the site runs, this is the answer.</li>
+        <li><strong>Database Structure</strong> — one green or red line per column the app adds to
+            the database by itself. A red line names what stops working because of it. If one
+            stays red, signing out and back in as an admin usually applies it.
+            <br>If a change the database says it needs keeps being refused, admins get an email
+            titled <em>&ldquo;Schema updates are being refused&rdquo;</em> &mdash; at most one an
+            hour. <strong>Read this readout first when one arrives.</strong> A red line here is a
+            real missing piece and the email says what it costs. Every line green means the
+            database is refusing the change for its own reasons and nothing is wrong with your
+            content or your signs; forward the email to whoever looks after the site.</li>
+        <li><strong>Errors and Alerts</strong> — where problems are being written down, when the
+            last one was, and who gets an email about them. Nothing is ever printed on the page
+            when something breaks: a screen shows a plain "temporarily unavailable" notice and
+            keeps re-checking, and the detail goes to the log. At most one email per problem
+            per hour goes to admins who have an email address on file, and this list refreshes
+            every time you open the Admin Panel.
+            <br><strong>If it says the log has nowhere to write, or that alerts go to nobody</strong>,
+            then nothing is being recorded and nobody would be told — that is the one thing on
+            these three readouts worth fixing straight away.</li>
+    </ul>
+
+    <div class="note"><strong>Note:</strong> You cannot close your own account, and you cannot close
+        the last admin who is still able to sign in — make somebody else an admin first. An admin must
+        always exist, and closing cannot be reversed.</div>
 </div>
 <?php endif; ?>
 
@@ -677,17 +830,33 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 <div class="help-section" id="viewer">
     <h2>The Display Viewer</h2>
     <a href="#" class="back-top">↑ Top</a>
-    <p>The Viewer (<code>viewer.php</code>) is the page that runs on your TV or kiosk. It displays the published layout full-screen and automatically refreshes every 30 seconds to pick up new publishes.</p>
+    <p>The Viewer is the page that runs on your TV or kiosk. It shows one display's published layout full-screen and refreshes every 30 seconds to pick up new publishes.</p>
 
-    <h3>Setting up your display screen</h3>
+    <p><strong>Which display it shows comes from the address</strong>, and only from the address:</p>
+    <ul>
+        <li><code>viewer.php?display=drive-thru</code> — the display whose screen name tag is <code>drive-thru</code></li>
+        <li><code>viewer.php</code> with nothing after it — <em>no</em> layout, just a "no display specified" notice</li>
+    </ul>
+    <p>That is deliberate. A truncated or mistyped address shows a notice rather than falling back to some other screen's prices, which is the mistake worth preventing on a sign that customers read. Admins can copy the exact address for any display from Admin Panel → Displays.</p>
+
+    <h3>Setting up a screen</h3>
     <ol class="steps">
-        <li><span>Open <code>viewer.php</code> on the TV or kiosk browser.</span></li>
+        <li><span>Get the display's address from Admin Panel → Displays — the <strong>Screen address</strong> box, with its <strong>Copy</strong> button.</span></li>
+        <li><span>Open that address in the TV or kiosk browser.</span></li>
         <li><span>Switch the browser to full-screen mode (<kbd>F11</kbd> on most systems).</span></li>
         <li><span>Leave it running — it polls automatically. No login is required on the viewer.</span></li>
     </ol>
+    <p>The layout is scaled to fit whatever screen it lands on and centred, so a display designed at 1920 × 1080 fills a larger screen of the same shape with no changes at all. If the shapes differ you get plain dark bars on the mismatched edges rather than a stretched, distorted sign.</p>
+
+    <h3>If the screen shows a notice instead of the layout</h3>
+    <ul>
+        <li><strong>"No display specified"</strong> — the address has no <code>?display=</code> part. Re-point the screen at the full address.</li>
+        <li><strong>"Display not found"</strong> — the tag in the address doesn't match any display. Check for a typo, and check whether the tag was renamed or the display deleted.</li>
+        <li><strong>"This display is turned off"</strong> — someone turned it off in Admin Panel → Displays. Turn it back on; the layout was kept.</li>
+    </ul>
 
     <div class="tip"><strong>Tip:</strong> Use a dedicated browser profile or kiosk mode so the viewer page cannot be accidentally closed or navigated away from.</div>
-    <div class="note"><strong>Note:</strong> The viewer page is publicly accessible (no login needed) so it can run on any screen on your network. If you want it password-protected, discuss with your server admin about adding HTTP Basic Auth at the web server level.</div>
+    <div class="note"><strong>Note:</strong> Viewer addresses are public — no login is needed, so that any screen on your network can display one. Anyone who has an address can see that sign, so treat the addresses as public and keep prices you are not ready to show off the canvas. If you want a screen password-protected, discuss HTTP Basic Auth at the web server level with your server admin.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -714,13 +883,20 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Make two boxes the same width</strong> → click first block, note W value in Inspector; click second block, type same W value, press Tab</li>
         <li><strong>Align a row of labels</strong> → Shift+click all blocks, click ▲ Top in alignment bar, Publish</li>
         <li><strong>Add a new product</strong> → click a section, add Item Title + Price + Description blocks, fill in text, Publish</li>
-        <li><strong>Change all prices to a new colour</strong> → Brand Standards → change Price font colour → Save → Publish</li>
-        <li><strong>Update the display remotely</strong> → make changes in builder, click Publish — viewer updates within 30 seconds</li>
+        <li><strong>Change all prices to a new colour</strong> → Brand Standards → change Price font colour → Save. No publishing needed; every screen picks it up within 30 seconds</li>
+        <li><strong>Update a display remotely</strong> → make changes in the Builder, click Publish — that display's screen updates within 30 seconds</li>
+        <li><strong>Point a new TV at a sign</strong> → Admin Panel → Displays → Copy the screen address → open it on the TV → full-screen</li>
     </ul>
 
     <h3>Troubleshooting</h3>
     <ul>
-        <li><strong>Display hasn't updated</strong> — wait up to 30 seconds; if still not updated, check that Publish succeeded (look for the green toast message)</li>
+        <li><strong>Display hasn't updated</strong> — wait up to 30 seconds; if still not updated, check that Publish succeeded (look for the green toast message), and check you published the display that screen is actually pointed at</li>
+        <li><strong>Screen shows "No display specified" or "Display not found"</strong> — the screen is pointed at the wrong address. Copy the display's screen address from Admin Panel → Displays and re-point it</li>
+        <li><strong>Screen shows "This display is turned off"</strong> — turn it back on in Admin Panel → Displays; nothing was lost</li>
+        <li><strong>The Builder won't let me change anything</strong> — read the bar at the top. A purple bar means somebody else has this display open, so you have it read-only; a red bar means the display has stopped being yours to edit and says which of the five reasons it was. Neither loses your work, but publishing will be refused</li>
+        <li><strong>A display says somebody is editing it and they are not here</strong> — this clears itself. A lock is dropped fifteen minutes after that person's last click, and immediately if their account has been suspended or closed. An admin can also take it over from the Builder without waiting</li>
+        <li><strong>Publish was refused</strong> — either the display changed since you opened it (reload and re-apply your changes, or the message names who published) or somebody else holds it now. Nothing was saved either way, and what is on your screen is still there</li>
+        <li><strong>Wrong display in the Builder</strong> — use <strong>Switch display ⇄</strong> in the nav bar</li>
         <li><strong>Block won't move</strong> — check if the 🔒 lock icon is showing; deselect and re-click the block, then untick Lock in the Inspector</li>
         <li><strong>Image looks stretched</strong> — select the image block, change Image Fit to <em>Cover</em> or <em>Contain</em> in the Inspector</li>
         <li><strong>Shift+click not working</strong> — make sure you click the block itself (not its text inner area); click a block normally first, then Shift+click the next</li>

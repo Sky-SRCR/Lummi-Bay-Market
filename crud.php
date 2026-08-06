@@ -1,10 +1,32 @@
 <?php
+// ============================================================
+// ASSET LIBRARY PAGE
+// ============================================================
+// A thin adapter. Every statement against `assets` lives in lib/assets.php, and
+// the reference counting that decides whether a row is safe to remove lives in
+// lib/layout_store.php, which owns `canvas_elements`. This page asks both and
+// renders the answer — see the header of lib/assets.php for why the question has
+// to be split that way.
+
 require_once 'auth.php';
 require_once 'db_connect.php';
-requireLogin();   // all roles can access; delete is admin-only below
+require_once __DIR__ . '/lib/schema.php';
+require_once __DIR__ . '/lib/displays.php';
+require_once __DIR__ . '/lib/layout_store.php';
+require_once __DIR__ . '/lib/assets.php';
+requireCurrentAccount($pdo);   // all roles can access; delete is admin-only below
 $me = currentUser();
 
+// Signed-in page, so schema convergence is allowed here (invariant 7). This page
+// is the only one that needs `assets.auto_pooled`, and an admin who never opens
+// the admin panel would otherwise be tidying against the label prefix alone.
+ensureSignageSchema($pdo);
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') { verifyCsrf(); }
+
+$library = new AssetLibrary($pdo);
+$signs   = new DisplayStore($pdo);
+$layouts = new LayoutStore($pdo, $signs);
 
 // ---- File upload validation ----
 $allowedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
@@ -82,9 +104,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create'])) {
     }
 
     if (empty($message) && !empty($content)) {
-        $stmt = $pdo->prepare("INSERT INTO assets (type, content, label) VALUES (?, ?, ?)");
-        $stmt->execute([$type, $content, $label]);
-        $message = 'Asset saved successfully.';
+        if ($library->create($type, $content, $label)) {
+            $message = 'Asset saved successfully.';
+        } else {
+            $message  = 'That asset could not be saved. Nothing was changed.';
+            $msgClass = 'error';
+        }
     } elseif (empty($message)) {
         $message  = 'No content provided. Please enter text or choose an image.';
         $msgClass = 'error';
@@ -126,10 +151,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_update'])) {
         $msgClass = 'error';
     }
 
+    // `!empty($content)` guards the write, not just the message: an empty content
+    // field means the form arrived without one, and writing it would blank the row —
+    // which blanks the line on every sign reading from it, with no undo.
+    if (empty($message) && $id > 0 && !empty($content) && !$library->update($id, $label, $content)) {
+        // Reported rather than swallowed. The raw statement this replaced would have
+        // thrown and produced a 500; a module that returns false instead must not
+        // let the page print "Asset updated" over a write that did not happen.
+        $message  = 'That asset could not be updated. Nothing was changed.';
+        $msgClass = 'error';
+    }
+
     if (empty($message) && $id > 0 && !empty($content)) {
-        $stmt = $pdo->prepare("UPDATE assets SET label = ?, content = ? WHERE id = ?");
-        $stmt->execute([$label, $content, $id]);
-        $message = 'Asset updated successfully.';
+        // Editing a library entry changes every sign that draws on it, on the next
+        // 30-second poll, with nobody publishing anything. Advance those Displays'
+        // stamps so a Builder that is open on one is refused rather than quietly
+        // republishing the text that was here a moment ago (ADR-0006).
+        $usage = $layouts->assetUsage($id);
+        foreach ($usage['displays'] as $displayId) {
+            $d = $signs->forId($displayId);
+            if ($d) { $signs->advanceLayoutRevision($d); }
+        }
+
+        $message = $usage['elements']
+            ? 'Asset updated. It is used by ' . $usage['elements'] . ' block'
+              . ($usage['elements'] === 1 ? '' : 's') . ' on ' . count($usage['displays'])
+              . ' display' . (count($usage['displays']) === 1 ? '' : 's')
+              . ', which will show the new content within 30 seconds.'
+            : 'Asset updated successfully.';
     }
     } // end isAdmin check
 }
@@ -144,8 +193,63 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_delete'])) {
     } else {
         $id = intval($_POST['delete_id'] ?? 0);
         if ($id > 0) {
-            $pdo->prepare("DELETE FROM assets WHERE id = ?")->execute([$id]);
-            $message = 'Asset deleted.';
+            // Refused while any Display uses it. `canvas_elements.asset_id` is
+            // ON DELETE SET NULL and a pooled block keeps no copy of its own text,
+            // so deleting a used entry blanked that line on every sign drawing on
+            // it — within 30 seconds, with no warning, and permanently, because the
+            // next publish from either Builder writes the emptiness back.
+            //
+            // Still worded for more than one Display: publishing no longer creates
+            // a row two signs share, but rows it created before that change are
+            // still in this table (lib/assets.php).
+            $usage = $layouts->assetUsage($id);
+            if ($usage['elements'] > 0) {
+                $message  = 'That asset is still in use: ' . $usage['elements'] . ' block'
+                          . ($usage['elements'] === 1 ? '' : 's') . ' on ' . count($usage['displays'])
+                          . ' display' . (count($usage['displays']) === 1 ? '' : 's')
+                          . ' would be left blank. Remove those blocks first, or edit this'
+                          . ' asset instead of deleting it.';
+                $msgClass = 'error';
+            } elseif ($library->delete($id)) {
+                $message = 'Asset deleted.';
+            } else {
+                $message  = 'That asset could not be deleted. Nothing was changed.';
+                $msgClass = 'error';
+            }
+        }
+    }
+}
+
+// ============================================================
+// TIDY UP  (admin only)
+// ============================================================
+// Publishing copies a text block's text into this library and points the block at
+// the copy, so ordinary editing leaves rows behind. A publish clears up after
+// itself for the rows its own Display held; what it cannot reach is a block
+// deleted from the admin Work Area, which releases a reference with no publish
+// anywhere near it. Those collect here until somebody presses this.
+//
+// Only ever pooled rows nothing points at. An image uploaded to the library and
+// not placed on a sign yet is somebody's next job, and AssetLibrary refuses to
+// remove it however this page asks.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_tidy'])) {
+    if (!isAdmin()) {
+        $message  = 'Only admins can tidy the library.';
+        $msgClass = 'error';
+    } else {
+        $referenced = $layouts->referencedAssetIds();
+        if ($referenced === null) {
+            // Could not read the references. Sweeping now would treat every pooled
+            // row as unused and blank the lines that use them, with no undo.
+            $message  = 'The library could not be tidied: the list of blocks using these'
+                      . ' entries could not be read. Nothing was changed.';
+            $msgClass = 'error';
+        } else {
+            $gone = $library->discardPooled($library->pooledNotIn($referenced));
+            $message = $gone
+                ? 'Removed ' . $gone . ' auto-saved entr' . ($gone === 1 ? 'y' : 'ies')
+                  . ' that no sign was using. Nothing on any sign changed.'
+                : 'Nothing to tidy — every auto-saved entry is in use.';
         }
     }
 }
@@ -153,15 +257,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_delete'])) {
 // ============================================================
 // READ
 // ============================================================
-$assets = $pdo->query("SELECT * FROM assets ORDER BY id DESC")->fetchAll();
+$assets = $library->all();
+
+// How many auto-saved entries could be tidied away, for the button's label. Null
+// references mean the question cannot be answered, so the button is not offered.
+$referencedNow = isAdmin() ? $layouts->referencedAssetIds() : [];
+$tidyCount     = ($referencedNow === null) ? null : count($library->pooledNotIn($referencedNow));
 
 // Pre-fill edit form if an edit is requested via GET
-$editAsset = null;
-if (isset($_GET['edit_id'])) {
-    $s = $pdo->prepare("SELECT * FROM assets WHERE id = ?");
-    $s->execute([intval($_GET['edit_id'])]);
-    $editAsset = $s->fetch();
-}
+$editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -243,6 +347,14 @@ if (isset($_GET['edit_id'])) {
         }
         .badge-text  { background: #d6eaf8; color: #1a5276; }
         .badge-image { background: #d5f5e3; color: #1e8449; }
+        .badge-auto  { background: #fdebd0; color: #7e5109; }
+
+        .tidy-bar {
+            background:#fdf6e3; border:1px solid #f5e0a3; border-radius:6px;
+            padding:12px 14px; margin-bottom:16px; font-size:13px; color:#7e5109;
+            display:flex; gap:12px; align-items:center; flex-wrap:wrap;
+        }
+        .tidy-bar p { margin:0; flex:1; min-width:220px; }
 
         .action-row { display: flex; gap: 6px; }
 
@@ -289,6 +401,13 @@ if (isset($_GET['edit_id'])) {
             <div class="form-group">
                 <label>Label</label>
                 <input type="text" name="edit_label" value="<?= htmlspecialchars($editAsset['label'] ?? '') ?>" placeholder="e.g. Summer Promo Banner">
+                <?php if (!empty($editAsset['auto_pooled'])): ?>
+                <small style="display:block; margin-top:4px; color:#7e5109; font-size:11px;">
+                    This was saved automatically when a sign was published. Saving it here
+                    makes it yours — it will keep whatever name you give it and will never
+                    be tidied away.
+                </small>
+                <?php endif; ?>
             </div>
 
             <?php if ($editAsset['type'] === 'text'): ?>
@@ -334,6 +453,11 @@ if (isset($_GET['edit_id'])) {
             <div class="form-group">
                 <label>Label <span style="font-weight:normal; color:#888;">(so you can find it later)</span></label>
                 <input type="text" name="label" placeholder="e.g. Summer Promo Headline">
+                <small style="display:block; margin-top:4px; color:#7f8c8d; font-size:11px;">
+                    Anything you save here is kept until you delete it, even if no sign uses it.
+                    Avoid starting the name with &ldquo;Auto:&rdquo; — that is how the app marks its
+                    own copies, which the tidy-up can remove.
+                </small>
             </div>
 
             <div id="text-fields" class="form-group">
@@ -361,6 +485,28 @@ if (isset($_GET['edit_id'])) {
     <!-- ======================= ASSET TABLE ======================= -->
     <div class="table-panel">
         <h2>All Saved Assets (<?= count($assets) ?>)</h2>
+
+        <?php if (isAdmin() && $tidyCount === null): ?>
+        <div class="tidy-bar">
+            <p><strong>Cannot check for unused entries.</strong> The list of blocks
+               using these entries could not be read, so nothing here can be tidied
+               safely. Everything below still works as normal.</p>
+        </div>
+        <?php elseif (isAdmin() && $tidyCount > 0): ?>
+        <div class="tidy-bar">
+            <p><strong><?= intval($tidyCount) ?></strong>
+               auto-saved entr<?= $tidyCount === 1 ? 'y is' : 'ies are' ?> no longer used by any
+               sign. These are copies publishing made of text you edited, left behind when you
+               published again. Removing them changes nothing on any sign.</p>
+            <form method="POST" action="crud.php"
+                  onsubmit="return confirm('Remove <?= intval($tidyCount) ?> unused auto-saved entr<?= $tidyCount === 1 ? 'y' : 'ies' ?>? Nothing on any sign will change.')">
+                <input type="hidden" name="action_tidy" value="1">
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+                <button type="submit" class="btn btn-blue" style="font-size:13px; padding:8px 14px;">Tidy up</button>
+            </form>
+        </div>
+        <?php endif; ?>
+
         <?php if (empty($assets)): ?>
             <div class="empty-state">No assets saved yet. Add one using the form on the left.</div>
         <?php else: ?>
@@ -383,6 +529,10 @@ if (isset($_GET['edit_id'])) {
                         <span class="badge <?= $row['type'] === 'image' ? 'badge-image' : 'badge-text' ?>">
                             <?= htmlspecialchars($row['type']) ?>
                         </span>
+                        <?php if (!empty($row['auto_pooled'])): ?>
+                        <span class="badge badge-auto"
+                              title="Saved automatically when a sign was published. Renaming it makes it yours, and it will never be tidied away.">auto</span>
+                        <?php endif; ?>
                     </td>
                     <td>
                         <?php if ($row['type'] === 'image'): ?>

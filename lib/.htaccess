@@ -1,0 +1,10 @@
+# Modules — included by the page scripts, never requested by a browser.
+# Nothing here prints output, but a directly reachable PHP file is surface we
+# don't need. Both syntaxes so this holds on Apache 2.2 and 2.4.
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>

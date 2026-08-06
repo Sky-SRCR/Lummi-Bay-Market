@@ -1,8 +1,88 @@
-<!DOCTYPE html>
+<?php
+// ============================================================
+// VIEWER — the public page a Screen shows
+// ============================================================
+// A thin adapter: it resolves which Display this URL names, sizes the canvas from
+// that Display's record, and renders. Every `displays` statement lives in
+// lib/displays.php; the notice wording lives in lib/display_request.php. See
+// docs/BUILD-REFERENCE.md.
+//
+// Public and login-free by design, so any Screen on the network can show a sign.
+// Deliberately does NOT include auth.php: no session is started here.
+//
+// Runs no DDL — this page is polled every 30s by every Screen forever
+// (BUILD-REFERENCE §2 invariant 7). DisplayStore self-heals only if the schema is
+// genuinely absent, and then at most once every five minutes across the whole
+// installation, however many Screens are asking (see repairSchemaAfterFailure()).
+
+// Declared before the database is opened, because a database that will not open is
+// the failure this matters most for. A Screen has nobody in front of it: whatever
+// goes wrong here has to become the same dark kiosk notice the rest of this file
+// draws, re-checking every 30 seconds, and never a PHP error naming server paths
+// on a board customers are reading. See lib/error_policy.php.
+require_once __DIR__ . '/lib/error_policy.php';
+ErrorPolicy::install(ErrorPolicy::SCREEN);
+
+require_once __DIR__ . '/db_connect.php';
+require_once __DIR__ . '/lib/displays.php';
+require_once __DIR__ . '/lib/display_request.php';
+
+$resolution = DisplayRequest::forViewing(new DisplayStore($pdo), $_GET);
+$display    = $resolution->display();
+
+// A Display this URL does not name, or one that is turned off, is a notice — never
+// another Display's layout (ADR-0003).
+//
+// The notice re-checks every 30 seconds, matching the poll cadence, because two of
+// the three reasons for it do go away: a Display that was turned off gets turned
+// back on, and one that was renamed gets its tag corrected. Without this, a Screen
+// that happened to boot during either — a TV powered on before opening while the
+// sign was still retired — sat on the notice until somebody walked over and reloaded
+// the browser, while the admin panel had already promised the screen would update
+// within 30 seconds. A meta refresh rather than script, so it works on the least
+// capable kiosk browser.
+if (!$resolution->isFound()) {
+    $notice = $resolution->message();
+    ?><!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Display</title>
+<meta http-equiv="refresh" content="30">
+<title><?= htmlspecialchars($display ? $display->title() : 'Display') ?></title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+        width: 100%; height: 100%;
+        overflow: hidden;
+        background: #111;
+        overscroll-behavior: none;
+        touch-action: none;
+    }
+    body { display: flex; align-items: center; justify-content: center; }
+    .notice {
+        font-family: Arial, Helvetica, sans-serif;
+        color: #8a8a8a;
+        font-size: 2.2vw;
+        letter-spacing: 0.04em;
+        text-align: center;
+        padding: 0 6vw;
+    }
+</style>
+</head>
+<body>
+<p class="notice"><?= htmlspecialchars($notice) ?></p>
+</body>
+</html><?php
+    exit;
+}
+
+$canvasW = $display->canvasWidth();
+$canvasH = $display->canvasHeight();
+?><!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title><?= htmlspecialchars($display->title()) ?></title>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     /* Kiosk / embedded display: never scroll in either direction. Lock the
@@ -26,15 +106,32 @@
         -ms-touch-action: none;
     }
 
-    /* 1920×1080 design canvas – scaled to fill any screen via JS */
+    /* The Display's canvas, at the dimensions fixed when it was created
+       (ADR-0004) — scaled to fill any Screen via JS. */
     #viewer-canvas {
-        width: 1920px; height: 1080px;
+        width: <?= $canvasW ?>px; height: <?= $canvasH ?>px;
         position: absolute; top: 0; left: 0;
         transform-origin: top left;
         overflow: hidden;
         background-color: #1a1a2e;
         background-size: cover;
         background-position: center;
+    }
+
+    /* Shown if the Display is turned off while a Screen is running. */
+    #viewer-notice {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: #111;
+        align-items: center;
+        justify-content: center;
+        font-family: Arial, Helvetica, sans-serif;
+        color: #8a8a8a;
+        font-size: 2.2vw;
+        letter-spacing: 0.04em;
+        text-align: center;
+        padding: 0 6vw;
     }
 
     /* Sections */
@@ -142,16 +239,24 @@
 </head>
 <body>
 <div id="viewer-canvas"></div>
+<div id="viewer-notice"></div>
 <script>
-    // Scale 1920×1080 canvas to fill the actual screen
+    // This Display's canvas, fixed at creation (ADR-0004).
+    var CANVAS_W = <?= $canvasW ?>;
+    var CANVAS_H = <?= $canvasH ?>;
+    // The screen name tag this Screen was pointed at. Every poll names it.
+    var DISPLAY_TAG = <?= json_encode($display->tag()) ?>;
+
+    // Scale the canvas to fill the actual Screen. Letterboxed on a shape
+    // mismatch — min() preserves proportions rather than distorting prices.
     function scaleToFit() {
         var c  = document.getElementById('viewer-canvas');
-        var sx = window.innerWidth  / 1920;
-        var sy = window.innerHeight / 1080;
+        var sx = window.innerWidth  / CANVAS_W;
+        var sy = window.innerHeight / CANVAS_H;
         var s  = Math.min(sx, sy);
         c.style.transform  = 'scale(' + s + ')';
-        c.style.marginLeft = ((window.innerWidth  - 1920 * s) / 2) + 'px';
-        c.style.marginTop  = ((window.innerHeight - 1080 * s) / 2) + 'px';
+        c.style.marginLeft = ((window.innerWidth  - CANVAS_W * s) / 2) + 'px';
+        c.style.marginTop  = ((window.innerHeight - CANVAS_H * s) / 2) + 'px';
     }
     window.addEventListener('resize', scaleToFit);
     scaleToFit();
@@ -171,32 +276,62 @@
         _marqueeStops = [];
     }
 
+    // A Display turned off (or deleted) while this Screen is running: show the
+    // notice instead of the last layout, within one poll.
+    function showNotice(message) {
+        stopAnimations();
+        var canvas = document.getElementById('viewer-canvas');
+        var notice = document.getElementById('viewer-notice');
+        canvas.innerHTML  = '';
+        canvas.style.display = 'none';
+        notice.textContent   = message || 'No display specified';
+        notice.style.display = 'flex';
+        _layoutHash = '';   // re-render from scratch if it comes back
+    }
+
+    function hideNotice() {
+        document.getElementById('viewer-notice').style.display = 'none';
+        document.getElementById('viewer-canvas').style.display = '';
+    }
+
     function loadLayout() {
         if (_loading) return;
         _loading = true;
-        fetch('api.php?action=get_layout')
+        // A request that never settles must not freeze the sign for good. _loading
+        // is only cleared in .then/.catch, and fetch has no timeout of its own, so
+        // one wedged request (captive portal, stalled worker, a query blocked on a
+        // lock) would silently end all further polling.
+        var _watchdog = setTimeout(function() { _loading = false; }, 20000);
+        fetch('api.php?action=get_layout&display=' + encodeURIComponent(DISPLAY_TAG))
             .then(function(r) { return r.json(); })
             .then(function(data) {
+                clearTimeout(_watchdog);
                 _loading = false;
+
+                if (!data || data.status !== 'success') {
+                    showNotice(data && data.message);
+                    return;
+                }
+
                 var hash = JSON.stringify(data);
                 if (hash === _layoutHash) return; // nothing changed — leave videos running
-                _layoutHash = hash;
 
                 stopAnimations();
+                hideNotice();
 
                 var canvas = document.getElementById('viewer-canvas');
                 canvas.innerHTML = '';
 
-                var settings    = data.settings    || {};
+                var display     = data.display     || {};
                 var elements    = data.elements    || [];
                 var blockStyles = data.block_styles || {};
 
-                // Background
-                if (settings.bg_type === 'color') {
-                    canvas.style.backgroundColor = settings.bg_val || '#1a1a2e';
+                // Background — the Display owns it (canvas_settings is retired)
+                if (display.bg_type === 'color') {
+                    canvas.style.backgroundColor = display.bg_val || '#1a1a2e';
                     canvas.style.backgroundImage = 'none';
                 } else {
-                    canvas.style.backgroundImage = "url('" + settings.bg_val + "')";
+                    canvas.style.backgroundImage = "url('" + display.bg_val + "')";
                     canvas.style.backgroundColor = '#111';
                 }
 
@@ -243,6 +378,14 @@
                         && !parseInt(e.hidden)
                         && !hiddenSections.has(parseInt(e.section_id));
                 }).forEach(function(el) {
+                  // One element must never take the sign down. An element's stored
+                  // content is deliberately unvalidated for the non-text types
+                  // (invariant 6), so a table whose `rows` is not an array — from a
+                  // hand edit, an older Builder, or a crafted publish — used to throw
+                  // mid-render, after the canvas had already been emptied. Skipping
+                  // the bad block leaves the rest of the sign up, which is what a
+                  // customer-facing board needs.
+                  try {
                     var parent = el.section_id ? sectionMap[el.section_id] : canvas;
                     if (!parent) return;
 
@@ -327,10 +470,22 @@
                     }
 
                     parent.appendChild(block);
+                  } catch (e) {
+                    // Skip this element. The block is appended last, so a throw
+                    // part-way through leaves nothing half-drawn on the canvas.
+                  }
                 });
+
+                // Latched only now, and only on a render that finished. Latching it
+                // before the canvas was rebuilt meant a render that threw left the
+                // sign blank *and* every later poll comparing equal — so the sign
+                // stayed blank until somebody walked over and reloaded the browser.
+                _layoutHash = hash;
             })
             .catch(function() {
-                _loading = false; // allow retry on next interval
+                clearTimeout(_watchdog);
+                _loading = false;   // allow retry on next interval
+                _layoutHash = '';   // and re-render from scratch when it comes back
             });
     }
 

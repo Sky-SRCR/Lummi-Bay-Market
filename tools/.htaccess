@@ -1,0 +1,10 @@
+# Command-line tools. rehearse_phase1.php writes to a database — it must never
+# be reachable by URL. The scripts also refuse to run outside the CLI, but the
+# server should not be the only thing standing between them and a browser.
+<IfModule !mod_authz_core.c>
+    Order allow,deny
+    Deny from all
+</IfModule>
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>

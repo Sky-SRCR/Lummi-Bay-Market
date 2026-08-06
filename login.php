@@ -35,13 +35,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($username === '' || $password === '') {
         $error = 'Please enter both your username and password.';
     } else {
-        $stmt = $pdo->prepare(
-            "SELECT id, username, password_hash, role, is_active,
-                    failed_attempts, last_failed_at, locked_until
-             FROM users WHERE username = ? LIMIT 1"
-        );
-        $stmt->execute([$username]);
-        $user = $stmt->fetch();
+        // ensureLockoutColumns() above swallows its failures by design, so this
+        // read cannot assume the three columns exist. If the ALTER could not apply
+        // — a database user without ALTER, a hosting restriction, a full disk —
+        // the unguarded version raised "unknown column" with nothing catching it,
+        // and nobody could sign in at all, on any account, with no message and
+        // nothing in a log. Signing in without the brute-force counters is worse
+        // than the alternative of nobody signing in at all, so fall back and carry
+        // on: clearLockout()/registerFailedLogin() swallow their own failures the
+        // same way.
+        try {
+            $stmt = $pdo->prepare(
+                "SELECT id, username, password_hash, role, is_active,
+                        failed_attempts, last_failed_at, locked_until
+                 FROM users WHERE username = ? LIMIT 1"
+            );
+            $stmt->execute([$username]);
+            $user = $stmt->fetch();
+        } catch (Throwable $e) {
+            $stmt = $pdo->prepare(
+                "SELECT id, username, password_hash, role, is_active
+                 FROM users WHERE username = ? LIMIT 1"
+            );
+            $stmt->execute([$username]);
+            $user = $stmt->fetch();
+            if ($user) {
+                $user['failed_attempts'] = 0;
+                $user['last_failed_at']  = null;
+                $user['locked_until']    = null;
+            }
+        }
         $now  = time();
 
         if ($user && $user['locked_until'] !== null && strtotime($user['locked_until']) > $now) {
@@ -72,6 +95,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     )->execute([$attempts, date('Y-m-d H:i:s', $now), $user['id']]);
                 }
             }
+        } elseif (accountIsClosed($pdo, (int)$user['id'])) {
+            // Checked before the deactivated branch because closing also clears
+            // is_active — without this, someone whose account was retired would be
+            // told to contact a manager about getting it switched back on, which is
+            // not a thing that can happen (lib/accounts.php).
+            $error = 'This account has been closed and cannot be used again. '
+                   . 'If you still work here, ask an admin to set you up a new one.';
         } elseif (!$user['is_active']) {
             $error = 'Your account has been deactivated. Please contact your manager.';
         } else {

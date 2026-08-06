@@ -18,7 +18,7 @@ editor, next to the admin's CSRF token, enabling account takeover.
 
 Treat text-block content as **plain text everywhere**. Render it with
 `textContent` (viewer and builder) so stored text can never execute, and strip
-any markup server-side when it is saved (`api.php` publish and `crud.php`
+any markup server-side when it is saved (the publish path in `lib/layout_store.php` and `crud.php`
 assets) via `toPlainText()`. Author line breaks are preserved with
 `white-space: pre-wrap`. The inline rich-text formatting toolbar
 (bold/italic/underline/strike) was removed, since that formatting could no

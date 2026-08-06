@@ -19,6 +19,13 @@
 // folder (i.e. above public_html / www).
 // ============================================================
 
+// Every entry point includes this file, which makes it the one place that can put
+// the error policy in front of all of them. An entry point that has already
+// declared what kind of page it is — viewer.php, api.php — keeps its declaration;
+// everything else gets the default. See lib/error_policy.php.
+require_once __DIR__ . '/lib/error_policy.php';
+ErrorPolicy::installDefault();
+
 $credentialsFile = dirname(__DIR__, 2) . '/private/db_credentials.php';
 
 
@@ -33,6 +40,16 @@ if (file_exists($credentialsFile)) {
     define('DB_PASS', 'your_database_password');
 }
 
+// The alert channel is armed before the connection is attempted, because the
+// connection failing is the first thing worth alerting about. It needs no database
+// of its own: its recipients were cached to disk the last time an admin opened the
+// admin panel, which is the only way an alert can go out when the database is the
+// thing that is down.
+ErrorPolicy::useAlerts(new AlertMailer(
+    ErrorPolicy::stateDir(),
+    defined('SITE_NAME') ? SITE_NAME : ''
+));
+
 try {
     $pdo = new PDO(
         "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=utf8mb4",
@@ -45,7 +62,14 @@ try {
         ]
     );
 } catch (PDOException $e) {
-    http_response_code(500);
-    die("Database connection failed. Please contact your system administrator.");
+    // This used to print "Database connection failed. Please contact your system
+    // administrator." — as black text on a white page, on a TV, in the shop. The
+    // policy decides what each kind of caller is told and, for a Screen, puts a
+    // notice up that re-checks every 30 seconds so the sign comes back on its own.
+    ErrorPolicy::fail(
+        'database-unreachable',
+        'Could not connect to the database: ' . $e->getMessage(),
+        'Database unreachable'
+    );
 }
 ?>

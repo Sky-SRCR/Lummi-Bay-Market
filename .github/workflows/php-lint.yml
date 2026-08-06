@@ -1,0 +1,37 @@
+name: PHP lint and self-test
+
+# There is no CI or deploy pipeline for this app — every change reaches the sign
+# by hand. This is the cheap insurance: a syntax error in a file that only runs
+# on the live server is caught here instead of on the sign, and the layout
+# self-test guards the publish path, which can empty every Display at once.
+#
+# `php -l` cannot see the inline JavaScript that most of builder.php is made of.
+# Changes to that file still need reading.
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: pdo, pdo_sqlite
+
+      - name: Lint every PHP file
+        run: |
+          status=0
+          while IFS= read -r -d '' file; do
+            php -l "$file" > /dev/null || { php -l "$file"; status=1; }
+          done < <(find . -name '*.php' -not -path './vendor/*' -print0)
+          exit $status
+
+      - name: Layout self-test
+        run: php tools/selftest_layout.php

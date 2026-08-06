@@ -1,9 +1,170 @@
 <?php
 require_once 'auth.php';
 require_once 'db_connect.php';
-requireLogin();
+require_once __DIR__ . '/lib/schema.php';
+require_once __DIR__ . '/lib/displays.php';
+require_once __DIR__ . '/lib/grants.php';
+require_once __DIR__ . '/lib/display_request.php';
+require_once __DIR__ . '/lib/upload_limits.php';
+requireCurrentAccount($pdo);
 $me      = currentUser();
 $isAdmin = isAdmin();
+
+// Which Display is being edited, and at what canvas size. Authenticated, so schema
+// convergence is safe here (BUILD-REFERENCE §2 invariant 7).
+ensureSignageSchema($pdo);
+
+$displayStore = new DisplayStore($pdo);
+// Who is asking, and which Displays they hold (ADR-0005). The same object decides
+// what this page may open and what the picker below offers, so the two cannot
+// disagree about what belongs to this account.
+$actor      = Actor::signedIn($me, new GrantStore($pdo));
+$resolution = DisplayRequest::forEditing($displayStore, $_GET, $actor);
+
+// One Display to work on and no tag goes straight in. Beyond that, a `basic`
+// account returns to whatever it was last editing rather than being asked again —
+// the roadmap's Builder entry decision. It is remembered for the session only, and
+// it lives here rather than in lib/ because nothing in lib/ touches $_SESSION.
+// Admins are asked every time: they hold every Display, and choosing is the point.
+// `?switch=1` is how the top bar's Switch display link asks for the picker anyway.
+if (!$resolution->isFound() && $resolution->kind() === DisplayResolution::NO_TAG
+    && !$isAdmin && empty($_GET['switch']) && !empty($_SESSION['last_display'])) {
+    $again = DisplayRequest::forEditing($displayStore, ['display' => $_SESSION['last_display']], $actor);
+    // Silently ignored if that Display was deleted, retired, or is no longer
+    // granted — a remembered choice must never override a refusal.
+    if ($again->isFound()) { $resolution = $again; }
+}
+
+// Anything that names no Display, names one that does not exist, or names one this
+// account may not open lands here and picks from what is actually theirs.
+if (!$resolution->isFound()) {
+    $notice  = '';
+    if ($resolution->kind() === DisplayResolution::UNKNOWN) {
+        $notice = 'That display does not exist. It may have been deleted, or its screen name tag renamed.';
+    } elseif ($resolution->kind() === DisplayResolution::INACTIVE) {
+        // Only a basic account lands here: a retired Display opens normally for an
+        // admin, banner and all.
+        $notice = 'That display is turned off, so it is not yours to edit while it is out of service. '
+                . 'An admin can turn it back on.';
+    } elseif ($resolution->kind() === DisplayResolution::FORBIDDEN
+           || $resolution->kind() === DisplayResolution::MISMATCH) {
+        $notice = $resolution->message();
+    }
+
+    // Only what this account may open — a Display it has not been granted is not
+    // offered, and neither is a retired one it could not work on anyway (ADR-0005).
+    $allDisplays = $displayStore->all();
+    $choices     = $actor->openable($allDisplays);
+    // Theirs by grant, turned off ones included: the difference between these two
+    // is what tells "you have not been given a sign yet" from "your sign is off".
+    $theirs      = $actor->granted($allDisplays);
+    ?><!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Choose a display — Builder</title>
+<style>
+* { box-sizing:border-box; margin:0; padding:0;
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
+body { background:#2c3e50; color:#fff; min-height:100vh; padding:40px 20px; }
+.wrap { max-width:640px; margin:0 auto; }
+h1 { font-size:19px; margin-bottom:6px; }
+.sub { font-size:13px; color:#bdc3c7; margin-bottom:22px; line-height:1.6; }
+.notice { background:#5d3a3a; border:1px solid #8c5252; border-radius:5px; padding:10px 14px;
+          font-size:13px; margin-bottom:18px; }
+a.pick { display:block; background:#34495e; border:1px solid #415b76; border-radius:6px;
+         padding:13px 16px; margin-bottom:9px; text-decoration:none; color:#fff; }
+a.pick:hover { background:#3d566e; }
+.pick .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.pick .title { font-size:15px; font-weight:600; }
+.pick .tag { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:12px; background:#2c3e50;
+             border:1px solid #4a6480; border-radius:3px; padding:1px 7px; color:#aed6f1; }
+.pick .off { font-size:11px; font-weight:700; background:#7b3f3f; border-radius:9px; padding:1px 8px; }
+.pick .facts { font-size:12px; color:#bdc3c7; margin-top:5px; }
+.foot { margin-top:24px; font-size:13px; }
+.foot a { color:#aed6f1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <?php if ($notice !== ''): ?><div class="notice"><?= htmlspecialchars($notice) ?></div><?php endif; ?>
+
+  <?php if ($choices): ?>
+    <h1>Which display do you want to edit?</h1>
+    <p class="sub">Each one is a separate sign with its own layout. Publishing sends only the
+       display you are in to its screen.<?= $isAdmin
+         ? ' As an admin you hold all of them.'
+         : ' These are the displays assigned to you.' ?></p>
+    <?php foreach ($choices as $d): ?>
+      <a class="pick" href="builder.php?display=<?= urlencode($d->tag()) ?>">
+        <span class="row">
+          <span class="title"><?= htmlspecialchars($d->title()) ?></span>
+          <span class="tag"><?= htmlspecialchars($d->tag()) ?></span>
+          <?php if (!$d->isActive()): ?><span class="off">TURNED OFF</span><?php endif; ?>
+        </span>
+        <span class="facts"><?= $d->dimensionsLabel() ?> <?= $d->orientation() ?><?php
+          if ($d->location() !== '') { echo ' · ' . htmlspecialchars($d->location()); } ?></span>
+      </a>
+    <?php endforeach; ?>
+  <?php elseif (!$allDisplays): ?>
+    <h1>There are no displays yet</h1>
+    <p class="sub">A display is one sign: its screen name tag, its canvas size and its layout.
+       <?= $isAdmin ? 'Add the first one in the Admin Panel, under Displays.'
+                    : 'Ask an admin to add one, and to give you access to it.' ?></p>
+  <?php elseif (!$theirs): ?>
+    <h1>No displays have been assigned to you yet</h1>
+    <p class="sub">Editing a sign is given out one display at a time, so that nobody changes a
+       screen they were not asked to. Ask an admin which display is yours — they assign it in the
+       Admin Panel, under Displays.</p>
+  <?php else: ?>
+    <h1>Nothing to edit right now</h1>
+    <p class="sub">Every display assigned to you is turned off. A display that is out of service is
+       not editable by a basic account — ask an admin to turn one back on.</p>
+  <?php endif; ?>
+
+  <p class="foot">
+    <?php if ($isAdmin): ?><a href="admin_panel.php?tab=displays">Manage displays</a> &nbsp;·&nbsp; <?php endif; ?>
+    <a href="crud.php">Asset Library</a> &nbsp;·&nbsp;
+    <a href="logout.php">Sign Out</a>
+  </p>
+</div>
+</body>
+</html><?php
+    exit;
+}
+
+$display = $resolution->display();
+$canvasW = $display->canvasWidth();
+$canvasH = $display->canvasHeight();
+
+// The edit lock (ADR-0007). Claimed here, on the request that opens the Display,
+// because the answer decides how this page is *built*: an account that cannot have
+// the lock gets a Builder with no editing controls in the HTML at all, rather than a
+// whole editor that script disables afterwards. Read-only is therefore a mode of
+// this page rather than a state to keep in sync, and it never changes while the page
+// is open.
+//
+// It is a GET that writes, which is normally worth avoiding. The alternative is to
+// render the editor and let script claim a moment later — which means either a
+// flicker or, worse, somebody starting to drag a block that is about to turn
+// read-only. Claiming during the render is also what makes two people opening the
+// same sign in the same second resolve to one holder. What a crafted link could
+// achieve is making this account hold a Display it may already edit, for at most one
+// idle window; see BUILD-REFERENCE §4e.
+$claimed = $displayStore->claimLock($display, $me['id']);
+if ($claimed) { $display = $claimed; }
+
+$lock     = $display->lockState();
+$readOnly = $lock->heldByOther($me['id']);
+// "Someone else" rather than an empty name: the account could have been deleted
+// between taking the lock and this page load.
+$lockHolder = $lock->holderName() !== '' ? $lock->holderName() : 'Someone else';
+
+// Where a `basic` account comes back to next time it opens the Builder without
+// naming a display. Read only by the entry rule above.
+$_SESSION['last_display'] = $display->tag();
+
+// There is somewhere to switch to only if this account may open a second Display —
+// offering the choice to someone holding one grant would be a link to a dead end.
+$switchable = count($actor->openable($displayStore->all()));
 
 // Load store branding (defaults if config not yet set)
 if (!defined('BRAND_NAV_BG') && file_exists(__DIR__ . '/branding_config.php')) {
@@ -42,6 +203,50 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
             text-transform: uppercase; }
 .btn.publish-btn { background: <?= htmlspecialchars(BRAND_ACCENT) ?>; }
 
+/* Which sign am I editing? Never left to be inferred from the canvas shape. */
+#top-nav .display-badge { margin-left: 18px; display: flex; align-items: center; gap: 7px;
+                          font-size: 12px; white-space: nowrap; }
+#top-nav .display-badge .d-title { font-weight: 600; color: #fff; }
+#top-nav .display-badge .d-tag { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 11px;
+                                 background: #2c3e50; border: 1px solid #4a6480; border-radius: 3px;
+                                 padding: 1px 6px; color: #aed6f1; }
+#top-nav .display-badge .d-dims { color: #8fa6bb; font-size: 11px; }
+#top-nav .display-badge .d-off { background: #c0392b; color: #fff; font-size: 10px; font-weight: bold;
+                                 padding: 1px 6px; border-radius: 8px; text-transform: uppercase; }
+
+/* Editing a retired Display is allowed on purpose — but never by accident. */
+#display-off-banner {
+    display: none; background: #7b3f3f; color: #fff; font-size: 13px; padding: 8px 14px;
+    flex-shrink: 0; border-bottom: 1px solid #9b5252;
+}
+
+/* Somebody else is editing this Display (ADR-0007). One editor at a time, so this
+   page is read-only — and the bar has to be the first thing read, because every
+   control that would have changed something is simply not on the page. */
+#lock-banner {
+    background: #4b3869; color: #fff; font-size: 13px; padding: 9px 14px; flex-shrink: 0;
+    border-bottom: 1px solid #6b5291; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+#lock-banner .who { font-weight: 700; }
+#lock-banner .btn { padding: 4px 10px; }
+
+/* The holder's own bars: idle warning, lapsed, lost-to-somebody-else, and access
+   taken away. Each is an offer or a fact, never a modal — interrupting an editor is
+   the thing the idle window exists to avoid. */
+#lock-idle-bar, #lock-lapsed-bar, #lock-lost-bar, #lock-access-bar {
+    display: none; font-size: 13px; padding: 8px 14px; flex-shrink: 0;
+    align-items: center; gap: 10px; flex-wrap: wrap;
+}
+#lock-idle-bar   { background: #7d6608; border-bottom: 1px solid #9e8109; }
+#lock-lapsed-bar { background: #4b3869; border-bottom: 1px solid #6b5291; }
+#lock-lost-bar   { background: #7b3f3f; border-bottom: 1px solid #9b5252; }
+/* Not the lock: the reach. Whatever this bar says, nothing on this page works again
+   until somebody does something about it — so it is the one bar that never turns off
+   by itself. Its sentence depends on which way the display stopped being this page's
+   to edit; see LOCK_TERMINAL. */
+#lock-access-bar { background: #7b3f3f; border-bottom: 1px solid #9b5252; }
+#lock-idle-bar .btn { padding: 4px 10px; }
+
 /* ── Control bar ── */
 #control-bar {
     background: #1a252f; padding: 8px 14px; display: flex; gap: 8px;
@@ -79,10 +284,14 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #editor-frame { flex: 1; overflow: auto; padding: 40px; display: flex;
                 justify-content: flex-start; align-items: flex-start; user-select: none; }
 
+/* This Display's canvas, at the dimensions fixed when it was created (ADR-0004).
+   Scaled by the zoom control — transform-origin keeps the top-left anchored so
+   scroll position and pointer maths stay predictable. */
 #builder-canvas {
-    width: 1920px; height: 1080px; background: #fff; position: relative;
+    width: <?= $canvasW ?>px; height: <?= $canvasH ?>px; background: #fff; position: relative;
     flex-shrink: 0; box-shadow: 0 10px 30px rgba(0,0,0,.5);
     background-size: cover; background-position: center;
+    transform-origin: top left;
 }
 
 /* ── Blocks ── */
@@ -307,6 +516,21 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     box-shadow: 0 4px 12px rgba(0,0,0,.3);
 }
 #toast.err { background: #e74c3c; }
+
+/* ── Upload progress ──
+   Not a toast: a toast fades, and the whole defect being fixed here is that a
+   failed upload was indistinguishable from one still running. This stays on
+   screen for as long as the upload does, and is removed by the code that knows
+   the upload ended — one way or the other. */
+#upload-status {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #2c3e50; color: #fff; padding: 10px 18px; border-radius: 4px;
+    font-size: 13px; display: none; z-index: 10000; min-width: 260px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.4);
+}
+#upload-status .up-label { font-weight: bold; margin-bottom: 6px; }
+#upload-status .up-track { background: #1a252f; border-radius: 3px; height: 6px; overflow: hidden; }
+#upload-status .up-fill  { background: #3498db; height: 100%; width: 0; transition: width .15s linear; }
 </style>
 </head>
 <body>
@@ -322,19 +546,78 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <?= htmlspecialchars($me['username']) ?>
         <span class="role-tag"><?= $isAdmin ? 'ADMIN' : 'USER' ?></span>
     </span>
+    <span class="display-badge" title="The display you are editing. Publishing sends only this one to its screen.">
+        <span class="d-title"><?= htmlspecialchars($display->title()) ?></span>
+        <span class="d-tag"><?= htmlspecialchars($display->tag()) ?></span>
+        <span class="d-dims"><?= $display->dimensionsLabel() ?></span>
+        <?php if (!$display->isActive()): ?><span class="d-off">off</span><?php endif; ?>
+    </span>
+    <?php if ($switchable > 1): ?>
+        <a href="builder.php?switch=1" title="Edit a different display">Switch display ⇄</a>
+    <?php endif; ?>
     <span class="nav-spacer"></span>
     <a href="crud.php">Asset Library</a>
     <?php if ($isAdmin): ?>
     <a href="admin_panel.php">Admin Panel</a>
     <?php endif; ?>
     <a href="help.php" target="_blank">Help</a>
-    <a href="viewer.php" target="_blank">View Display ↗</a>
+    <a href="viewer.php?display=<?= urlencode($display->tag()) ?>" target="_blank">View Display ↗</a>
     <a href="logout.php">Sign Out</a>
+</div>
+
+<!-- ── Edit lock (ADR-0007) ── -->
+<?php if ($readOnly): ?>
+<div id="lock-banner">
+    <span>
+        <span class="who"><?= htmlspecialchars($lockHolder) ?></span> is editing this display<?php
+            if ($lock->takenAtLabel() !== ''): ?> (since <?= htmlspecialchars($lock->takenAtLabel()) ?>)<?php
+            endif; ?>. You are looking at it read-only — one person edits a display at a time, so
+        nothing here can be moved, changed or published. It frees up on its own
+        <?= intval(LockState::IDLE_LAPSE_SECONDS / 60) ?> minutes after they stop working.
+        <span id="lock-free-hint" style="display:none;"><strong>It is free now</strong> —
+            <a href="builder.php?display=<?= urlencode($display->tag()) ?>" style="color:#d6c9f5;">reload to edit it</a>.</span>
+    </span>
+    <?php if ($isAdmin): ?>
+        <button class="btn danger" onclick="takeOverEditing()"
+                title="Take the edit lock from <?= htmlspecialchars($lockHolder) ?>">Take over editing</button>
+    <?php endif; ?>
+</div>
+<?php else: ?>
+<!-- Filled in by script from the idle age it is already tracking. Written out as
+     markup rather than built in JavaScript so the wording is reviewable and no
+     holder's name is ever assembled into HTML. -->
+<div id="lock-idle-bar">
+    <span><strong>Still working?</strong> Nothing has been touched here for a while, so this display
+        will be released for other people to edit in about <span id="lock-idle-mins">2</span> minutes.</span>
+    <button class="btn green" onclick="keepEditing()">Keep editing</button>
+</div>
+<div id="lock-lapsed-bar">
+    <span><strong>The edit lock was released</strong> after
+        <?= intval(LockState::IDLE_LAPSE_SECONDS / 60) ?> minutes with nothing happening, so somebody
+        else can take this display. Carry on — changing anything takes it straight back, unless
+        somebody has started in the meantime.</span>
+</div>
+<div id="lock-lost-bar">
+    <span><strong><span id="lock-lost-who">Someone else</span> is editing this display now.</strong>
+        Everything you have done is still on screen, but publishing is refused while they have it.
+        Publish once they are finished, or reload to start again from what is on the screen.</span>
+</div>
+<?php endif; ?>
+<!-- Outside the read-only branch on purpose: access can be taken away from somebody
+     who was editing *and* from somebody who was only looking, and both need telling.
+     An admin revoking a grant frees the edit lock in the same write, so this page has
+     already stopped holding the display by the time it reads this — and if it said
+     nothing, the person would carry on working and find out at the publish. -->
+<div id="lock-access-bar">
+    <span id="lock-access-text"><strong>Your access to this display has been removed.</strong>
+        An admin has taken it off your list, so nothing here can be published any more and the
+        display has been released for somebody else. What you have done is still on this screen —
+        copy anything you need before you leave the page. Ask an admin if this was not expected.</span>
 </div>
 
 <!-- ── Control bar ── -->
 <div id="control-bar">
-    <?php if ($isAdmin): ?>
+    <?php if ($isAdmin && !$readOnly): ?>
         <button class="btn purple" onclick="createSection()">+ Section</button>
         <button class="btn"        onclick="createBlock('image',null)">+ Image</button>
         <button class="btn"        onclick="createBlock('carousel',null)">+ Carousel</button>
@@ -344,12 +627,16 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <div class="sep"></div>
     <?php endif; ?>
 
+    <?php if (!$readOnly): ?>
     <button class="btn orange" onclick="createBlock('text','section_header')">+ Section Header</button>
     <button class="btn orange" onclick="createBlock('text','item_title')">+ Item Title</button>
     <button class="btn orange" onclick="createBlock('text','price')">+ Price</button>
     <button class="btn orange" onclick="createBlock('text','description')">+ Description</button>
+    <?php else: ?>
+    <span style="font-size:12px; color:#bdc3c7;">Read-only — <?= htmlspecialchars($lockHolder) ?> has this display open.</span>
+    <?php endif; ?>
 
-    <?php if ($isAdmin): ?>
+    <?php if ($isAdmin && !$readOnly): ?>
     <div class="sep"></div>
     <label style="font-size:11px; color:#bdc3c7;">Background:</label>
     <select id="bg-type" onchange="toggleBgInputs()" style="padding:5px 7px; border-radius:3px; border:1px solid #34495e; background:#2c3e50; color:#fff; font-size:12px;">
@@ -362,10 +649,24 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
            style="display:none; font-size:11px; color:#aaa;">
     <?php endif; ?>
 
-    <button class="btn publish-btn" style="margin-left:auto;" onclick="publishCanvas()">&#10003; Publish</button>
+    <div class="sep" style="margin-left:auto;"></div>
+    <label style="font-size:11px; color:#bdc3c7;">Zoom:</label>
+    <button class="btn gray" onclick="zoomToFit()" title="Fit the whole canvas in the window">Fit</button>
+    <button class="btn gray" onclick="applyZoom(1)" title="Actual size">100%</button>
+    <button class="btn gray" onclick="nudgeZoom(-1)" title="Zoom out">&minus;</button>
+    <button class="btn gray" onclick="nudgeZoom(1)" title="Zoom in">+</button>
+    <span id="zoom-readout" style="font-size:11px; color:#bdc3c7; min-width:34px; text-align:right;">100%</span>
+
+    <?php if (!$readOnly): ?>
+    <button class="btn publish-btn" style="margin-left:12px;" onclick="publishCanvas()">&#10003; Publish</button>
+    <?php endif; ?>
 </div>
 
-<!-- ── Align bar (shown on multi-select OR single select) ── -->
+<!-- ── Align bar (shown on multi-select OR single select) ──
+     Everything from here to the end of the editor modals is an editing control,
+     and a read-only Builder does not get any of it in the page. See the note
+     above #inspector for what that costs and why it is worth it. -->
+<?php if (!$readOnly): ?>
 <div id="align-bar">
     <span style="font-size:11px;color:#bdc3c7;">Align Items:</span>
     <button class="align-btn" title="Align left edges (single: to parent left)"    onclick="alignBlocks('left')"     style="width:auto;padding:0 8px;font-size:11px;">&#9664; Left</button>
@@ -385,9 +686,24 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <div class="sep"></div>
     <span id="sel-count" style="font-size:11px; color:#bdc3c7;"></span>
 </div>
+<?php endif; ?>
+
+<!-- ── Turned-off notice ── -->
+<?php if (!$display->isActive()): ?>
+<div id="display-off-banner" style="display:block;">
+    <strong>This display is turned off.</strong>
+    No screen is showing it — anything pointed at it says so instead. You can still edit and publish;
+    the layout is kept until someone turns it back on
+    <?php if ($isAdmin): ?>
+        (<a href="admin_panel.php?tab=displays" style="color:#ffd9d9;">Displays</a> in the Admin Panel).
+    <?php else: ?>
+        — ask an admin to turn it on.
+    <?php endif; ?>
+</div>
+<?php endif; ?>
 
 <!-- ── Section banner for basic users ── -->
-<?php if (!$isAdmin): ?>
+<?php if (!$isAdmin && !$readOnly): ?>
 <div id="section-banner">
     Click on a <strong>section</strong> (purple border) to target it, then add your blocks.
 </div>
@@ -395,10 +711,27 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 
 <!-- ── Canvas ── -->
 <div id="editor-frame">
-    <div id="builder-canvas"></div>
+    <!-- #canvas-sizer carries the ZOOMED footprint. A CSS transform does not
+         change layout size, so without this the frame could not scroll to the
+         far edge of a canvas zoomed past the viewport. -->
+    <div id="canvas-sizer" style="flex-shrink:0;">
+        <div id="builder-canvas"></div>
+    </div>
 </div>
 
-<!-- ── Inspector panel ── -->
+<!-- ── Inspector panel ──
+     Not emitted when this Builder is read-only. The file used to claim, twice,
+     that "every control that would have changed something is simply not on the
+     page"; the control bar honoured that and this did not, so a read-only page
+     still shipped the whole inspector, both editor modals and the write handlers
+     behind them. Nothing could reach them — a read-only page cannot select a
+     block, so `activeBlock` stays null and every one of those handlers returns —
+     but that is the braces, and this comment was promising a belt.
+
+     Two things follow, and the JavaScript is written to expect both: any lookup
+     of a node in here can come back null, and any function that only exists to
+     drive one of these controls is now unreachable rather than merely inert. -->
+<?php if (!$readOnly): ?>
 <div id="inspector">
     <h3 id="insp-title">Block</h3>
 
@@ -407,21 +740,21 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <div class="insp-row">
             <div>
                 <label>X (px)</label>
-                <input type="number" id="insp-x" min="-1920" max="1920" onchange="applyPos('x',this.value)">
+                <input type="number" id="insp-x" min="-<?= $canvasW ?>" max="<?= $canvasW ?>" onchange="applyPos('x',this.value)">
             </div>
             <div>
                 <label>Y (px)</label>
-                <input type="number" id="insp-y" min="-1080" max="1080" onchange="applyPos('y',this.value)">
+                <input type="number" id="insp-y" min="-<?= $canvasH ?>" max="<?= $canvasH ?>" onchange="applyPos('y',this.value)">
             </div>
         </div>
         <div class="insp-row" style="margin-top:4px;">
             <div>
                 <label>W (px)</label>
-                <input type="number" id="insp-w" min="40" max="1920" onchange="applyDim('w',this.value)">
+                <input type="number" id="insp-w" min="40" max="<?= $canvasW ?>" onchange="applyDim('w',this.value)">
             </div>
             <div>
                 <label>H (px)</label>
-                <input type="number" id="insp-h" min="24" max="1080" onchange="applyDim('h',this.value)">
+                <input type="number" id="insp-h" min="24" max="<?= $canvasH ?>" onchange="applyDim('h',this.value)">
             </div>
         </div>
     </div>
@@ -660,8 +993,14 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         </div>
     </div>
 </div>
+<?php endif; ?>
 
 <div id="toast"></div>
+
+<div id="upload-status">
+    <div class="up-label"></div>
+    <div class="up-track"><div class="up-fill"></div></div>
+</div>
 
 <script>
 // ============================================================
@@ -670,6 +1009,51 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 var IS_ADMIN  = <?= $isAdmin ? 'true' : 'false' ?>;
 var SITE_NAME = <?= json_encode(SITE_NAME, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 var CSRF_TOKEN = <?= json_encode(csrfToken(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+
+// The Display being edited. Its canvas size was fixed at creation (ADR-0004), so
+// these are constants for the life of the page — every bound, clamp and default
+// below is derived from them rather than from a hardcoded 1920×1080.
+var DISPLAY_TAG   = <?= json_encode($display->tag(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+// The record this page was actually opened on. The tag above addresses it, but an
+// admin may rename a tag and hand the old one to another sign, so every call below
+// sends both and the server refuses any that disagree (DisplayRequest::ID_PARAM).
+var DISPLAY_ID    = <?= intval($display->id()) ?>;
+var DISPLAY_TITLE = <?= json_encode($display->title(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var CANVAS_W      = <?= $canvasW ?>;
+var CANVAS_H      = <?= $canvasH ?>;
+
+// Whether somebody else holds this Display's edit lock (ADR-0007). Decided by the
+// server before this page was built, and constant for its life: every control that
+// would change something is absent from the HTML rather than disabled here, and the
+// guards below are the belt to that braces — for the keyboard, and for anything
+// reachable without a button.
+var READ_ONLY   = <?= $readOnly ? 'true' : 'false' ?>;
+var LOCK_HOLDER = <?= json_encode($lockHolder, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+
+// The idle window and its warning, from the one place they are defined
+// (LockState) rather than a second copy that could drift away from it.
+var LOCK_LAPSE_SECONDS = <?= LockState::IDLE_LAPSE_SECONDS ?>;
+var LOCK_WARN_SECONDS  = <?= LockState::WARN_AFTER_SECONDS ?>;
+
+// The largest file that can actually reach this server, from UploadLimit — which
+// is the smallest of the app's own 50 MB ceiling and PHP's two. The browser knows
+// how big a chosen file is before sending a byte, so a file that cannot arrive is
+// refused in the file picker rather than after two minutes of uploading it. The
+// server checks the same number again; this only saves the wait.
+var UPLOAD_MAX_BYTES = <?= UploadLimit::bytes() ?>;
+var UPLOAD_MAX_LABEL = <?= json_encode(UploadLimit::describe(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+
+// Editor zoom. The canvas is CSS-scaled, so interact.js deltas — which arrive in
+// screen pixels — are divided by ZOOM before becoming canvas coordinates. Miss one
+// of those divisions and dragging drifts at any zoom but 100%.
+var ZOOM = 1;
+
+// The layout stamp this editor loaded (docs/adr/0006). Publish submits it back;
+// if the display has changed since — someone else published, or an element was
+// hidden or deleted in the admin panel — the publish is refused instead of
+// overwriting their work. There is no undo, so refusing is the safety net.
+// Empty until loadLayout() runs, and a publish without it is refused by design.
+var LAYOUT_STAMP = '';
 
 // Block default sizes
 var BLOCK_DEFAULTS = {
@@ -683,7 +1067,7 @@ var BLOCK_DEFAULTS = {
     section:        { w:600, h:380 },
     carousel:       { w:480, h:320 },
     table:          { w:480, h:200 },
-    marquee:        { w:1920, h:60  },
+    marquee:        { w:CANVAS_W, h:60  },
 };
 
 var FONT_FAMILIES = ['Arial','Georgia','Verdana','Tahoma',
@@ -714,10 +1098,52 @@ document.addEventListener('DOMContentLoaded', function() {
         showToast('Failed to load layout.', true);
     });
     setupCanvas();
-    if (!IS_ADMIN) {
+    if (!IS_ADMIN && !READ_ONLY) {
         document.getElementById('section-banner').style.display = 'block';
     }
+    // After the banner, so the fit measures the frame at its final height.
+    zoomToFit();
+    setupLockWatch();
 });
+
+// ============================================================
+// ZOOM
+// ============================================================
+// A Display's canvas can be larger or taller than the editor window — a portrait
+// 1080×1920 does not fit at all — so the canvas is CSS-scaled and #canvas-sizer
+// carries the scaled footprint so the frame can still scroll.
+//
+// Every place a screen-pixel measurement becomes a canvas coordinate divides by
+// ZOOM: handleMove, handleResize, getCanvasDropCenter. Nothing else needs to know.
+
+var ZOOM_MIN = 0.1;
+var ZOOM_MAX = 3;
+var ZOOM_PAD = 80;   // #editor-frame's 40px padding, both sides
+
+function applyZoom(z) {
+    ZOOM = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+    var canvas = document.getElementById('builder-canvas');
+    var sizer  = document.getElementById('canvas-sizer');
+    canvas.style.transform = (ZOOM === 1) ? 'none' : 'scale(' + ZOOM + ')';
+    sizer.style.width  = Math.round(CANVAS_W * ZOOM) + 'px';
+    sizer.style.height = Math.round(CANVAS_H * ZOOM) + 'px';
+    var readout = document.getElementById('zoom-readout');
+    if (readout) readout.textContent = Math.round(ZOOM * 100) + '%';
+}
+
+/** Largest zoom that shows the whole canvas, never magnifying past 100%. */
+function zoomToFit() {
+    var frame = document.getElementById('editor-frame');
+    var z = Math.min(
+        (frame.clientWidth  - ZOOM_PAD) / CANVAS_W,
+        (frame.clientHeight - ZOOM_PAD) / CANVAS_H
+    );
+    applyZoom(Math.min(1, z));
+}
+
+function nudgeZoom(direction) {
+    applyZoom(ZOOM * (direction > 0 ? 1.25 : 0.8));
+}
 
 // ============================================================
 // LOAD
@@ -728,6 +1154,10 @@ function loadAssets() {
         .then(function(list) {
             assetsCache = list;
             var sel = document.getElementById('asset-link');
+            // The dropdown lives in the inspector, which a read-only page does
+            // not have. The cache is still worth filling: a block that points at
+            // a library entry renders from it.
+            if (!sel) { return; }
             sel.innerHTML = '<option value="">— None (manual content) —</option>';
             list.forEach(function(a) {
                 sel.innerHTML += '<option value="'+a.id+'">['+a.type.toUpperCase()+'] '+escHtml(a.label||a.content.substr(0,20))+'</option>';
@@ -748,14 +1178,27 @@ function populateAssetLinkOptions(blockType) {
 }
 
 function loadLayout() {
-    return fetch('api.php?action=get_layout')
+    // The editing read, not the Viewer's: a Display that has been turned off is a
+    // notice on a Screen but must still open here (CONTEXT.md), and get_layout
+    // deliberately returns nothing for one.
+    return fetch('api.php?action=get_editor_layout&display=' + encodeURIComponent(DISPLAY_TAG)
+                 + '&display_id=' + DISPLAY_ID)
         .then(function(r){ return r.json(); })
         .then(function(data) {
-            blockStyles = data.block_styles || {};
-            var canvas  = document.getElementById('builder-canvas');
+            if (!data || data.status !== 'success') {
+                // The Display was deleted or renamed while this tab sat open. Its
+                // layout is gone; publishing what is on screen would recreate it
+                // under a Display that no longer exists.
+                showToast(((data && data.message) || 'That display could not be loaded.')
+                          + ' Reload to choose a display.', true);
+                return;
+            }
+            blockStyles  = data.block_styles || {};
+            LAYOUT_STAMP = data.layout_stamp || '';
+            var canvas   = document.getElementById('builder-canvas');
 
-            if (data.settings) {
-                var s = data.settings;
+            if (data.display) {
+                var s = data.display;
                 document.getElementById('bg-type') && (document.getElementById('bg-type').value = s.bg_type);
                 if (s.bg_type === 'color') {
                     document.getElementById('bg-color') && (document.getElementById('bg-color').value = s.bg_val);
@@ -788,20 +1231,24 @@ function loadLayout() {
 // ============================================================
 // BACKGROUND (admin)
 // ============================================================
+// The background controls are an admin's, and a read-only Builder has none of them
+// in the page at all — hence READ_ONLY as well as IS_ADMIN. loadLayout() calls in
+// here for both, so these are the guards that keep a read-only admin's page from
+// reaching for a control that was never rendered.
 function toggleBgInputs() {
-    if (!IS_ADMIN) return;
+    if (!IS_ADMIN || READ_ONLY) return;
     var t = document.getElementById('bg-type').value;
     document.getElementById('bg-color').style.display = t==='color' ? 'inline-block' : 'none';
     document.getElementById('bg-file').style.display  = t==='image' ? 'inline-block' : 'none';
 }
 function applyBg() {
-    if (!IS_ADMIN) return;
+    if (!IS_ADMIN || READ_ONLY) return;
     var canvas = document.getElementById('builder-canvas');
     canvas.style.backgroundColor = document.getElementById('bg-color').value;
     canvas.style.backgroundImage = 'none';
 }
 function applyBgFile() {
-    if (!IS_ADMIN) return;
+    if (!IS_ADMIN || READ_ONLY) return;
     var f = document.getElementById('bg-file').files[0];
     if (!f) return;
     var r = new FileReader();
@@ -813,7 +1260,7 @@ function applyBgFile() {
 // CREATE SECTION (admin)
 // ============================================================
 function createSection() {
-    if (!IS_ADMIN) return;
+    if (!IS_ADMIN || READ_ONLY) return;
     var def    = BLOCK_DEFAULTS.section || {w:600, h:380};
     var center = getCanvasDropCenter(def.w, def.h, null);
     renderSection({
@@ -825,7 +1272,7 @@ function createSection() {
 function renderSection(el) {
     var s = document.createElement('div');
     s.className = 'editable-block section-block';
-    if (!el.locked && IS_ADMIN) s.classList.add('draggable-block');
+    if (!el.locked && IS_ADMIN && !READ_ONLY) s.classList.add('draggable-block');
     s.dataset.type    = 'section';
     s.dataset.tempId  = el.temp_id || tmpId();
     s.dataset.dbId    = el.id      || '';
@@ -861,6 +1308,7 @@ function renderSection(el) {
     if (el.locked) appendLockIcon(s);
 
     s.addEventListener('mousedown', function(e) {
+        if (READ_ONLY) return;   // no selecting, no targeting, no inspector
         if (e.target.closest('.child-block')) return;
         if (IS_ADMIN) {
             if (e.shiftKey) {
@@ -880,6 +1328,7 @@ function renderSection(el) {
 // CREATE BLOCK
 // ============================================================
 function createBlock(type, subtype) {
+    if (READ_ONLY) return;
     // Basic users must have a section targeted
     if (!IS_ADMIN && !targetSection) {
         showToast('Please click on a section first to add content.', true);
@@ -925,7 +1374,7 @@ function renderBlock(el, parent, isNew) {
     block.className = 'editable-block';
     var isChildBlock = parent !== document.getElementById('builder-canvas');
     block.classList.add(isChildBlock ? 'child-block' : 'root-block');
-    if (!el.locked && (IS_ADMIN || isChildBlock)) block.classList.add('draggable-block');
+    if (!el.locked && (IS_ADMIN || isChildBlock) && !READ_ONLY) block.classList.add('draggable-block');
     if (el.locked) block.classList.add('locked-block');
 
     block.dataset.type    = el.type;
@@ -956,7 +1405,10 @@ function renderBlock(el, parent, isNew) {
         if (el.text_align) { block.style.textAlign = el.text_align; block.dataset.textAlign = el.text_align; }
         var inner = document.createElement('div');
         inner.className = 'text-inner';
-        inner.contentEditable = 'true';
+        // Not even editable in a read-only Builder: the dblclick that turns pointer
+        // events on is guarded too, but a contenteditable node is one stray focus
+        // away from accepting typing that could never be published.
+        inner.contentEditable = READ_ONLY ? 'false' : 'true';
         inner.style.pointerEvents = 'none'; // disabled until dblclick; lets drag/shift+click reach block div
         inner.style.whiteSpace = 'pre-wrap'; // preserve line breaks in plain text
         inner.textContent = content || (el.block_subtype !== 'free' ? 'Enter text here' : 'Double-click to edit');
@@ -975,8 +1427,26 @@ function renderBlock(el, parent, isNew) {
             inner.style.userSelect = '';
             inner.style.webkitUserSelect = '';
         });
+        // Typing breaks the link to the library entry, exactly as uploadBlockImage,
+        // uploadBlockVideo and changeImageFit already do for their own content.
+        //
+        // This is load-bearing, not tidiness. Publishing pools a text block's
+        // content into `assets` and nulls the element's own copy, so after one
+        // publish every text block comes back asset-linked — and publishCanvas
+        // only collects content for a block with no asset. Without this line the
+        // second edit of a price is dropped in the browser, the toast still says
+        // Published, and the sign keeps the old number. It also means editing one
+        // sign never rewrites a library entry other Displays are sharing.
+        inner.addEventListener('input', function() {
+            if (!block.dataset.assetId) return;
+            block.dataset.assetId = '';
+            if (block === activeBlock) {
+                var _link = document.getElementById('asset-link');
+                if (_link) _link.value = '';
+            }
+        });
         block.addEventListener('dblclick', function(e) {
-            if (block.dataset.locked === '1' || _shiftDown || e.target.closest('.rh')) return;
+            if (READ_ONLY || block.dataset.locked === '1' || _shiftDown || e.target.closest('.rh')) return;
             block.classList.remove('just-added');   // first edit clears the highlight
             inner.style.pointerEvents = 'auto';
             inner.style.userSelect = 'text';
@@ -1025,6 +1495,7 @@ function renderBlock(el, parent, isNew) {
     if (el.locked) appendLockIcon(block);
 
     block.addEventListener('mousedown', function(e) {
+        if (READ_ONLY) return;               // no selecting, so no inspector to reach
         if (e.target.closest('.rh')) return; // resize handles handled by interact.js
         if (e.shiftKey) {
             e.preventDefault(); // prevent browser focus/text-selection changes during multi-select
@@ -1065,6 +1536,7 @@ function applyTextStyles(block, el) {
 // SELECTION (single)
 // ============================================================
 function selectBlock(block) {
+    if (READ_ONLY) return;
     clearMultiSel();
     deselectAll();
     activeBlock = block;
@@ -1079,13 +1551,19 @@ function deselectAll() {
         if (_ti) { _ti.style.pointerEvents = 'none'; _ti.blur(); }
     }
     activeBlock = null;
-    document.getElementById('inspector').style.display = 'none';
-    if (multiSel.length === 0) document.getElementById('align-bar').style.display = 'none';
+    // Both panels are absent on a read-only page, and this runs on every click in
+    // the canvas area — including there, where there is nothing to deselect but
+    // the handler still fires.
+    var insp = document.getElementById('inspector');
+    if (insp) { insp.style.display = 'none'; }
+    var bar = document.getElementById('align-bar');
+    if (bar && multiSel.length === 0) { bar.style.display = 'none'; }
 }
 
 function showInspector(block) {
-    updateAlignBar(); // keep screen-align bar visible while a block is selected
     var insp = document.getElementById('inspector');
+    if (!insp) { return; }              // read-only: nothing to show it in
+    updateAlignBar(); // keep screen-align bar visible while a block is selected
     var type    = block.dataset.type;
     var subtype = block.dataset.subtype || 'free';
     var isSection = type === 'section';
@@ -1217,7 +1695,8 @@ function toggleMultiSel(block) {
         multiSel.push(activeBlock);
     }
     activeBlock = null;
-    document.getElementById('inspector').style.display = 'none';
+    var _insp = document.getElementById('inspector');
+    if (_insp) { _insp.style.display = 'none'; }
 
     var idx = multiSel.indexOf(block);
     if (idx >= 0) {
@@ -1239,6 +1718,7 @@ function clearMultiSel() {
 function updateAlignBar() {
     var bar  = document.getElementById('align-bar');
     var cnt  = document.getElementById('sel-count');
+    if (!bar || !cnt) { return; }       // read-only: the align bar is not in the page
     var total = multiSel.length + (activeBlock ? 1 : 0);
     if (total > 0) {
         bar.style.display = 'flex';
@@ -1262,8 +1742,8 @@ function _parentContainer(block) {
     var p = block.parentElement;
     return {
         el: p,
-        w: (p === canvas) ? 1920 : p.offsetWidth,
-        h: (p === canvas) ? 1080 : p.offsetHeight
+        w: (p === canvas) ? CANVAS_W : p.offsetWidth,
+        h: (p === canvas) ? CANVAS_H : p.offsetHeight
     };
 }
 
@@ -1392,25 +1872,29 @@ function appendLockIcon(el) {
 // ============================================================
 // SECTION TARGET (for adding children)
 // ============================================================
+// The banner is a basic account's instruction for adding blocks, so it is in the
+// page only when the account is basic AND the page can edit. These two functions
+// tested the role and not the lock — and clearTargetSection() runs on every click
+// in the canvas area, so a read-only basic account threw an uncaught TypeError on
+// every click, from exactly the unguarded lookup this file claims cannot exist.
+function setSectionBanner(text) {
+    var el = document.getElementById('section-banner');
+    if (el) { el.textContent = text; }
+}
+
 function setTargetSection(sectionEl) {
     if (targetSection) targetSection.classList.remove('targeted');
     targetSection = sectionEl;
     if (targetSection) {
         targetSection.classList.add('targeted');
-        if (!IS_ADMIN) {
-            document.getElementById('section-banner').textContent =
-                'Section selected — now add a block from the bar above.';
-        }
+        setSectionBanner('Section selected — now add a block from the bar above.');
     }
 }
 
 function clearTargetSection() {
     if (targetSection) targetSection.classList.remove('targeted');
     targetSection = null;
-    if (!IS_ADMIN) {
-        document.getElementById('section-banner').textContent =
-            'Click on a section (purple border) to target it, then add your blocks.';
-    }
+    setSectionBanner('Click on a section (purple border) to target it, then add your blocks.');
 }
 
 // ============================================================
@@ -1425,7 +1909,7 @@ function setupCanvas() {
     document.addEventListener('selectionchange', trackSelection);
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Shift') _shiftDown = true;
-        if (e.key === 'Delete') {
+        if (e.key === 'Delete' && !READ_ONLY) {
             var ae = document.activeElement;
             if (ae && (ae.classList.contains('text-inner') || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')) return;
             if (activeBlock) {
@@ -1513,22 +1997,21 @@ function changeSectionBgFit(fit) {
 }
 
 function uploadSectionBg(input) {
-    if (!IS_ADMIN || !activeBlock || !input.files[0]) return;
-    var fd = new FormData();
-    fd.append('file', input.files[0]);
-    fd.append('csrf_token', CSRF_TOKEN);
-    fetch('api.php?action=upload_file', {method:'POST', body:fd})
-        .then(function(r){ return r.json(); })
-        .then(function(res) {
-            if (res.status==='success') {
-                var _fit = (document.getElementById('section-bg-fit') || {}).value || 'cover';
-                activeBlock.style.backgroundImage = "url('"+res.path+"')";
-                activeBlock.dataset.sectionBg = res.path;
-                activeBlock.dataset.bgFit = _fit;
-                applySectionBgFit(activeBlock, _fit);
-                document.getElementById('section-bg-preview').textContent = res.path;
-            } else { showToast(res.message||'Upload failed.', true); }
-        });
+    if (!IS_ADMIN || !activeBlock) return;
+    var target = activeBlock;
+    startUpload(input, 'upload_file', 'section background', function (path) {
+        // Read the fit *now*, not when the upload started: the inspector may have
+        // been touched during the upload, and the block may no longer be selected
+        // at all — which is why the block is captured above rather than read from
+        // activeBlock in here.
+        var fit = (document.getElementById('section-bg-fit') || {}).value || 'cover';
+        target.style.backgroundImage = "url('" + path + "')";
+        target.dataset.sectionBg = path;
+        target.dataset.bgFit = fit;
+        applySectionBgFit(target, fit);
+        var preview = document.getElementById('section-bg-preview');
+        if (preview) preview.textContent = path;
+    });
 }
 
 function clearSectionBg() {
@@ -1542,47 +2025,205 @@ function clearSectionBg() {
 }
 
 // ============================================================
-// IMAGE / VIDEO UPLOADS
+// UPLOADS — one path, and it always says what happened
 // ============================================================
-function uploadBlockImage(input) {
-    if (!input.files[0] || !activeBlock) return;
+// There were four of these, each with its own fetch chain, and three of them had
+// no `.catch()` at all. What that meant on the shop floor: an admin picks a 60 MB
+// clip on the store's Wi-Fi, the request dies, and *nothing else ever runs*. The
+// "Uploading video…" toast fades after three and a half seconds and that is the
+// last word on the subject. They publish, get a green "Published to Deli Board",
+// and the sign shows an empty rectangle where the video should be. The image and
+// section-background handlers were worse in one respect — no toast at all, so a
+// failed upload looked exactly like one still in progress.
+//
+// `r.json()` was a second silent failure on the same line: it rejects on any reply
+// that is not JSON, which is what a file over the server's post_max_size produced.
+//
+// So: one function, XMLHttpRequest rather than fetch (fetch cannot report upload
+// progress, and progress is half of what was missing), and every way this can end
+// has a branch that puts words on the screen:
+//
+//   · too big to send      — refused in the picker, before a byte leaves
+//   · network dies         — onerror
+//   · browser gives up     — ontimeout
+//   · server says no       — status ≥ 400, or a JSON error message
+//   · reply is not JSON    — the post_max_size case, and any PHP output above it
+//   · saved                — the caller's success branch
+//
+// Two details that are not decoration. The file input is cleared at the end of
+// every attempt: without that, choosing the *same* file again fires no change
+// event, so the obvious response to a failed upload — try it again — did nothing
+// whatsoever. And a second upload on the same input while one is in flight is
+// refused, because both would write to the same block and the slower one wins.
+
+/** The upload currently in flight per input, so a second pick cannot race it. */
+var uploadsInFlight = 0;
+
+function showUploadProgress(label, percent) {
+    // Guarded the same way every other lookup in this file is: the readout is
+    // markup, and an upload must still run — and still report — on a page where
+    // that markup is missing. Progress is the nicety; the message is not.
+    var box = document.getElementById('upload-status');
+    if (!box) return;
+    var text = box.querySelector('.up-label');
+    var fill = box.querySelector('.up-fill');
+    if (text) text.textContent = label;
+    if (fill) fill.style.width = (percent === null ? 100 : percent) + '%';
+    box.style.display = 'block';
+}
+
+function hideUploadProgress() {
+    var box = document.getElementById('upload-status');
+    if (box) box.style.display = 'none';
+}
+
+/**
+ * Send the file chosen in `input` to `action`, and call onSuccess(path) if and
+ * only if the server saved it. Every other outcome is reported to the user here.
+ *
+ * `what` is the noun for the messages ("video", "slide image").
+ */
+function startUpload(input, action, what, onSuccess) {
+    if (READ_ONLY) return;
+
+    var file = input.files && input.files[0];
+    if (!file) return;
+
+    // Refused before sending. The browser knows the size; the server would only
+    // find out after receiving all of it, and on a host whose post_max_size is
+    // smaller than the file the request arrives with its body thrown away and no
+    // way to tell that apart from a missing security token.
+    if (file.size > UPLOAD_MAX_BYTES) {
+        showToast('That ' + what + ' is too large (' + describeBytes(file.size) + '). '
+                + 'This server accepts up to ' + UPLOAD_MAX_LABEL + '.', true);
+        input.value = '';
+        return;
+    }
+    if (file.size === 0) {
+        showToast('That file is empty — nothing was uploaded.', true);
+        input.value = '';
+        return;
+    }
+
+    if (input._uploading) {
+        showToast('That ' + what + ' is still uploading. Wait for it to finish.', true);
+        return;
+    }
+    input._uploading = true;
+    uploadsInFlight++;
+
     var fd = new FormData();
-    fd.append('file', input.files[0]);
+    fd.append('file', file);
     fd.append('csrf_token', CSRF_TOKEN);
-    fetch('api.php?action=upload_file', {method:'POST', body:fd})
-        .then(function(r){ return r.json(); })
-        .then(function(res) {
-            if (res.status==='success') {
-                var _img = activeBlock.querySelector('img');
-                if (_img) _img.src = res.path;
-                activeBlock.dataset.manualPath = res.path;
-                activeBlock.dataset.assetId    = '';
-                document.getElementById('asset-link').value = '';
-            } else { showToast(res.message||'Upload failed.', true); }
-        });
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', 'api.php?action=' + action, true);
+    xhr.timeout = 600000;   // ten minutes: a 50 MB video on shop Wi-Fi is slow, not broken
+
+    var finished = false;
+    function done(message, isError) {
+        if (finished) return;      // ontimeout and onerror can both arrive
+        finished = true;
+        input._uploading = false;
+        uploadsInFlight--;
+        // Cleared whatever happened, so picking the same file again is an action
+        // the browser will actually report.
+        input.value = '';
+        if (uploadsInFlight <= 0) { uploadsInFlight = 0; hideUploadProgress(); }
+        if (message) showToast(message, !!isError);
+    }
+
+    if (xhr.upload) {
+        xhr.upload.onprogress = function (e) {
+            if (finished) return;
+            var pct = e.lengthComputable ? Math.round((e.loaded / e.total) * 100) : null;
+            showUploadProgress('Uploading ' + what + '… ' + (pct === null ? '' : pct + '%'), pct);
+        };
+    }
+    showUploadProgress('Uploading ' + what + '… 0%', 0);
+
+    xhr.onload = function () {
+        if (xhr.status === 0 || xhr.status >= 400) {
+            // A JSON body is still the most useful thing here — api.php answers a
+            // dropped request body with 413 and an explanation.
+            var said = readJsonMessage(xhr.responseText);
+            done(said || ('The server refused the ' + what + ' (error ' + xhr.status + '). Nothing was changed.'), true);
+            return;
+        }
+        var res = null;
+        try { res = JSON.parse(xhr.responseText); } catch (e) { res = null; }
+        if (!res) {
+            done('The server\'s reply to that ' + what + ' could not be read, so nothing was changed. '
+               + 'It may be larger than this server accepts (' + UPLOAD_MAX_LABEL + ').', true);
+            return;
+        }
+        if (res.status !== 'success' || !res.path) {
+            done(res.message || ('That ' + what + ' was not saved.'), true);
+            return;
+        }
+        done('', false);
+        onSuccess(res.path);
+    };
+
+    xhr.onerror = function () {
+        done('The ' + what + ' did not upload — the connection dropped. Nothing was changed; try again.', true);
+    };
+    xhr.ontimeout = function () {
+        done('The ' + what + ' was still uploading after ten minutes and was given up on. Nothing was changed.', true);
+    };
+    xhr.onabort = function () {
+        done('That ' + what + ' upload was cancelled. Nothing was changed.', true);
+    };
+
+    xhr.send(fd);
+}
+
+/** A JSON error message out of a response body, or '' if there isn't one. */
+function readJsonMessage(text) {
+    try {
+        var res = JSON.parse(text);
+        return (res && res.message) ? res.message : '';
+    } catch (e) {
+        return '';
+    }
+}
+
+/** Bytes as words, matching UploadLimit::describeBytes so both agree. */
+function describeBytes(bytes) {
+    if (bytes >= 1048576) return Math.floor(bytes / 1048576) + ' MB';
+    if (bytes >= 1024)    return Math.floor(bytes / 1024) + ' KB';
+    return bytes + ' bytes';
+}
+
+function uploadBlockImage(input) {
+    if (!activeBlock) return;
+    var target = activeBlock;
+    startUpload(input, 'upload_file', 'image', function (path) {
+        var img = target.querySelector('img');
+        if (img) img.src = path;
+        target.dataset.manualPath = path;
+        target.dataset.assetId    = '';
+        var link = document.getElementById('asset-link');
+        if (link) link.value = '';
+        showToast('Image uploaded. Publish to put it on the sign.');
+    });
 }
 
 function uploadBlockVideo(input) {
-    if (!IS_ADMIN || !input.files[0] || !activeBlock) return;
-    showToast('Uploading video…');
-    var fd = new FormData();
-    fd.append('file', input.files[0]);
-    fd.append('csrf_token', CSRF_TOKEN);
-    fetch('api.php?action=upload_video', {method:'POST', body:fd})
-        .then(function(r){ return r.json(); })
-        .then(function(res) {
-            if (res.status==='success') {
-                var vid = activeBlock.querySelector('video');
-                if (!vid) { showToast('Video element not found.', true); return; }
-                vid.innerHTML = '';
-                var src = document.createElement('source');
-                src.src = res.path; vid.appendChild(src); vid.load();
-                activeBlock.dataset.manualPath = res.path;
-                activeBlock.dataset.assetId    = '';
-                document.getElementById('asset-link').value = '';
-                showToast('Video uploaded.');
-            } else { showToast(res.message||'Upload failed.', true); }
-        });
+    if (!IS_ADMIN || !activeBlock) return;
+    var target = activeBlock;
+    startUpload(input, 'upload_video', 'video', function (path) {
+        var vid = target.querySelector('video');
+        if (!vid) { showToast('That block is no longer a video block. The file uploaded but was not used.', true); return; }
+        vid.innerHTML = '';
+        var src = document.createElement('source');
+        src.src = path; vid.appendChild(src); vid.load();
+        target.dataset.manualPath = path;
+        target.dataset.assetId    = '';
+        var link = document.getElementById('asset-link');
+        if (link) link.value = '';
+        showToast('Video uploaded. Publish to put it on the sign.');
+    });
 }
 
 // ============================================================
@@ -1611,6 +2252,7 @@ function linkAsset(assetId) {
 // DELETE
 // ============================================================
 function deleteSelected() {
+    if (READ_ONLY) return;
     if (activeBlock) {
         if (activeBlock.dataset.type === 'section') {
             if (!confirm('Delete this section and ALL blocks inside it?')) return;
@@ -1624,6 +2266,11 @@ function deleteSelected() {
 // PUBLISH
 // ============================================================
 function publishCanvas() {
+    // There is no Publish button on a read-only page. The server refuses this
+    // anyway (LayoutStore checks the lock inside the publish transaction) — this is
+    // just not making the round trip to be told so.
+    if (READ_ONLY) { showToast(LOCK_HOLDER + ' is editing this display — nothing can be published from here.', true); return; }
+
     var canvas   = document.getElementById('builder-canvas');
     var elements = [];
 
@@ -1711,11 +2358,24 @@ function publishCanvas() {
     var fd = new FormData();
     fd.append('layout_data', JSON.stringify(elements));
     fd.append('csrf_token', CSRF_TOKEN);
+    fd.append('display', DISPLAY_TAG);
+    fd.append('display_id', DISPLAY_ID);
+    fd.append('layout_stamp', LAYOUT_STAMP);
 
     if (IS_ADMIN) {
         fd.append('bg_type', document.getElementById('bg-type').value);
         fd.append('bg_val',  document.getElementById('bg-color').value);
         var bgFile = document.getElementById('bg-file').files[0];
+        // Checked before sending, and the publish is abandoned rather than
+        // attempted: a background file over the server's post_max_size takes the
+        // whole request body with it, so this would not be one rejected image, it
+        // would be the entire layout not saved.
+        if (bgFile && bgFile.size > UPLOAD_MAX_BYTES) {
+            showToast('That background image is too large (' + describeBytes(bgFile.size) + '). '
+                    + 'This server accepts up to ' + UPLOAD_MAX_LABEL + '. Nothing was published — '
+                    + 'choose a smaller image, or clear it and publish again.', true);
+            return;
+        }
         if (bgFile) fd.append('bg_file', bgFile);
     }
 
@@ -1723,9 +2383,328 @@ function publishCanvas() {
         .then(function(r){ return r.json(); })
         .then(function(res) {
             if (res.status === 'success') {
-                showToast('Published! Display screen will update in 30 seconds.');
+                // Adopt the stamp this publish created, so a second publish from
+                // this same tab is not mistaken for a stale one.
+                LAYOUT_STAMP = res.layout_stamp || LAYOUT_STAMP;
+                // Named, because there is more than one sign now and "published!"
+                // does not tell you which one you just changed.
+                showToast('Published to ' + DISPLAY_TITLE + ' (' + DISPLAY_TAG + '). '
+                          + 'That screen updates within 30 seconds.');
                 loadAssets();
+            } else if (res.reason === 'stale' || res.reason === 'locked'
+                       || isTerminalLockReason(res.reason)) {
+                // Nothing was saved, and none of these refusals may be glimpsed and
+                // missed: the layout on screen is still the editor's, and what to do
+                // next differs — reload for a stale stamp, wait for somebody else's
+                // edit lock, reload for a screen name tag that moved, ask an admin for
+                // a display that is no longer yours, sign in again for an account that
+                // no longer may. The message says which; a toast would not be read.
+                //
+                // The terminal ones also raise the bar, so it is still on screen after
+                // the alert is dismissed. Reaching one here rather than from a beat
+                // means the publish arrived inside the same minute as the change —
+                // otherwise the bar is already up and this branch is the second telling.
+                if (res.reason === 'locked') { lockLost = true; renderLockBars(); }
+                if (isTerminalLockReason(res.reason)) { noteAccessLost(res.reason); }
+                alert(res.message);
             } else { showToast(res.message||'Publish failed.', true); }
+        })
+        .catch(function(){ showToast('Network error.', true); });
+}
+
+// ============================================================
+// EDIT LOCK (ADR-0007)
+// ============================================================
+// One account edits a Display at a time, and the lock is held by *work* rather than
+// by this tab being open. So the only thing tracked here is when something real last
+// happened, and every heartbeat sends that *age* rather than "now": a tab forgotten
+// on a back-office monitor keeps beating and still loses the display on time, while
+// somebody reading, thinking or typing slowly keeps it.
+//
+// Read-only is not managed here at all — the server decided it before this page was
+// built and READ_ONLY never changes. What can change is losing a lock that was held:
+// an admin took over, or it lapsed and somebody else claimed it. ADR-0007 keeps the
+// unsaved edits on screen for that case and lets the publish be refused, rather than
+// pulling the editor apart underneath the person using it.
+
+var LOCK_BEAT_MS = 60000;   // the most often the server hears from us
+var LOCK_TICK_MS = 15000;   // how often the bars are re-decided from the local clock
+var LOCK_POLL_MS = 30000;   // read-only: how often we check whether it has freed up
+
+var lastInteraction = Date.now();
+var lastBeatAt      = Date.now();
+var lockLost        = false;   // somebody else holds it — never claim again
+// Not the same thing, and kept apart on purpose: a lock can come back on its own, and
+// losing the display cannot. There are five ways to get here and none of them mends
+// itself — see LOCK_TERMINAL. In four of them the server has already stopped believing
+// this page holds the sign; in the fifth, a renamed tag, the lock is deliberately still
+// this account's and a reload picks it straight back up.
+var accessLost      = false;
+
+/**
+ * The refusals that never succeed later, and what to tell somebody mid-edit.
+ *
+ * A failed request is normally nothing to act on: the next one covers it, which is
+ * exactly right for a dropped connection. These five are the opposite — the display
+ * has stopped being this page's to edit, and no amount of waiting changes that. Each
+ * one used to be swallowed, so the person kept working on a sign they had already
+ * lost and heard about it at the publish.
+ *
+ * A fixed list rather than "anything with a reason": a reason added to the server
+ * later must not silently become fatal to an editor mid-work. Anything not named here
+ * is still ignored.
+ *
+ * The wording is the editor's, not the Screen's. The server sends a sentence for a
+ * sign in a shop window — "This display is turned off" — and somebody who has been
+ * laying out prices for twenty minutes needs to know what happened to their work.
+ */
+var LOCK_TERMINAL = {
+    forbidden: '<strong>Your access to this display has been removed.</strong> '
+             + 'An admin has taken it off your list, so nothing here can be published any more and '
+             + 'the display has been released for somebody else. What you have done is still on this '
+             + 'screen — copy anything you need before you leave the page. Ask an admin if this was '
+             + 'not expected.',
+    inactive:  '<strong>This display has been turned off.</strong> '
+             + 'An admin has retired it, so it is no longer yours to edit and nothing here can be '
+             + 'published. What you have done is still on this screen — copy anything you need '
+             + 'before you leave the page. Nothing you had not published reached the screen.',
+    // One message for two causes, because "not found at this address" cannot tell them
+    // apart: a renamed screen name tag and a deleted display answer identically. So it
+    // says both and sends them to the one action that distinguishes them.
+    unknown:   '<strong>This display is no longer at this address.</strong> '
+             + 'Its screen name tag has been renamed, or the display has been deleted. Reload the '
+             + 'page to find out which — if it was renamed it is still yours, and still where you '
+             + 'left it. Copy anything you cannot afford to lose first. Nothing you had not '
+             + 'published reached a screen.',
+    mismatch:  '<strong>This page\'s address now belongs to a different display.</strong> '
+             + 'A screen name tag was renamed and given to another sign, so nothing here can be '
+             + 'saved — publishing would write over somebody else\'s layout. Copy anything you need, '
+             + 'then reload and open your display again.',
+    signed_out:'<strong>You have been signed out.</strong> '
+             + 'This account can no longer sign in — an admin may have suspended it. Nothing here '
+             + 'can be published. What you have done is still on this screen, so copy anything you '
+             + 'need before you leave the page, and ask an admin if this was not expected.'
+};
+
+/** Is this refusal one there is no point waiting out? */
+function isTerminalLockReason(reason) {
+    return !!reason && Object.prototype.hasOwnProperty.call(LOCK_TERMINAL, reason);
+}
+
+// The server's own idea of how idle this lock is, and when it said so. It knows
+// about every tab this account has open on this Display, which this tab does not:
+// without it, a second tab left sitting on the same sign would show its owner an
+// idle warning while they were busy working in the first one.
+var serverIdle       = 0;
+var serverAnsweredAt = 0;
+
+/**
+ * How long since the last real interaction, in seconds — the figure the bars are
+ * drawn from and the figure a heartbeat carries.
+ *
+ * The lower of this tab's own clock and the server's, aged forward since it
+ * answered. Whichever of the two saw work most recently is the one telling the
+ * truth about whether anybody is editing this Display.
+ */
+function lockIdleSeconds() {
+    var local = Math.round((Date.now() - lastInteraction) / 1000);
+    if (serverAnsweredAt === 0) { return local; }
+    return Math.min(local, serverIdle + Math.round((Date.now() - serverAnsweredAt) / 1000));
+}
+
+function setupLockWatch() {
+    if (READ_ONLY) {
+        // Watch for the display freeing up, so the offer to reload is a fact rather
+        // than a guess. Never claims it: taking a lock the moment its holder pauses
+        // is exactly what "an active editor is never interrupted" rules out.
+        setInterval(pollLockState, LOCK_POLL_MS);
+        return;
+    }
+    // A click, a key, an edit — the interactions ADR-0007 counts as work. Captured on
+    // the document so nothing downstream can stop propagation and starve the lock,
+    // and deliberately not `mousemove`: presence is not work, and mouse drift would
+    // hold a sign for as long as somebody left a cat on the desk.
+    document.addEventListener('pointerdown', noteInteraction, true);
+    document.addEventListener('keydown',     noteInteraction, true);
+    document.addEventListener('input',       noteInteraction, true);
+    window.addEventListener('pagehide', releaseLockOnLeave);
+    setInterval(lockTick, LOCK_TICK_MS);
+}
+
+function noteInteraction() {
+    var wasQuiet = (Date.now() - lastInteraction) > LOCK_BEAT_MS;
+    lastInteraction = Date.now();
+    // Coming back from a quiet spell is the one moment worth an immediate beat: the
+    // lock may have lapsed, and taking it back now is what stops a colleague
+    // starting on a display somebody is working on again. Any bar on screen implies
+    // a long quiet spell, so this is also the only time they need re-deciding.
+    if (wasQuiet) { holdLock(); renderLockBars(); }
+}
+
+function lockTick() {
+    renderLockBars();
+    if (!lockLost && (Date.now() - lastBeatAt) >= LOCK_BEAT_MS) { holdLock(); }
+}
+
+/** Take the lock, keep it, or take it back — one endpoint, as one question. */
+function holdLock() {
+    if (READ_ONLY || lockLost || accessLost) { return; }
+    lastBeatAt = Date.now();
+    var fd = new FormData();
+    fd.append('csrf_token', CSRF_TOKEN);
+    fd.append('display', DISPLAY_TAG);
+    fd.append('display_id', DISPLAY_ID);
+    // The true age of the last interaction, so a beat can never quietly extend a
+    // lock on a display nobody has touched.
+    fd.append('idle_seconds', lockIdleSeconds());
+    fetch('api.php?action=hold_lock', {method:'POST', body:fd})
+        .then(function(r){ return r.json(); })
+        .then(applyLockAnswer)
+        .catch(function(){});   // a missed beat is covered by the next one
+}
+
+function applyLockAnswer(res) {
+    if (!res) { return; }
+    if (res.status !== 'success') {
+        // A failed beat is normally nothing to act on — the next one covers it. The
+        // terminal refusals are not: the display has stopped being this page's to
+        // edit and no later beat will ever succeed. Swallowing them left somebody
+        // editing a sign they had already lost, with the first word of it coming at
+        // the publish.
+        if (isTerminalLockReason(res.reason)) { noteAccessLost(res.reason); }
+        return;
+    }
+
+    if (res.held_by_me) {
+        serverIdle       = res.idle_seconds || 0;
+        serverAnsweredAt = Date.now();
+    }
+    if (!res.held_by_other) { return; }
+    // Lost it: somebody took over, or it lapsed and somebody else claimed it. The
+    // canvas is left exactly as it is — publishing is what gets refused.
+    lockLost = true;
+    var who = document.getElementById('lock-lost-who');
+    if (who) { who.textContent = res.held_by || 'Someone else'; }
+    renderLockBars();
+}
+
+/**
+ * This display is no longer this page's to edit. Say which way, and stop asking.
+ *
+ * The canvas is left alone, exactly as ADR-0007 leaves it when the lock moves on:
+ * pulling the editor apart under somebody would lose work that is still on screen and
+ * still theirs to copy out. What stops is the claiming — every beat from here would be
+ * refused, and a page that keeps politely asking is a page that never says anything.
+ *
+ * First answer wins. Once one of these has been shown, a later beat's refusal is a
+ * consequence of it rather than news, and rewriting the sentence underneath somebody
+ * reading it would only make them doubt the first one.
+ *
+ * @param {string} reason a key of LOCK_TERMINAL. Anything else leaves the bar's
+ *                        server-rendered wording alone rather than blanking it.
+ */
+function noteAccessLost(reason) {
+    if (accessLost) { return; }
+    accessLost = true;
+    var text = document.getElementById('lock-access-text');
+    if (text && LOCK_TERMINAL[reason]) { text.innerHTML = LOCK_TERMINAL[reason]; }
+    // On a read-only page the banner above says somebody else is editing and offers a
+    // reload once it frees up. Both were true a moment ago and neither is now, so it
+    // goes: an offer to reload into a refusal is worse than no offer.
+    var banner = document.getElementById('lock-banner');
+    if (banner) { banner.style.display = 'none'; }
+    renderLockBars();
+}
+
+/** The one click that keeps the lock, from the idle warning. */
+function keepEditing() {
+    lastInteraction = Date.now();
+    holdLock();
+    renderLockBars();
+}
+
+/** Which of the four bars belongs on screen, decided from the local idle age. */
+function renderLockBars() {
+    var idle = lockIdleSeconds();
+    // Access first, and it hides the other three: "you have lost this display" and
+    // "it will be released in two minutes" are both true once the display has stopped
+    // being this page's, and only one of them is worth reading. The lost bar in
+    // particular would name a holder there is not one of.
+    showLockBar('lock-access-bar', accessLost);
+    showLockBar('lock-lost-bar',   !accessLost && lockLost);
+    showLockBar('lock-lapsed-bar', !accessLost && !lockLost && idle >= LOCK_LAPSE_SECONDS);
+    showLockBar('lock-idle-bar',   !accessLost && !lockLost && idle >= LOCK_WARN_SECONDS && idle < LOCK_LAPSE_SECONDS);
+    var mins = document.getElementById('lock-idle-mins');
+    if (mins) { mins.textContent = Math.max(1, Math.round((LOCK_LAPSE_SECONDS - idle) / 60)); }
+}
+
+function showLockBar(id, on) {
+    var el = document.getElementById(id);
+    if (el) { el.style.display = on ? 'flex' : 'none'; }
+}
+
+/** Read-only: has the display freed up while we were watching? */
+function pollLockState() {
+    fetch('api.php?action=lock_state&display=' + encodeURIComponent(DISPLAY_TAG)
+          + '&display_id=' + DISPLAY_ID)
+        .then(function(r){ return r.json(); })
+        .then(function(res) {
+            if (!res) { return; }
+            if (res.status !== 'success') {
+                // Somebody watching a display can lose it as easily as somebody
+                // editing one — retired, renamed, their own account suspended — and
+                // the offer to reload would then be an offer to be refused. Same bar,
+                // same sentences.
+                if (isTerminalLockReason(res.reason)) { noteAccessLost(res.reason); }
+                return;
+            }
+            // Shown when free and taken away again if somebody else starts, so the
+            // offer to reload means what it says at the moment it is read.
+            var hint = document.getElementById('lock-free-hint');
+            if (hint) { hint.style.display = res.held_by_other ? 'none' : 'inline'; }
+        })
+        .catch(function(){});
+}
+
+/**
+ * Hand the lock back as the page goes away, so the next person is not waiting out
+ * the idle window for a display nobody is looking at.
+ *
+ * `pagehide` and `sendBeacon` because this is the one send that survives a page
+ * being torn down. Best effort by nature — a closed lid or a flat battery sends
+ * nothing at all, which is what the idle window is there for.
+ */
+function releaseLockOnLeave() {
+    // accessLost included, whichever way it happened: either the change released the
+    // lock already, or — a renamed tag — the lock is still this account's and the
+    // address this beacon would name no longer resolves. Both make the send pointless,
+    // and it would be refused by the same seam that refused the beat.
+    if (READ_ONLY || lockLost || accessLost || !navigator.sendBeacon) { return; }
+    var fd = new FormData();
+    fd.append('csrf_token', CSRF_TOKEN);
+    fd.append('display', DISPLAY_TAG);
+    fd.append('display_id', DISPLAY_ID);
+    navigator.sendBeacon('api.php?action=release_lock', fd);
+}
+
+/** An admin taking the display off whoever has it — ADR-0007's force-unlock. */
+function takeOverEditing() {
+    if (!IS_ADMIN) { return; }
+    if (!confirm('Take over editing ' + DISPLAY_TITLE + '?\n\n'
+        + LOCK_HOLDER + ' is editing it right now. Anything they have not published yet will be '
+        + 'lost — they keep it on screen but will not be able to publish it once you take over.')) { return; }
+
+    var fd = new FormData();
+    fd.append('csrf_token', CSRF_TOKEN);
+    fd.append('display', DISPLAY_TAG);
+    fd.append('display_id', DISPLAY_ID);
+    fetch('api.php?action=take_over_lock', {method:'POST', body:fd})
+        .then(function(r){ return r.json(); })
+        .then(function(res) {
+            // Reload rather than enable the controls in place: read-only is a mode
+            // this page was built in, so the way out of it is to build it again.
+            if (res && res.held_by_me) { location.reload(); return; }
+            showToast((res && res.message) || 'Could not take over editing.', true);
         })
         .catch(function(){ showToast('Network error.', true); });
 }
@@ -1734,6 +2713,11 @@ function publishCanvas() {
 // INTERACT.JS – drag, resize, bounds
 // ============================================================
 function setupInteract() {
+    // Nothing on the canvas moves or resizes in a read-only Builder. One return
+    // covers sections, root blocks and child blocks — and covers a fourth
+    // interactable added here later, which is the point of putting it here.
+    if (READ_ONLY) { return; }
+
     var canvas = document.getElementById('builder-canvas');
 
     // Handle-based resize edges (corners + sides)
@@ -1787,8 +2771,9 @@ function handleMove(event) {
     var t = event.target;
     if (t && t.classList) t.classList.remove('just-added');  // first move clears the new-block highlight
     if (t.dataset.locked === '1') return;
-    var x = (parseFloat(t.getAttribute('data-x'))||0) + event.dx;
-    var y = (parseFloat(t.getAttribute('data-y'))||0) + event.dy;
+    // event.dx/dy are screen pixels; ZOOM converts them to canvas pixels.
+    var x = (parseFloat(t.getAttribute('data-x'))||0) + event.dx / ZOOM;
+    var y = (parseFloat(t.getAttribute('data-y'))||0) + event.dy / ZOOM;
     t.style.transform = 'translate('+x+'px,'+y+'px)';
     t.setAttribute('data-x', x);
     t.setAttribute('data-y', y);
@@ -1801,16 +2786,17 @@ function handleMove(event) {
 function handleResize(event) {
     var t = event.target;
     if (t.dataset.locked === '1') return;
-    var x = (parseFloat(t.getAttribute('data-x'))||0) + event.deltaRect.left;
-    var y = (parseFloat(t.getAttribute('data-y'))||0) + event.deltaRect.top;
-    t.style.width  = event.rect.width  + 'px';
-    t.style.height = event.rect.height + 'px';
+    // event.deltaRect and event.rect are screen pixels; ZOOM converts to canvas.
+    var x = (parseFloat(t.getAttribute('data-x'))||0) + event.deltaRect.left / ZOOM;
+    var y = (parseFloat(t.getAttribute('data-y'))||0) + event.deltaRect.top  / ZOOM;
+    t.style.width  = (event.rect.width  / ZOOM) + 'px';
+    t.style.height = (event.rect.height / ZOOM) + 'px';
     t.style.transform = 'translate('+x+'px,'+y+'px)';
     t.setAttribute('data-x', x);
     t.setAttribute('data-y', y);
 
-    var w = Math.round(event.rect.width);
-    var h = Math.round(event.rect.height);
+    var w = Math.round(event.rect.width  / ZOOM);
+    var h = Math.round(event.rect.height / ZOOM);
     var lbl = document.getElementById('resize-label');
     lbl.textContent = w + ' × ' + h + ' px';
     var r = t.getBoundingClientRect();
@@ -1831,7 +2817,7 @@ function hideResizeLabel() {
 function _parentBounds() {
     // Returns {w, h} of the parent container (section or canvas)
     var p = activeBlock && activeBlock.parentElement;
-    if (!p) return { w: 1920, h: 1080 };
+    if (!p) return { w: CANVAS_W, h: CANVAS_H };
     return { w: p.offsetWidth, h: p.offsetHeight };
 }
 
@@ -1860,8 +2846,8 @@ function applyPos(which, val) {
     var y   = parseFloat(activeBlock.getAttribute('data-y')) || 0;
     // Clamp to parent bounds for child blocks; canvas bounds for root/section blocks
     var isChild = activeBlock.classList.contains('child-block');
-    if (which === 'x') x = isChild ? Math.max(0, Math.min(val, pb.w - bw)) : Math.max(0, Math.min(val, 1920 - bw));
-    else               y = isChild ? Math.max(0, Math.min(val, pb.h - bh)) : Math.max(0, Math.min(val, 1080 - bh));
+    if (which === 'x') x = isChild ? Math.max(0, Math.min(val, pb.w - bw)) : Math.max(0, Math.min(val, CANVAS_W - bw));
+    else               y = isChild ? Math.max(0, Math.min(val, pb.h - bh)) : Math.max(0, Math.min(val, CANVAS_H - bh));
     activeBlock.style.transform = 'translate('+x+'px,'+y+'px)';
     activeBlock.setAttribute('data-x', x);
     activeBlock.setAttribute('data-y', y);
@@ -1918,8 +2904,9 @@ function getCanvasDropCenter(defW, defH, parent) {
             y: Math.max(0, Math.round((sh - defH) / 2))
         };
     }
-    var cx = Math.round(frame.scrollLeft + frame.clientWidth  / 2 - PAD - defW / 2);
-    var cy = Math.round(frame.scrollTop  + frame.clientHeight / 2 - PAD - defH / 2);
+    // The frame's visual centre, expressed in canvas coordinates.
+    var cx = Math.round((frame.scrollLeft + frame.clientWidth  / 2 - PAD) / ZOOM - defW / 2);
+    var cy = Math.round((frame.scrollTop  + frame.clientHeight / 2 - PAD) / ZOOM - defH / 2);
     cx = Math.max(0, Math.min(cx, canvas.offsetWidth  - defW));
     cy = Math.max(0, Math.min(cy, canvas.offsetHeight - defH));
     return { x: cx, y: cy };
@@ -2121,21 +3108,22 @@ function removeSlideRow(btn) {
 }
 
 function uploadSlideImage(input) {
-    if (!input.files[0]) return;
+    // The only handler in the file that writes to the server without first
+    // needing a selected block — so it is the one that could not be left to the
+    // "nothing is selected, so nothing happens" argument. Its slide row is inside
+    // the carousel modal, which a read-only page no longer has; the guard is what
+    // makes that a rule rather than a consequence of the markup.
+    if (READ_ONLY) return;
     var row = input.closest('.slide-row');
-    var fd  = new FormData();
-    fd.append('file', input.files[0]);
-    fd.append('csrf_token', CSRF_TOKEN);
-    fetch('api.php?action=upload_file', {method:'POST', body:fd})
-        .then(function(r){ return r.json(); })
-        .then(function(res) {
-            if (res.status === 'success') {
-                var pi = row.querySelector('.slide-img-path');
-                if (pi) pi.value = res.path;
-                var pv = row.querySelector('.slide-img-preview');
-                if (pv) pv.innerHTML = '<img src="'+escHtml(res.path)+'" style="max-width:100%;max-height:60px;object-fit:contain;">';
-            } else { showToast(res.message || 'Upload failed.', true); }
-        }).catch(function(){ showToast('Upload failed.', true); });
+    startUpload(input, 'upload_file', 'slide image', function (path) {
+        // The row can be removed while its image is uploading, so this is checked
+        // here rather than assumed from the click that started it.
+        if (!row || !row.parentNode) { showToast('That slide was removed. The file uploaded but was not used.', true); return; }
+        var pi = row.querySelector('.slide-img-path');
+        if (pi) pi.value = path;
+        var pv = row.querySelector('.slide-img-preview');
+        if (pv) pv.innerHTML = '<img src="'+escHtml(path)+'" style="max-width:100%;max-height:60px;object-fit:contain;">';
+    });
 }
 
 function saveCarouselSlides() {
@@ -2421,11 +3409,11 @@ function applyTextAlign(align) {
 }
 
 // ============================================================
-// ALIGN TO SCREEN (1920 × 1080 canvas)
+// ALIGN TO SCREEN (this Display's canvas)
 // ============================================================
 // "Align to Parent" — snaps each element to a position within its own parent container.
 // For child blocks in a section, the section is the parent.
-// For root-level blocks and sections, the canvas (1920×1080) is the parent.
+// For root-level blocks and sections, the canvas is the parent.
 function alignToParent(direction) {
     var targets = multiSel.length > 0 ? multiSel : (activeBlock ? [activeBlock] : []);
     if (targets.length === 0) return;
