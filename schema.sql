@@ -48,6 +48,12 @@ CREATE TABLE IF NOT EXISTS users (
     failed_attempts INT(11)      NOT NULL DEFAULT 0,
     last_failed_at  DATETIME     NULL DEFAULT NULL,
     locked_until    DATETIME     NULL DEFAULT NULL,
+    -- Account closure — added at runtime by lib/accounts.php via the admin panel.
+    -- An account is never deleted: the row stays so its id can never be handed to
+    -- somebody else, which is what would let a stale grant, a held edit lock or a
+    -- publish record silently change whose they are. Distinct from is_active on
+    -- purpose — inactive is a suspension an admin can undo, closed is permanent.
+    closed_at       DATETIME     NULL DEFAULT NULL,
     PRIMARY KEY (id),
     UNIQUE KEY username (username),
     UNIQUE KEY email (email)

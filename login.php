@@ -95,6 +95,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     )->execute([$attempts, date('Y-m-d H:i:s', $now), $user['id']]);
                 }
             }
+        } elseif (accountIsClosed($pdo, (int)$user['id'])) {
+            // Checked before the deactivated branch because closing also clears
+            // is_active — without this, someone whose account was retired would be
+            // told to contact a manager about getting it switched back on, which is
+            // not a thing that can happen (lib/accounts.php).
+            $error = 'This account has been closed and cannot be used again. '
+                   . 'If you still work here, ask an admin to set you up a new one.';
         } elseif (!$user['is_active']) {
             $error = 'Your account has been deactivated. Please contact your manager.';
         } else {

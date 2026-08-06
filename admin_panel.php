@@ -9,6 +9,7 @@ require_once __DIR__ . '/lib/display_admin.php';
 require_once __DIR__ . '/lib/brand_styles.php';
 require_once __DIR__ . '/lib/server_report.php';
 require_once __DIR__ . '/lib/password_resets.php';
+require_once __DIR__ . '/lib/accounts.php';
 requireCurrentAccount($pdo);
 requireAdmin();
 
@@ -32,6 +33,14 @@ $displayStore = new DisplayStore($pdo);
 $layoutStore  = new LayoutStore($pdo, $displayStore);
 $grantStore   = new GrantStore($pdo);
 $displayAdmin = new DisplayAdmin($pdo, $displayStore, $layoutStore, $grantStore);
+
+// Accounts are closed, never deleted, so an id number can never come back into
+// service under a different person (lib/accounts.php). The column that records it
+// converges here for the same reason as everything above. AccountAdmin holds the
+// transaction that surrenders their grants and their edit lock in the same breath.
+$accountStore = new AccountStore($pdo);
+$accountStore->ensureSchema();
+$accountAdmin = new AccountAdmin($pdo, $accountStore, $grantStore, $displayStore);
 
 /**
  * The address to type into a TV or a signage widget — absolute, because it is
@@ -98,7 +107,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ->execute([$uname, $email, password_hash($pass, PASSWORD_DEFAULT), $role]);
                 $msg = "User \"$uname\" created.";
             } catch (PDOException $e) {
-                $msg = 'Username or email already exists.'; $msgType = 'error';
+                // A closed account keeps its name, and a closed account is not in
+                // the list on this page — so "already exists" for a name nobody
+                // can see is a dead end. Say which one it is.
+                $clash = $accountStore->findByNameOrEmail($uname, $email);
+                $msg = ($clash && $accountStore->isClosed($clash['id']))
+                    ? 'That username or email belonged to "' . $clash['username'] . '", a closed account. '
+                      . 'Closed names stay reserved so nobody inherits their history — choose another.'
+                    : 'Username or email already exists.';
+                $msgType = 'error';
             }
         }
         $tab = 'users';
@@ -140,26 +157,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tab = 'users';
     }
 
-    // Delete user
-    if (isset($_POST['action_delete_user'])) {
-        $uid = intval($_POST['del_id'] ?? 0);
-        if ($uid === $user['id']) {
-            $msg = 'You cannot delete your own account.'; $msgType = 'error';
-        } else {
-            // Their grants go first, and explicitly. The FK's ON DELETE CASCADE
-            // should do it, but it is added by schemaTry() and may never have
-            // applied on a database behind the repo — and a grant row left
-            // pointing at a deleted account would hand its access to whoever
-            // inherited that id.
-            $grantStore->revokeAllForAccount($uid);
-            // And any edit lock they were holding, for the same reason and one of
-            // its own: a lock naming a deleted account blocks that display for a
-            // full idle window, held by a name no banner can even print.
-            $displayStore->releaseLocksHeldBy($uid);
-            $pdo->prepare("DELETE FROM users WHERE id = ?")->execute([$uid]);
-            $msg = 'User deleted, along with any display access they had.';
-        }
-        $tab = 'users';
+    // Close an account. Never a DELETE: the row has to stay so its id number can
+    // never be handed to somebody else (lib/accounts.php). Every rule about what
+    // closing means, and the transaction that surrenders their access with it,
+    // lives in AccountAdmin — this collects the form and prints the answer.
+    if (isset($_POST['action_close_user'])) {
+        $res     = $accountAdmin->close(intval($_POST['close_id'] ?? 0), $user['id']);
+        $msg     = $res->message();
+        $msgType = $res->isOk() ? 'success' : 'error';
+        $tab     = 'users';
     }
 
     // ============================================================
@@ -254,9 +260,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // every Display by role, so a grant on one would mean nothing. Intersecting
         // the submitted accounts with the basic ones is also what stops a forged
         // POST from writing grant rows for an admin account.
+        // Open accounts only: a closed one surrendered its grants when it closed,
+        // and handing it a new one would rebuild the stale pointer on purpose.
         $basicIds = [];
-        foreach ($pdo->query("SELECT id FROM users WHERE role = 'basic'")->fetchAll() as $row) {
-            $basicIds[] = intval($row['id']);
+        foreach ($accountStore->open() as $row) {
+            if ($row['role'] === 'basic') { $basicIds[] = intval($row['id']); }
         }
         $declared = isset($_POST['grants_accounts']) && is_array($_POST['grants_accounts'])
             ? array_map('intval', $_POST['grants_accounts']) : [];
@@ -373,7 +381,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 // ---- READ DATA ----
-$users  = $pdo->query("SELECT * FROM users ORDER BY role DESC, username ASC")->fetchAll();
+// Two lists, because a closed account is neither gone nor in service. `$users` is
+// everyone still working here — the management table and the grant matrix — and
+// `$closedUsers` is the reserved names, shown so that "already exists" for a name
+// that is nowhere on the page is never a dead end.
+$users       = $accountStore->open();
+$closedUsers = $accountStore->closed();
 
 // Displays, with how much each one would lose if it were deleted, and the sizes a
 // new Display could be duplicated from (ADR-0004: identical dimensions only).
@@ -396,11 +409,13 @@ foreach ($displays as $d) {
 $grantsByAccount = $grantStore->displayIdsByAccount();
 $grantsByDisplay = $grantStore->accountIdsByDisplay();
 $basicUsers      = [];
-$userNames       = [];
 foreach ($users as $u) {
-    $userNames[intval($u['id'])] = $u['username'];
     if ($u['role'] === 'basic') { $basicUsers[] = $u; }
 }
+// Names for *every* account, closed included. This is the reason closing beats
+// deleting: "published by Kayla" and a held edit lock both name an account by id,
+// and they have to keep printing a name after that person leaves.
+$userNames = $accountStore->names();
 
 // Offered as a starting point only; any size inside the bounds can be typed.
 $canvasPresets = [
@@ -639,11 +654,12 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 
                         <?php if ($u['id'] !== $user['id']): ?>
                         <form method="POST" style="display:inline;"
-                              onsubmit="return confirm('Delete user <?= htmlspecialchars($u['username']) ?>?')">
+                              onsubmit="return confirm('Close the account for <?= htmlspecialchars($u['username']) ?>?\n\nThey will not be able to sign in again, and they will lose access to every display. This cannot be undone, and the name stays reserved.')">
                             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
-                            <input type="hidden" name="del_id" value="<?= $u['id'] ?>">
-                            <button type="submit" name="action_delete_user"
-                                    class="btn btn-red" style="font-size:11px; padding:5px 10px;">Delete</button>
+                            <input type="hidden" name="close_id" value="<?= $u['id'] ?>">
+                            <button type="submit" name="action_close_user"
+                                    class="btn btn-red" style="font-size:11px; padding:5px 10px;"
+                                    title="Permanently close this account. Their name stays reserved and anything they published still says who published it.">Close Account</button>
                         </form>
                         <?php endif; ?>
                     </td>
@@ -701,6 +717,33 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             </tbody>
         </table>
     </div>
+
+    <?php if ($closedUsers): ?>
+    <div class="card">
+        <h2>Closed Accounts (<?= count($closedUsers) ?>)</h2>
+        <p style="font-size:13px; color:#7f8c8d; margin-bottom:14px;">
+            These people can no longer sign in and have no access to any display. Their records are
+            kept so that anything they published still says who published it, and
+            <strong>their usernames and email addresses stay reserved</strong> — nobody else can be
+            given the same name. This cannot be undone; a returning employee needs a new account.
+        </p>
+        <table>
+            <thead>
+                <tr><th>Username</th><th>Email</th><th>Role held</th><th>Closed</th></tr>
+            </thead>
+            <tbody>
+            <?php foreach ($closedUsers as $c): ?>
+                <tr style="color:#7f8c8d;">
+                    <td><strong><?= htmlspecialchars($c['username']) ?></strong></td>
+                    <td><?= htmlspecialchars($c['email']) ?></td>
+                    <td><?= htmlspecialchars(strtoupper($c['role'])) ?></td>
+                    <td><?= !empty($c['closed_at']) ? date('M j, Y', strtotime($c['closed_at'] . ' UTC')) : '—' ?></td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+    <?php endif; ?>
 </div>
 
 <!-- ============================================================ -->

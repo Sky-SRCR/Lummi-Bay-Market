@@ -21,6 +21,7 @@ require_once __DIR__ . '/../lib/display_request.php';
 require_once __DIR__ . '/../lib/display_admin.php';
 require_once __DIR__ . '/../lib/password_resets.php';
 require_once __DIR__ . '/../lib/server_report.php';
+require_once __DIR__ . '/../lib/accounts.php';
 
 /**
  * DisplayStore with its one non-portable statement swapped out.
@@ -52,6 +53,20 @@ class TestDisplayStore extends DisplayStore
 function newTestLayoutStore(PDO $pdo)
 {
     return new LayoutStore($pdo, new TestDisplayStore($pdo));
+}
+
+/** The real AccountAdmin over the real stores — nothing about it is stubbed. */
+function newTestAccountAdmin(PDO $pdo)
+{
+    return new AccountAdmin($pdo, new AccountStore($pdo), new GrantStore($pdo), new TestDisplayStore($pdo));
+}
+
+/** Add an account the fixture did not seed, and return its id. */
+function makeTestAccount(PDO $pdo, $username, $role = 'basic')
+{
+    $pdo->prepare("INSERT INTO users (username, email, role) VALUES (?, ?, ?)")
+        ->execute([$username, $username . '@example.test', $role]);
+    return intval($pdo->lastInsertId());
 }
 
 /** The real DisplayAdmin over the real stores — nothing about it is stubbed. */
@@ -105,7 +120,9 @@ function newTestDb()
         is_active INTEGER NOT NULL DEFAULT 1,
         failed_attempts INTEGER NOT NULL DEFAULT 0,
         last_failed_at TEXT DEFAULT NULL,
-        locked_until TEXT DEFAULT NULL
+        locked_until TEXT DEFAULT NULL,
+        email TEXT NOT NULL DEFAULT '',
+        closed_at TEXT DEFAULT NULL
     )");
 
     $pdo->exec("CREATE TABLE displays (
@@ -198,7 +215,8 @@ function newTestDb()
         ('price_2',       'Arial',30,'#e74c3c','bold','normal',1.20),
         ('description',   'Arial',16,'#bdc3c7','normal','normal',1.40)");
 
-    $pdo->exec("INSERT INTO users (username, role) VALUES ('sky','admin'), ('clerk','basic')");
+    $pdo->exec("INSERT INTO users (username, email, role) VALUES
+        ('sky','sky@example.test','admin'), ('clerk','clerk@example.test','basic')");
 
     return $pdo;
 }

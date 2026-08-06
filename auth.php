@@ -76,6 +76,10 @@ function syncSessionAccount(PDO $pdo): bool {
         return false;
     }
     if (!$row || intval($row['is_active']) !== 1) { return false; }
+    // Closing an account also clears is_active, so the line above already ends the
+    // session — this is the belt for a row edited by hand, and the one place that
+    // states the rule in the vocabulary of closure rather than of suspension.
+    if (accountIsClosed($pdo, intval($_SESSION['user_id']))) { return false; }
     $_SESSION['role'] = ($row['role'] === 'admin') ? 'admin' : 'basic';
     return true;
 }
@@ -177,6 +181,26 @@ function clearLockout(PDO $pdo, int $userId): void {
     $pdo->prepare(
         "UPDATE users SET failed_attempts = 0, last_failed_at = NULL, locked_until = NULL WHERE id = ?"
     )->execute([$userId]);
+}
+
+// ── Closed accounts ─────────────────────────────────────────
+// A closed account is one that has been retired permanently: the row stays so its
+// id number can never be handed to somebody else, and it can never sign in again.
+// The rule and every statement behind it live in lib/accounts.php; this is the
+// one-line form the pre-auth pages and the session sync call.
+//
+// Answers false when the column does not exist, which is right rather than
+// convenient: a database without it has never closed an account, because there was
+// nowhere to record one.
+require_once __DIR__ . '/lib/accounts.php';
+
+// Built per call rather than cached in a static: a cached store would hold the
+// first PDO it ever saw, and a helper that silently answers about the wrong
+// database is the kind of bug that only shows up somewhere it cannot be traced.
+// This runs once per request.
+function accountIsClosed(PDO $pdo, int $accountId): bool {
+    $store = new AccountStore($pdo);
+    return $store->isClosed($accountId);
 }
 
 // ── Signage text sanitiser ──────────────────────────────────

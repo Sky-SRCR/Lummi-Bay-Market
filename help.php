@@ -230,7 +230,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li>Add any block type: Image, Carousel, Marquee, Video</li>
         <li>Edit font styles, block dimensions, canvas background</li>
         <li>Manage Brand Standards via the Branding page (global font/color styles for branded blocks)</li>
-        <li>Delete blocks, manage users, configure store branding</li>
+        <li>Delete blocks, manage accounts, configure store branding</li>
         <li>Publish the layout to the display</li>
     </ul>
 
@@ -727,15 +727,22 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <ul>
         <li><strong>Create user</strong> — add a new account with a username, email, password, and role (Admin or Basic)</li>
         <li><strong>Edit user</strong> — change username, email, role, or active status. Leave password blank to keep it unchanged.</li>
-        <li><strong>Deactivate / Activate</strong> — a deactivated user cannot sign in</li>
-        <li><strong>Delete</strong> — permanently removes the account</li>
+        <li><strong>Deactivate / Activate</strong> — a deactivated user cannot sign in, and can be
+            switched back on whenever you like. This is the one to use for someone on leave.</li>
+        <li><strong>Close Account</strong> — for somebody who has left. They can never sign in again
+            and lose access to every display, but their record is kept, so anything they published
+            still says who published it. <strong>This cannot be undone</strong>, and their username
+            and email stay reserved so nobody else can be given the same name. Closed accounts are
+            listed further down the tab. If someone comes back, make them a new account.</li>
         <li><strong>Reset password</strong> — sends a password reset email to the user</li>
     </ul>
 
     <h3>Assets tab</h3>
     <p>Shows all entries in the Asset Library with the option to view, edit, or delete them. Deleting an asset that is linked to a canvas block sets those blocks to show no content until re-linked or manually filled.</p>
 
-    <div class="note"><strong>Note:</strong> You cannot delete your own account from the Admin Panel. An admin must always exist.</div>
+    <div class="note"><strong>Note:</strong> You cannot close your own account, and you cannot close
+        the last admin who is still able to sign in — make somebody else an admin first. An admin must
+        always exist, and closing cannot be reversed.</div>
 </div>
 <?php endif; ?>
 

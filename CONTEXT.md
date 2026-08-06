@@ -65,6 +65,14 @@ A named user of the builder, stored as a row in `users` with a role. The unit
 that a login lockout applies to.
 _Avoid_: login, profile
 
+**Closed account**:
+An account retired permanently. It cannot sign in, holds no grant and no edit lock,
+and is out of the user list — but the row stays forever, so its account number can
+never be handed to somebody new and quietly inherit what pointed at it. The username
+and email stay reserved, and anything the person published still names them. There is
+no reopening: a returning employee gets a new account.
+_Avoid_: deleted, removed, deactivated
+
 **Failed login attempt**:
 A sign-in POST for an existing account where the password does not verify.
 Attempts against a username that matches no account are not counted.

@@ -60,6 +60,7 @@ Design rules, applied to every module added by this build:
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, and `assetUsage()` — which Displays depend on a shared library entry. |
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `redeem` / `discard` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. |
+| `accounts.php` | `AccountStore`, `AccountAdmin` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. Not a gatekeeper for all of `users`: creating, role changes and password resets are still written by `admin_panel.php`, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means. |
 | `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads `information_schema` and PHP's own configuration and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
@@ -193,7 +194,18 @@ through the app again:
     a one-time link — counts them somewhere the person guessing cannot reach, and
     says the same sentence for every refusal, or the count itself becomes the
     oracle it was rationing against.
-14. **`schema.sql` is what `schema.php` converges to.** They are two statements of
+14. **An account number is never reused.** Accounts are *closed*, never deleted
+    (CONTEXT.md). `DELETE FROM users` freed the id, and MySQL hands a freed id to
+    the next account created — so a grant that outlived its cascade, a held edit
+    lock, a publish record or a signed-in browser could silently come to mean a
+    different person. Each of those was defended one at a time, by remembering to;
+    keeping the row removes the thing they were defending against. `closed_at` is
+    deliberately not `is_active`: inactive is a suspension an admin undoes, closed
+    is permanent, and collapsing them would put an "undo" button on the one thing
+    that must not be undone. There must be no `DELETE FROM users` anywhere, and
+    anything that resolves an account id to a person must keep resolving a closed
+    one — `AccountStore::names()` covers every account for exactly that reason.
+15. **`schema.sql` is what `schema.php` converges to.** They are two statements of
     one structure, and the runtime one is authoritative — a column that exists only
     in `schema.sql` never reaches the live server. Add to both in the same commit,
     and remember `CREATE TABLE IF NOT EXISTS` is a no-op on a database that already
@@ -510,7 +522,7 @@ than skipping it.
 - **`schema.sql` is a rebuild artefact, not a description of the server, and it
   says so.** Its header now names the two runtime convergence functions and states
   the order of authority: `lib/schema.php` and `auth.php` decide what the live
-  database becomes, and `schema.sql` has to agree with them (invariant 14). The
+  database becomes, and `schema.sql` has to agree with them (invariant 15). The
   alternative — documenting the live server's current lagging structure — describes
   something that changes the next time an admin signs in, and would have to be
   rewritten after every deploy.
@@ -781,6 +793,51 @@ first time an admin opens Settings after this deploys; until then the 7.1 rule
 stands unchanged, because guessing in the other direction is the one mistake that
 breaks sign-in on the live site.
 
+### 4l. An account number is never handed to a second person
+
+`DELETE FROM users` returned the id to the pool, and MySQL gives a freed id to the
+next account created. Everything that identifies a person by number could therefore
+come to mean somebody else: a `display_permissions` row that outlived a cascade
+which is added by `schemaTry()` and may never have applied, a `lock_holder_id` on a
+Display, a `last_published_by`, a session in a browser in the back office. Every one
+of those had already been defended, individually, by remembering to — the delete
+handler revoked grants and released locks by hand, with a comment explaining why.
+Closing the account removes the thing all of them were defending against.
+
+The row stays. `closed_at` is stamped, `is_active` goes to 0 in the same statement
+so every existing "may this account sign in" check refuses it without being taught
+anything, the grants are surrendered and the lock released — all inside one
+transaction, because an account marked closed that still holds a grant is precisely
+the stale pointer this exists to prevent.
+
+Four consequences worth stating, because each is a thing somebody will meet:
+
+- **The name stays taken.** That is deliberate: a re-registered `kayla` would
+  inherit a stranger's publish history at a glance. But "username already exists"
+  for a name that is nowhere on the page is a dead end, so closed accounts get
+  their own list on the Users tab, and the create-user error names the clash.
+- **There is no reopening.** A number that can come back into service is a number
+  that can be reused. A returning employee gets a new account.
+- **Because it cannot be undone, two things are now refused** that a delete never
+  needed to refuse: closing your own account (which the old handler did check) and
+  closing the last admin who can still sign in (which it did not — you could delete
+  your way out of having any admin, and re-create one; now you cannot).
+- **`AccountStore::names()` covers closed accounts on purpose.** "Published by
+  Kayla" and a lock banner both resolve an id to a name, and they have to keep
+  working after she leaves. That is the whole argument for closing over deleting,
+  and it is asserted rather than assumed.
+
+`closed_at` is not `is_active`. Inactive is a manager suspending somebody for a
+fortnight; closed is final. Collapsing them would put a "reactivate" tick-box on the
+one state that must not be reversible.
+
+Twenty-eight checks, including a database with no `closed_at` column at all — which
+is what the live server looks like until this deploys, and which must report nobody
+closed rather than throwing. Verified against five mutations: going back to a
+`DELETE` fails 7, skipping the grant surrender fails 1, skipping the lock release
+fails 1, hiding closed accounts from `names()` fails 1, and dropping the last-admin
+guard fails 2.
+
 ---
 
 ## 5. Verification
@@ -799,6 +856,14 @@ grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus sche
 grep -rn "information_schema" --include=*.php .  # only lib/server_report.php — the one file
                                               # allowed to name a table it does not own,
                                               # because it reads the catalogue and no rows
+grep -rn "DELETE FROM users" --include=*.php . # nothing outside tools/ (invariant 14). Accounts
+                                              # are closed, never deleted, so a freed id can
+                                              # never be handed to somebody new
+grep -rn "closed_at" --include=*.php .        # lib/accounts.php, schema.sql's DDL, the fixture,
+                                              # and ONE render in admin_panel.php that prints the
+                                              # date. A hit that *decides* something is a second
+                                              # opinion about what closed means — ask
+                                              # AccountStore::isClosed() instead
 grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?displays`?" --include=*.php .  # lib/displays.php + schema.php's ALTERs
 grep -rn "INTO display_permissions\|FROM display_permissions" --include=*.php .  # only lib/grants.php, plus tools/
 grep -rn "lock_holder_id\|lock_activity_at\|lock_taken_at" --include=*.php .  # only lib/displays.php + lib/schema.php
@@ -829,7 +894,7 @@ control the lock took away.
 
 `schema.sql` has no automated check at all — nothing reads it, so a column missing
 from it fails silently on a future rebuild and nowhere else. Diff it against
-`lib/schema.php` by eye whenever either changes (invariant 14), and use
+`lib/schema.php` by eye whenever either changes (invariant 15), and use
 `tools/rehearse_phase1.php` on a copy of live data to see what MySQL actually ends
 up with.
 

@@ -684,7 +684,7 @@ checkSame(true, newTestActor($pdo, 1, 'admin')->mayEdit($deli),
           'and changes nothing: an admin already held every Display');
 
 // An account being deleted takes its grants with it, the same way a Display does.
-checkSame(1, $grants->revokeAllForAccount($janeId), 'deleting an account revokes its grants');
+checkSame(1, $grants->revokeAllForAccount($janeId), 'closing an account revokes its grants');
 checkSame([], (new GrantStore($pdo))->displayIdsFor($janeId), 'leaving it holding nothing');
 
 // ─────────────────────────────────────────────────────────────
@@ -827,7 +827,7 @@ checkSame('locked', $res->kind(), 'and its publish is refused, which is how it f
 
 // ---- An account being deleted --------------------------------------------------
 $store->claimLock($lobby, 2);
-checkSame(2, $store->releaseLocksHeldBy(2), 'deleting an account releases every lock it held');
+checkSame(2, $store->releaseLocksHeldBy(2), 'closing an account releases every lock it held');
 checkSame(false, $store->forId($driveT->id())->lockState()->isHeld(), 'drive-thru is free again');
 checkSame(false, $store->forId($lobby->id())->lockState()->isHeld(),  'and so is lobby');
 
@@ -1052,8 +1052,13 @@ $pdo->exec("UPDATE users SET is_active = 0 WHERE id = 2");
 checkSame(false, syncSessionAccount($pdo), 'a deactivated account\'s session is refused');
 
 $pdo->exec("UPDATE users SET is_active = 1 WHERE id = 2");
+$pdo->exec("UPDATE users SET closed_at = '2026-01-01 00:00:00' WHERE id = 2");
+checkSame(false, syncSessionAccount($pdo), 'and so is a closed one, even with is_active still set');
+
+// The app no longer deletes an account (invariant 14), but a hand-edited database
+// or a partial restore can still leave a session pointing at a row that is gone.
 $pdo->exec("DELETE FROM users WHERE id = 2");
-checkSame(false, syncSessionAccount($pdo), 'and so is a deleted one');
+checkSame(false, syncSessionAccount($pdo), 'and a session whose account row vanished entirely');
 
 $_SESSION['user_id'] = 999;
 checkSame(false, syncSessionAccount($pdo), 'an account that never existed is refused');
@@ -1279,4 +1284,86 @@ foreach ($runtime as $fact) {
 }
 check($allStrings, 'every fact is a printable pair, so the panel cannot be handed an object');
 
-reportChecks(380);
+// ─────────────────────────────────────────────────────────────
+section('An account is closed, never deleted, so its number is never reused');
+
+// The defect: `DELETE FROM users` freed the id, and MySQL hands a freed id to the
+// next account created. Everything still pointing at it — a grant that outlived
+// its cascade, a held edit lock, a publish record, a signed-in browser — would
+// then be pointing at a different person. Closing removes the freeing.
+$aPdo   = newTestDb();
+$aStore = new AccountStore($aPdo);
+$aAdmin = newTestAccountAdmin($aPdo);
+$aDisps = new TestDisplayStore($aPdo);
+$aSign  = makeTestDisplay($aPdo, 'lobby', 'Lobby');
+
+// Account 2 is the clerk. Give them a Display to edit and let them hold the lock,
+// so closing has something real to surrender.
+grantTestAccess($aPdo, $aSign->id(), 2);
+$aDisps->claimLock($aSign, 2);
+checkSame([2], (new GrantStore($aPdo))->displayIdsFor(2) ? [2] : [], 'the clerk starts out granted the sign');
+checkSame(true, $aDisps->forId($aSign->id())->lockState()->heldBy(2), 'and holding its edit lock');
+
+$res = $aAdmin->close(2, 1);
+checkSame(true, $res->isOk(), 'an admin can close somebody else\'s account');
+check(strpos($res->message(), 'clerk') !== false, 'and the answer names who was closed');
+
+checkSame(true, $aStore->isClosed(2), 'the account reads as closed');
+checkSame(1, count($aPdo->query("SELECT id FROM users WHERE id = 2")->fetchAll()),
+          'and its row is still there — which is the whole point, so the id is never free');
+checkSame([], (new GrantStore($aPdo))->displayIdsFor(2), 'closing surrendered every grant it held');
+checkSame(false, $aDisps->forId($aSign->id())->lockState()->isHeld(), 'and released the display it was holding');
+
+// The list a manager sees, and the list of names that stay spoken for.
+$open = $aStore->open();
+checkSame(1, count($open), 'a closed account is out of the user list');
+checkSame('sky', $open[0]['username'], 'leaving the accounts still in service');
+$closed = $aStore->closed();
+checkSame(1, count($closed), 'and into the closed list, where its name is visible');
+checkSame('clerk', $closed[0]['username'], 'so "that name is taken" is never a dead end');
+
+// The reason closing beats deleting, asserted rather than assumed: history keeps
+// printing a name. A delete would have left this blank or, worse, someone else's.
+$names = $aStore->names();
+checkSame('clerk', isset($names[2]) ? $names[2] : null,
+          'a closed account still answers to its name, so "published by" survives');
+
+// Closing twice is not a second closure, and must not re-run the surrenders.
+$again = $aAdmin->close(2, 1);
+checkSame(false, $again->isOk(), 'closing an account that is already closed is refused');
+
+// Two refusals that exist because closing cannot be undone.
+$self = $aAdmin->close(1, 1);
+checkSame(false, $self->isOk(), 'an admin cannot close their own account');
+$onlyAdmin = $aAdmin->close(1, 2);
+checkSame(false, $onlyAdmin->isOk(), 'nor can the last admin who can still sign in be closed');
+check(strpos($onlyAdmin->message(), 'cannot be undone') !== false,
+      'and the refusal says why it matters');
+
+// With a second admin in place the guard lifts — it is a floor, not a ban.
+$aPdo2   = newTestDb();
+$aAdmin2 = newTestAccountAdmin($aPdo2);
+makeTestAccount($aPdo2, 'second', 'admin');
+checkSame(true, $aAdmin2->close(1, 3)->isOk(), 'with another admin available, an admin can be closed');
+checkSame(1, (new AccountStore($aPdo2))->openAdminCount(), 'and exactly one admin is left in service');
+
+// An id that names nobody must not report success, or the panel says it closed
+// something it did not touch.
+checkSame(false, $aAdmin2->close(999, 1)->isOk(), 'closing an account that does not exist is refused');
+checkSame(false, $aAdmin2->close(0, 1)->isOk(),   'and so is closing nothing at all');
+
+// A database that predates the column has never closed anybody, and must say so
+// rather than throwing — this is what the live server looks like before deploy.
+$oldPdo = newTestDb();
+$oldPdo->exec("CREATE TABLE u2 AS SELECT id, username, email, role, is_active FROM users");
+$oldPdo->exec("DROP TABLE users");
+$oldPdo->exec("ALTER TABLE u2 RENAME TO users");
+$oldStore = new AccountStore($oldPdo);
+checkSame(false, $oldStore->isClosed(1), 'without the column, no account reads as closed');
+checkSame(2, count($oldStore->open()),   'and every account is still in service');
+checkSame([], $oldStore->closed(),       'with none of them closed');
+checkSame(false, (new AccountAdmin($oldPdo, $oldStore, new GrantStore($oldPdo), new TestDisplayStore($oldPdo)))
+                 ->close(2, 1)->isOk(),
+          'and closing refuses rather than half-doing it');
+
+reportChecks(406);
