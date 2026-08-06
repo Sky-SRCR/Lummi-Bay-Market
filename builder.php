@@ -45,7 +45,8 @@ if (!$resolution->isFound()) {
         // admin, banner and all.
         $notice = 'That display is turned off, so it is not yours to edit while it is out of service. '
                 . 'An admin can turn it back on.';
-    } elseif ($resolution->kind() === DisplayResolution::FORBIDDEN) {
+    } elseif ($resolution->kind() === DisplayResolution::FORBIDDEN
+           || $resolution->kind() === DisplayResolution::MISMATCH) {
         $notice = $resolution->message();
     }
 
@@ -958,6 +959,10 @@ var CSRF_TOKEN = <?= json_encode(csrfToken(), JSON_HEX_TAG | JSON_HEX_APOS | JSO
 // these are constants for the life of the page — every bound, clamp and default
 // below is derived from them rather than from a hardcoded 1920×1080.
 var DISPLAY_TAG   = <?= json_encode($display->tag(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+// The record this page was actually opened on. The tag above addresses it, but an
+// admin may rename a tag and hand the old one to another sign, so every call below
+// sends both and the server refuses any that disagree (DisplayRequest::ID_PARAM).
+var DISPLAY_ID    = <?= intval($display->id()) ?>;
 var DISPLAY_TITLE = <?= json_encode($display->title(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 var CANVAS_W      = <?= $canvasW ?>;
 var CANVAS_H      = <?= $canvasH ?>;
@@ -1109,7 +1114,8 @@ function loadLayout() {
     // The editing read, not the Viewer's: a Display that has been turned off is a
     // notice on a Screen but must still open here (CONTEXT.md), and get_layout
     // deliberately returns nothing for one.
-    return fetch('api.php?action=get_editor_layout&display=' + encodeURIComponent(DISPLAY_TAG))
+    return fetch('api.php?action=get_editor_layout&display=' + encodeURIComponent(DISPLAY_TAG)
+                 + '&display_id=' + DISPLAY_ID)
         .then(function(r){ return r.json(); })
         .then(function(data) {
             if (!data || data.status !== 'success') {
@@ -2117,6 +2123,7 @@ function publishCanvas() {
     fd.append('layout_data', JSON.stringify(elements));
     fd.append('csrf_token', CSRF_TOKEN);
     fd.append('display', DISPLAY_TAG);
+    fd.append('display_id', DISPLAY_ID);
     fd.append('layout_stamp', LAYOUT_STAMP);
 
     if (IS_ADMIN) {
@@ -2138,11 +2145,12 @@ function publishCanvas() {
                 showToast('Published to ' + DISPLAY_TITLE + ' (' + DISPLAY_TAG + '). '
                           + 'That screen updates within 30 seconds.');
                 loadAssets();
-            } else if (res.reason === 'stale' || res.reason === 'locked') {
-                // Nothing was saved, and either refusal has to be acknowledged
-                // rather than glimpsed: the layout on screen is still the editor's,
-                // and what to do next differs — reload for a stale stamp, wait for
-                // somebody else's edit lock. The message says which.
+            } else if (res.reason === 'stale' || res.reason === 'locked' || res.reason === 'mismatch') {
+                // Nothing was saved, and none of these refusals may be glimpsed and
+                // missed: the layout on screen is still the editor's, and what to do
+                // next differs — reload for a stale stamp, wait for somebody else's
+                // edit lock, reload for a screen name tag that moved to another
+                // display. The message says which.
                 if (res.reason === 'locked') { lockLost = true; renderLockBars(); }
                 alert(res.message);
             } else { showToast(res.message||'Publish failed.', true); }
@@ -2235,6 +2243,7 @@ function holdLock() {
     var fd = new FormData();
     fd.append('csrf_token', CSRF_TOKEN);
     fd.append('display', DISPLAY_TAG);
+    fd.append('display_id', DISPLAY_ID);
     // The true age of the last interaction, so a beat can never quietly extend a
     // lock on a display nobody has touched.
     fd.append('idle_seconds', lockIdleSeconds());
@@ -2284,7 +2293,8 @@ function showLockBar(id, on) {
 
 /** Read-only: has the display freed up while we were watching? */
 function pollLockState() {
-    fetch('api.php?action=lock_state&display=' + encodeURIComponent(DISPLAY_TAG))
+    fetch('api.php?action=lock_state&display=' + encodeURIComponent(DISPLAY_TAG)
+          + '&display_id=' + DISPLAY_ID)
         .then(function(r){ return r.json(); })
         .then(function(res) {
             if (!res || res.status !== 'success') { return; }
@@ -2309,6 +2319,7 @@ function releaseLockOnLeave() {
     var fd = new FormData();
     fd.append('csrf_token', CSRF_TOKEN);
     fd.append('display', DISPLAY_TAG);
+    fd.append('display_id', DISPLAY_ID);
     navigator.sendBeacon('api.php?action=release_lock', fd);
 }
 
@@ -2322,6 +2333,7 @@ function takeOverEditing() {
     var fd = new FormData();
     fd.append('csrf_token', CSRF_TOKEN);
     fd.append('display', DISPLAY_TAG);
+    fd.append('display_id', DISPLAY_ID);
     fetch('api.php?action=take_over_lock', {method:'POST', body:fd})
         .then(function(r){ return r.json(); })
         .then(function(res) {

@@ -168,7 +168,17 @@ through the app again:
     the *age* of the last interaction, so a forgotten tab keeps beating and still
     frees the Display on time. Anything added to the Builder that keeps the lock
     alive must be something a person did on purpose.
-12. **`schema.sql` is what `schema.php` converges to.** They are two statements of
+12. **A page that knows its Display says which record it means.** The screen name
+    tag is the *address*, not the identity: an admin may rename one, and the name
+    it vacated may be given to another sign the same afternoon. So a page built
+    for a Display sends `display_id` alongside `display` on every call, and
+    `DisplayRequest::confirmIdentity()` refuses the pair when they disagree —
+    which is the only thing standing between a Builder left open across a rename
+    and a publish that silently overwrites another screen's layout. The claim is
+    optional by design (a Viewer URL on a TV carries the tag and nothing else),
+    so anything added to `builder.php` or the Work Area that names a Display must
+    send the id too, or it opts itself out of the check without a word.
+13. **`schema.sql` is what `schema.php` converges to.** They are two statements of
     one structure, and the runtime one is authoritative — a column that exists only
     in `schema.sql` never reaches the live server. Add to both in the same commit,
     and remember `CREATE TABLE IF NOT EXISTS` is a no-op on a database that already
@@ -201,6 +211,16 @@ Phase 3 removed the *transitional* part: with a picker in place, failing to reso
 is no longer a dead end. Phase 4 generalised the rule from "the installation's only
 Display" to "this account's only Display" — the same sentence, once an account can
 hold fewer Displays than exist.
+
+**And which record does a request that *does* name one mean?** The tag it names,
+unless the caller also says which Display it believed that tag stood for. Pages
+built for a Display — the Builder, the Work Area — send `display_id` beside
+`display`, and `DisplayRequest::confirmIdentity()` refuses the pair when they
+disagree (invariant 12). The tag still does the routing; the id only ever turns a
+resolution into a refusal, never into a different Display. That asymmetry is
+deliberate: it means the check can be added to a caller without changing where
+anything resolves to, and that a caller which does not send an id — a Screen
+polling `get_layout` — behaves exactly as it did before.
 
 A `basic` account with more than one grant returns to whatever it last opened
 instead of picking again. That lives in `builder.php`, not here: it reads
@@ -475,7 +495,7 @@ than skipping it.
 - **`schema.sql` is a rebuild artefact, not a description of the server, and it
   says so.** Its header now names the two runtime convergence functions and states
   the order of authority: `lib/schema.php` and `auth.php` decide what the live
-  database becomes, and `schema.sql` has to agree with them (invariant 12). The
+  database becomes, and `schema.sql` has to agree with them (invariant 13). The
   alternative — documenting the live server's current lagging structure — describes
   something that changes the next time an admin signs in, and would have to be
   rewritten after every deploy.
@@ -563,11 +583,7 @@ fail against the unfixed code — that verification is the point, not the check.
 
 Known and not fixed, so nobody assumes otherwise:
 
-- **The Builder addresses its Display by mutable tag**, never by the id the page
-  was built for. Renaming a tag under an open Builder can move its heartbeat, its
-  release and its publish onto a different sign, and ADR-0006's per-Display stamp
-  cannot see a cross-Display switch. The fix is to bind the id into the page and
-  check it server-side; it is the largest remaining correctness gap.
+- ~~**The Builder addresses its Display by mutable tag**~~ **Fixed** — see §4h.
 - **The password reset's guess limiter lives in `$_SESSION`**, which the attacker
   owns — the exact bypass ADR-0001 rewrote *login* to avoid. It needs the same
   account-keyed treatment.
@@ -581,6 +597,39 @@ Known and not fixed, so nobody assumes otherwise:
   can queue behind the metadata lock. It should read `information_schema` once.
 - **`schema.php` has no automated coverage at all** — its syntax is MySQL-only, so
   the SQLite fixture cannot execute it. Only a MySQL service container can.
+
+### 4h. The tag addresses a Display; it does not identify one
+
+The audit's largest remaining correctness gap, and the first of the reviewed list
+to be closed. Every call the Builder makes named its Display by screen name tag
+alone. A tag is admin-editable by design, and the name a rename vacates is free to
+be given to another sign — so a Builder open across both changes held an address
+that still resolved, cleanly and quietly, to a different screen. Its next publish
+would have deleted that screen's layout, reinserted this one's, and reported
+success. ADR-0006's stamp could not catch it: the stamp is per Display, both
+counters are small integers, and equal ones are common.
+
+The fix is a second parameter, not a new addressing scheme. `display_id` says which
+record the page was built for; `DisplayRequest::confirmIdentity()` compares it with
+what the tag resolved to and returns a new `MISMATCH` resolution when they differ.
+Three properties made it cheap to add everywhere at once:
+
+- **It only ever refuses.** A resolution can go from found to refused, never to a
+  *different* Display. So a caller can start sending the id without moving where
+  anything resolves to.
+- **An absent claim is not a claim.** The Screens send a tag and nothing else
+  (ADR-0003), and so does a Builder tab left open across the deploy. Neither is
+  broken by the check, and neither is protected by it — which is the price of not
+  breaking them, and the reason invariant 12 is worded as a rule for *new* callers.
+- **A malformed claim is a disagreement, not a puzzle.** `?display_id[]=1`, `1abc`
+  and `007` are all refused rather than coerced. Nothing that knows its Display
+  sends one, so there is nothing to be forgiving about.
+
+It is checked in `locate()`, which means the no-tag entry rule of §3 is covered too
+— otherwise a write carrying a stale id and no tag would have walked straight past
+the check that exists for it. Fourteen checks in the self-test, verified against
+two mutations: dropping the check outright fails six, and relaxing the comparison
+to `==` fails the two that pad and suffix the number.
 
 ---
 
@@ -603,6 +652,10 @@ grep -rn "1920\|1080" --include=*.php .        # admin size presets, the seed, t
 grep -rn "viewer.php\"\|viewer.php'" --include=*.php .  # every link must carry ?display=
 grep -rn "catch (Exception" --include=*.php lib/  # must be empty: a TypeError is an Error, not an Exception
 grep -rn "hash_equals(" --include=*.php .     # only auth.php's csrfOk(), which fails closed on an empty token
+grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
+                                              # DISPLAY_ID / waDisplayId() with it (invariant 12), which
+                                              # omission silently opts out of. viewer.php is the one
+                                              # exception: a Screen sends the tag alone (ADR-0003)
 ```
 
 `php -l` cannot see inline JavaScript, and `builder.php` is ~3050 lines of it.
@@ -610,7 +663,7 @@ Anything touching that file needs reading, not linting.
 
 `schema.sql` has no automated check at all — nothing reads it, so a column missing
 from it fails silently on a future rebuild and nowhere else. Diff it against
-`lib/schema.php` by eye whenever either changes (invariant 12), and use
+`lib/schema.php` by eye whenever either changes (invariant 13), and use
 `tools/rehearse_phase1.php` on a copy of live data to see what MySQL actually ends
 up with.
 

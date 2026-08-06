@@ -1270,7 +1270,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                 <label>Display</label>
                 <select id="wa-display" onchange="loadCanvasElements()" style="width:340px;">
                     <?php foreach ($displays as $d): ?>
-                    <option value="<?= htmlspecialchars($d->tag()) ?>">
+                    <option value="<?= htmlspecialchars($d->tag()) ?>" data-id="<?= intval($d->id()) ?>">
                         <?= htmlspecialchars($d->title()) ?> — <?= htmlspecialchars($d->tag()) ?>
                         (<?= $d->dimensionsLabel() ?>)
                     </option>
@@ -1446,6 +1446,17 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         return sel ? sel.value : '';
     }
 
+    /**
+     * The id of that same Display, as this page was built. Sent alongside the tag
+     * so a rename in another tab cannot point a hide or a delete at whichever sign
+     * inherited the name — the server refuses the pair rather than acting on it.
+     */
+    function waDisplayId() {
+        var sel = document.getElementById('wa-display');
+        if (!sel || sel.selectedIndex < 0) { return ''; }
+        return sel.options[sel.selectedIndex].getAttribute('data-id') || '';
+    }
+
     function loadCanvasElements() {
         var wrap = document.getElementById('canvas-elements-wrap');
         var tag  = waDisplay();
@@ -1454,7 +1465,8 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             return;
         }
         wrap.innerHTML = '<p style="color:#7f8c8d;font-size:13px;">Loading…</p>';
-        fetch('api.php?action=get_canvas_elements&display=' + encodeURIComponent(tag))
+        fetch('api.php?action=get_canvas_elements&display=' + encodeURIComponent(tag)
+              + '&display_id=' + encodeURIComponent(waDisplayId()))
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 if (!Array.isArray(data)) {
@@ -1539,6 +1551,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         fd.append('element_id', id);
         fd.append('hidden', hidden);
         fd.append('display', waDisplay());
+        fd.append('display_id', waDisplayId());
         fd.append('csrf_token', CSRF_TOKEN);
         fetch('api.php', { method:'POST', body:fd })
             .then(function(r) { return r.json(); })
@@ -1557,6 +1570,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         fd.append('action', 'delete_canvas_element');
         fd.append('element_id', id);
         fd.append('display', waDisplay());
+        fd.append('display_id', waDisplayId());
         fd.append('csrf_token', CSRF_TOKEN);
         fetch('api.php', { method:'POST', body:fd })
             .then(function(r) { return r.json(); })

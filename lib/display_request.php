@@ -21,6 +21,13 @@
 // The URL contract is the screen name tag, in the `display` parameter, and
 // nothing else. One way in keeps the Viewer URL an admin types on a device
 // identical to the one the app uses everywhere.
+//
+// The tag is the address, not the identity: an admin may rename it (CONTEXT.md),
+// and a renamed tag is free to be given to a different sign afterwards. So a page
+// that has been open for a while holds an address that may since have come to mean
+// a different Display. Any caller that knows which record it loaded may say so in
+// `display_id`, and a disagreement between the two is refused rather than resolved
+// — see DisplayRequest::confirmIdentity.
 
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/grants.php';
@@ -32,6 +39,7 @@ class DisplayResolution
     const UNKNOWN   = 'unknown';     // named one that does not exist
     const INACTIVE  = 'inactive';    // named a deactivated Display
     const FORBIDDEN = 'forbidden';   // named one this account has not been granted
+    const MISMATCH  = 'mismatch';    // tag and id name different Displays
 
     private $kind;
     private $display;
@@ -84,6 +92,21 @@ class DisplayResolution
             'That display has not been assigned to you. An admin can give you access to it.');
     }
 
+    /**
+     * The tag resolved, but to a different Display than the caller meant.
+     *
+     * Carries the Display the *tag* names — the one that was about to be written —
+     * because that is what a refusal has to be able to name. The message tells the
+     * truth about the only two ways to get here: the tag moved under an open page,
+     * or the request was assembled by hand.
+     */
+    public static function mismatch(Display $display)
+    {
+        return new self(self::MISMATCH, $display,
+            'That screen name tag no longer belongs to the display this page was opened on, '
+            . 'so nothing was saved. Reload the page and try again.');
+    }
+
     public function isFound() { return $this->kind === self::FOUND; }
     public function kind()    { return $this->kind; }
     public function message() { return $this->message; }
@@ -99,6 +122,13 @@ class DisplayRequest
 {
     /** The one request parameter that names a Display. */
     const PARAM = 'display';
+
+    /**
+     * What the caller believes that tag currently names. Optional, and checked
+     * only when sent — a Viewer URL on a TV carries the tag and nothing else
+     * (ADR-0003), and so does a Builder tab left open across a deploy.
+     */
+    const ID_PARAM = 'display_id';
 
     /**
      * Resolve for rendering a sign. Public: no session, no account, no grants.
@@ -173,11 +203,41 @@ class DisplayRequest
             // (BUILD-REFERENCE.md §3).
             $openable = $actor->openable($store->all());
             return count($openable) === 1
-                ? DisplayResolution::found($openable[0])
+                ? self::confirmIdentity($openable[0], $params)
                 : DisplayResolution::noTag();
         }
 
         $display = $store->forTag($raw);
-        return $display ? DisplayResolution::found($display) : DisplayResolution::unknown();
+        return $display ? self::confirmIdentity($display, $params) : DisplayResolution::unknown();
+    }
+
+    /**
+     * Does the caller still agree with us about which Display this is?
+     *
+     * The tag routes; the id confirms. An admin renaming a tag is an ordinary act,
+     * and the tag it vacated may be given to another sign the same afternoon — so a
+     * Builder that has been open across both changes holds an address that now
+     * resolves, cleanly and silently, to somebody else's screen. Its next publish
+     * would overwrite that layout and report success, and there is no undo anywhere
+     * in this app (CLAUDE.md). Refusing the write is the only safe answer.
+     *
+     * A claim that is absent, or empty, is no claim: the check cannot be the thing
+     * that stops a Screen rendering. A claim that is malformed — an array, a word,
+     * `007` — *is* a disagreement, because nothing that knows its Display sends
+     * one, and it is not this method's business to guess what was meant.
+     */
+    private static function confirmIdentity(Display $display, array $params)
+    {
+        if (!isset($params[self::ID_PARAM])) { return DisplayResolution::found($display); }
+
+        $claim = $params[self::ID_PARAM];
+        if (is_array($claim)) { return DisplayResolution::mismatch($display); }
+
+        $claim = trim((string)$claim);
+        if ($claim === '') { return DisplayResolution::found($display); }
+
+        return ((string)intval($claim) === $claim && intval($claim) === $display->id())
+            ? DisplayResolution::found($display)
+            : DisplayResolution::mismatch($display);
     }
 }

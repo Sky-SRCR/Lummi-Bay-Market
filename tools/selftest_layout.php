@@ -86,6 +86,72 @@ check($r->isFound(), 'which does not stop a basic account editing an active Disp
 $pdo->exec("UPDATE displays SET is_active = 1 WHERE tag = 'lobby'");
 
 // ─────────────────────────────────────────────────────────────
+section('The tag addresses, the id confirms');
+
+// A whole database of its own, because these checks rename tags and hand them to
+// other Displays — the exact sequence being defended against, and not something to
+// leave behind for the sections below.
+$idPdo   = newTestDb();
+$idStore = new DisplayStore($idPdo);
+$idAdmin = newTestActor($idPdo, 1, 'admin');
+$signA   = makeTestDisplay($idPdo, 'drive-thru', 'Drive-Thru');
+$signB   = makeTestDisplay($idPdo, 'lobby', 'Lobby', 1080, 1920);
+
+$r = DisplayRequest::forViewing($idStore, ['display' => 'lobby']);
+check($r->isFound(), 'a request with no id claim resolves as it always has');
+
+$r = DisplayRequest::forViewing($idStore, ['display' => 'lobby', 'display_id' => $signB->id()]);
+check($r->isFound(), 'and one whose id agrees with the tag resolves too');
+
+$r = DisplayRequest::forViewing($idStore, ['display' => 'lobby', 'display_id' => $signA->id()]);
+checkSame(DisplayResolution::MISMATCH, $r->kind(), 'an id naming a different Display than the tag is refused');
+check($r->display() !== null && $r->display()->id() === $signB->id(),
+      'and the refusal carries the Display the tag named — the one that was about to be written');
+
+// The sequence the id exists for: a tag is renamed, and the name it vacated is
+// given to another sign. A Builder open on the first one still addresses
+// 'drive-thru', which now resolves — cleanly, and to the wrong screen.
+$idPdo->exec("UPDATE displays SET tag = 'drive-thru-old' WHERE id = " . $signA->id());
+$idPdo->exec("UPDATE displays SET tag = 'drive-thru' WHERE id = " . $signB->id());
+$r = DisplayRequest::forEditing($idStore, ['display' => 'drive-thru'], $idAdmin);
+check($r->isFound() && $r->display()->id() === $signB->id(),
+      'a recycled tag resolves to its new Display, which is why the tag alone is not enough');
+$r = DisplayRequest::forEditing($idStore, ['display' => 'drive-thru', 'display_id' => $signA->id()], $idAdmin);
+checkSame(DisplayResolution::MISMATCH, $r->kind(),
+          'so a page that was opened on the old one is refused rather than published to the new one');
+
+// A claim that cannot be a Display id is a disagreement, not something to guess at:
+// nothing that knows which Display it is on sends one of these.
+$r = DisplayRequest::forViewing($idStore, ['display' => 'lobby-2', 'display_id' => ['1']]);
+checkSame(DisplayResolution::UNKNOWN, $r->kind(), 'an unknown tag is still unknown, id claim or not');
+$idPdo->exec("UPDATE displays SET tag = 'lobby' WHERE id = " . $signA->id());
+$r = DisplayRequest::forViewing($idStore, ['display' => 'lobby', 'display_id' => [(string)$signA->id()]]);
+checkSame(DisplayResolution::MISMATCH, $r->kind(), 'an array id claim is refused rather than cast to a number');
+$r = DisplayRequest::forViewing($idStore, ['display' => 'lobby', 'display_id' => '1abc']);
+checkSame(DisplayResolution::MISMATCH, $r->kind(), 'and so is one that is not a whole number');
+$r = DisplayRequest::forViewing($idStore, ['display' => 'lobby', 'display_id' => '0' . $signA->id()]);
+checkSame(DisplayResolution::MISMATCH, $r->kind(), 'including a padded one that would have compared equal');
+
+// The check cannot be the thing that stops a Screen rendering: a Viewer URL on a TV
+// carries the tag and nothing else (ADR-0003), and a form field left blank is a
+// page that failed to fill it in, not a page claiming Display zero.
+$r = DisplayRequest::forViewing($idStore, ['display' => 'lobby', 'display_id' => '']);
+check($r->isFound(), 'an empty id claim is no claim, and renders');
+
+// The entry rule resolves a Display nobody named, so the claim is checked there too
+// — otherwise a write with a stale id and no tag would slip past.
+$soloPdo  = newTestDb();
+$soloStore = new DisplayStore($soloPdo);
+$solo      = makeTestDisplay($soloPdo, 'only-sign', 'Only Sign');
+$soloAdmin = newTestActor($soloPdo, 1, 'admin');
+$r = DisplayRequest::forEditing($soloStore, [], $soloAdmin);
+check($r->isFound(), 'no tag still resolves to the sole Display');
+$r = DisplayRequest::forEditing($soloStore, ['display_id' => $solo->id()], $soloAdmin);
+check($r->isFound(), 'and agrees with an id claim naming it');
+$r = DisplayRequest::forEditing($soloStore, ['display_id' => $solo->id() + 1], $soloAdmin);
+checkSame(DisplayResolution::MISMATCH, $r->kind(), 'but not with one naming a Display it is not');
+
+// ─────────────────────────────────────────────────────────────
 section('Publishing is scoped to one Display');
 
 $layouts = newTestLayoutStore($pdo);
@@ -1079,4 +1145,4 @@ $own = $pdo->query("SELECT manual_content FROM canvas_elements WHERE asset_id = 
 checkSame([null, null], array_column($own, 'manual_content'),
           'a pooled block holds no content of its own, so losing the entry loses the words');
 
-reportChecks(316);
+reportChecks(330);

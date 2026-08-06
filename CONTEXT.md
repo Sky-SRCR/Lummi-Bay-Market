@@ -27,7 +27,11 @@ _Avoid_: monitor, device, display
 **Screen name tag**:
 The short word that names a Display in a Viewer URL (`lobby` in
 `viewer.php?display=lobby`). Unique, admin-editable, and the contract a configured
-Screen depends on.
+Screen depends on. It is an *address*, not an identity: rename a Display and the
+word it gave up can be handed to another sign, so a page that has been open a while
+may hold a tag that now means somebody else's screen. That is why the Builder sends
+the Display's id alongside its tag and the server refuses any request where the two
+disagree.
 _Avoid_: slug, id, handle
 
 **Canvas**:
