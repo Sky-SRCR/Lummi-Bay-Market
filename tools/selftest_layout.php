@@ -539,14 +539,16 @@ grantTestAccess($pdo, $lobby->id(), 2);
 grantTestAccess($pdo, $driveT->id(), 2);
 checkSame(2, count(allGrants($pdo)), 'the clerk has been assigned both Displays');
 
-$res = $admin->destroy($lobby, 'lobbi');
+$res = $admin->destroy($lobby, 'lobbi', 1);
 checkSame(DisplayResult::INVALID, $res->kind(), 'a mistyped tag does not delete a Display');
 checkSame(2, $store->count(), 'both Displays are still there');
 checkSame(2, count(elementsOf($pdo, $lobby->id())), 'and its layout is untouched');
 
-$res = $admin->destroy($lobby, ' LOBBY ');
+$res = $admin->destroy($lobby, ' LOBBY ', 1);
 check($res->isOk(), 'the typed tag is matched after trimming and lowercasing');
 check(strpos($res->message(), '2 elements were deleted') !== false, 'and the confirmation says what was lost');
+check(strpos($res->message(), '1 account\'s access') !== false,
+      'and says the assignment went with it — the element count was never the whole cost (#19)');
 checkSame(1, $store->count(), 'the Display is gone');
 checkSame(0, count(elementsOf($pdo, $lobby->id())), 'its elements went with it');
 checkSame(2, count(elementsOf($pdo, $driveT->id())), 'and the other Display kept every one of its own');
@@ -558,11 +560,125 @@ checkSame($driveT->id(), intval($grants[0]['display_id']), 'and the surviving Di
 
 // The roadmap decided there is no "last Display" rule: an installation may have
 // none, and the Builder says so rather than the panel refusing.
-$res = $admin->destroy($store->forTag('drive-thru'), 'drive-thru');
+$res = $admin->destroy($store->forTag('drive-thru'), 'drive-thru', 1);
 check($res->isOk(), 'the last Display can be deleted too');
 checkSame(0, $store->count(), 'leaving none');
 checkSame(0, count(allElements($pdo)), 'and no elements behind');
 checkSame(0, count(allGrants($pdo)), 'and no grant pointing at a Display that is gone');
+
+// ─────────────────────────────────────────────────────────────
+section('Deleting a Display asks who is using it first (#19)');
+
+// Deletion is the one change of reach that cannot free a lock and tell its holder:
+// afterwards there is no row to free and no Display for their page to ask about. So
+// it is the one that has to refuse instead. Everything below is about that refusal
+// being real rather than advisory — checked at the module, because the panel's
+// greyed-out button is a courtesy and a POST can arrive without it.
+
+$pdo    = newTestDb();
+$store  = newTestDisplayStore($pdo);
+$admin  = newTestDisplayAdmin($pdo);
+$layouts = newTestLayoutStore($pdo);
+
+/**
+ * A drive-thru with two elements and one assignment, whatever the last block left.
+ *
+ * Every block below starts from this rather than from the one before it. Not
+ * tidiness: half of what is being tested here is a *refusal*, so a regression
+ * leaves the Display standing where the test expected it gone — and the next
+ * `makeTestDisplay('drive-thru')` then dies on the unique tag, or is handed a null
+ * and throws a TypeError. Either way the suite reports the crash instead of the
+ * cause, three blocks away from the line that actually broke.
+ */
+function freshDriveThru(PDO $pdo, LayoutStore $layouts)
+{
+    $pdo->exec("DELETE FROM displays WHERE tag = 'drive-thru'");
+    $d = makeTestDisplay($pdo, 'drive-thru', 'Drive-Thru');
+    publishAs($layouts, $d, layoutWith('Sockeye 18.99'), '0');
+    grantTestAccess($pdo, $d->id(), 2);
+    return loadTestDisplay($pdo, $d->id());
+}
+
+/** Everything a refused delete must have left exactly where it was. */
+function stillThereAfterRefusal(DisplayStore $store, PDO $pdo, $displayId, $what)
+{
+    check($store->forId($displayId) !== null,      $what . ' — the Display is still there');
+    checkSame(2, count(elementsOf($pdo, $displayId)), $what . ' — and its layout');
+    checkSame(1, count(allGrants($pdo)),             $what . ' — and the assignment on it');
+}
+
+$driveT = freshDriveThru($pdo, $layouts);
+checkSame(2, count(elementsOf($pdo, $driveT->id())), 'the Display starts with a layout to lose');
+
+// ---- Somebody else is editing --------------------------------------------------
+$driveT = $store->claimLock($driveT, 2);
+checkSame(true, $driveT->lockState()->heldByOther(1), 'the clerk has it open');
+
+$res = $admin->destroy($driveT, 'drive-thru', 1);
+checkSame(DisplayResult::CONFLICT, $res->kind(),
+          'an admin cannot delete a Display somebody else is editing, correct tag and all');
+stillThereAfterRefusal($store, $pdo, $driveT->id(), 'a refused delete writes nothing');
+check(strpos($res->message(), 'clerk') !== false, 'the refusal names who is editing');
+check(strpos($res->message(), 'not published') !== false, 'and what deleting would cost them');
+check(strpos($res->message(), '15 minutes') !== false,
+      'and the way out that needs nobody — the idle window, quoted from LockState');
+checkSame('', $res->field(),
+          'it points at no input, because there is no input to fix');
+
+// The order of the two gates, which is the whole of what an admin's next minute
+// looks like: told who is editing now, or sent away to retype a tag and told then.
+$res = $admin->destroy($driveT, 'wrong-tag', 1);
+checkSame(DisplayResult::CONFLICT, $res->kind(),
+          'the lock is answered before the typed tag, so a mistyped tag does not hide it');
+
+// ---- Whose lock it is ----------------------------------------------------------
+$driveT = $store->claimLock(freshDriveThru($pdo, $layouts), 2);
+$res = $admin->destroy($driveT, 'drive-thru', 2);
+check($res->isOk(), 'the holder deleting the Display they have open is not stopped — it is their own work');
+checkSame(0, $store->count(), 'and it went');
+
+// ---- A lock that has lapsed is nobody -------------------------------------------
+$driveT = freshDriveThru($pdo, $layouts);
+$driveT = $store->claimLock($driveT, 2);
+ageTestLock($pdo, $driveT->id(), LockState::IDLE_LAPSE_SECONDS + 1);
+$driveT = $store->forId($driveT->id());
+$res = $admin->destroy($driveT, 'drive-thru', 1);
+check($res->isOk(),
+      'a Builder left open on a back-office monitor past the idle window does not block a deletion');
+
+// ---- A holder who cannot sign in is nobody either --------------------------------
+// The same rule as #22, reached from a third direction: a lock nobody can release
+// must not be able to keep a Display alive forever either.
+$driveT = freshDriveThru($pdo, $layouts);
+$driveT = $store->claimLock($driveT, 2);
+checkSame(true, $driveT->lockState()->heldByOther(1), 'the clerk holds it again');
+$pdo->exec("UPDATE users SET is_active = 0 WHERE id = 2");
+$res = $admin->destroy($store->forId($driveT->id()), 'drive-thru', 1);
+check($res->isOk(), 'a lock held by an account that can no longer sign in does not block one either');
+$pdo->exec("UPDATE users SET is_active = 1 WHERE id = 2");
+
+// ---- The check inside the transaction --------------------------------------------
+// The argument is deliberately stale here: read while the Display was free, passed
+// after somebody took it. That is the state a form submitted a minute ago is in, and
+// it is the reason destroy() re-reads rather than trusting what it was handed.
+$stale = freshDriveThru($pdo, $layouts);
+checkSame(false, $stale->lockState()->isHeld(), 'the Display was free when this copy of it was read');
+
+$store->claimLock($stale, 2);
+$res = $admin->destroy($stale, 'drive-thru', 1);
+checkSame(DisplayResult::CONFLICT, $res->kind(),
+          'a lock taken after the form was drawn still refuses — the row is re-read inside the transaction');
+stillThereAfterRefusal($store, $pdo, $stale->id(), 'and that refusal writes nothing either');
+
+// ---- Re-read finds it already gone -----------------------------------------------
+// Two admins on the delete button at once. The second one is told, rather than
+// running three deletes against a row that is not there and reporting success.
+$pdo->exec("DELETE FROM displays WHERE tag = 'drive-thru'");
+$twice = makeTestDisplay($pdo, 'drive-thru', 'Drive-Thru');
+check($admin->destroy($twice, 'drive-thru', 1)->isOk(), 'the first admin deletes it');
+$res = $admin->destroy($twice, 'drive-thru', 1);
+checkSame(DisplayResult::FAILED, $res->kind(), 'the second is told it no longer exists');
+check(strpos($res->message(), 'Nothing was changed') !== false, 'and that nothing happened');
 
 // ─────────────────────────────────────────────────────────────
 section('Grants decide which Displays are an account\'s');
@@ -4072,4 +4188,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Two numbers because the MySQL run adds a section the SQLite one cannot ask for.
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
-reportChecks(testIsMysql() ? 1094 : 1071);
+reportChecks(testIsMysql() ? 1119 : 1096);

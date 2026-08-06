@@ -56,7 +56,7 @@ written down rather than remembered:
 | 16 | The permissions grid read a column that wasn't on the page as "take that access away", and F5 replayed the whole save. | Save only what the form covered, then redirect. | **Done** | §4s |
 | 17 | Taking access away left the edit lock stranded on the person who lost it, and told them nothing. | Release it, and tell them. | **Done** | §4s |
 | 18 | Promoting somebody to admin left individual assignments nothing could see and nothing could remove. | Clear them on promotion. | **Done** | §4s |
-| 19 | Deleting a Display never asked whether anyone was editing it, and the confirm undercounted what a mid-edit clerk loses. | Refuse while somebody else is editing. | Open | — |
+| 19 | Deleting a Display never asked whether anyone was editing it, and the confirm undercounted what a mid-edit clerk loses. | Refuse while somebody else is editing. | **Done** — the refusal is asked twice, before the typed tag and again inside the transaction on a row the module reads itself. The confirm now names the accounts that lose access and, when somebody has it open, who and since when. | §4x |
 | 20 | Deleting an account freed its number for the next person, leaving "last published by" naming a stranger. | Keep the username as text, and never reuse an account number — close accounts instead of deleting them. | **Done** | §4l |
 | 21 | The admin panel coerced values it could not parse and reported success — an unreadable colour, an account id that isn't one. | Refuse, and say so. | **Done** — taken with #41; they are one defect from two ends. What a colour is now lives in one pure module instead of four disagreeing copies, and an id reaches the module raw so `intval` cannot pick a different, real account. | §4w |
 | 22 | Turning off a Display, suspending an account, or renaming a tag each left the edit lock behind, and never re-checked whether the holder may still sign in. | Free the lock when reach changes, never honour a lock whose holder cannot sign in, and tell the person. A rename tells them but keeps their lock. | **Done** | §4t |
@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**34 done, 1 part done (#49), 16 open.**
+**35 done, 1 part done (#49), 15 open.**
 
 #48 and #51 were taken together because they are the same subject — what the tests
 run against, and whether anybody runs them. Both are Done; the version question
@@ -114,6 +114,13 @@ still coercing an unreadable colour to `#1a1a2e` (#21). Both were named in §4v 
 both are now closed together in **§4w** — they are one defect from two ends, which is
 that the app held four disagreeing opinions about what a colour is and every one of
 them substituted a value rather than refusing.
+
+**#19 completes the edit-lock set begun in #17 and #22.** Those two made every change
+of reach free the lock it stranded and tell the person holding it. Deletion could not
+join them — afterwards there is no row to free a lock on and nobody to tell — so it is
+the one that refuses in advance instead. §4x also names one thing it deliberately did
+not fix: `normalizeTag()` still raises a warning on an array, which is **#27**'s half
+of the same function.
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

@@ -2431,6 +2431,93 @@ is asserted before anything is asserted through it.
 - Restoring `setBackgroundColor()`'s coercion fails 4, including the layout stamp
   moving on a refusal.
 
+### 4x. Deleting a Display never asked who was using it (#19)
+
+Every other change of reach in this app frees the holder's edit lock in the same
+transaction and lets their Builder say so — a revoked grant, a closed account, a
+demotion, a suspension, a Display turned off (§4s, §4t). Deletion was the one that
+could not, and so it was the one that did nothing at all.
+
+It cannot, for a reason that is structural rather than an oversight: afterwards
+there is no row to free a lock on and no Display for the holder's page to ask about.
+The machinery those five changes rely on has nothing left to work with. So deletion
+is the case that has to **refuse in advance** instead of repairing afterwards.
+
+What happened without it: a clerk had Drive-Thru open and a shelf's worth of
+unpublished layout on screen. An admin deleted the Display. The clerk's canvas was
+still drawn — nothing tells a browser its subject has gone — and their next publish
+had nowhere to land. The admin was never told there was anybody there, and there is
+no undo anywhere in this app, so neither of them could get it back.
+
+**The predicate is `heldByOther()`, not `isHeld()`** — the same one that makes a
+Builder read-only and refuses a publish. An admin deleting a sign they have open
+themselves is deleting their own work, knowingly. A lapsed lock does not block
+either: `LockState` already rules that a Builder left open on a back-office monitor
+is nobody, and a lock whose holder can no longer sign in is nobody too (§4t). Both
+of those follow for free from asking `LockState` rather than testing the column, and
+both are checked, because "a deletion this app can never perform again" is the
+failure mode of getting that wrong.
+
+**It is asked twice, and the two asks do different jobs.**
+
+- *Before the typed tag.* The tag gate proves the admin means this sign; it says
+  nothing about whether anyone is using it. Asking the immovable fact first is the
+  difference between learning who is editing now and being sent away to retype a tag
+  for a deletion that was never going to happen.
+- *Inside the transaction, on a row the module reads itself.* Without it the
+  guarantee is "the caller handed me a Display it read recently" — true of both
+  callers today, and not something to rest an irreversible write on. This is also
+  what catches the realistic case: a delete form drawn a minute ago, submitted after
+  somebody opened the sign.
+
+**What is left open, on purpose.** The re-read is a plain `SELECT`, so a lock claimed
+between it and the delete still gets through. What that costs is the moment, not the
+twenty minutes the refusal exists for, and the holder's Builder already has a
+sentence for a Display that has gone. Closing it would mean a second `FOR UPDATE`, a
+second SQLite seam for it, and a second encounter with #35's lock-wait timeout —
+spent on the rarest write in the app, when the publish path carrying the first one
+has two people colliding on an ordinary Tuesday. Written down rather than left as an
+absence, because the next person to read `destroy()` will wonder.
+
+**The second half of #19 was the confirm box.** It said "Delete Drive-Thru and its
+12 elements?" — accurate, and the smallest part of the bill. Deleting also takes
+every assignment on the sign, and it may be taking it out from under somebody right
+now. Both are on the panel before the button: the assigned accounts are named, and a
+held lock replaces the button with who has it, since when, and the two ways out. The
+button is *disabled* rather than absent, because a page drawn while somebody was
+editing and submitted after they stopped is a POST the server has to judge on its
+own either way — the greying-out saves an admin typing a tag for nothing, and is not
+where the rule lives. The confirmation message now counts the revoked grants too.
+
+**Coverage.** 25 new checks in `tools/selftest_layout.php`, both engines, at the
+module — because the panel's greyed-out button is a courtesy and a POST can arrive
+without it. Every block builds its own Display through `freshDriveThru()`: half of
+what is under test is a *refusal*, so a regression leaves the sign standing where
+the test expected it gone, and the next block would otherwise die on the unique tag
+or on a null, reporting a crash three blocks from the line that broke.
+
+**The deliberate breakages the tests catch.** Verified by injection, not assumed:
+
+- Removing both checks — `destroy()` exactly as it shipped — fails 12, led by
+  *an admin cannot delete a Display somebody else is editing, correct tag and all*.
+- Removing only the in-transaction re-check fails 4: the stale-argument case goes
+  through, and the Display, its layout and its grant are all gone.
+- Removing only the pre-tag check fails 1 — the ordering. The deletion is still
+  refused, by the second ask; what is lost is the admin's next minute.
+- `heldByOther()` → `isHeld()` fails 2: the holder can no longer delete their own
+  sign, which is the over-correction this rule is one step away from.
+- Dropping the revoked-grant clause from the confirmation fails the #19 check that
+  the element count was never the whole cost.
+- Replacing the gone-already arm with a fallback to the caller's Display fails 2:
+  two admins on the button at once, and the second one told it worked.
+
+**Not covered here, and deliberately.** `DisplayStore::normalizeTag()` still does
+`(string)$tag`, so `confirm_tag[]=x` raises "Array to string conversion" above the
+document before refusing. That is the same function and the same defect as **#27**
+(`?display[]=x` becoming the tag "array"), and fixing half of it here would leave
+#27's write-up describing a bug that was already partly gone. It refuses either way;
+what it does not do yet is refuse quietly.
+
 ---
 
 ## 6. Delivery

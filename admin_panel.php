@@ -260,13 +260,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // Delete a display and its layout. There is no undo anywhere in this app, so
-    // the typed screen name tag is the safeguard — DisplayAdmin checks it.
+    // the typed screen name tag is one safeguard — DisplayAdmin checks it — and
+    // refusing while somebody else has it open in the builder is the other (#19).
+    // The actor is passed because that check is "somebody *else*": an admin who has
+    // this sign open themselves is deleting their own work and is not stopped.
     if (isset($_POST['action_delete_display'])) {
         $display = $displayStore->forId($_POST['d_id'] ?? 0);
         if (!$display) {
             $msg = 'That display no longer exists.'; $msgType = 'error';
         } else {
-            $res     = $displayAdmin->destroy($display, $_POST['confirm_tag'] ?? '');
+            $res     = $displayAdmin->destroy($display, $_POST['confirm_tag'] ?? '', $user['id']);
             $msg     = $res->message();
             $msgType = $res->isOk() ? 'success' : 'error';
         }
@@ -979,6 +982,15 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             </div>
 
             <!-- Delete -->
+            <?php
+            // What deleting this actually costs, stated before the button rather
+            // than discovered after it (#19). The element count was the whole of it
+            // and it was the smallest part: the assignments go too, and somebody may
+            // be working on the canvas at this moment. `$busyNow` is the same
+            // question DisplayAdmin::destroy() asks — this page just asks it early,
+            // so a deletion that would be refused is not offered in the first place.
+            $busyNow = $cardLock->heldByOther($user['id']) ? $cardLock : null;
+            ?>
             <div class="display-panel" id="del-display-<?= $did ?>">
                 <div class="danger-panel">
                     <p style="font-size:13px;color:#c0392b;font-weight:600;margin-bottom:8px;">
@@ -988,18 +1000,40 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     <p class="hint" style="margin-bottom:10px;">
                         This cannot be undone — nothing in this app is versioned. Any screen still pointed at
                         <code><?= htmlspecialchars($d->tag()) ?></code> will show “Display not found”.
+                        <?php if ($editors): ?>
+                            <br><?= count($editors) ?> account<?= count($editors) === 1 ? '' : 's' ?>
+                            assigned to it (<?= htmlspecialchars(implode(', ', $editors)) ?>)
+                            lose<?= count($editors) === 1 ? 's' : '' ?> that access with it.
+                        <?php endif; ?>
                     </p>
+                    <?php if ($busyNow): ?>
+                        <p style="font-size:13px;color:#c0392b;font-weight:600;margin-bottom:10px;">
+                            <?= htmlspecialchars($busyNow->holderName() !== '' ? $busyNow->holderName() : 'Somebody') ?>
+                            has this open in the builder<?php
+                                if ($busyNow->takenAtLabel() !== ''): ?>, since
+                                <?= htmlspecialchars($busyNow->takenAtLabel()) ?><?php
+                                endif; ?>. Deleting it now would lose whatever they have not published,
+                            so it will be refused. Ask them to close it, or wait — the lock lapses
+                            <?= intdiv(LockState::IDLE_LAPSE_SECONDS, 60) ?> minutes after their last change.
+                        </p>
+                    <?php endif; ?>
                     <form method="POST">
                         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
                         <input type="hidden" name="d_id" value="<?= $did ?>">
                         <div class="form-row">
                             <div class="form-group">
                                 <label>Type <code><?= htmlspecialchars($d->tag()) ?></code> to confirm</label>
-                                <input type="text" name="confirm_tag" autocomplete="off" style="width:200px;">
+                                <input type="text" name="confirm_tag" autocomplete="off" style="width:200px;"
+                                       <?= $busyNow ? 'disabled' : '' ?>>
                             </div>
                             <div class="form-group">
                                 <label>&nbsp;</label>
-                                <button type="submit" name="action_delete_display" class="btn btn-red">
+                                <?php // Disabled, not absent: a page drawn while somebody was editing and
+                                      // submitted after they stopped would otherwise be a POST the server
+                                      // has to refuse anyway. The server refuses either way — this is the
+                                      // half that stops an admin typing the tag for nothing. ?>
+                                <button type="submit" name="action_delete_display" class="btn btn-red"
+                                        <?= $busyNow ? 'disabled' : '' ?>>
                                     Delete this display</button>
                             </div>
                             <div class="form-group">
