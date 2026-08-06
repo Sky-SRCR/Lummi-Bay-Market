@@ -23,6 +23,15 @@
 // run the paths that survive. Anything reaching for a control that is not there
 // throws, and a throw is a failure.
 //
+// **That DOM is derived from builder.php's own conditionals, not written out by
+// hand.** It was a hand-kept list until decision #40, and by then it had drifted in
+// four places — including one id that exists nowhere in the file and two the page
+// really does emit. A list that has drifted generous is the worst possible state
+// for this suite: it stubs a node the browser will not have, so the lookup passes
+// here and throws in the shop. `emittedIds()` reads the page instead, and the rules
+// it follows when it meets a condition it does not understand are checked before
+// anything is trusted to it.
+//
 // CLI only. Nothing here touches a database or a network.
 
 const fs   = require('fs');
@@ -98,17 +107,163 @@ check(emittedOnlyWhenEditable('<button id="publish-btn"'),          'and so is t
 
 // ---- A DOM with only what that page emits -----------------------------------
 
-// The ids builder.php still renders when $readOnly is true and the account is
-// basic. Everything else resolves to null, which is what the browser will do.
-// `lock-access-bar` is here and the other three lock bars are not, which is the
-// point of this list: those are emitted only for the holder, while losing *access*
-// can happen to somebody who is only watching. A read-only page has the access bar
-// and the banner above it, and nothing else the lock uses.
-const PRESENT = new Set([
-    'lock-banner', 'lock-access-bar', 'lock-access-text', 'lock-holder',
-    'control-bar', 'zoom-readout', 'editor-frame', 'canvas-sizer', 'builder-canvas',
-    'toast', 'resize-label', 'display-off-banner', 'top-nav'
-]);
+// This list used to be written out by hand, and by the time decision #40 was picked
+// up it had drifted in four places: it named `lock-holder`, which is not an id
+// anywhere in the file; it claimed `display-off-banner`, which is emitted only when
+// the Display is turned off; and it was missing `lock-free-hint` and
+// `upload-status`, both of which a read-only page really does get. Three of those
+// err strict and one errs generous, and the generous direction is the dangerous
+// one: an id the browser will not have, stubbed present here, is a lookup this
+// suite blesses and the shop floor throws on.
+//
+// So it is derived from the markup instead. `emittedIds()` walks builder.php's own
+// `<?php if:/else:/endif;` conditionals over the Builder document and answers which
+// ids survive for a given page — here: somebody else holds the lock, the account is
+// basic, the Display is on.
+//
+// Two rules make the derivation safe to trust, and they are the same two invariant
+// 19 puts on reading the database catalogue. A condition it cannot evaluate is
+// **unknown, never false** — it is reported by name and fails a check, because a
+// guard nobody taught it about is work, not a default. And unknown ids are left
+// *out* of the DOM, so the untaught case makes this suite stricter rather than
+// blinder: the lookup returns null, and null is what makes a missing guard throw.
+
+/**
+ * Which ids the Builder document emits for a given page.
+ *
+ * Only the last document in the file: builder.php renders a display picker first
+ * and `exit`s, and that page shares no markup with this one.
+ *
+ * Returns { ids, unknown, unbalanced } — the caller checks the last two rather than
+ * trusting the first.
+ */
+function emittedIds(page, source) {
+    const doc = (source === undefined
+                    ? php.slice(php.lastIndexOf('<!DOCTYPE html>'))
+                    : source)
+                   // <script> bodies emit no markup; ids inside them are JavaScript
+                   // asking for a node, which is the thing under test, not a node.
+                   .replace(/<script\b(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/gi, '');
+
+    const unknown = new Set();
+    const ids     = new Set();
+    const stack   = [];
+
+    const atom = (text) => {
+        let a = text.trim(), negated = false;
+        while (a.startsWith('!')) { negated = !negated; a = a.slice(1).trim(); }
+        while (a.startsWith('(') && a.endsWith(')')) { a = a.slice(1, -1).trim(); }
+        let v;
+        if      (a === '$readOnly')             { v = page.readOnly; }
+        else if (a === '$isAdmin')              { v = page.isAdmin; }
+        else if (a === '$display->isActive()')  { v = page.active; }
+        else { unknown.add(a); return null; }
+        return negated ? !v : v;
+    };
+    const truth = (cond) => {
+        if (cond === null) { return null; }
+        if (cond.indexOf('||') >= 0) { unknown.add(cond); return null; }   // never seen; say so
+        let out = true;
+        for (const part of cond.split('&&')) {
+            const t = atom(part);
+            if (t === null) { return null; }
+            out = out && t;
+        }
+        return out;
+    };
+
+    const tok = /<\?php\s+if\s*\(([\s\S]*?)\)\s*:\s*\?>|<\?php\s+elseif\s*\(([\s\S]*?)\)\s*:\s*\?>|<\?php\s+else\s*:\s*\?>|<\?php\s+endif;?\s*\?>|\sid="([A-Za-z0-9_-]+)"/g;
+    let m;
+    while ((m = tok.exec(doc))) {
+        if (m[3] !== undefined) {
+            let visible = true;
+            for (const cond of stack) {
+                const t = truth(cond);
+                if (t === null)  { visible = null;  break; }   // cannot tell → left out
+                if (t === false) { visible = false; break; }
+            }
+            if (visible === true) { ids.add(m[3]); }
+        } else if (m[1] !== undefined) {
+            stack.push(m[1]);
+        } else if (m[2] !== undefined) {
+            stack[stack.length - 1] = null;                    // elseif: not taught yet
+        } else if (m[0].indexOf('else') >= 0) {
+            const top = stack[stack.length - 1];
+            stack[stack.length - 1] = (top === null) ? null : '!(' + top + ')';
+        } else {
+            stack.pop();
+        }
+    }
+    return { ids, unknown: [...unknown], unbalanced: stack.length };
+}
+
+const emitted = emittedIds({ readOnly: true, isAdmin: false, active: true });
+const PRESENT = emitted.ids;
+
+section('The derivation, before anything is trusted to it');
+
+// Driven on markup written here rather than only on builder.php, because the rule
+// that matters most is about a conditional builder.php does not contain *yet*. Read
+// off the real file, "unknown" is an empty set and every claim about it is vacuous;
+// the day somebody adds a guard on a new variable, this is what decides whether the
+// suite says so or quietly stubs the node present and blesses the lookup.
+const RO = { readOnly: true, isAdmin: false, active: true };
+
+const plain = emittedIds(RO, '<div id="always"></div>');
+check(plain.ids.has('always'), 'an id under no condition at all is emitted');
+
+const branches = emittedIds(RO,
+    '<?php if ($readOnly): ?><div id="watching"></div>'
+  + '<?php else: ?><div id="editing"></div><?php endif; ?>');
+check(branches.ids.has('watching') && !branches.ids.has('editing'),
+      'an if/else picks the branch this page is on, and only that branch');
+
+const both = emittedIds(RO, '<?php if (!$isAdmin && !$readOnly): ?><div id="basic-editing"></div><?php endif; ?>');
+check(!both.ids.has('basic-editing'),
+      'a condition on the role AND the lock needs both to hold — the #40 shape exactly');
+
+const strange = emittedIds(RO, '<?php if ($somethingNew): ?><div id="mystery"></div><?php endif; ?>');
+check(!strange.ids.has('mystery'),
+      'a condition this suite has never met leaves its id OUT of the page');
+check(strange.unknown.indexOf('$somethingNew') >= 0,
+      'and names it, so an unteachable guard is work rather than a silent guess');
+
+const ragged = emittedIds(RO, '<?php if ($readOnly): ?><div id="dangling"></div>');
+check(ragged.unbalanced > 0, 'and markup whose conditionals do not close is reported, not guessed at');
+
+section('What a read-only page actually emits, read off the page');
+
+check(emitted.unbalanced === 0,
+      'the markup\'s conditionals balance, so the walk knows where each block ends');
+check(emitted.unknown.length === 0,
+      'and every condition guarding an id is one this suite understands'
+      + (emitted.unknown.length ? ' — not: ' + emitted.unknown.join(', ') : ''));
+
+// Anchors. Without them a derivation that returned everything — or nothing — would
+// turn this whole suite green, which is decision #50's complaint in the one place
+// it would be least visible.
+['builder-canvas', 'editor-frame', 'toast', 'lock-banner', 'upload-status'].forEach(function (id) {
+    check(PRESENT.has(id), 'a read-only page still has #' + id);
+});
+['inspector', 'align-bar', 'section-banner', 'insp-x', 'carousel-modal-overlay', 'publish-btn'].forEach(function (id) {
+    check(!PRESENT.has(id), 'and does not have #' + id);
+});
+// #section-banner is the node decision #40 is about, and the derivation is what
+// makes its shape statable: it depends on the role *and* the lock, so a lookup
+// guarded on the role alone is right on three pages out of four and throws on the
+// fourth — a basic account watching somebody else edit.
+const editableBasic = emittedIds({ readOnly: false, isAdmin: false, active: true }).ids;
+const editableAdmin = emittedIds({ readOnly: false, isAdmin: true,  active: true }).ids;
+check(editableBasic.has('section-banner'),
+      'a basic account that can edit does have #section-banner');
+check(!editableAdmin.has('section-banner'),
+      'an admin never has it, editing or not — so "not an admin" does not mean "the banner is there"');
+
+// The mirror image, and the reason pollLockState's `if (hint)` can never be false:
+// the hint is emitted on exactly the pages that poll for it. That is a coupling
+// between two files' worth of conditions, and this is the only thing asserting it.
+check(PRESENT.has('lock-free-hint') && !editableBasic.has('lock-free-hint'),
+      'the "it is free now" hint is on exactly the pages that poll for it — read-only ones');
 
 function stubEl(id) {
     return {
@@ -118,11 +273,21 @@ function stubEl(id) {
         scrollLeft: 0, scrollTop: 0, parentElement: null,
         classList: { add() {}, remove() {}, contains() { return false; } },
         appendChild() {}, removeChild() {}, insertBefore() {}, remove() {},
-        addEventListener() {}, focus() {}, blur() {},
+        // Recorded rather than discarded, so a handler can be fired the way the
+        // browser fires it. Calling the three functions a click reaches proves those
+        // three are safe; it does not prove the handler only calls those three.
+        _on: {},
+        addEventListener(type, fn) { (this._on[type] || (this._on[type] = [])).push(fn); },
+        focus() {}, blur() {},
         querySelector() { return null; }, querySelectorAll() { return []; },
         closest() { return null; }, getAttribute() { return null; }, setAttribute() {},
         getBoundingClientRect() { return { left: 0, top: 0, width: 100, height: 100 }; }
     };
+}
+
+/** Fire every handler wired to `el` for `type`, as the browser would. */
+function fire(el, type, event) {
+    (el._on[type] || []).forEach(function (fn) { fn(event); });
 }
 
 const nodes = {};
@@ -134,7 +299,8 @@ global.document = {
     querySelector() { return null; },
     querySelectorAll() { return []; },
     createElement(tag) { return stubEl(tag); },
-    addEventListener() {},
+    _on: {},
+    addEventListener(type, fn) { (this._on[type] || (this._on[type] = [])).push(fn); },
     body: stubEl('body'),
     activeElement: null,
     execCommand() {},
@@ -179,6 +345,32 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     await survives('a click in the canvas area deselects with no inspector to hide', () => deselectAll());
     await survives('and clears multi-select with no align bar to update',            () => clearMultiSel());
     await survives('and clears the target section with no banner to write to',       () => clearTargetSection());
+
+    // …and the same click again, through the handler the page actually registers.
+    // Decision #40 is a click on this page throwing, and calling the three functions
+    // it reaches today only proves those three: a fourth call added to the handler
+    // would be covered by nothing. `setupCanvas()` wires it, `fire()` sends it.
+    setupCanvas();
+    const frame = document.getElementById('editor-frame');
+    check((frame._on.mousedown || []).length === 1, 'the canvas area has its mousedown handler wired');
+    await survives('a real mousedown on the canvas area does not throw',
+                   () => fire(frame, 'mousedown', { target: { closest: () => null }, shiftKey: false }));
+    await survives('nor does a shift-click, which takes the other branch',
+                   () => fire(frame, 'mousedown', { target: { closest: () => null }, shiftKey: true }));
+    await survives('nor one that lands on a block, which returns early',
+                   () => fire(frame, 'mousedown', { target: { closest: () => stubEl('blk') }, shiftKey: false }));
+
+    // The only controls a basic read-only account can actually press: the control
+    // bar keeps its zoom buttons, because looking at a sign you may not edit is
+    // exactly when you want to zoom around it.
+    await survives('Fit works on a page with no editing controls', () => zoomToFit());
+    await survives('so does 100%',                                 () => applyZoom(1));
+    await survives('and so does nudging the zoom',                 () => { nudgeZoom(1); nudgeZoom(-1); });
+
+    // Delete is wired to the document, not to a control, so it arrives on a
+    // read-only page too. READ_ONLY is what stops it, and nothing else does.
+    await survives('pressing Delete on a read-only page removes nothing',
+                   () => fire(global.document, 'keydown', { key: 'Delete' }));
     await survives('targeting a section is a no-op rather than a throw',             () => setTargetSection(stubEl('s')));
     await survives('the align bar update finds nothing to update',                   () => updateAlignBar());
 
@@ -211,6 +403,34 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     await survives('taking a Publish button that is not there out of service does nothing',
                    () => { setPublishBusy(true); setPublishBusy(false); });
     check(publishInFlight === false, 'and a read-only page never has a publish in flight to release');
+
+    section('The one thing a read-only page waits for');
+
+    // #lock-free-hint is a read-only page's own node — it is inside the `$readOnly`
+    // branch, so the editing page never has it. The hand-written DOM this suite used
+    // to carry left it out, which meant the only branch of the lock poll that runs
+    // on a good day had never once been executed here: `if (hint)` was false every
+    // time. Derived, it is present, and the branch runs.
+    const freeHint = document.getElementById('lock-free-hint');
+    check(freeHint !== null, 'a read-only page has the "it is free now" hint to fill in');
+
+    global.fetch = () => Promise.resolve({
+        json: () => Promise.resolve({ status: 'success', held_by_other: true })
+    });
+    await survives('a poll saying somebody still holds it does not throw', async () => {
+        pollLockState();
+        await settle();
+    });
+    check(freeHint.style.display === 'none', 'and the offer to reload stays hidden while they do');
+
+    global.fetch = () => Promise.resolve({
+        json: () => Promise.resolve({ status: 'success', held_by_other: false })
+    });
+    await survives('a poll saying it has freed up does not throw either', async () => {
+        pollLockState();
+        await settle();
+    });
+    check(freeHint.style.display === 'inline', 'and the offer to reload appears the moment it has');
 
     section('Losing access to a display you could only look at');
 
@@ -276,7 +496,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 30;
+    const expected = 65;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

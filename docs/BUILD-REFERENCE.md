@@ -2007,6 +2007,87 @@ Left standing, and worth knowing:
   ends, and on shop Wi-Fi with a background image that can be minutes. Reloading the
   page is the only way out, and it costs the unpublished canvas.
 
+### 4w. The one that was already fixed, and the list that had stopped being true
+
+Decision `#40` — *a basic account with the sign open read-only threw an error on
+every canvas click* — was **settled by `#3`**. §4j fixed it in passing and named it
+there: `clearTargetSection()` tested the account's role, but `#section-banner` is
+emitted only when the account is basic *and* the page can edit, so a basic clerk
+watching somebody else work got an uncaught `TypeError` on every click in the canvas
+area. The lookup goes through `setSectionBanner()` now, which is null-safe and needs
+no role test at all.
+
+Confirmed rather than assumed: putting the role-only lookup back fails the read-only
+suite with `TypeError: Cannot set properties of null`, which is the shop-floor error
+verbatim. **No line of `builder.php` changed for this decision.**
+
+What did change is why that question was hard to answer. The suite that proves it
+carried a **hand-written list of the ids a read-only page emits**, and by the time
+this was picked up it had drifted in four places:
+
+| | |
+|---|---|
+| `lock-holder` | listed, and not an id anywhere in `builder.php` |
+| `display-off-banner` | listed, but emitted only when the Display is turned off |
+| `lock-free-hint` | missing, and a read-only page really has it |
+| `upload-status` | missing, and every page has it |
+
+Three of those err strict, which only ever costs a redundant guard. The fourth errs
+**generous**, and that is the direction that matters: an id the browser will not
+have, stubbed present here, is a lookup this suite blesses and the shop floor throws
+on — the precise defect it exists to catch, inverted. `lock-free-hint` cost something
+too, quietly: it is a read-only page's own node, so `pollLockState()`'s success
+branch — the one that runs on a good day — had never once been executed, because
+`if (hint)` was false every time.
+
+**So the DOM is derived from the markup.** `emittedIds(page)` walks `builder.php`'s
+`<?php if:/else:/endif;` conditionals over the Builder document and answers which ids
+survive for a given combination of lock, role and Display state. The list cannot
+drift from the page because it *is* the page.
+
+Two rules make that safe to trust, and they are invariant 19's two rules about
+reading the database catalogue, in a different medium. A condition it cannot
+evaluate is **unknown, never false**: it is reported by name and fails a check,
+because a guard nobody taught it about is work rather than a default. And an id under
+an unknown condition is left **out** of the DOM, so the untaught case makes this suite
+stricter rather than blinder — the lookup returns null, and null is what makes a
+missing guard throw. The derivation is driven on markup written in the test as well as
+on the real file, because on the real file "unknown" is empty and every claim about it
+is vacuous; the rule that matters is about a conditional `builder.php` does not
+contain yet.
+
+Three coverage holes closed while the shape of the page was being pinned down, all of
+them "what can a basic read-only account actually do":
+
+- **The canvas click is now fired through the handler the page registers**, not by
+  calling the three functions it happens to reach today. Those three prove those
+  three; a fourth call added to the handler was covered by nothing.
+- **The zoom controls run.** `Fit`, `100%` and the two nudges are the only buttons a
+  basic read-only account has — the control bar keeps them, because looking at a sign
+  you may not edit is exactly when you want to zoom around it — and none had ever been
+  called.
+- **`Delete` is fired at the document**, because it is wired there rather than to a
+  control and so arrives on a read-only page too. `READ_ONLY` is what stops it and
+  nothing else is.
+
+**Thirty-eight new checks** (27 up to 65), and eleven deliberate mutations, ten
+killed (3, 4, 2, 4, 3, 2, 1, 2, 1, 9). The eleventh is an honest survivor and is left
+recorded rather than quietly dropped: removing `pollLockState()`'s `if (hint)` guard
+kills nothing, because `#lock-free-hint` is emitted on exactly the pages that poll
+for it. The guard is unreachable-as-false rather than untested — and since that is a
+coupling between a PHP conditional and a JavaScript call site, with nothing else
+asserting it, the coupling itself is now a check.
+
+Left standing, and worth knowing:
+
+- **The derivation understands three conditions**: `$readOnly`, `$isAdmin` and
+  `$display->isActive()`, with `!` and `&&`. That is every guard in the Builder
+  document today. A fourth arrives as a named failure, which is the intent.
+- **It answers about ids, not about handlers.** A control emitted for everyone but
+  wired to a function that only makes sense for an editor is invisible to this — the
+  `READ_ONLY` guards inside those functions are what cover it, and they are checked
+  one at a time.
+
 ---
 
 ## 5. Verification
@@ -2193,6 +2274,16 @@ emits, which is the only automated way to catch a lookup reaching for a control 
 lock took away. `selftest_builder_uploads.js` takes the opposite premise — an admin
 who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the only
 way to see a missing `.catch()`: the file parses perfectly without one.
+
+`selftest_builder_readonly.js` derives the ids a read-only page emits by walking
+`builder.php`'s own conditionals, so there is no list to keep in step by hand — it
+was one, and it had drifted in four places (§4w). Two consequences for anybody
+editing that file. A new `<?php if (…):` guard on markup, written on anything other
+than `$readOnly`, `$isAdmin` or `$display->isActive()`, arrives as a **named failing
+check** rather than a silent guess; teach `emittedIds()` about it, or move the guard.
+And an id that moves out of a conditional, or into one, changes what that suite
+stubs — which is the point, but it means a red run there after a markup change is
+usually the markup, not the JavaScript.
 
 `schema.sql` has no automated check at all — nothing reads it, so a column missing
 from it fails silently on a future rebuild and nowhere else. Diff it against

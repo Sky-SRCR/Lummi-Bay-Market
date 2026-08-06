@@ -77,7 +77,7 @@ written down rather than remembered:
 | 37 | The asset editor read the file type from a hidden form field instead of the stored record. | Read it from the record. | **Done** | §4u |
 | 38 | Two login problems: a secure-cookie setting causes an invisible sign-in loop on plain HTTP, and the suspended-account message tells a guesser the password was right. | Fix both. | Open | — |
 | 39 | Double-clicking Publish produced a success message and a stale-sign warning together. | Ignore the second while the first is still running. | **Done** | §4v |
-| 40 | A basic account with the sign open read-only threw an error on every canvas click. | Guard the lookup. | Open | — |
+| 40 | A basic account with the sign open read-only threw an error on every canvas click. | Guard the lookup. | **Done** — settled by #3: §4j guarded it via `setSectionBanner()` while making the read-only page what the file claimed. Re-confirmed by mutation, and the harness that proves it is now derived from the markup rather than hand-listed, having drifted in four places. | §4j, §4w |
 | 41 | An unreadable stored colour round-tripped through the colour picker and published back as black. | Validate on the way in and on the way out. | Open | — |
 | 42 | Six smaller Builder rough edges: section minimum size measured in screen pixels, Fit cannot fit a very large canvas, no way to unhide a section, deleting a slide field cannot be undone, marquee "Transparent" loses the colour, and dead code. | All six. | Open | — |
 | 43 | Deleting an account wrote to three tables with no transaction, going around the owning module. | All-or-nothing, through the module. | **Done** — settled by #20: closing is one transaction in `AccountAdmin`, and no `DELETE FROM users` exists anywhere. | §4l |
@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**24 done, 2 part done, 25 open.**
+**25 done, 2 part done, 24 open.**
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which
