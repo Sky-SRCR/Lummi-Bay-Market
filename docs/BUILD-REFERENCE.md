@@ -1843,17 +1843,48 @@ Left standing, and named rather than skipped:
 
 ## 5. Verification
 
-No CI, no test suite, no PHP runtime on the target — verification is deliberate
-and manual. Run all of it before every push.
+There is no deploy pipeline — every change reaches the sign by hand — but as of
+#48 and #51 CI runs everything below except the two things that need a browser or
+a copy of live data. PHP 8.2, which is the live server's version (confirmed, not
+assumed — the 7.1 figure #51 was written against was a guess made while nobody
+could check), against two engines: SQLite and a real MySQL 5.7 service. Run it
+locally before every push anyway; the loop is faster than a push.
 
 ```
-php -l <every touched .php>              # syntax; also a GitHub Action
-php tools/selftest_layout.php            # the real modules, in-memory database
+php -l <every touched .php>              # syntax; also in CI, on both PHP versions
+php tools/check_invariants.php           # the greps below, run rather than read —
+                                         # comment-aware, so a module documenting a
+                                         # rule does not fail it
+php tools/selftest_layout.php            # the real modules, in-memory SQLite
 node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
                                          # that has only what a read-only page emits
 node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an
                                          # admin who can edit — driving a stubbed
                                          # XMLHttpRequest through every way an upload ends
+```
+
+And, with a MySQL to point at — the same suite, with nothing stubbed:
+
+```
+SELFTEST_MYSQL_DSN='mysql:host=127.0.0.1;dbname=lbm_selftest;charset=utf8mb4' \
+SELFTEST_MYSQL_USER=... SELFTEST_MYSQL_PASS=... php tools/selftest_layout.php
+```
+
+On MySQL the fixture is built by running `schema.sql`, the `FOR UPDATE` stub is
+gone, and fifteen further checks run that SQLite cannot be asked — see §4u.
+
+**The greps below are what `tools/check_invariants.php` automates.** They are kept
+here because the annotations are the reasoning, and because five of them cannot be
+decided by pattern and are still yours to read: `canvas_elements` (the endpoint
+name `get_canvas_elements` is indistinguishable from the table), `ErrorPolicy::report`
+callers (a new one is allowed but has to be read for whether it can repeat),
+the *position* of `ensureSignageSchema()` calls, and the `grants_accounts` /
+`grants_displays` pairing. The checker prints that list on every run so nobody
+mistakes it for total coverage. `schema.sql` against `lib/schema.php` used to be a
+sixth; the MySQL run now asserts convergence has nothing left to do against a
+database built from that file, which is the same property mechanised.
+
+```
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
                                               # the get_canvas_elements endpoint NAME, and
                                               # server_report.php's expected-column list
@@ -2014,6 +2045,14 @@ On a server with a **copy** of live data — never the live database:
 php tools/rehearse_phase1.php            # converge schema, prove scoping, publish twice
 ```
 
+CI runs this too, but against a database built from `schema.sql` rather than a copy
+of live data, and the difference is the whole remaining point of doing it by hand.
+A schema.sql database is already converged, so the run proves the round trip —
+both widened ENUMs, the cascade rules, publish-and-republish scoping, DDL
+committing an open transaction — and cannot prove the one thing the tool was
+written for: that the idempotent statements apply to the live table **as it
+stands**. That still needs a copy, and is still a deploy-day step.
+
 Then in a real browser: sign in → edit → publish → the Screen updates within
 30s; publish again from a second stale tab → refused with a named holder;
 `api.php?action=get_layout` with no session still returns the drive-thru layout.
@@ -2021,6 +2060,78 @@ Then in a real browser: sign in → edit → publish → the Screen updates with
 Phases 4–5 additionally need two accounts (one admin, one `basic` with a single
 grant) and, for the lock, two browsers. Phase 2 needs a genuinely
 different-shaped Display, including a portrait one.
+
+---
+
+### 4u. The suite had never met the database it is about (#48, #51)
+
+Two decisions, one subject: what the tests were actually running against, and how
+much of §5 anybody was really doing.
+
+**The stub nobody could remove.** `SELECT … FOR UPDATE` has no SQLite equivalent,
+so `TestDisplayStore` replaced `lockLayoutRevision()` with a plain SELECT. Every
+other statement in the publish path was real; that one was not — and it is the row
+lock the publish transaction takes before it deletes anything, which makes it the
+line in this repo with the most riding on it and, until now, no test over it at
+all. Setting `SELFTEST_MYSQL_DSN` builds the fixture on a real MySQL database and
+`newTestDisplayStore()` hands back the real store, so all 827 checks go through the
+actual statement. SQLite stays the default: it needs nothing installed and runs in
+about a second, and the fast loop is the one people use.
+
+**Building the MySQL fixture from `schema.sql` was the cheap part and the valuable
+one.** Nothing read that file. A column missing from it failed silently on a future
+rebuild and nowhere else, which is why invariant 15 said to diff it against
+`lib/schema.php` by eye. The MySQL run now asserts that convergence has *nothing
+left to do* against a database built from it — the same property, mechanised. Drift
+between the two files fails a check instead of waiting for a rebuild.
+
+**A database per fixture, not one wiped between calls.** The suite holds two at
+once on purpose — one scoping check proves a rename in database A cannot reach into
+B — so a shared connection that reset itself would delete rows an earlier `$pdo`
+was still being asserted against. This cost an hour to find and is worth writing
+down: it presents as a `TypeError` about a null Display, forty checks after the
+real cause.
+
+**Four checks stay on SQLite deliberately**, and each says so where it sits. Three
+need a catalogue that *disagrees* with the tables — a column that is really there
+on a table `information_schema` never mentioned — and MySQL's cannot be made to
+lie. One needs `INSERT IGNORE` to be *refused*, which is the witness that the seed
+statement was never sent. `fakeCatalogue()` now rejects a non-SQLite handle rather
+than failing later with a confusing message about `ATTACH`.
+
+**What MySQL found:** the self-repair path completes. On SQLite the CREATE is
+refused, the table stays missing, and the exception comes back out — all the
+fixture could ever show. On MySQL `displays` and `display_permissions` are really
+recreated, the drive-thru Display is seeded, and the read that triggered the repair
+returns. §4q called that path "fixed" on the strength of a detector test; this is
+the first time the sequence has run end to end anywhere except
+`tools/rehearse_phase1.php` against live data.
+
+**#51's version half was a false alarm.** It read "CI pins PHP 8.2 against a 7.1
+target". The live server runs **8.2**. The pin was right the whole time and the 7.1
+figure was a guess made while nobody could check — which is worth recording,
+because two items were written as though the guess were a fact. CI now names 8.2
+and Settings → This Server is where a host upgrade becomes visible.
+
+Running on 7.1 before that was settled did surface two ways this code misbehaves
+below PHP 8, and both are fixed even though neither is reachable on 8.2:
+
+- An array where a `temp_id` belongs. PHP 8 throws on the subscript and the publish
+  is refused; earlier versions warn and continue, mapping nothing, so the section's
+  content lands at root level — #31's silent reparenting. The refusal was real but
+  it lived in the language rather than in `LayoutStore`, and the check covering it
+  passed for a reason no reader of that file could see. It is written down now.
+- The error log never rotating, because the size was read from a stat cache PHP 8
+  invalidates and earlier versions do not.
+
+The second one leaves a check that cannot fail on 8.2, which is the shape #50 is
+about. It is kept and labelled as such rather than deleted, because what it records
+is worth more than the line — but it is not coverage and is not counted as any.
+
+**What still is not covered**, printed by `tools/check_invariants.php` on every run
+so it cannot be mistaken for full coverage: five §5 greps that no pattern can
+decide, and the rehearsal against a database that genuinely *lags* the repo, which
+needs a copy of live data and remains a deploy-day step.
 
 ---
 

@@ -36,6 +36,8 @@
 //   php tools/rehearse_phase1.php --host=localhost --db=COPY_NAME \
 //        --user=USER --pass=PASS --confirm-copy
 //
+//   --port=3307 too, if the copy is not on the default port.
+//
 // Run it against a COPY. It creates two throwaway Displays, publishes to them,
 // and deletes them again — it never publishes over an existing layout — but it
 // does write, and there is no undo anywhere in this app. The --confirm-copy flag
@@ -79,8 +81,13 @@ foreach (['host', 'db', 'user'] as $needed) {
     }
 }
 
+// --port is optional and rarely needed against a live copy, which sits on 3306.
+// It exists because the other places this now runs — a developer's second server,
+// a CI service container — do not always.
+$port = (isset($opts['port']) && $opts['port'] !== true) ? ';port=' . intval($opts['port']) : '';
+
 $pdo = new PDO(
-    "mysql:host={$opts['host']};dbname={$opts['db']};charset=utf8mb4",
+    "mysql:host={$opts['host']}{$port};dbname={$opts['db']};charset=utf8mb4",
     $opts['user'],
     isset($opts['pass']) && $opts['pass'] !== true ? $opts['pass'] : '',
     [

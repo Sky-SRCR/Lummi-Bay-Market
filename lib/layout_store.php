@@ -604,11 +604,36 @@ class LayoutStore
             if (($el['type'] ?? '') !== 'section') { continue; }
             $this->insertSection($display, $el);
             if (!empty($el['temp_id'])) {
+                self::requireUsableTempId($el['temp_id']);
                 $tempMap[$el['temp_id']] = $this->pdo->lastInsertId();
             }
         }
 
         $this->insertContent($display, $elements, $tempMap);
+    }
+
+    /**
+     * Refuse a temp id that cannot be an array key, rather than letting PHP decide.
+     *
+     * The refusal was already happening on the server this runs on — PHP 8 throws a
+     * TypeError on an array subscript, publish() catches Throwable, and the result
+     * is `failed`, which is correct. What was missing was anywhere saying so. The
+     * rule lived in the language rather than in the module, and the check covering
+     * it passed for a reason no reader of this file could see.
+     *
+     * Below PHP 8 the same code emits a warning and carries on: the section is
+     * inserted but never mapped, and on the read side the same subscript yields
+     * null, so the section's content is written at root level — the silent
+     * reparenting #31 is about. That is not reachable on 8.2 and this is not a
+     * portability shim for it. It is the refusal written down where the other
+     * publish refusals are, which is the only place a later change would look.
+     */
+    private static function requireUsableTempId($value)
+    {
+        if (!is_string($value) && !is_int($value)) {
+            throw new InvalidArgumentException(
+                'a temp_id must be a string or an integer, not ' . gettype($value));
+        }
     }
 
     /**
@@ -632,6 +657,7 @@ class LayoutStore
         foreach ($elements as $el) {
             if (($el['type'] ?? '') !== 'section') { continue; }
             if (empty($el['temp_id']) || empty($el['db_id'])) { continue; }
+            self::requireUsableTempId($el['temp_id']);
             $dbId = intval($el['db_id']);
             if (isset($ownSections[$dbId])) {
                 $tempMap[$el['temp_id']] = $dbId;
@@ -684,7 +710,12 @@ class LayoutStore
             $type = $el['type'] ?? 'text';
             if ($type === 'section') { continue; }
 
+            // The read side of the same subscript, and the more dangerous half: on
+            // 7.1 an array here yields null through the `??`, which parents the
+            // block at root level instead of inside its section. Refused rather
+            // than resolved, for the reasons on requireUsableTempId().
             $parentTmp = $el['parent_temp_id'] ?? null;
+            if ($parentTmp) { self::requireUsableTempId($parentTmp); }
             $sectionId = $parentTmp ? ($tempMap[$parentTmp] ?? null) : null;
             $assetId   = !empty($el['asset_id']) ? intval($el['asset_id']) : null;
             $manual    = $el['manual_content'] ?? '';

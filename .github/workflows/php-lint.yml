@@ -1,12 +1,29 @@
 name: PHP lint and self-test
 
-# There is no CI or deploy pipeline for this app — every change reaches the sign
-# by hand. This is the cheap insurance: a syntax error in a file that only runs
-# on the live server is caught here instead of on the sign, and the layout
-# self-test guards the publish path, which can empty every Display at once.
+# There is no deploy pipeline for this app — every change reaches the sign by hand.
+# This is the cheap insurance: a syntax error in a file that only runs on the live
+# server is caught here instead of on the sign, and the layout self-test guards the
+# publish path, which can empty every Display at once.
 #
-# `php -l` cannot see the inline JavaScript that most of builder.php is made of.
-# Changes to that file still need reading.
+# What this used to be: `php -l` and the self-test, on PHP 8.2, on SQLite.
+#
+# Decision #51 had two halves. One was "CI pins 8.2 against a 7.1 target" — and
+# that half turned out to be a false alarm: the live server runs **8.2**, so the
+# pin was right all along and the 7.1 rule it was measured against was a guess
+# made while nobody could check. The version is settled now and this matches it.
+#
+# The other half was real. CI ran neither the consistency greps nor the rehearsal,
+# so three of the four things BUILD-REFERENCE §5 asks for before every push were
+# things only a person could be relied on to do. All of them run here now, against
+# both database engines.
+#
+# Running the suite on 7.1 while the target was still unknown did find two ways the
+# code misbehaves below PHP 8 — an array where a temp_id belongs is accepted rather
+# than refused, and the error log never rotates. Neither was ever reachable on 8.2.
+# Both are fixed anyway, because both fixes say in code what the language was doing
+# by accident, but neither was a live defect and 7.1 is not tested here: pinning CI
+# to a version the store does not run would constrain every future change for
+# nothing.
 
 on:
   push:
@@ -14,16 +31,40 @@ on:
   pull_request:
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
+  php:
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The live server's version, confirmed rather than assumed. Settings →
+        # This Server reports it, so a host upgrade is visible and this list is
+        # the one line to change when that happens.
+        php: ['8.2']
+
+    services:
+      mysql:
+        # 5.7 to match the live server, which schema.sql was verified against.
+        image: mysql:5.7
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: lbm_selftest
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=20
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up PHP
+      - name: Set up PHP ${{ matrix.php }}
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.2'
-          extensions: pdo, pdo_sqlite
+          php-version: ${{ matrix.php }}
+          extensions: pdo, pdo_sqlite, pdo_mysql
 
       - name: Lint every PHP file
         run: |
@@ -33,5 +74,54 @@ jobs:
           done < <(find . -name '*.php' -not -path './vendor/*' -print0)
           exit $status
 
-      - name: Layout self-test
+      # BUILD-REFERENCE §5's greps, run rather than described. Comment-aware, so
+      # the modules that document the rules they enforce do not fail them.
+      - name: Consistency checks
+        run: php tools/check_invariants.php
+
+      - name: Layout self-test — SQLite
         run: php tools/selftest_layout.php
+
+      # The same suite against the engine the app runs on, where the publish
+      # transaction's `SELECT … FOR UPDATE` is the real statement rather than the
+      # stub SQLite needs (#48).
+      - name: Layout self-test — MySQL
+        env:
+          SELFTEST_MYSQL_DSN: 'mysql:host=127.0.0.1;port=3306;dbname=lbm_selftest;charset=utf8mb4'
+          SELFTEST_MYSQL_USER: root
+          SELFTEST_MYSQL_PASS: root
+        run: php tools/selftest_layout.php
+
+      # Against a database built from schema.sql, which is a fresh rebuild rather
+      # than a copy of live data. That covers the real round trip — convergence,
+      # both widened ENUMs, the cascade rules, publish-and-republish scoping, and
+      # DDL committing an open transaction. What it cannot cover is converging a
+      # database that *lags*, because schema.sql produces one that does not. That
+      # case still needs a copy of the live database and is still a deploy-day
+      # step in the roadmap's checklist.
+      - name: Rehearsal against real MySQL
+        run: |
+          mysql -h 127.0.0.1 -uroot -proot -e "DROP DATABASE IF EXISTS lbm_rehearsal; CREATE DATABASE lbm_rehearsal CHARACTER SET utf8mb4;"
+          mysql -h 127.0.0.1 -uroot -proot lbm_rehearsal < schema.sql
+          php tools/rehearse_phase1.php \
+            --host=127.0.0.1 --port=3306 --db=lbm_rehearsal \
+            --user=root --pass=root --confirm-copy
+
+  # builder.php is ~3300 lines of inline JavaScript that `php -l` cannot see. These
+  # two suites run it: one against a DOM holding only what a read-only page emits,
+  # one against a stubbed XMLHttpRequest driven through every way an upload ends.
+  # Their own job because they are the same JavaScript whichever PHP is installed.
+  builder-js:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Builder self-test — read-only page
+        run: node tools/selftest_builder_readonly.js
+
+      - name: Builder self-test — uploads
+        run: node tools/selftest_builder_uploads.js

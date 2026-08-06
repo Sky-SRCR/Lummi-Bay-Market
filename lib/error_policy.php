@@ -361,6 +361,19 @@ class ErrorPolicy
             $path = self::logFile();
             if ($path === '') { return false; }
 
+            // Ask for the size rather than accept a remembered one. PHP caches stat
+            // results per path; PHP 8 invalidates that cache when it is the one
+            // writing, and earlier versions do not — there, the second and every
+            // later entry in a request saw the size the file had before the first,
+            // so the check never tripped and the log grew forever on exactly the
+            // shared host with a disk quota that rotation exists for.
+            //
+            // The server runs 8.2, so this is not fixing anything that happens
+            // today. It is here because rotation is decided from a number this
+            // function does not own, and one explicit stat is cheaper than the
+            // assumption that every future runtime invalidates the way 8 does.
+            clearstatcache(true, $path);
+
             // `is_file` first: statting a path that is not there is a warning, and a
             // warning raised inside the thing that writes warnings down is a loop
             // waiting for somebody to remove one `@`.

@@ -2542,6 +2542,11 @@ checkSame(true, ErrorPolicy::handleError(E_NOTICE, 'a notice', '', 0),
 
 // The app is full of deliberate `@` calls — this very module's filesystem writes,
 // schemaTry, the reset email. Logging them would bury the real entries.
+// Both sizes are read with the stat cache cleared. Only the second one used to be,
+// which made this check meaningless on PHP 7.1: `$before` came back as whatever the
+// file measured several entries ago, so the comparison was against a number that was
+// already wrong rather than against the size before this call.
+clearstatcache();
 $before = filesize($logPath);
 $was    = error_reporting(0);
 ErrorPolicy::handleError(E_WARNING, 'a deliberately suppressed call', '', 0);
@@ -2554,7 +2559,35 @@ checkSame($before, filesize($logPath), 'a suppressed diagnostic is not logged at
 file_put_contents($logPath, str_repeat('x', ErrorPolicy::MAX_LOG_BYTES + 1));
 ErrorPolicy::log('the entry that tipped it over');
 check(file_exists($logPath . '.1'), 'an oversized log is rotated rather than grown forever');
+clearstatcache();
 check(filesize($logPath) < 1024, 'and the live file starts again');
+
+// The shape the check above could not see: the size is not measured once, it is
+// measured before every entry, so what matters is whether a *later* entry in the
+// same request measures it again. Two log() calls with the file pushed over the
+// limit between them, because that is the sequence — a request that logs, keeps
+// working, and logs again.
+//
+// Honest about its own reach: on PHP 8 this passes with or without the
+// clearstatcache() in ErrorPolicy::log(), because 8 invalidates the cache itself.
+// It is load-bearing only below 8, and CI runs 8.2 — the server's version — so it
+// is not covering the fix so much as recording what the fix is for. Kept because
+// the knowledge is worth more than the line, not because it is proving anything on
+// the version this runs on.
+// Two entries before the file is pushed over the limit, not one: the very first
+// log() to a path that does not exist yet never reaches filesize() at all, because
+// `is_file` is false and `&&` stops there. It takes a second entry to put a size in
+// the cache, and a third to read it back stale. Get that order wrong and the check
+// passes against the unfixed module, which is how this one was first written.
+$rollDir  = newTestStateDir();
+$rollPath = $rollDir . '/lbm-error.log';
+ErrorPolicy::useLogFile($rollPath);
+ErrorPolicy::log('the first entry of the request, which creates the file');
+ErrorPolicy::log('the second, which is the one that measures it');
+file_put_contents($rollPath, str_repeat('x', ErrorPolicy::MAX_LOG_BYTES + 1));
+ErrorPolicy::log('the third, by which time the file is far too big');
+check(file_exists($rollPath . '.1'),
+      'a later entry in the same request measures the file again rather than remembering it');
 
 // ─────────────────────────────────────────────────────────────
 section('Alerts: one per problem per hour, to admins only');
@@ -3277,4 +3310,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Two numbers because the MySQL run adds a section the SQLite one cannot ask for.
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
-reportChecks(testIsMysql() ? 841 : 826);
+reportChecks(testIsMysql() ? 842 : 827);

@@ -84,14 +84,19 @@ written down rather than remembered:
 | 44 | Nothing set a timezone, so "editing since 2:15pm" followed whatever the host's `php.ini` happened to say. | A store timezone setting on the Branding page. | Open | — |
 | 45 | The sign itself printed "Carousel — no slides added yet" where a customer could read it. | Draw nothing. | Open | — |
 | 46 | Deployment step 3 had no do-not-overwrite list, so re-uploading reverted live branding and restored `setup.php`. | Write down what to skip. | Open | — |
-| 48 | The test database differs from MySQL in twelve ways, including row locking stubbed out entirely. | Test against real MySQL as well. | Open | — |
-| 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | Part done — `schema.php`'s *decision* is now a pure function with 43 checks (§4o); its statements are still MySQL-only. | §4o |
+| 48 | The test database differs from MySQL in twelve ways, including row locking stubbed out entirely. | Test against real MySQL as well. | **Done** | §4u |
+| 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | Part done — `schema.php`'s *decision* is a pure function with 43 checks (§4o). Its *statements* now run for real on the MySQL leg (#48), which leaves the mutation coverage on `plain_text.php` as the open half. | §4o, §4u |
 | 50 | About 29 checks in the suite could not fail, and five invariants had no automated check at all. | Replace the hollow ones, and cover the missing rules. | Open — the harness itself was hardened so a suite that stops early now fails, but the 29 have not been swept. | — |
-| 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | Part done — **the live PHP version is still unknown.** Settings → This Server answers it the first time an admin opens it after deploy; until then the 7.1 rule stands. | §4g |
+| 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | **Done** — and the version half was a false alarm: **the live server runs 8.2**, so the pin was correct and the 7.1 target was a guess. CI now also runs the greps (`tools/check_invariants.php`), the rehearsal, the two node suites, and the MySQL self-test. | §4u |
 
 ## Where this stands
 
-**22 done, 2 part done, 27 open.**
+**24 done, 1 part done (#49), 26 open.**
+
+#48 and #51 were taken together because they are the same subject — what the tests
+run against, and whether anybody runs them. Both are Done; the version question
+inside #51 was answered rather than worked around, and the answer was that the
+premise was wrong.
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which
