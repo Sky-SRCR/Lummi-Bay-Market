@@ -70,18 +70,11 @@ class ServerReport
                   . 'a default. Times shown next to an edit lock may be hours out.'
                 : ''];
 
-        // A public page printing a stack trace gives away the absolute path to the
-        // webroot, which is the first thing anyone probing the site wants.
-        $out['Errors shown to visitors'] = [$this->onOff('display_errors'),
-            $this->flagOn('display_errors')
-                ? 'On. A PHP error on the Viewer prints server paths onto the sign '
-                  . 'and into anyone\'s browser. It should be off.'
-                : ''];
-
-        $log = ini_get('error_log');
-        $out['Errors written to a log'] = [$this->onOff('log_errors') . ($log ? ' → ' . $log : ''),
-            $this->flagOn('log_errors') ? '' : 'Off. Nothing that goes wrong on the '
-                . 'server leaves any record at all.'];
+        // What happens when something goes wrong is no longer a property of the
+        // server: lib/error_policy.php sets it in code on every request, and
+        // reports itself through ErrorPolicy::status(). Reading the same two ini
+        // flags here as well would be a second opinion about a setting this module
+        // does not own — and one that could only ever agree with itself.
 
         // These three are what stops a stolen or cross-site request riding the
         // session. auth.php sets them; this says whether they took.
@@ -178,17 +171,6 @@ class ServerReport
         } catch (Throwable $e) {
             return 'unknown';
         }
-    }
-
-    private function flagOn($setting)
-    {
-        $v = strtolower(trim((string)ini_get($setting)));
-        return ($v !== '' && $v !== '0' && $v !== 'off' && $v !== 'false');
-    }
-
-    private function onOff($setting)
-    {
-        return $this->flagOn($setting) ? 'On' : 'Off';
     }
 
     private function yesNo($ok)

@@ -1366,4 +1366,213 @@ checkSame(false, (new AccountAdmin($oldPdo, $oldStore, new GrantStore($oldPdo), 
                  ->close(2, 1)->isOk(),
           'and closing refuses rather than half-doing it');
 
-reportChecks(406);
+// ─────────────────────────────────────────────────────────────
+section('What a visitor is told when something breaks');
+
+// ErrorPolicy::install() is deliberately NOT called here: it would replace this
+// suite's own error handler, which is the thing that makes a PHP diagnostic count
+// as a failure. Everything below is reachable without installing, because the
+// decisions worth testing — what each kind of caller is told, and whether a
+// Screen can recover on its own — are pure functions of the mode.
+
+$screen = ErrorPolicy::noticeFor(ErrorPolicy::SCREEN, 'This sign is temporarily unavailable.');
+check(strpos($screen, 'content="30"') !== false,
+      'a Screen is given a notice that re-checks every 30 seconds');
+check(strpos($screen, 'This sign is temporarily unavailable.') !== false,
+      'and it says so in words a customer can read');
+check(strpos($screen, '#111') !== false,
+      'on the same dark background the Viewer already uses, so it looks like the sign');
+check(strpos($screen, '<!DOCTYPE') === 0,
+      'as a whole document, because nothing of the page got out');
+
+// Output already sent: the document is gone, so the notice has to cover it.
+$partial = ErrorPolicy::noticeFor(ErrorPolicy::SCREEN, 'This sign is temporarily unavailable.', true);
+check(strpos($partial, '<!DOCTYPE') === false,
+      'a failure after output has begun does not send a second document');
+check(strpos($partial, 'location.reload') !== false,
+      'but it still gets the sign back on its own');
+check(strpos($partial, 'z-index:2147483647') !== false,
+      'and covers whatever half-drawn page it landed on');
+
+$api = ErrorPolicy::noticeFor(ErrorPolicy::API, 'Temporarily unavailable.');
+$decoded = json_decode($api, true);
+check(is_array($decoded), 'an endpoint gets JSON, not HTML — its caller is a script');
+checkSame('error', $decoded['status'], 'with the status the Builder and the Viewer both branch on');
+checkSame('Temporarily unavailable.', $decoded['message'],
+          'and the message the Viewer prints straight onto the sign');
+
+$page = ErrorPolicy::noticeFor(ErrorPolicy::PAGE, 'Something went wrong.');
+check(strpos($page, 'content="30"') === false,
+      'a page somebody is typing into does not reload itself under them');
+check(strpos($page, 'Something went wrong.') !== false, 'it just says so');
+
+// The sentence reaches the browser. Nothing that ever becomes one is attacker-set
+// today, but this is the file that prints during a failure, when the guards that
+// normally escape output have already been skipped.
+$nasty = ErrorPolicy::noticeFor(ErrorPolicy::SCREEN, '<script>alert(1)</script>');
+check(strpos($nasty, '<script>alert(1)</script>') === false,
+      'the sentence is escaped on its way into the notice');
+
+check(strpos(ErrorPolicy::noticeFor('nonsense', 'x'), '<!DOCTYPE') === 0,
+      'an unrecognised mode falls back to a page, never to nothing');
+
+checkSame('This sign is temporarily unavailable.', ErrorPolicy::sentence(ErrorPolicy::SCREEN),
+          'the Screen sentence names the sign, not the server');
+check(strpos(ErrorPolicy::sentence(ErrorPolicy::PAGE), 'error log') !== false,
+      'a signed-in person is told where the detail went');
+foreach ([ErrorPolicy::SCREEN, ErrorPolicy::API, ErrorPolicy::PAGE] as $mode) {
+    check(strpos(ErrorPolicy::sentence($mode), '/') === false,
+          'no default sentence can carry a server path (' . $mode . ')');
+}
+
+// api.php's public poll overrides the wording, because its caller is a Screen
+// even though its reply is JSON.
+ErrorPolicy::sayOnFailure('This sign is temporarily unavailable.');
+checkSame('This sign is temporarily unavailable.', ErrorPolicy::sentence(ErrorPolicy::API),
+          'an endpoint serving a Screen can say the Screen\'s words');
+ErrorPolicy::sayOnFailure('');
+checkSame('Temporarily unavailable. Please try again in a moment.', ErrorPolicy::sentence(ErrorPolicy::API),
+          'and clearing the override restores the default');
+
+// ─────────────────────────────────────────────────────────────
+section('The error log');
+
+ErrorPolicy::useLogFile('');
+checkSame(false, ErrorPolicy::log('nowhere to write this'),
+          'with no writable directory the log reports that it wrote nothing');
+
+$stateDir = newTestStateDir();
+$logPath  = $stateDir . '/lbm-error.log';
+ErrorPolicy::useLogFile($logPath);
+
+checkSame(true, ErrorPolicy::log('a plain message'), 'otherwise it writes');
+$written = file_get_contents($logPath);
+check(strpos($written, 'a plain message') !== false, 'and the message is in the file');
+check(strpos($written, ' UTC]') !== false,
+      'stamped in UTC, so two entries from either side of a clock change still order');
+
+// One entry, one line. A message carrying newlines — an exception with a trace,
+// a MySQL error — would otherwise break every later reading of this file.
+ErrorPolicy::log("first line\nsecond line\r\nthird");
+$lines = array_filter(explode("\n", file_get_contents($logPath)));
+checkSame(2, count($lines), 'a multi-line message is flattened into a single entry');
+
+ErrorPolicy::handleError(E_WARNING, 'a warning nobody caught', '/srv/app/thing.php', 42);
+$written = file_get_contents($logPath);
+check(strpos($written, 'WARNING: a warning nobody caught') !== false,
+      'a PHP warning is written down rather than printed');
+check(strpos($written, 'thing.php:42') !== false, 'with the file and line that raised it');
+checkSame(true, ErrorPolicy::handleError(E_NOTICE, 'a notice', '', 0),
+          'and the handler reports it handled it, so PHP prints nothing itself');
+
+// The app is full of deliberate `@` calls — this very module's filesystem writes,
+// schemaTry, the reset email. Logging them would bury the real entries.
+$before = filesize($logPath);
+$was    = error_reporting(0);
+ErrorPolicy::handleError(E_WARNING, 'a deliberately suppressed call', '', 0);
+error_reporting($was);
+clearstatcache();
+checkSame($before, filesize($logPath), 'a suppressed diagnostic is not logged at all');
+
+// A shared host has a disk quota, and this file is appended to by every request
+// forever.
+file_put_contents($logPath, str_repeat('x', ErrorPolicy::MAX_LOG_BYTES + 1));
+ErrorPolicy::log('the entry that tipped it over');
+check(file_exists($logPath . '.1'), 'an oversized log is rotated rather than grown forever');
+check(filesize($logPath) < 1024, 'and the live file starts again');
+
+// ─────────────────────────────────────────────────────────────
+section('Alerts: one per problem per hour, to admins only');
+
+$alertDir = newTestStateDir();
+$mailer   = new TestAlertMailer($alertDir, 'Lummi Bay Market');
+
+checkSame(false, $mailer->notify('db', 'Database unreachable', 'detail'),
+          'with nobody to write to, nothing is sent');
+
+$mailer->remember(['sky@example.test', 'boss@example.test']);
+checkSame(['sky@example.test', 'boss@example.test'], $mailer->recipients(),
+          'the cached recipients survive being written to disk and read back');
+
+// The cache is the only list available when the database is the thing that failed,
+// so a call that would empty it has to be refused rather than obeyed.
+$mailer->remember([]);
+checkSame(2, count($mailer->recipients()), 'an empty list never blanks a working one');
+$mailer->remember(['sky@example.test', 'boss@example.test', 'not-an-address']);
+checkSame(2, count($mailer->recipients()), 'and something that is not an address is dropped');
+$mailer->remember(['sky@example.test', "boss@example.test\nBcc: someone@else.test"]);
+checkSame(1, count($mailer->recipients()),
+          'a newline in an address is refused — it would forge a header');
+
+$mailer2 = new TestAlertMailer($alertDir, 'Lummi Bay Market');
+$mailer2->remember(['sky@example.test', 'boss@example.test']);
+checkSame(true, $mailer2->notify('db|db_connect.php:47', 'Database unreachable', 'detail'),
+          'a problem nobody has heard about is sent');
+checkSame(1, count($mailer2->sent), 'once');
+check(strpos($mailer2->sent[0]['to'], 'sky@example.test') !== false
+      && strpos($mailer2->sent[0]['to'], 'boss@example.test') !== false,
+      'to every admin on the list');
+check(strpos($mailer2->sent[0]['subject'], 'Lummi Bay Market') !== false,
+      'with the site named in the subject, because one inbox may watch several');
+
+// The whole point. Four Screens polling every 30 seconds through an outage is
+// 11,520 emails a day if this returns true.
+checkSame(false, $mailer2->notify('db|db_connect.php:47', 'Database unreachable', 'detail'),
+          'the same problem again inside the hour is not sent');
+checkSame(1, count($mailer2->sent), 'and no second message goes out');
+
+// Per problem, not per hour. A second failure elsewhere is news.
+checkSame(true, $mailer2->notify('fatal|viewer.php:22', 'Fatal error', 'detail'),
+          'a different problem in the same hour is still sent');
+checkSame(2, count($mailer2->sent), 'so both are known about');
+
+check($mailer2->lastSent('db|db_connect.php:47') > 0, 'and the panel can see when one last went out');
+checkSame(0, $mailer2->lastSent('never-happened'), 'while a problem that never happened has no time');
+
+// The recipient list and the rate limiter live in the same directory, so losing it
+// loses both — there is nobody to tell and no way to remember having told them.
+$blind = new TestAlertMailer('', 'Lummi Bay Market');
+checkSame(false, $blind->notify('db', 'Database unreachable', 'detail'),
+          'with no writable directory at all, nothing is sent');
+checkSame(0, count($blind->sent), 'not even the first one');
+
+// And the case the guard above cannot reach: a directory that is there, with a
+// recipient list in it, where this one stamp cannot be written. Sending without
+// recording it is how one problem becomes an email per Screen per poll, so the
+// send has to lose. The stamp's name is read back from a successful send rather
+// than recomputed here — a test that reimplements the naming would agree with a
+// broken module.
+$stampDir = newTestStateDir();
+$namer    = new TestAlertMailer($stampDir, 'Lummi Bay Market');
+$namer->remember(['sky@example.test']);
+$namer->notify('wedged|viewer.php:1', 'Fatal error', 'detail');
+$stampName = basename(glob($stampDir . '/alert-*.stamp')[0]);
+
+$jammedDir = newTestStateDir();
+$jammed    = new TestAlertMailer($jammedDir, 'Lummi Bay Market');
+$jammed->remember(['sky@example.test']);
+mkdir($jammedDir . '/' . $stampName);   // a path that can never be written as a file
+checkSame(false, $jammed->notify('wedged|viewer.php:1', 'Fatal error', 'detail'),
+          'a send it could not have recorded is refused instead');
+checkSame(0, count($jammed->sent), 'so an outage cannot turn into an email per poll');
+
+// ─────────────────────────────────────────────────────────────
+section('Who counts as an admin worth alerting');
+
+$mailPdo = newTestDb();
+$mStore  = new AccountStore($mailPdo);
+checkSame(['sky@example.test'], $mStore->adminEmails(), 'a basic account is not alerted');
+
+makeTestAccount($mailPdo, 'second', 'admin');
+checkSame(2, count($mStore->adminEmails()), 'a second admin is');
+
+$mailPdo->exec("UPDATE users SET is_active = 0 WHERE username = 'second'");
+checkSame(1, count($mStore->adminEmails()), 'a deactivated admin is not');
+
+$mailPdo->exec("UPDATE users SET is_active = 1, closed_at = '2026-01-01 00:00:00' WHERE username = 'second'");
+checkSame(1, count($mStore->adminEmails()), 'nor is a closed one, whatever is_active says');
+
+$mailPdo->exec("UPDATE users SET email = '' WHERE username = 'sky'");
+checkSame([], $mStore->adminEmails(), 'and an admin with no address on file is left out');
+
+reportChecks(462);

@@ -62,6 +62,8 @@ Design rules, applied to every module added by this build:
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `redeem` / `discard` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. |
 | `accounts.php` | `AccountStore`, `AccountAdmin` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. Not a gatekeeper for all of `users`: creating, role changes and password resets are still written by `admin_panel.php`, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means. |
 | `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads `information_schema` and PHP's own configuration and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
+| `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. Depends on nothing: no database, no session, no config. |
+| `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 
@@ -210,6 +212,18 @@ through the app again:
     in `schema.sql` never reaches the live server. Add to both in the same commit,
     and remember `CREATE TABLE IF NOT EXISTS` is a no-op on a database that already
     has the table, so a column added to an existing table needs its own `ALTER`.
+16. **No failure reaches a visitor as PHP's own output.** `lib/error_policy.php`
+    sets `display_errors` off and `log_errors` on *in code*, on every request, and
+    installs the three handlers — warning, uncaught exception, fatal — that stand
+    between a failure and the page. The rule is not "wrap things in try/catch": it
+    is that the last thing any request can print is one of three sentences chosen
+    by mode, and none of them carries a file path, a class name, an SQL fragment or
+    anything from the request. A new entry point declares its mode before it opens
+    the database (`viewer.php`, `api.php`) or inherits `PAGE` from `db_connect.php`;
+    a new page that prints its own raw exception text has left the policy. The
+    Screen mode is the one that matters most and the one with no user to notice it
+    is wrong: its notice re-checks every 30 seconds, so a sign that went dark on a
+    database blip comes back without anybody driving to the store.
 
 ---
 
@@ -838,6 +852,80 @@ closed rather than throwing. Verified against five mutations: going back to a
 fails 1, hiding closed accounts from `names()` fails 1, and dropping the last-admin
 guard fails 2.
 
+### 4m. The sign was one PHP warning away from printing the webroot
+
+Two items, and they are one thing seen from either end: nothing in this repo ever
+set `error_reporting`, `display_errors` or `log_errors`, and nothing on the public
+path caught what escaped. So the policy was whatever the hosting account's php.ini
+happened to say — on a shared host, usually "print it" — and the consequence was
+not an ugly page. It was **an absolute server path rendered in grey on a menu board
+in the shop**, or a white page where the prices had been, for as long as it took
+somebody to walk past and mention it.
+
+The database was the likeliest trigger. `db_connect.php` ended a failed connection
+with `die("Database connection failed. Please contact your system administrator.")`
+— black text, white page, on a TV, addressed to a system administrator who is not
+in the room. Everything after it was uncaught: a `PDOException` from
+`DisplayRequest::forViewing()` reached PHP's default handler with a stack trace
+attached.
+
+**The policy is set in code, not in `.htaccess`.** `php_flag display_errors Off`
+only works under mod_php, and this app has been bitten once already by assuming a
+mechanism was in force when it silently was not — the session cookie flags in
+`auth.php`, which do nothing at all on PHP 7.1. Code travels with the deploy, is
+true on every SAPI, and — the argument that settled it — can be read back, which is
+what the new Settings card does.
+
+**Three modes, because the last sentence is the whole problem.** The same failure
+has to become a JSON error for an endpoint the Builder is polling, a plain sentence
+for somebody signed in, and, on a TV, a notice that looks like the Viewer's own and
+**re-checks every 30 seconds**. That last clause is the one that matters: a Screen
+has nobody in front of it, so a sign taken down by a thirty-second database blip
+must come back on its own or it stays down until the store closes. `api.php`'s
+public poll additionally overrides the wording, because its reply is JSON but its
+reader is a shop.
+
+**The alerts are on disk, deliberately.** The commonest thing worth an email is the
+database being unreachable, so a rate limiter that needed a query would fail open —
+and failing open is four Screens × one poll per 30 seconds × two emails a minute,
+from the address the store's real mail depends on. The limiter is a stamp file
+keyed by kind *and* file *and* line, so two different bugs in an hour are two emails
+and one bug hit three thousand times is one. The recipient list has the same
+problem and the same answer: `AccountStore::adminEmails()` is read on the admin
+panel, which is by definition a working moment, and cached to a file that is read
+back when nothing is working. **With nowhere writable it sends nothing at all** —
+a log entry nobody reads is recoverable; a mail bomb is not.
+
+The corollary nobody likes: silence is not proof that nothing is wrong. An
+unwritable directory means no log *and* no alert, and looks exactly like a healthy
+week. That is why Settings → Errors and Alerts prints the log's path, when it was
+last written, and who an alert would reach — with "Nobody" spelled out as a
+sentence rather than left as an empty row.
+
+One narrowing to the self-test harness came with this. It counted *any* PHP
+diagnostic as a failed check; it now exempts diagnostics the code deliberately
+suppressed with `@`. The app suppresses in exactly the places where failure is an
+expected outcome rather than a defect — writing the log, stamping the limiter,
+calling `mail()` on a host with no MTA — and those paths could not be tested at all
+while reaching them failed the suite. Unsuppressed diagnostics, which is what the
+hardening was for, still fail it; that was re-verified against an injected
+`Undefined array key`.
+
+Fifty-six checks. Verified against twelve mutations, each a defect somebody could
+plausibly introduce: the Screen notice losing its 30-second re-check fails 2, losing
+its reload after partial output fails 2, the sentence going unescaped fails 2, a log
+entry not flattened to one line fails 2, suppressed diagnostics being logged fails
+2, rotation removed fails 4, the rate limiter failing open fails 6, an empty list
+blanking the cached recipients fails 2, sending without being able to record it
+fails 4, a newline accepted in an address fails 2, and alerting closed or
+deactivated admins fails 4 and 2.
+
+Left standing, and worth knowing: the rate limiter's check-then-stamp is not atomic
+across processes, so two requests colliding inside the same second can both send.
+Two emails is the worst case and the alternative is a lock file with its own failure
+modes. And `#9` — schema failures logged rather than papered over — is not done;
+`ErrorPolicy::report()` is the seam it attaches to.
+
 ---
 
 ## 5. Verification
@@ -872,6 +960,12 @@ grep -rEn "WHERE +`?id`? *= *'?1'?" --include=*.php .  # must be empty — white
 grep -rn "1920\|1080" --include=*.php .        # admin size presets, the seed, tools/, and prose
 grep -rn "viewer.php\"\|viewer.php'" --include=*.php .  # every link must carry ?display=
 grep -rn "catch (Exception" --include=*.php lib/  # must be empty: a TypeError is an Error, not an Exception
+grep -rn "display_errors\|error_reporting(\|set_exception_handler\|register_shutdown" --include=*.php .
+                                              # lib/error_policy.php owns all of it, plus tools/ (the
+                                              # self-test harness has handlers of its own on purpose).
+                                              # A second file setting any of these is a second opinion
+                                              # about what a visitor sees when something breaks —
+                                              # invariant 16
 grep -rn "hash_equals(" --include=*.php .     # auth.php's csrfOk(), which fails closed on an empty token,
                                               # and the passcode comparison in lib/password_resets.php
 grep -rEn "(INTO|UPDATE|FROM|TABLE) +password_resets|reset_attempts" --include=*.php .

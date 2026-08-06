@@ -22,6 +22,7 @@ require_once __DIR__ . '/../lib/display_admin.php';
 require_once __DIR__ . '/../lib/password_resets.php';
 require_once __DIR__ . '/../lib/server_report.php';
 require_once __DIR__ . '/../lib/accounts.php';
+require_once __DIR__ . '/../lib/error_policy.php';   // pulls in lib/alerts.php
 
 /**
  * DisplayStore with its one non-portable statement swapped out.
@@ -294,6 +295,49 @@ function allGrants(PDO $pdo)
                         ORDER BY display_id ASC, user_id ASC")->fetchAll();
 }
 
+/**
+ * AlertMailer with the one line that reaches the outside world replaced.
+ *
+ * What is worth testing about an alerter is who it writes to and how often — the
+ * rate limiter especially, because failing open there means one email per Screen
+ * per poll. `mail()` on a machine with no MTA proves none of that and can block
+ * for as long as the host's sendmail takes to give up.
+ */
+class TestAlertMailer extends AlertMailer
+{
+    public $sent = [];
+
+    protected function deliver($to, $subject, $body, $headers)
+    {
+        $this->sent[] = ['to' => $to, 'subject' => $subject, 'body' => $body, 'headers' => $headers];
+        return true;
+    }
+}
+
+/**
+ * A throwaway directory for the log and the alert stamps, removed when the run
+ * ends. Not the app's own `logs/` — a self-test that writes into the deployment
+ * it is testing has changed the thing it is measuring.
+ */
+function newTestStateDir()
+{
+    $dir = sys_get_temp_dir() . '/lbm-selftest-' . getmypid() . '-' . count($GLOBALS['_testStateDirs']);
+    @mkdir($dir, 0700, true);
+    $GLOBALS['_testStateDirs'][] = $dir;
+    return $dir;
+}
+
+$GLOBALS['_testStateDirs'] = [];
+
+register_shutdown_function(function () {
+    foreach ($GLOBALS['_testStateDirs'] as $dir) {
+        foreach ((array)@glob($dir . '/*') as $file) {
+            if (@is_dir($file)) { @rmdir($file); } else { @unlink($file); }
+        }
+        @rmdir($dir);
+    }
+});
+
 // ---- Minimal assertions -----------------------------------------------------
 
 $GLOBALS['_checks']   = 0;
@@ -312,7 +356,14 @@ $GLOBALS['_reported'] = false;
 //   3. Deleting a whole section of the file printed "193 checks, 0 failed" and
 //      exited 0, because nothing anchored the expected count. reportChecks()
 //      now takes that number.
+// One narrowing, added when the error policy landed: a diagnostic the code
+// deliberately suppressed with `@` is not a failure. The app suppresses in exactly
+// the places where a failure is an expected outcome rather than a defect — writing
+// the error log, stamping the alert rate-limiter, sending mail on a host with no
+// MTA — and those paths cannot be tested at all if reaching them fails the suite.
+// Unsuppressed diagnostics, which are what the hardening was for, still fail it.
 set_error_handler(function ($severity, $message, $file, $line) {
+    if (!(error_reporting() & $severity)) { return true; }
     $GLOBALS['_checks']++;
     $label = 'no PHP diagnostics during the run — got "' . $message . '" at '
            . basename($file) . ':' . $line;

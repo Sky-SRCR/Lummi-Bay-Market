@@ -740,6 +740,27 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h3>Assets tab</h3>
     <p>Shows all entries in the Asset Library with the option to view, edit, or delete them. Deleting an asset that is linked to a canvas block sets those blocks to show no content until re-linked or manually filled.</p>
 
+    <h3>Settings tab — This Server, Database Structure, Errors and Alerts</h3>
+    <p>Three read-only readouts at the bottom of the Settings tab. Nothing on them can be
+       changed from this page; they are there so nobody has to guess.</p>
+    <ul>
+        <li><strong>This Server</strong> — the PHP and MySQL versions, the time zone, and whether
+            the sign-in cookie's protections applied. If you are ever asked what version of PHP
+            the site runs, this is the answer.</li>
+        <li><strong>Database Structure</strong> — one green or red line per column the app adds to
+            the database by itself. A red line names what stops working because of it. If one
+            stays red, signing out and back in as an admin usually applies it.</li>
+        <li><strong>Errors and Alerts</strong> — where problems are being written down, when the
+            last one was, and who gets an email about them. Nothing is ever printed on the page
+            when something breaks: a screen shows a plain "temporarily unavailable" notice and
+            keeps re-checking, and the detail goes to the log. At most one email per problem
+            per hour goes to admins who have an email address on file, and this list refreshes
+            every time you open the Admin Panel.
+            <br><strong>If it says the log has nowhere to write, or that alerts go to nobody</strong>,
+            then nothing is being recorded and nobody would be told — that is the one thing on
+            these three readouts worth fixing straight away.</li>
+    </ul>
+
     <div class="note"><strong>Note:</strong> You cannot close your own account, and you cannot close
         the last admin who is still able to sign in — make somebody else an admin first. An admin must
         always exist, and closing cannot be reversed.</div>

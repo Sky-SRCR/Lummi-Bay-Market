@@ -42,6 +42,13 @@ $accountStore = new AccountStore($pdo);
 $accountStore->ensureSchema();
 $accountAdmin = new AccountAdmin($pdo, $accountStore, $grantStore, $displayStore);
 
+// The one moment an alert can learn who to write to. When the database is
+// unreachable — the failure most worth an email — the list cannot be looked up,
+// so it is cached here, on a page that by definition is working, and read back
+// from disk at the moment of failure. See lib/alerts.php.
+(new AlertMailer(ErrorPolicy::stateDir(), defined('SITE_NAME') ? SITE_NAME : ''))
+    ->remember($accountStore->adminEmails());
+
 /**
  * The address to type into a TV or a signage widget — absolute, because it is
  * being copied to a device that has no idea what page it came from.
@@ -292,10 +299,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'image/webp'=>'webp'];
             // The error check comes first. A logo over the host's upload limit
             // arrives with an empty tmp_name, and on PHP 8 mime_content_type('')
-            // throws a ValueError — an uncaught fatal on the Admin Panel, with the
-            // absolute server path attached if display_errors is on. api.php and
-            // crud.php both check the error code first; this was the only sink
-            // that did not.
+            // throws a ValueError — an uncaught fatal on the Admin Panel. The error
+            // policy now turns that into a sentence rather than a stack trace
+            // (invariant 16), but a page that dies where it could have said "too
+            // large" is still a defect; the policy is the floor, not the fix.
+            // api.php and crud.php both check the error code first; this was the
+            // only sink that did not.
             if ($_FILES['logo_file']['error'] !== UPLOAD_ERR_OK) {
                 $msg = 'Logo upload failed. Please try again.'; $msgType = 'error';
             } elseif ($_FILES['logo_file']['size'] > 2 * 1024 * 1024) {
@@ -1329,6 +1338,30 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     <strong><?= htmlspecialchars($fact[0]) ?></strong>
                     <?php if ($fact[1] !== ''): ?>
                         <div style="color:#7f8c8d; font-size:12px; margin-top:2px;"><?= htmlspecialchars($fact[1]) ?></div>
+                    <?php endif; ?>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>Errors and Alerts</h2>
+        <p style="font-size:13px; color:#7f8c8d; margin-bottom:14px;">
+            When something breaks, nothing is printed on the page — it is written to a log file and,
+            once an hour at most, emailed to the admins listed below. If a sign ever goes dark on its
+            own, this is the first place to look. Recipients are refreshed every time this page loads.
+        </p>
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <?php foreach (ErrorPolicy::status() as $label => $fact): ?>
+            <tr style="border-bottom:1px solid #ecf0f1;">
+                <td style="padding:7px 10px 7px 0; color:#7f8c8d; white-space:nowrap; vertical-align:top;">
+                    <?= htmlspecialchars($label) ?>
+                </td>
+                <td style="padding:7px 0; vertical-align:top; word-break:break-all;">
+                    <strong><?= htmlspecialchars($fact[0]) ?></strong>
+                    <?php if ($fact[1] !== ''): ?>
+                        <div style="color:#7f8c8d; font-size:12px; margin-top:2px; word-break:normal;"><?= htmlspecialchars($fact[1]) ?></div>
                     <?php endif; ?>
                 </td>
             </tr>

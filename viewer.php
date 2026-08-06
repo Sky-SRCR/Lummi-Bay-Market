@@ -14,6 +14,14 @@
 // (BUILD-REFERENCE §2 invariant 7). DisplayStore self-heals only if the schema is
 // genuinely absent.
 
+// Declared before the database is opened, because a database that will not open is
+// the failure this matters most for. A Screen has nobody in front of it: whatever
+// goes wrong here has to become the same dark kiosk notice the rest of this file
+// draws, re-checking every 30 seconds, and never a PHP error naming server paths
+// on a board customers are reading. See lib/error_policy.php.
+require_once __DIR__ . '/lib/error_policy.php';
+ErrorPolicy::install(ErrorPolicy::SCREEN);
+
 require_once __DIR__ . '/db_connect.php';
 require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/display_request.php';

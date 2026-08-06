@@ -59,7 +59,9 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/display_admin.php` | `DisplayAdmin` — create/edit/delete a Display across all three tables; writes no SQL itself |
 | `lib/display_request.php` | Which Display a request means, and whether the actor may have it. Both the Builder and every API write resolve through here |
 | `lib/plain_text.php` | `toPlainText()` — signage content is plain text (ADR-0002) |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **316 checks**. Run before pushing |
+| `lib/error_policy.php` | The error policy, set in code: errors off, logging on, the three handlers, and the notice a Screen / an endpoint / a person gets when something breaks |
+| `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **462 checks**. Run before pushing |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data |
 | `config.php` | Site constants (`SITE_NAME`, `MAIL_FROM`); loads `branding_config.php` |
 | `db_connect.php` | PDO `$pdo`; loads creds from `../../private/db_credentials.php` |
@@ -126,6 +128,20 @@ anything, they hold every Display by role.
   returns its layout JSON. WebFetch can read live pages but can't run JS or log in.
 - Uploads live in `uploads/` on the server only (git-ignored), as does the private
   credentials file.
+- **The error log is written on the server and is not in the repo.** `ErrorPolicy`
+  picks the first writable of: `LBM_LOG_DIR` if the credentials file defines it,
+  `../../private/logs/` (beside the credentials, outside the webroot — preferred,
+  and only tried if `private/` already exists), then `logs/` inside the app, which
+  it creates with a deny-all `.htaccess`. `lbm-error.log` rotates to `.1` at 2 MB;
+  the alert rate-limiter's `alert-*.stamp` files and the cached admin recipient
+  list sit beside it. **Admin Panel → Settings → Errors and Alerts** prints which
+  path won, when it was last written, and who an alert would reach. If it says
+  "Nowhere to write", nothing that goes wrong is being recorded and no alert can be
+  sent — that is the one row on that screen worth acting on immediately.
+- Alerts go out via `mail()` to admins with an email address on file, at most one
+  per problem per hour. The recipient list is refreshed every time an admin opens
+  the admin panel, so a fresh install alerts nobody until somebody has been there
+  once.
 
 ## 6. The multi-display build (this branch)
 

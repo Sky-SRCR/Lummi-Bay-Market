@@ -146,6 +146,32 @@ class AccountStore
         return $out;
     }
 
+    /**
+     * The addresses an automatic alert goes to: admins who can still sign in and
+     * have somewhere to be written to.
+     *
+     * Read here, but used when the database is unreachable — which is why the
+     * caller caches the answer to disk rather than asking at the moment of
+     * failure. See lib/alerts.php.
+     */
+    public function adminEmails()
+    {
+        $out = [];
+        try {
+            $sql = "SELECT email FROM users
+                     WHERE role = 'admin' AND is_active = 1
+                       AND email IS NOT NULL AND email <> ''"
+                 . ($this->columnExists() ? " AND closed_at IS NULL" : "");
+            foreach ($this->pdo->query($sql)->fetchAll() as $row) {
+                $out[] = $row['email'];
+            }
+        } catch (Throwable $e) {
+            // No list is a real answer: the alerter sends nothing rather than
+            // guessing an address.
+        }
+        return $out;
+    }
+
     /** How many admins can still sign in. The guard against closing the last one. */
     public function openAdminCount()
     {

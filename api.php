@@ -12,6 +12,13 @@
 // endpoint added later inherits the check by resolving its Display the same way.
 // See docs/BUILD-REFERENCE.md.
 
+// Every answer this file gives is JSON, including the ones it gives by failing.
+// A PHP warning printed above the payload is what turns a working poll into
+// `r.json()` rejecting on the Screen — so the policy goes on before anything else
+// runs. See lib/error_policy.php.
+require_once __DIR__ . '/lib/error_policy.php';
+ErrorPolicy::install(ErrorPolicy::API);
+
 // The public poll gets no session. auth.php opens one at include time, and this
 // endpoint is fetched every 30 seconds by every Screen without ever reading
 // $_SESSION — so on a framed Screen, which returns no cookie, every poll was
@@ -19,6 +26,10 @@
 // until after the includes, and this decision has to be made before them.
 if (($_GET['action'] ?? '') === 'get_layout' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
     define('AUTH_NO_SESSION', true);
+    // This one endpoint's caller is a Screen. Its reply is JSON either way, but
+    // the Viewer prints `message` straight onto the sign, so the words have to be
+    // the words a customer can read — not the ones the Builder needs.
+    ErrorPolicy::sayOnFailure('This sign is temporarily unavailable.');
 }
 
 require_once 'auth.php';
