@@ -2716,6 +2716,82 @@ count as a change at all. Recorded rather than folded in.
 
 ---
 
+### 4aa. A block with nothing in it was explaining itself to the customer (#45)
+
+An empty carousel drew **"Carousel — no slides added yet"** in grey, centred in the
+block, on a board somebody is reading to decide what to order. The sentence is
+addressed to whoever was building the layout, and it is the one audience that could
+never receive it: a person standing in front of a price sign cannot add a slide to
+it. What they can do is read it, and conclude the store's board is broken.
+
+**It was two blocks, not one.** `renderTable()` had the identical construction one
+function down — **"Table — no data"**, over an `rgba(0,0,0,0.3)` panel drawn
+specifically to hold the message. Both are closed here. Leaving the second would
+have meant knowingly shipping the defect the item describes, in code the item had
+just been applied to.
+
+**Drawing nothing costs the author nothing, and that is what makes it safe.** The
+warning still exists; it was simply in the wrong place. The Builder never renders
+carousel or table *content* on its canvas at all — it draws a label, and that label
+already counts: `↻ Carousel — 0 slides` (`builder.php:3062`) and `⋞ Table — 0 cols,
+0 rows` (`:3281`). So the surface the author is looking at while they forget to add
+the slides tells them, and the surface a customer is looking at says nothing. Both
+labels are asserted from the Viewer's own suite, because deleting one would quietly
+turn this decision into a block nobody can see is empty.
+
+**Returning is enough to draw nothing.** The caller appends the `.element-block`
+either way, and that class sets only `position` and `overflow` — no background, no
+border — so an empty one is not ink. That is the fact the fix rests on; it is
+written into the code beside the `return` rather than left to be re-derived by
+whoever next adds a rule to that stylesheet.
+
+**"Not a list of slides" reaches the same answer, by answering.** Element content is
+deliberately unvalidated for the non-text types (§2 invariant 6), so `slides` can be
+a string, an object or absent. It previously threw into the caller's `try` and the
+block was skipped — the same thing a customer sees, arrived at by accident. The
+guard is `!Array.isArray(slides) || slides.length === 0`, and the suite checks that
+each shape *decides* without throwing, because the two stop being equivalent the
+moment anybody moves the call.
+
+**Coverage.** `tools/selftest_viewer.js` grew from 32 checks to 75. It calls the two
+renderers directly across eight empty shapes — no slides, never configured,
+unparseable content, content that is not a list, and the four table equivalents —
+asserting for each that nothing is appended, no words reach the sign, and no panel
+is painted behind them. Then the same thing end to end through the real poll: a
+price beside an empty carousel and an empty table, asserting all three blocks are
+laid out and the only words on the canvas are `Sockeye 18.99`.
+
+Three checks guard the other way, because quietening a carousel that *does* have
+slides would be a far worse fault than the one #45 reports. Two more read the source
+with whole-line comments stripped, matched on the ASCII half of each sentence — a
+guard that looked for the em dash would be walked past by `—` or `&mdash;`,
+which is not hypothetical: the first injection run wrote it that way by accident and
+slipped through.
+
+**Verified by injection, four times.** Restoring the carousel placeholder fails 9,
+including *and a customer reads the price, and nothing addressed to the author*;
+restoring the table's fails 10; making the carousel return unconditionally fails 3,
+led by *a carousel that has a slide still draws it*; and deleting the Builder's
+label fails 1.
+
+**Not covered here, and deliberately.** Three more blocks draw something when they
+have nothing, and none of them is a sentence written for the author, so each is a
+separate judgement rather than this item:
+
+- an **image** with no asset sets `img.src = ''`, which resolves to the page URL and
+  can leave a broken-image icon;
+- a **video** with no source is an empty `<video>` element;
+- a **marquee** with no text still paints its background bar — `#c0392b` by default,
+  a solid red band across the sign. The code already means to do nothing (`if
+  (!text) return;`), but the background is assigned four lines above it.
+
+The marquee is the visible one and the tempting one, and it is left alone on
+purpose: unlike a sentence in English, a coloured bar could be somebody's divider,
+and no undo exists anywhere in this app. Worth its own number rather than a silent
+change to what live signs draw.
+
+---
+
 ## 6. Delivery
 
 One PR per phase, on `claude/app-update-planning-1pjqfr`, restarted from `main`

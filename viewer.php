@@ -576,15 +576,29 @@ $canvasH = $display->canvasHeight();
         var slides   = data.slides   || [];
         var interval = Math.max(500, data.interval || 5000);
 
+        // A carousel with no slides draws nothing at all (#45). It used to print
+        // "Carousel — no slides added yet" in grey, on a board a customer is
+        // reading to decide what to order. That sentence was written for whoever
+        // was building the layout, and it never reached them: the person standing
+        // in front of a price sign cannot add a slide to it.
+        //
+        // Saying nothing here costs the author nothing either, because the surface
+        // they are actually looking at already tells them. The Builder labels the
+        // same block "↻ Carousel — 0 slides" on its own canvas, whether or not this
+        // page ever says a word.
+        //
+        // Returning is enough to draw nothing: the caller appends `block` either
+        // way, and .element-block sets only position and overflow — no background,
+        // no border, so an empty one is not ink.
+        //
+        // A `slides` that is not an array lands here rather than throwing further
+        // down. Element content is deliberately unvalidated for the non-text types
+        // (invariant 6), and "not a list of slides" is a block with nothing
+        // showable in it, which is this case.
+        if (!Array.isArray(slides) || slides.length === 0) { return; }
+
         var wrap = document.createElement('div');
         wrap.className = 'carousel-wrap';
-
-        if (slides.length === 0) {
-            wrap.style.cssText = 'display:flex;align-items:center;justify-content:center;color:#aaa;font-family:Arial;font-size:18px;';
-            wrap.textContent = 'Carousel — no slides added yet';
-            block.appendChild(wrap);
-            return;
-        }
 
         // Helper: apply a blockStyles entry to an element, with CSS fallbacks
         function applyStyle(el, styleKey, fallback) {
@@ -699,11 +713,12 @@ $canvasH = $display->canvasHeight();
         var widths   = data.widths  || [];
         var rowPad   = Math.max(0, parseInt(data.row_padding) || 0);
 
-        if (!headers.length || !rows.length) {
-            block.style.cssText += 'display:flex;align-items:center;justify-content:center;color:#aaa;font-family:Arial;font-size:14px;background:rgba(0,0,0,0.3);';
-            block.textContent = 'Table — no data';
-            return;
-        }
+        // The same as the carousel above, and the same answer (#45). An empty table
+        // drew "Table — no data" over a grey panel, so the sign carried both a
+        // sentence meant for the author and a box drawn to hold it. The author is
+        // in the Builder, where this block reads "⋞ Table — 0 cols, 0 rows".
+        if (!Array.isArray(headers) || !Array.isArray(rows)
+            || headers.length === 0 || rows.length === 0) { return; }
 
         var wrap = document.createElement('div');
         wrap.className = 'table-wrap';

@@ -286,6 +286,125 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
     loadLayout(); await settle();
     checkSame(1, _failedPolls, 'while a reply that could not be read is still a failed poll');
 
+    section('A block with nothing in it draws nothing (#45)');
+
+    // Two block types used to explain themselves to the customer. An empty carousel
+    // printed "Carousel — no slides added yet"; an empty table printed "Table — no
+    // data" over a grey panel drawn to hold it. Both sentences were addressed to
+    // whoever was building the layout, and neither could ever reach them — the
+    // person reading a price board cannot add a slide to it.
+    //
+    // These run the renderers directly, because the interesting question is not
+    // whether the page still parses but what ends up on the sign.
+
+    /** Every word this block would put in front of a customer. */
+    function inkIn(el) {
+        var text = el.textContent || '';
+        el.children.forEach(function (c) { text += inkIn(c); });
+        return text;
+    }
+    /** Anything it would paint behind them. */
+    function paintOn(el) {
+        var s = el.style || {};
+        return [s.cssText, s.background, s.backgroundColor, s.border].filter(Boolean).join(' ');
+    }
+    function drewNothing(content, render, label) {
+        const block = stubEl('div');
+        // Reaching "there is nothing to draw" has to be an answer, not a throw the
+        // caller's catch turns into the same outcome by accident. The two differ
+        // the moment anybody moves this call, and only one of them is a decision.
+        let threw = null;
+        try { render(block, content, {}); } catch (e) { threw = e; }
+        check(threw === null, label + ' decides that without throwing'
+                              + (threw ? ' — ' + threw.message : ''));
+        checkSame(0,  block.children.length, label + ' appends nothing');
+        checkSame('', inkIn(block),          label + ' writes no words onto the sign');
+        checkSame('', paintOn(block),        label + ' paints no panel either');
+    }
+
+    drewNothing('{"slides":[],"interval":5000}', renderCarousel, 'a carousel with no slides');
+    drewNothing('',                              renderCarousel, 'a carousel never configured');
+    drewNothing('{"slides":',                    renderCarousel, 'a carousel whose content will not parse');
+    // Element content is unvalidated for the non-text types, so `slides` can be
+    // anything at all. "Not a list of slides" is a block with nothing showable in
+    // it, which is this case — and reaching it by answer rather than by throwing
+    // means the outcome does not depend on the caller's catch.
+    drewNothing('{"slides":"three"}',            renderCarousel, 'a carousel whose slides are not a list');
+
+    drewNothing('{"headers":[],"rows":[]}',      renderTable,    'a table with no columns and no rows');
+    drewNothing('{"headers":["price"],"rows":[]}', renderTable,  'a table with columns but no rows');
+    drewNothing('',                              renderTable,    'a table never configured');
+    drewNothing('{"headers":{},"rows":{}}',      renderTable,    'a table whose columns are not a list');
+
+    // The strings themselves, so neither can come back by a route these renderer
+    // calls do not go through.
+    //
+    // Read with whole-line comments dropped, because viewer.php quotes both
+    // sentences in its own comments in order to record what was removed and why,
+    // and a check that fails on its own explanation gets deleted rather than
+    // heeded — the same trap check_invariants.php had to be made comment-aware
+    // for. A trailing comment on a line of code is *not* dropped, which errs
+    // towards failing loudly: the right way round for a guard.
+    const codeOnly = js.split('\n')
+                       .filter(line => !/^\s*(\/\/|\/\*|\*)/.test(line))
+                       .join('\n');
+    // Matched on the ASCII half of each sentence on purpose. Both began with an em
+    // dash, and a JavaScript source can spell that '—', '—' or '&mdash;' and
+    // put the same character on the sign each way — so a guard that looked for the
+    // dash would have been walked past by whichever spelling came next.
+    check(codeOnly.indexOf('no slides added yet') === -1,
+          'the sentence #45 names is no longer anything the page can draw');
+    check(codeOnly.indexOf('no data') === -1,
+          'nor is the one that sat beside it');
+
+    // Guarding the other way. "Draw nothing" is about blocks with nothing in them,
+    // and a fix that quietened a carousel which does have slides would be a far
+    // worse fault than the one #45 reports.
+    const filled = stubEl('div');
+    renderCarousel(filled, JSON.stringify({ slides: [{ title: 'Dungeness', price: '$14/lb' }] }), {});
+    check(filled.children.length > 0,             'a carousel that has a slide still draws it');
+    check(inkIn(filled).indexOf('Dungeness') > -1, 'with the words the author wrote');
+    check(inkIn(filled).indexOf('$14/lb')    > -1, 'and the price beside them');
+
+    const table = stubEl('div');
+    renderTable(table, JSON.stringify({ headers: ['free'], rows: [['Sockeye 18.99']] }), {});
+    check(table.children.length > 0,                    'a table that has rows still draws them');
+    check(inkIn(table).indexOf('Sockeye 18.99') > -1,   'with the prices in them');
+
+    // Drawing nothing here is only safe because the warning still exists where it
+    // can be acted on. The Builder labels the same two blocks on its own canvas,
+    // and that is the surface the author is looking at while they forget to add
+    // the slides. Checked rather than assumed, because deleting that label would
+    // turn this decision into a block nobody can see is empty.
+    const builder = fs.readFileSync(path.join(__dirname, '..', 'builder.php'), 'utf8');
+    check(builder.indexOf("'↻ Carousel — ' + slides.length") > -1,
+          'the Builder still tells the author how many slides the carousel has');
+    check(builder.indexOf("'⋞ Table — ' + headers.length") > -1,
+          'and how many columns the table has');
+
+    // End to end, through the real poll: an empty carousel and an empty table
+    // beside a price. The blocks are still appended — .element-block paints
+    // nothing on its own — and the only words on the sign are the ones the store
+    // meant to put there.
+    const el = (id, type, content) => ({
+        id: id, type: type, x_pos: 10, y_pos: id * 100, width: 300, height: 80,
+        z_index: 2, hidden: 0, section_id: null, manual_content: content
+    });
+    global.fetch = replying({
+        status: 'success',
+        display: { tag: 'drive-thru', bg_type: 'color', bg_val: '#101010' },
+        elements: [
+            el(1, 'text',     'Sockeye 18.99'),
+            el(2, 'carousel', '{"slides":[]}'),
+            el(3, 'table',    '{"headers":[],"rows":[]}')
+        ],
+        block_styles: {}
+    });
+    loadLayout(); await settle();
+    checkSame(3, canvas.children.length, 'all three blocks are laid out');
+    checkSame('Sockeye 18.99', inkIn(canvas),
+              'and a customer reads the price, and nothing addressed to the author');
+
     section('One poll at a time');
 
     // _loading is what stops the 30-second interval stacking requests on a slow

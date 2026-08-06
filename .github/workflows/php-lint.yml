@@ -138,5 +138,9 @@ jobs:
       # dropped packet did the wrong thing for a failure that was never going to
       # stop, and a sign kept last week's prices. Only visible by running the poll
       # loop against a fetch the test controls.
-      - name: Viewer self-test — the poll, and when a sign stops claiming
+      #
+      # #45 is here for the same reason from the other end: nothing had ever *run*
+      # the Viewer's renderers, so a block with no content had been explaining
+      # itself to the customer through every gate this repo has. It parses.
+      - name: Viewer self-test — the poll, and what a block with nothing in it draws
         run: node tools/selftest_viewer.js

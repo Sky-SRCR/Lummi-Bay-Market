@@ -86,11 +86,13 @@ sign rather than a stack trace anybody will read.
 The four node suites go further and *run* that JavaScript, each under a premise the
 others cannot hold — a page that may not edit, an admin uploading a file, an admin
 opening a Display whose stored data is already wrong, and a Screen whose server has
-stopped answering — because the defects they exist for are invisible to a parse: a
-lookup for a control the edit lock took away, a `fetch` chain with no `.catch()`, a
-colour the CSSOM discarded in silence and the publish payload then sent as black,
-and a `.catch()` that correctly ignores a dropped packet and therefore also ignored
-a failure that was never going to stop.
+stopped answering or whose blocks have nothing in them — because the defects they
+exist for are invisible to a parse: a lookup for a control the edit lock took away,
+a `fetch` chain with no `.catch()`, a colour the CSSOM discarded in silence and the
+publish payload then sent as black, a `.catch()` that correctly ignores a dropped
+packet and therefore also ignored a failure that was never going to stop, and a
+sentence written for whoever was building the layout, drawn on the board a customer
+reads prices off.
 
 - **`json_encode` is never called outside `lib/http_reply.php`.** It returns `false`,
   not a throw, and `echo false` prints the empty string — so a reply holding one byte
