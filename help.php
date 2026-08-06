@@ -405,6 +405,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <ul>
         <li><strong>X / Y / W / H</strong> — exact position and size, all editable</li>
         <li><strong>Link DB Asset</strong> — link the block to a saved entry in the Asset Library so updates to the asset reflect everywhere it is used</li>
+        <li><strong>Hide from the screens</strong> (admin only) — takes the block off every screen showing this display while keeping it in the layout, ready to bring back by unticking. Hiding a <strong>section</strong> hides everything inside it. Hidden blocks are faded on the canvas and wear a red HIDDEN band, so you can see at a glance what a customer cannot. Unlike the Work Area's Hide, this takes effect when you <strong>Publish</strong>.</li>
         <li><strong>Lock toggle</strong> — prevents accidental drags/resizes; locked blocks show a 🔒 icon</li>
         <li><strong>Delete Block</strong> — removes the block from the canvas (cannot be undone until the next Publish)</li>
     </ul>
@@ -438,7 +439,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Marquee Text</strong> — the scrolling message</li>
         <li><strong>Scroll Speed</strong> — pixels per second (10–300)</li>
         <li><strong>Text Style</strong> — colour, size (px), weight</li>
-        <li><strong>Background Color</strong> — the bar's background</li>
+        <li><strong>Background Color</strong> — the bar's background. Tick <strong>Transparent</strong> to let whatever is behind the block show through; your colour is remembered while it is ticked, so unticking gives it straight back.</li>
     </ul>
 
     <div class="tip"><strong>Alignment tip:</strong> The Inspector shows a reminder: Shift+click a second block to enter multi-select mode and reveal the alignment toolbar above the canvas.</div>
@@ -634,6 +635,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><span>Click <strong>Save Slides</strong> when done. Publish when ready.</span></li>
     </ol>
 
+    <div class="tip"><strong>Leaving a field off one slide:</strong> the <strong>&#10005; Delete</strong> button beside Title, Price or Description takes that line off <em>that slide only</em> — the others keep theirs. The button turns into <strong>+ Restore</strong>, which puts your words back exactly as they were, as long as you have not left the slide editor. Once you save with a field deleted, restoring gives you an empty box to retype.</div>
+
     <div class="tip"><strong>Tip:</strong> Carousels are great for a "Featured Products" section — set a 5-second interval so customers have time to read each slide.</div>
 </div>
 
@@ -649,7 +652,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><span>Click <strong>+ Marquee</strong> in the control bar.</span></li>
         <li><span>Select the block. In the Inspector, type the scrolling message in the <strong>Marquee Text</strong> box.</span></li>
         <li><span>Adjust the <strong>Scroll Speed</strong> slider (pixels per second — higher = faster).</span></li>
-        <li><span>Set the text colour, size, weight, and background colour.</span></li>
+        <li><span>Set the text colour, size, weight, and background colour — or tick <strong>Transparent</strong> for no bar behind the text. The colour you picked is kept while Transparent is ticked, so you can switch back without choosing it again.</span></li>
         <li><span>Resize the block to span the width you want (commonly full-screen width).</span></li>
         <li><span>Publish when ready.</span></li>
     </ol>
@@ -772,7 +775,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     </ul>
 
     <h3>Work Area tab</h3>
-    <p>Lists the published elements of one display — choose which with the <strong>Display</strong> selector at the top — so you can hide or delete a single block without opening the Builder. <strong>Hide</strong> takes it off that screen within 30 seconds while keeping it in the layout, ready to un-hide; <strong>Delete</strong> removes it for good. Neither needs a publish, and both mean that any Builder tab opened before the change has to reload before it can publish.</p>
+    <p>Lists the published elements of one display — choose which with the <strong>Display</strong> selector at the top — so you can hide or delete a single block without opening the Builder. <strong>Hide</strong> takes it off that screen within 30 seconds while keeping it in the layout, ready to un-hide — here, or from the block's own <strong>Hide from the screens</strong> box in the Builder's Inspector, which takes effect at the next publish instead. <strong>Delete</strong> removes it for good. Neither needs a publish, and both mean that any Builder tab opened before the change has to reload before it can publish.</p>
 
     <h3>Users tab</h3>
     <ul>

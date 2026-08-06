@@ -518,6 +518,29 @@ $driveT = loadTestDisplay($pdo, $driveT->id());
 $res = publishAs($layouts, $driveT, layoutWith('After hide'), $stampBefore);
 checkSame('stale', $res->kind(), 'a Builder holding the pre-hide stamp is refused');
 
+// Decision #42. The Builder's own visibility box writes nothing when it is ticked
+// — the change rides out on the next publish, like everything else on that canvas.
+// So a publish has to carry it, on a section as well as on a block, and it has to
+// carry the way back: unticking is the only route out of hidden the Builder has.
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$withHidden = layoutWith('Sunday only', 's-hide');
+$withHidden[0]['hidden'] = 1;
+$withHidden[1]['hidden'] = 1;
+$res = publishAs($layouts, $driveT, $withHidden, $driveT->layoutStamp());
+check($res->isOk(), 'a layout with a hidden section publishes');
+$hiddenByType = [];
+foreach (elementsOf($pdo, $driveT->id()) as $row) { $hiddenByType[$row['type']] = intval($row['hidden']); }
+checkSame(1, $hiddenByType['section'], 'the section is stored hidden');
+checkSame(1, $hiddenByType['text'],    'and so is the block inside it');
+
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$res = publishAs($layouts, $driveT, layoutWith('Sunday only', 's-hide'), $driveT->layoutStamp());
+check($res->isOk(), 'publishing the same layout with the box unticked works');
+$hiddenByType = [];
+foreach (elementsOf($pdo, $driveT->id()) as $row) { $hiddenByType[$row['type']] = intval($row['hidden']); }
+checkSame(0, $hiddenByType['section'], 'the section is on the screens again');
+checkSame(0, $hiddenByType['text'],    'and so is the block — the way back the Builder never had');
+
 // Deleting a section takes its children with it, within one Display only.
 $driveT = loadTestDisplay($pdo, $driveT->id());
 $res = publishAs($layouts, $driveT, layoutWith('Cascade check'), $driveT->layoutStamp());
@@ -5696,4 +5719,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // did (#21 closed while it was open, so three checks that asserted the coercion now
 // assert the refusal). The MySQL figure is the SQLite one plus the 23 checks in the
 // engine-only section below, which is the same difference it has always been.
-reportChecks(testIsMysql() ? 1531 : 1508);
+reportChecks(testIsMysql() ? 1537 : 1514);
