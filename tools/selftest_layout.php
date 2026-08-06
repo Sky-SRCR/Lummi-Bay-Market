@@ -1070,6 +1070,214 @@ $_SESSION = [];
 checkSame(false, syncSessionAccount($pdo), 'and a session with no account at all is refused');
 
 // ─────────────────────────────────────────────────────────────
+section('The sign-in page tells a stranger nothing, and a browser without a cookie something');
+
+// Decision #38, first half. The suspended and closed checks used to sit *after*
+// password_verify(), so being told "your account has been deactivated" was itself
+// the news that the password was right. Every check below is the same shape: the
+// sentence must not move when the password does.
+$now       = 1750000000;
+$live      = ['id' => 2, 'is_active' => true,  'closed' => false,
+              'failed_attempts' => 0, 'last_failed_at' => null, 'locked_until' => null];
+$suspended = array_merge($live, ['is_active' => false]);
+$closedOne = array_merge($live, ['closed' => true]);
+$typed     = ['username' => 'clerk', 'password' => 'hunter2', 'session_cookie' => true];
+$right     = function () { return true; };
+$wrong     = function () { return false; };
+
+checkSame(LoginOutcome::SIGNED_IN, LoginGate::decide($typed, $live, $right, $now)->kind(),
+          'the right password on a live account signs in');
+checkSame(LoginOutcome::REFUSED,   LoginGate::decide($typed, $live, $wrong, $now)->kind(),
+          'the wrong one is refused');
+
+$wrongOnLive   = LoginGate::decide($typed, $live,      $wrong, $now)->message();
+$rightOnOff    = LoginGate::decide($typed, $suspended, $right, $now)->message();
+$rightOnClosed = LoginGate::decide($typed, $closedOne, $right, $now)->message();
+$noSuchUser    = LoginGate::decide($typed, null,       $wrong, $now)->message();
+
+checkSame($wrongOnLive, $rightOnOff,
+          'a suspended account with the RIGHT password says exactly what a wrong password says');
+checkSame($wrongOnLive, $rightOnClosed, 'and so does a closed one');
+checkSame($wrongOnLive, $noSuchUser,    'and so does a username nobody has');
+checkSame(LoginOutcome::REFUSED, LoginGate::decide($typed, $suspended, $right, $now)->kind(),
+          'the kind matches too, so a caller cannot leak what the sentence does not');
+check(stripos(LoginGate::REFUSAL, 'deactivat') === false,
+      'the one sentence never says "deactivated"');
+check(stripos(LoginGate::REFUSAL, 'closed') === false, 'nor "closed"');
+checkMentions(LoginGate::REFUSAL, 'ask your manager',
+              'but it still tells a member of staff whose account was switched off what to do');
+
+// The other half of "identical": a refusal that arrives faster is still an answer.
+$hashCalls = 0;
+$counting  = function () use (&$hashCalls) { $hashCalls++; return true; };
+
+$hashCalls = 0;
+LoginGate::decide($typed, $live, $counting, $now);
+checkSame(1, $hashCalls, 'a live account is asked about its password once');
+$hashCalls = 0;
+LoginGate::decide($typed, $suspended, $counting, $now);
+checkSame(1, $hashCalls, 'and so is a suspended one, so the refusal cannot be timed apart from a wrong password');
+$hashCalls = 0;
+LoginGate::decide($typed, $closedOne, $counting, $now);
+checkSame(1, $hashCalls, 'and a closed one');
+$hashCalls = 0;
+LoginGate::decide($typed, null, $counting, $now);
+checkSame(0, $hashCalls, 'a username nobody has has no hash to check');
+
+// Nothing is counted against an account that could not have signed in anyway —
+// which is also what keeps the wait message from becoming the new leak.
+checkSame(null, LoginGate::decide($typed, $suspended, $wrong, $now)->failureRecord(),
+          'a failure against a suspended account is not counted');
+checkSame(null, LoginGate::decide($typed, $closedOne, $wrong, $now)->failureRecord(),
+          'nor against a closed one');
+checkSame(null, LoginGate::decide($typed, null, $wrong, $now)->failureRecord(),
+          'nor against a username that does not exist');
+
+// ---- The lockout itself is unchanged (ADR-0001) -------------------------------
+$lockedNow = array_merge($live, ['failed_attempts' => 5, 'locked_until' => $now + 300]);
+$out = LoginGate::decide($typed, $lockedNow, $right, $now);
+checkSame(LoginOutcome::LOCKED, $out->kind(), 'a lockout refuses even the correct password');
+checkMentions($out->message(), '5 minute', 'and says how long is left');
+$hashCalls = 0;
+LoginGate::decide($typed, $lockedNow, $counting, $now);
+checkSame(0, $hashCalls, 'without spending a hash on it, so hammering a locked account stays cheap');
+
+$lapsed = array_merge($live, ['failed_attempts' => 5, 'locked_until' => $now - 1,
+                              'last_failed_at' => $now - 60]);
+checkSame(LoginOutcome::SIGNED_IN, LoginGate::decide($typed, $lapsed, $right, $now)->kind(),
+          'a lapsed lockout lets the right password through');
+checkSame(1, LoginGate::decide($typed, $lapsed, $wrong, $now)->failureRecord()['failed_attempts'],
+          'and starts the count again rather than tripping on the next try');
+
+$fourth = array_merge($live, ['failed_attempts' => 4, 'last_failed_at' => $now - 30]);
+$out    = LoginGate::decide($typed, $fourth, $wrong, $now);
+checkSame(LoginOutcome::LOCKED, $out->kind(), 'the fifth failure inside the window trips the lockout');
+checkSame($now + LoginGate::WINDOW_SECONDS, $out->failureRecord()['locked_until'],
+          'for one window from now');
+checkSame(5, $out->failureRecord()['failed_attempts'], 'with the count recorded');
+
+$stale = array_merge($live, ['failed_attempts' => 4,
+                             'last_failed_at' => $now - (LoginGate::WINDOW_SECONDS + 1)]);
+checkSame(1, LoginGate::nextFailure($stale, $now)['failed_attempts'],
+          'four failures older than the window age out — otherwise one slip a day locks an account out eventually');
+checkSame(null, LoginGate::nextFailure($stale, $now)['locked_until'],
+          'so nothing is locked');
+$recent = array_merge($live, ['failed_attempts' => 2, 'last_failed_at' => $now - 100]);
+checkSame(3, LoginGate::nextFailure($recent, $now)['failed_attempts'], 'inside it they accumulate');
+checkSame($now, LoginGate::nextFailure($recent, $now)['last_failed_at'], 'stamped now');
+
+checkMentions(LoginGate::waitMessage(1), '1 minute',
+              'a wait of one second still reads as a minute, because rounding down would say "wait 0"');
+checkMentions(LoginGate::waitMessage(900), '15 minute', 'and a full window as fifteen');
+
+// ---- A sign-in that cannot be remembered (#38, second half) -------------------
+// A Secure cookie on plain HTTP is discarded by the browser, so login.php wrote a
+// session, redirected, and landed on a page with no session — which redirected back.
+// The form reappeared, forever, with nothing printed anywhere. RequestScheme stops
+// causing it; this refusal is what says so when something else does.
+$noCookie = array_merge($typed, ['session_cookie' => false]);
+$out      = LoginGate::decide($noCookie, $live, $right, $now);
+checkSame(LoginOutcome::NO_COOKIE, $out->kind(), 'a POST with no session cookie cannot sign in');
+checkMentions($out->message(), 'Reload', 'and is told to reload rather than left in a loop');
+checkSame($out->message(), LoginGate::decide($noCookie, $live, $wrong, $now)->message(),
+          'and the same thing whether the password was right or wrong — a message only the correct password unlocked would be the leak this section exists to close');
+$hashCalls = 0;
+LoginGate::decide($noCookie, $live, $counting, $now);
+checkSame(0, $hashCalls, 'the password is not even looked at');
+checkSame(LoginOutcome::NO_COOKIE, LoginGate::decide($noCookie, null, $wrong, $now)->kind(),
+          'and an unknown username gets it too, so the refusal says nothing about the account');
+
+checkSame(LoginOutcome::NO_FIELDS,
+          LoginGate::decide(['username' => '', 'password' => '', 'session_cookie' => true], $live, $right, $now)->kind(),
+          'an empty form is answered before anything is looked up');
+checkSame(LoginOutcome::NO_FIELDS,
+          LoginGate::decide(['username' => 'clerk', 'password' => '', 'session_cookie' => false], $live, $right, $now)->kind(),
+          'and the field the visitor can see comes before the cookie they cannot');
+checkSame(LoginOutcome::NO_FIELDS,
+          LoginGate::decide(['username' => '   ', 'password' => 'x', 'session_cookie' => true], $live, $right, $now)->kind(),
+          'a username of spaces is empty');
+
+// ---- The row as it really comes back -----------------------------------------
+checkSame(null, LoginGate::accountFacts(null, false), 'no row means no account');
+checkSame(null, LoginGate::accountFacts(['username' => 'clerk'], false),
+          'and a row with no id is not one either');
+$facts = LoginGate::accountFacts(
+    ['id' => '2', 'is_active' => '0', 'failed_attempts' => '3',
+     'last_failed_at' => '2026-01-01 00:00:00', 'locked_until' => null], false);
+checkSame(false, $facts['is_active'], 'both engines hand back strings, and "0" is not active');
+checkSame(2,     $facts['id'],              'the id is an integer');
+checkSame(3,     $facts['failed_attempts'], 'so is the count');
+checkSame(strtotime('2026-01-01 00:00:00'), $facts['last_failed_at'], 'a stored time becomes a timestamp');
+checkSame(null,  $facts['locked_until'],    'and an absent one stays absent');
+checkSame(null,  LoginGate::accountFacts(['id' => 2, 'locked_until' => 'not a time'], false)['locked_until'],
+          'an unreadable time reads as absent rather than as 1970, which would look like a lapsed lockout');
+checkSame(true,  LoginGate::accountFacts(['id' => 2], true)['closed'],
+          'closure is asked of AccountStore and carried in, because this module reads no SQL');
+checkSame(0,     LoginGate::accountFacts(['id' => 2], false)['failed_attempts'],
+          'a database that predates the lockout columns counts from nothing');
+
+// ---- The arithmetic through the database, both ways ---------------------------
+// date() out and strtotime() back in: the two halves are in different files, and a
+// format either of them disagreed about would show up as an account that never locks.
+$lPdo  = newTestDb();
+$lStore = new AccountStore($lPdo);
+for ($i = 0; $i < 5; $i++) {
+    $facts = LoginGate::accountFacts(
+        $lPdo->query("SELECT * FROM users WHERE id = 2")->fetch(),
+        false
+    );
+    $out = LoginGate::decide($typed, $facts, $wrong, $now);
+    $rec = $out->failureRecord();
+    check($rec !== null, 'failure ' . ($i + 1) . ' of five is counted');
+    $lStore->recordLoginFailure(2, $rec['failed_attempts'], date('Y-m-d H:i:s', $rec['last_failed_at']),
+        $rec['locked_until'] === null ? null : date('Y-m-d H:i:s', $rec['locked_until']));
+}
+$row = $lPdo->query("SELECT failed_attempts, locked_until FROM users WHERE id = 2")->fetch();
+checkSame(5, intval($row['failed_attempts']), 'five failures were written down one at a time');
+check($row['locked_until'] !== null, 'and the fifth locked the account');
+checkSame(LoginOutcome::LOCKED,
+          LoginGate::decide($typed, LoginGate::accountFacts($lPdo->query("SELECT * FROM users WHERE id = 2")->fetch(), false), $right, $now)->kind(),
+          'read back out of the database, the lockout refuses the correct password');
+$lStore->clearLoginLockout(2);
+checkSame(LoginOutcome::SIGNED_IN,
+          LoginGate::decide($typed, LoginGate::accountFacts($lPdo->query("SELECT * FROM users WHERE id = 2")->fetch(), false), $right, $now)->kind(),
+          'and clearing it lets that password in again');
+
+// ─────────────────────────────────────────────────────────────
+section('The sign-in cookie claims Secure only when there is a connection to claim it about');
+
+// The defect in one line: a browser told to keep a Secure cookie on http:// keeps
+// nothing at all, and every sign-in on such an install loops back to the form.
+checkSame(false, RequestScheme::sessionCookie([])['secure'],
+          'over plain HTTP the cookie does not claim Secure');
+checkSame(true,  RequestScheme::sessionCookie(['HTTPS' => 'on'])['secure'],
+          'over HTTPS it does, exactly as it always did on the live site');
+checkSame(true,  RequestScheme::sessionCookie([])['httponly'],
+          'HttpOnly does not depend on the scheme');
+checkSame('Lax', RequestScheme::sessionCookie([])['samesite'], 'nor does SameSite');
+checkSame('/',   RequestScheme::sessionCookie([])['path'],     'nor the path');
+
+checkSame(true,  RequestScheme::isHttps(['HTTPS' => 'on']),  '"on" is HTTPS');
+checkSame(true,  RequestScheme::isHttps(['HTTPS' => '1']),    'and so is "1"');
+checkSame(false, RequestScheme::isHttps(['HTTPS' => 'off']),  'but "off" is the string Apache sets for plain HTTP, and it is not');
+checkSame(false, RequestScheme::isHttps(['HTTPS' => '']),     'nor is an empty one');
+checkSame(true,  RequestScheme::isHttps(['REQUEST_SCHEME' => 'https']), 'Apache says it plainly too');
+checkSame(false, RequestScheme::isHttps(['REQUEST_SCHEME' => 'http']),  'and says the other plainly');
+checkSame(true,  RequestScheme::isHttps(['SERVER_PORT' => '443']), 'port 443 is HTTPS');
+checkSame(false, RequestScheme::isHttps(['SERVER_PORT' => '80']),  'port 80 is not');
+checkSame(true,  RequestScheme::isHttps(['HTTP_X_FORWARDED_PROTO' => 'https']),
+          'a proxy that terminated TLS in front is believed — the header is forgeable only on the forger\'s own request, and all it costs them is their own cookie');
+checkSame(true,  RequestScheme::isHttps(['HTTP_X_FORWARDED_PROTO' => 'https, http']),
+          'a chain of proxies states the browser\'s scheme first');
+checkSame(false, RequestScheme::isHttps(['HTTP_X_FORWARDED_PROTO' => 'http, https']),
+          'and a chain that began in the clear is not HTTPS however it finished');
+checkSame(false, RequestScheme::isHttps([]), 'a CLI run has no connection to protect');
+
+checkSame('https', RequestScheme::scheme(['HTTPS' => 'on']),
+          'the address an admin copies to a TV follows the same answer');
+checkSame('http',  RequestScheme::scheme([]), 'in both directions');
+
+// ─────────────────────────────────────────────────────────────
 section('The edit lock keeps time in UTC, so it survives a clock that repeats an hour');
 
 // The whole defect in one property: lock stamps must be UTC, whatever zone the
@@ -1594,6 +1802,17 @@ try {
     $cleared = false;
 }
 checkSame(true, $cleared, 'clearing a lockout that has nowhere to be recorded is not a failure');
+
+// The mirror, and the one login.php used to write itself: an unguarded UPDATE here
+// meant a *wrong password* on such a database raised "unknown column" instead of
+// printing "Incorrect username or password" — a 500 on the page strangers type into.
+$recorded = null;
+try {
+    $recorded = (new AccountStore($bare))->recordLoginFailure(1, 1, '2026-01-01 00:00:00', null);
+} catch (Throwable $e) {
+    $recorded = 'threw: ' . $e->getMessage();
+}
+checkSame(false, $recorded, 'and a failed login with nowhere to count says so rather than throwing');
 $code = (new ResetTokenStore($bare))->issue(1);
 checkSame(true, newCompletion($bare)->complete(1, $code, 'works-here-too')->isOk(),
           'and a reset on that database completes');
@@ -1671,6 +1890,17 @@ $runtime = (new ServerReport(newTestDb()))->runtime();
 check(isset($runtime['PHP version']), 'the report names the PHP version');
 checkSame(PHP_VERSION, $runtime['PHP version'][0], 'and it is this machine\'s actual version');
 check(isset($runtime['Session cookie']), 'and reports whether the sign-in cookie is protected');
+// A CLI run has no connection, so Secure is off and *correctly* off. The note has to
+// say which of those two it is: "a protection did not apply" would send an admin
+// hunting a bug in the app when the answer is that the site is not on HTTPS.
+// The value still shouts "NO", which is right: over plain HTTP the cookie really can
+// be read on the wire. It is the *note* beside it that had to stop blaming the app.
+checkMentions($runtime['Session cookie'][0], 'Secure NO',
+              'with Secure off where there is no TLS to claim it over');
+checkMentions($runtime['Session cookie'][1], 'plain HTTP',
+              'and the note naming the connection rather than blaming the app');
+check(strpos($runtime['Session cookie'][1], 'did not apply') === false,
+      'so nothing reads as a protection that failed');
 $allStrings = true;
 foreach ($runtime as $fact) {
     if (!is_string($fact[0]) || !is_string($fact[1])) { $allStrings = false; }
@@ -3147,4 +3377,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(826);
+reportChecks(906);

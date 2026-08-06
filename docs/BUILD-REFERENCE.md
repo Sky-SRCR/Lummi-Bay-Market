@@ -68,6 +68,8 @@ Design rules, applied to every module added by this build:
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
+| `login_gate.php` | `LoginGate::decide(request, account, verify, now) → LoginOutcome`, plus `accountFacts()` / `nextFailure()` / `waitMessage()` | Everything a sign-in attempt is allowed to learn (ADR-0008): the single sentence that answers a wrong password, an unknown username, a suspended account and a closed one alike, the ADR-0001 lockout arithmetic that decides what the three columns should now hold, and the order the questions are asked in — which is itself the security property, since a message reachable only by the correct password *is* the leak. Takes the password check as a callable rather than a boolean so the module can decide whether to spend it: never for a username nobody has, never while a lockout is running, and **always** for an existing account that may not sign in, so its refusal cannot be timed apart from a wrong password. Writes nothing and reads no SQL; `AccountStore` stores what it decides. |
+| `request_scheme.php` | `RequestScheme::isHttps($server)` / `scheme()` / `sessionCookie()` / `applyToSession()` | How this request arrived, and the session cookie's four attributes given that (ADR-0009). `Secure` asserted on plain HTTP is not a stricter setting but an instruction to discard the cookie, which made every sign-in on such an install loop back to the form in silence. Also the two PHP signatures the attributes have to be expressed in — the options array is 7.3+, and on 7.1 it sets *nothing* rather than some of it — and the one answer `admin_panel.php` builds a viewer address from, which used to be a second copy that knew only about `$_SERVER['HTTPS']`. Depends on nothing. |
 
 `lib/` is denied to the browser by `lib/.htaccess`. Nothing in `lib/` prints,
 redirects, reads `$_POST`/`$_GET`, or touches `$_SESSION` — adapters pass what
@@ -340,6 +342,25 @@ through the app again:
     one can fail after the first has landed, and the message printed then is decided
     by which line threw rather than by what is now true. With no undo anywhere,
     somebody acting on that message is the whole problem.
+23. **A refused sign-in says one sentence, and no sentence may be reachable only by
+    the correct password.** A wrong password, a username nobody has, a suspended
+    account and a closed one all get `LoginGate::REFUSAL`; the wording lives in that
+    module and nowhere else (ADR-0008). What made this an invariant rather than a bug
+    fix is how ordinary the defect looked: the suspended and closed checks were
+    perfectly reasonable `elseif` branches, and the *only* thing wrong with them was
+    that `password_verify()` came first, so arriving at one announced the password was
+    right. Anything added to that decision inherits the rule — including how long the
+    refusal takes, which is why an account that may not sign in still spends a
+    password check, and which counters may move, since the wait message is shown only
+    to accounts that could otherwise sign in.
+24. **The session cookie's `Secure` flag follows the connection, decided in one
+    place.** `Secure` over plain HTTP is not caution, it is an instruction to discard
+    the cookie: the sign-in completes, the redirect lands somewhere with no session,
+    and the login form comes back forever with nothing printed anywhere.
+    `RequestScheme` owns the question and both PHP call signatures for the answer
+    (ADR-0009); a second file deciding it is a second opinion about whether anybody
+    can sign in. The live server's HTTPS redirect is what hid this, so "it works on
+    the live site" is not evidence about this line.
 
 ---
 
@@ -785,6 +806,11 @@ Known and not fixed, so nobody assumes otherwise:
 - ~~**A lock stranded by deactivating a Display, deactivating an account, or renaming a
   tag**~~ **Fixed** — see §4t. Three more doors into the room §4s closed one door of,
   plus the reading rule that covers the doors nobody has found yet.
+- ~~**The suspended-account message tells a guesser the password was right, and a
+  `Secure` session cookie makes plain-HTTP sign-in loop invisibly**~~ **Fixed** — see
+  §4u. Both were invisible in the only environment anybody looks at: one needs an
+  account that has been switched off, the other needs a server without the live
+  site's HTTPS redirect.
 
 ### 4h. The tag addresses a Display; it does not identify one
 
@@ -1841,6 +1867,106 @@ Left standing, and named rather than skipped:
 
 ---
 
+### 4u. Two ways the sign-in page answered a question nobody asked it
+
+Decision #38, both halves. They arrived as one item because they are both about the
+login page, and they turned out to share something better than a location: each was
+invisible in the one environment anybody ever looks at.
+
+**The sentence that confirmed a password.** ADR-0001 was careful that an unknown
+username and a wrong password say the same thing. It said nothing about the other two
+refusals, and both of those checks sat *after* `password_verify()` — so reaching
+"Your account has been deactivated" was itself the news that the password was right.
+The accounts it told a guesser about are the worst ones to be told about: the
+leaver's, the suspended one, the one nobody is watching and whose password nobody is
+going to change now. Nothing in this app is reachable with it, which is not the point
+— people reuse passwords, and the passwords being confirmed were the staff's.
+
+The fix is one sentence for every refusal, and the interesting part is what had to go
+*with* it. An identical sentence is not an identical answer if it comes back sooner:
+a suspended account that skipped the hash was still distinguishable by a hundred
+milliseconds, so the gate spends a password check on **every** account that exists,
+including one that may not sign in. And nothing is counted against an account that
+could not have signed in anyway, because the wait message is shown only to accounts
+that can — count there and the state leaks straight back out through it.
+
+**What that sentence had to keep doing.** The two removed sentences were not
+decoration; a clerk whose account was switched off needs to stop retyping their
+password and go and find a manager. So the generic refusal carries that
+unconditionally — *"If you are sure they are right, your account may have been
+switched off — ask your manager to check"* — which is safe precisely because it is
+said to everybody, including the guesser it tells nothing new. The alternative
+orderings and the emailed-notification version are in ADR-0008 with their reasons.
+
+**The cookie that could not be kept.** `auth.php` marked the session cookie `Secure`
+unconditionally. `Secure` is not a preference for HTTPS; it is an instruction that
+the browser must not store the cookie over plain HTTP. So on an `http://` install the
+password was checked, the session was written, the redirect was sent — and the
+browser discarded the cookie, `builder.php` saw no session and sent the browser back,
+and `login.php` printed the empty form. No warning, no log line, no wrong password.
+The form returns forever and the app has no way in.
+
+It survived because the live site's `.htaccess` redirects to HTTPS *before PHP runs*,
+so on the one server anybody tests, the flag was always right. That is the shape both
+halves of #38 share: a defect that is total everywhere except where it would have been
+noticed. The flag now follows the request, decided in `lib/request_scheme.php` — which
+also became the one answer to "is this HTTPS?", because `admin_panel.php` had its own
+copy that knew only about `$_SERVER['HTTPS']` and printed an `http://` viewer address
+for an HTTPS site behind a proxy. A forwarded header is believed, and ADR-0009 says
+why: forging it costs the forger their own cookie, disbelieving it costs the store a
+cookie with no protection on a site that really is HTTPS.
+
+**And the loop is now sayable.** A browser that keeps no cookies causes the same
+silent loop, and no scheme detection can fix that one. So a POST arriving with no
+session cookie is refused with an explanation — checked *before* the password, since a
+message only a correct password could reach is the very thing the first half of this
+section is about.
+
+**A page that no longer chooses its own words.** All of it is one decision in
+`LoginGate::decide()`, taking the password check as a callable so the module owns
+whether to spend it, and returning what to say plus what to write down.
+`login.php` lost about sixty lines: it reads a row, applies the answer, and hands the
+counters to `AccountStore::recordLoginFailure()`. That last move fixed a third thing
+nobody had listed — the page wrote those three columns itself, unguarded, while its
+own comment claimed the write "swallows its failures the same way" as its neighbours.
+It did not. On a database where the runtime `ALTER` never applied, every **wrong
+password** raised "unknown column" instead of printing the refusal: a 500 on the one
+page in the app that exists to be typed into by strangers.
+
+**Eighty checks** (906 total, from 826) and fifteen deliberate mutations, all
+fifteen killed (kill counts 3, 2, 2, 5, 4, 3, 2, 1, 1, 1, 1, 2, 1, 1, 1). Four worth
+naming:
+
+- Restoring the old ordering — the suspended check reachable only with the right
+  password — kills two, and giving a suspended account its own sentence again kills
+  three. Those five are the defect itself, asserted as "the message must not move when
+  the password does".
+- Skipping the password check for an account that may not sign in kills two. It looks
+  like an optimisation and is the timing oracle.
+- Moving the missing-cookie refusal after the password kills five — the most of any
+  mutation here, because it recreates in one line the exact class of leak the rest of
+  the section closes.
+- Hardcoding `secure => true` kills one: the whole of the second half of #38, in the
+  single expression it was ever made of.
+
+Left standing, and named rather than skipped:
+
+- **The wait message still marks a real, usable account.** Five deliberate wrong
+  guesses distinguish "exists and could sign in" from "suspended, closed or unknown",
+  because a person locked out has to be told to stop trying. ADR-0001 accepted that
+  oracle; this narrows what it reveals from a credential to existence.
+- **A username that exists is still measurable by timing**, because there is no hash
+  to check for one that does not. Closing it means verifying every attempt against a
+  dummy hash — a constant to maintain, and a decision of its own rather than a line
+  to slip into this one.
+- **`recordLoginFailure()`'s column guard is belt-and-braces.** Its `try`/`catch`
+  alone would return `false` on a database missing the columns, so removing the guard
+  kills nothing; removing *both* kills one. It stays because it matches
+  `clearLoginLockout()` next to it and because an attempt that cannot succeed should
+  not write a line into the database's error log on every wrong password.
+
+---
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -1895,7 +2021,7 @@ grep -rn "DELETE FROM users" --include=*.php . # nothing outside tools/ (invaria
                                               # are closed, never deleted, so a freed id can
                                               # never be handed to somebody new
 grep -rn "SET password_hash" --include=*.php . # exactly two: lib/accounts.php (setPassword, which the
-                                              # reset goes through) and admin_panel.php:160, where an
+                                              # reset goes through) and admin_panel.php:171, where an
                                               # admin sets somebody's password in one write with
                                               # nothing to be atomic with. A third means a page is
                                               # changing a password beside another write again — the
@@ -1942,11 +2068,16 @@ grep -rn "flashMessage\|takeFlashMessage" --include=*.php .  # auth.php defines 
                                               # them for the grant matrix's post/redirect/get. A `flashMessage`
                                               # with no `header('Location'` after it leaves a sentence nobody
                                               # will ever be shown
-grep -rEn "UPDATE users SET" --include=*.php . # lib/accounts.php (four: closed_at, password_hash, role/
-                                              # is_active/email, the lockout clear), login.php's two failure
-                                              # counters, admin_panel.php:168 where an admin sets a password
-                                              # in one write, plus tools/. A fifth in a *page* means a `users`
-                                              # write beside another write again — invariant 22
+grep -rEn "UPDATE users SET" --include=*.php . # lib/accounts.php (five: closed_at, password_hash, role/
+                                              # is_active/email, the lockout clear, and the failed-login
+                                              # counters login.php used to write itself), admin_panel.php:171
+                                              # where an admin sets a password in one write, plus tools/.
+                                              # **login.php must not appear**: its two counter statements
+                                              # moved to AccountStore::recordLoginFailure() in §4u, and a hit
+                                              # there is the unguarded write back — on a database missing the
+                                              # three columns it answered a wrong password with a 500. A new
+                                              # one in any *page* means a `users` write beside another write
+                                              # again — invariant 22
 grep -rn "lock_holder_id\|lock_activity_at\|lock_taken_at" --include=*.php .  # SQL against them only in
                                               # lib/displays.php. lib/schema.php and lib/server_report.php
                                               # name them as *catalogue entries* — a column this database
@@ -1987,6 +2118,15 @@ grep -rn "post_max_size\|upload_max_filesize\|MAX_BYTES" --include=*.php .
 grep -rn "php://input" --include=*.php .      # must be empty: UploadLimit::bodyWasDropped() infers the
                                               # post_max_size case from an empty $_POST, which only
                                               # holds while nothing reads the raw body
+grep -rn "session_set_cookie_params" --include=*.php .  # only lib/request_scheme.php, which holds both
+                                              # PHP signatures and the one decision behind them. A second
+                                              # caller is a second opinion about `Secure`, and asserting it
+                                              # over plain HTTP is an app nobody can sign into — §4u, ADR-0009
+grep -rn "Incorrect username or password" --include=*.php .  # only lib/login_gate.php's REFUSAL constant,
+                                              # plus comments quoting it. A sentence
+                                              # written in login.php is a page choosing its own wording again,
+                                              # and the wording is the security property: every refusal says
+                                              # this one, so none of them says which — §4u, ADR-0008
 grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
                                               # DISPLAY_ID / waDisplayId() with it (invariant 12), which
                                               # omission silently opts out of. viewer.php is the one

@@ -59,19 +59,21 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/display_admin.php` | `DisplayAdmin` — create/edit/delete a Display across all three tables; writes no SQL itself |
 | `lib/display_request.php` | Which Display a request means, and whether the actor may have it. Both the Builder and every API write resolve through here |
 | `lib/plain_text.php` | `toPlainText()` — signage content is plain text (ADR-0002) |
+| `lib/login_gate.php` | `LoginGate` — what a sign-in attempt is allowed to learn (ADR-0008): one sentence for a wrong password, an unknown username, a suspended account and a closed one alike, the lockout arithmetic, and the order the questions are asked in. Decides; writes nothing |
+| `lib/request_scheme.php` | `RequestScheme` — is this request HTTPS, and therefore may the session cookie claim `Secure` (ADR-0009). Asserting it over plain HTTP made every sign-in loop back to the form in silence. Also the scheme the viewer address is built from |
 | `lib/error_policy.php` | The error policy, set in code: errors off, logging on, the three handlers, and the notice a Screen / an endpoint / a person gets when something breaks. `report()` is for a problem the app survived, and throttles the log as well as the email when the problem repeats on its own |
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **826 checks**. Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **906 checks**. Run before pushing |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **27 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit), **53 checks** |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data. It also publishes every element type and block subtype the schema allows and reads them back, checks that a deleted Display really cascades, and prints which of the five page-added columns landed |
 | `config.php` | Site constants (`SITE_NAME`, `MAIL_FROM`); loads `branding_config.php` |
 | `db_connect.php` | PDO `$pdo`; loads creds from `../../private/db_credentials.php` |
-| `auth.php` | `session_start`; `requireLogin/requireAdmin/isAdmin/currentUser`; `csrfToken()/verifyCsrf()`; the login-lockout columns |
+| `auth.php` | `session_start` with the cookie attributes `RequestScheme` decides; `requireLogin/requireAdmin/isAdmin/currentUser`; `csrfToken()/verifyCsrf()`; adding and clearing the login-lockout columns |
 | `branding_config.php` | Generated brand theme (`BRAND_*` constants) |
-| `login.php` / `logout.php` | Auth; account-keyed DB login lockout (5 tries / 15-min window) |
+| `login.php` / `logout.php` | Auth; account-keyed DB login lockout (5 tries / 15-min window). Every sentence it can print and every counter it writes are `LoginGate`'s, so no message it shows depends on something a stranger must not learn |
 | `.htaccess` | Server config: index/sensitive-file blocks, security headers, PHP hardening, HTTPS redirect. Frames `viewer.php` for external widgets (see §8) |
 | `lib/.htaccess`, `tools/.htaccess` | Make both folders unreachable from a browser. **Deploy them with the folders** |
 | `reset_password.php` | 2-step emailed 6-digit passcode reset (30-min expiry) |
@@ -294,7 +296,7 @@ staleness check, no version history), 0007 (one editor per Display).
   URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
   account, two browsers, and one unavoidable 15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 826 self-test checks against SQLite, 80 node checks over `builder.php`'s
+  `php -l`, 906 self-test checks against SQLite, 80 node checks over `builder.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare
@@ -304,7 +306,9 @@ staleness check, no version history), 0007 (one editor per Display).
 
 Everything from the previous session is resolved and merged: the account-keyed
 login lockout (ADR-0001), the security-hardening pass (stored XSS → plain-text
-content per ADR-0002, session cookie flags, reset enumeration), the Asset Library
+content per ADR-0002, session cookie flags — since corrected, see ADR-0009: the
+`Secure` flag that pass added was asserted unconditionally, which made sign-in
+impossible on any install not served over HTTPS — and reset enumeration), the Asset Library
 SVG/non-image block, the new-text-block highlight, and the viewer framing +
 kiosk scroll lock. `git log origin/main` has the detail.
 
@@ -320,6 +324,13 @@ kiosk scroll lock. `git log origin/main` has the detail.
   then both node suites (`tools/selftest_builder_readonly.js` and
   `tools/selftest_builder_uploads.js`) if `builder.php` was touched. A self-test
   failure is a release blocker, not a broken test.
+- **A refused sign-in says one sentence** (`LoginGate::REFUSAL`, ADR-0008), and the
+  login page writes no wording of its own. A friendlier "your account has been
+  deactivated" is the defect, not an improvement: it was reachable only with the
+  correct password, so it announced that the password was correct. The session
+  cookie's `Secure` flag likewise follows the connection (`RequestScheme`, ADR-0009)
+  — asserting it over plain HTTP is an app nobody can sign into, and the live site's
+  HTTPS redirect is what hid that.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer refusing a
   write to merging one — that is why publish has both a staleness check and a lock
   check, and why neither tries to merge.

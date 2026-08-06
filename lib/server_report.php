@@ -36,6 +36,7 @@
 
 require_once __DIR__ . '/upload_limits.php';
 require_once __DIR__ . '/schema.php';
+require_once __DIR__ . '/request_scheme.php';
 
 class ServerReport
 {
@@ -89,15 +90,29 @@ class ServerReport
 
         // These three are what stops a stolen or cross-site request riding the
         // session. auth.php sets them; this says whether they took.
+        //
+        // Secure is the one that has to be read against the connection rather than on
+        // its own. It follows the scheme (lib/request_scheme.php), so over plain HTTP
+        // it is *correctly* off — and reporting that as a protection that "did not
+        // apply" would send an admin looking for a bug in the app, when the answer is
+        // that the site is not on HTTPS and the cookie is readable on the wire.
         $cookie = session_get_cookie_params();
+        $https  = RequestScheme::isHttps($_SERVER);
+        if (!empty($cookie['httponly']) && (!empty($cookie['secure']) || !$https)) {
+            $note = $https ? '' : 'This page arrived over plain HTTP, so Secure is off — '
+                                . 'without it a browser could not keep the cookie at all and '
+                                . 'nobody could sign in. On HTTP the cookie can be read on the '
+                                . 'wire: put the site behind HTTPS.';
+        } else {
+            $note = 'One of the protections on the sign-in cookie did not apply.';
+        }
         $out['Session cookie'] = [
             'HttpOnly ' . $this->yesNo(!empty($cookie['httponly']))
             . ', Secure ' . $this->yesNo(!empty($cookie['secure']))
             . ', SameSite ' . (isset($cookie['samesite']) && $cookie['samesite'] !== ''
                                  ? $cookie['samesite']
                                  : $this->sameSiteFromPath($cookie)),
-            (!empty($cookie['httponly']) && !empty($cookie['secure'])) ? ''
-                : 'One of the protections on the sign-in cookie did not apply.'];
+            $note];
 
         // The effective number, not the three ini values it comes from: the
         // arithmetic belongs to lib/upload_limits.php, which is also what the

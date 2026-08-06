@@ -26,6 +26,8 @@ require_once __DIR__ . '/../lib/error_policy.php';   // pulls in lib/alerts.php
 require_once __DIR__ . '/../lib/assets.php';
 require_once __DIR__ . '/../lib/upload_limits.php';
 require_once __DIR__ . '/../lib/schema.php';
+require_once __DIR__ . '/../lib/login_gate.php';
+require_once __DIR__ . '/../lib/request_scheme.php';
 
 /**
  * DisplayStore with its one non-portable statement swapped out.

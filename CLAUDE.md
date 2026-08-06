@@ -60,6 +60,18 @@ edited in place and every change reaches the sign by hand.
   holds a sign disagree silently. Then make sure the Builder *says so*: `applyLockAnswer()`
   ignores a failed heartbeat on purpose, and `LOCK_TERMINAL` is the fixed list of refusals
   that never come back — each with its own sentence, because what to do next differs.
+- **A refusal a stranger can trigger says one sentence, and the login page decides
+  none of its own wording.** A wrong password, an unknown username, a suspended
+  account and a closed one all get `LoginGate::REFUSAL`, because a message reachable
+  only by the *correct* password announces that the password was correct — which is
+  what four reasonable-looking `elseif` branches after `password_verify()` were doing.
+  The rule covers more than wording: an account that may not sign in still spends a
+  password check, or the refusal arrives a bcrypt early and the timing says it
+  instead. Its neighbour is the same shape — the session cookie claims `Secure` only
+  over TLS (`RequestScheme`), because asserting it on plain HTTP tells the browser to
+  discard the cookie and every sign-in then loops back to the form with nothing
+  printed anywhere. The live server's HTTPS redirect is what hid that for months, so
+  "it works on the live site" is not evidence about either of these.
 - **PHP 7.1-compatible syntax** — the live server's version is unverified.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.

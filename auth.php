@@ -5,27 +5,15 @@
 // opening a session it never reads. A framed Screen returns no cookie, so each
 // poll was minting a fresh session file: thousands a day, per Screen, reaped by
 // nothing.
+require_once __DIR__ . '/lib/request_scheme.php';
 if (!defined('AUTH_NO_SESSION') && session_status() === PHP_SESSION_NONE) {
-    // Harden the session cookie: unreadable to page scripts (HttpOnly),
-    // HTTPS-only (Secure), and not sent on cross-site requests (SameSite=Lax).
-    //
-    // Two forms, because the options-array signature arrived in PHP 7.3 and this
-    // app targets 7.1 with the live version unverified. On 7.1 the array form is
-    // not a partial success — it fails argument parsing and sets *nothing*, so
-    // the cookie loses HttpOnly and Secure as well as SameSite, and the warning
-    // it emits lands before session_start() and can break sign-in outright. The
-    // pre-7.3 idiom appends the attribute to the path, which the header accepts
-    // verbatim.
-    if (PHP_VERSION_ID >= 70300) {
-        session_set_cookie_params([
-            'path'     => '/',
-            'httponly' => true,
-            'secure'   => true,
-            'samesite' => 'Lax',
-        ]);
-    } else {
-        session_set_cookie_params(0, '/; SameSite=Lax', '', true, true);
-    }
+    // Harden the session cookie: unreadable to page scripts (HttpOnly), not sent on
+    // cross-site requests (SameSite=Lax), and Secure **when the request arrived over
+    // TLS**. Secure asserted on a plain-HTTP install is not a stricter setting; it is
+    // a browser instruction to discard the cookie, and the sign-in that follows loops
+    // back to this page forever with nothing to read. RequestScheme owns that
+    // decision, the two PHP forms it has to be expressed in, and the reasoning.
+    RequestScheme::applyToSession($_SERVER);
     session_start();
 }
 require_once __DIR__ . '/config.php';
@@ -196,8 +184,13 @@ function takeFlashMessage() {
 // Failed-login state lives in three columns on `users`. A single window
 // governs BOTH how long failures stay "recent" (age-out) and how long a
 // tripped lockout lasts. See docs/adr/0001-account-keyed-login-lockout.md.
-const LOGIN_LOCKOUT_MAX    = 5;    // failed attempts before lockout
-const LOGIN_LOCKOUT_WINDOW = 900;  // 15 minutes, in seconds
+//
+// The two numbers, the arithmetic over them and every sentence the login page can
+// print are `LoginGate::MAX_ATTEMPTS` / `WINDOW_SECONDS` in lib/login_gate.php —
+// one place, so that what the page says and what it writes down cannot disagree
+// (ADR-0008). What stays here is the pair of database chores either side of that
+// decision: adding the columns, and clearing them.
+require_once __DIR__ . '/lib/login_gate.php';
 
 // Idempotently add the lockout columns. Called only from the pre-auth
 // pages (login / reset) — deliberately NOT from db_connect.php, so the

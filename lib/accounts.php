@@ -315,6 +315,37 @@ class AccountStore
         return true;
     }
 
+    /**
+     * Write down one failed sign-in: the counter, when it happened, and the lockout
+     * it may have tripped. `LoginGate` decides all three; this only stores them.
+     *
+     * **False when the three columns do not exist**, the mirror of clearLoginLockout()
+     * and for the same reason: a database where the runtime ALTER never applied has
+     * nowhere to count. login.php used to write this itself, unguarded, and the file's
+     * own comment claimed the write "swallows its failures the same way" as its
+     * neighbours — it did not. On such a database every *wrong password* raised
+     * "unknown column" instead of printing "Incorrect username or password", which is
+     * a 500 on the one page that exists to be typed into by strangers.
+     */
+    public function recordLoginFailure($accountId, $attempts, $failedAt, $lockedUntil)
+    {
+        if (!$this->lockoutColumnsExist()) { return false; }
+        try {
+            $this->pdo->prepare(
+                "UPDATE users SET failed_attempts = ?, last_failed_at = ?, locked_until = ?
+                  WHERE id = ?"
+            )->execute([
+                intval($attempts),
+                (string)$failedAt,
+                $lockedUntil === null ? null : (string)$lockedUntil,
+                intval($accountId),
+            ]);
+        } catch (Throwable $e) {
+            return false;
+        }
+        return true;
+    }
+
     /** The account holding this username or email, closed or not, or null. */
     public function findByNameOrEmail($username, $email)
     {

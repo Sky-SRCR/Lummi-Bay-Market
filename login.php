@@ -20,100 +20,95 @@ if (!defined('BRAND_TEXT'))       define('BRAND_TEXT',       '#ffffff');
 
 $error = '';
 
-// Rate limiting: account-keyed brute-force lockout, backed by the `users`
-// table (a session counter was bypassable by dropping the cookie). A single
-// window governs both the age-out of stale failures and the lockout length.
-$maxAttempts   = LOGIN_LOCKOUT_MAX;     // 5 failures
-$lockoutWindow = LOGIN_LOCKOUT_WINDOW;  // 900s = 15 min
+/**
+ * The one `users` read sign-in makes. Every rule applied to what comes back lives in
+ * lib/login_gate.php; this only fetches it.
+ *
+ * ensureLockoutColumns() swallows its failures by design, so this read cannot assume
+ * the three columns exist. If the ALTER could not apply — a database user without
+ * ALTER, a hosting restriction, a full disk — the unguarded version raised "unknown
+ * column" with nothing catching it, and nobody could sign in at all, on any account,
+ * with no message and nothing in a log. Signing in without the brute-force counters
+ * is worse than the alternative of nobody signing in at all, so fall back and carry
+ * on: clearLockout() and AccountStore::recordLoginFailure() both check the columns
+ * exist before writing them.
+ */
+function loginRow(PDO $pdo, $username)
+{
+    try {
+        $stmt = $pdo->prepare(
+            "SELECT id, username, password_hash, role, is_active,
+                    failed_attempts, last_failed_at, locked_until
+             FROM users WHERE username = ? LIMIT 1"
+        );
+        $stmt->execute([$username]);
+        return $stmt->fetch();
+    } catch (Throwable $e) {
+        $stmt = $pdo->prepare(
+            "SELECT id, username, password_hash, role, is_active
+             FROM users WHERE username = ? LIMIT 1"
+        );
+        $stmt->execute([$username]);
+        $row = $stmt->fetch();
+        if ($row) {
+            $row['failed_attempts'] = 0;
+            $row['last_failed_at']  = null;
+            $row['locked_until']    = null;
+        }
+        return $row;
+    }
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     ensureLockoutColumns($pdo); // idempotent; kept off the public viewer path
 
+    $accounts = new AccountStore($pdo);
     $username = trim($_POST['username'] ?? '');
-    $password = $_POST['password'] ?? '';
+    $password = (string)($_POST['password'] ?? '');
+    // Nothing typed is nothing to look up. Which sentence an empty form gets is still
+    // the gate's to decide — this only declines to query the database for nothing.
+    $row      = $username === '' ? null : loginRow($pdo, $username);
+    $account  = LoginGate::accountFacts($row, $row ? $accounts->isClosed($row['id']) : false);
 
-    if ($username === '' || $password === '') {
-        $error = 'Please enter both your username and password.';
-    } else {
-        // ensureLockoutColumns() above swallows its failures by design, so this
-        // read cannot assume the three columns exist. If the ALTER could not apply
-        // — a database user without ALTER, a hosting restriction, a full disk —
-        // the unguarded version raised "unknown column" with nothing catching it,
-        // and nobody could sign in at all, on any account, with no message and
-        // nothing in a log. Signing in without the brute-force counters is worse
-        // than the alternative of nobody signing in at all, so fall back and carry
-        // on: clearLockout()/registerFailedLogin() swallow their own failures the
-        // same way.
-        try {
-            $stmt = $pdo->prepare(
-                "SELECT id, username, password_hash, role, is_active,
-                        failed_attempts, last_failed_at, locked_until
-                 FROM users WHERE username = ? LIMIT 1"
-            );
-            $stmt->execute([$username]);
-            $user = $stmt->fetch();
-        } catch (Throwable $e) {
-            $stmt = $pdo->prepare(
-                "SELECT id, username, password_hash, role, is_active
-                 FROM users WHERE username = ? LIMIT 1"
-            );
-            $stmt->execute([$username]);
-            $user = $stmt->fetch();
-            if ($user) {
-                $user['failed_attempts'] = 0;
-                $user['last_failed_at']  = null;
-                $user['locked_until']    = null;
-            }
-        }
-        $now  = time();
+    // Whether this attempt succeeds, is refused, is locked out or cannot be
+    // remembered at all is one decision, made in one place, so that no sentence this
+    // page prints can depend on something a stranger must not learn (ADR-0008).
+    $outcome = LoginGate::decide(
+        [
+            'username'       => $username,
+            'password'       => $password,
+            // A POST with no session cookie has nowhere to keep a sign-in, so the
+            // redirect below would come straight back here — the invisible loop
+            // decision #38 is about. Asked here rather than after the password on
+            // purpose: see lib/login_gate.php.
+            'session_cookie' => isset($_COOKIE[session_name()]),
+        ],
+        $account,
+        function () use ($row, $password) {
+            return $row && password_verify($password, (string)$row['password_hash']);
+        },
+        time()
+    );
 
-        if ($user && $user['locked_until'] !== null && strtotime($user['locked_until']) > $now) {
-            // Lockout is absolute: a correct password still waits it out.
-            $remaining = strtotime($user['locked_until']) - $now;
-            $error = 'Too many failed attempts. Please wait ' . ceil($remaining / 60) . ' minute(s) before trying again.';
-        } elseif (!$user || !password_verify($password, $user['password_hash'])) {
-            // One generic message for both unknown user and wrong password.
-            $error = 'Incorrect username or password.';
+    if ($outcome->isSignedIn()) {
+        clearLockout($pdo, intval($row['id']));
+        session_regenerate_id(true);
+        $_SESSION['user_id']  = $row['id'];
+        $_SESSION['username'] = $row['username'];
+        $_SESSION['role']     = $row['role'];
+        header('Location: builder.php');
+        exit;
+    }
 
-            // Only real accounts accrue failed-attempt state.
-            if ($user) {
-                // Fresh 5 if the previous lockout has expired, or if it has
-                // been longer than the window since the last failure.
-                $lockoutExpired = $user['locked_until'] !== null && strtotime($user['locked_until']) <= $now;
-                $agedOut        = $user['last_failed_at'] !== null && ($now - strtotime($user['last_failed_at'])) > $lockoutWindow;
-                $attempts       = (($lockoutExpired || $agedOut) ? 0 : (int)$user['failed_attempts']) + 1;
-
-                if ($attempts >= $maxAttempts) {
-                    $lockedUntil = date('Y-m-d H:i:s', $now + $lockoutWindow);
-                    $pdo->prepare(
-                        "UPDATE users SET failed_attempts = ?, last_failed_at = ?, locked_until = ? WHERE id = ?"
-                    )->execute([$attempts, date('Y-m-d H:i:s', $now), $lockedUntil, $user['id']]);
-                    $error = 'Too many failed attempts. Please wait ' . ceil($lockoutWindow / 60) . ' minute(s) before trying again.';
-                } else {
-                    $pdo->prepare(
-                        "UPDATE users SET failed_attempts = ?, last_failed_at = ?, locked_until = NULL WHERE id = ?"
-                    )->execute([$attempts, date('Y-m-d H:i:s', $now), $user['id']]);
-                }
-            }
-        } elseif (accountIsClosed($pdo, (int)$user['id'])) {
-            // Checked before the deactivated branch because closing also clears
-            // is_active — without this, someone whose account was retired would be
-            // told to contact a manager about getting it switched back on, which is
-            // not a thing that can happen (lib/accounts.php).
-            $error = 'This account has been closed and cannot be used again. '
-                   . 'If you still work here, ask an admin to set you up a new one.';
-        } elseif (!$user['is_active']) {
-            $error = 'Your account has been deactivated. Please contact your manager.';
-        } else {
-            // Successful login — clear lockout state and start the session.
-            clearLockout($pdo, (int)$user['id']);
-            session_regenerate_id(true);
-            $_SESSION['user_id']  = $user['id'];
-            $_SESSION['username'] = $user['username'];
-            $_SESSION['role']     = $user['role'];
-            header('Location: builder.php');
-            exit;
-        }
+    $error   = $outcome->message();
+    $failure = $outcome->failureRecord();
+    if ($failure !== null) {
+        $accounts->recordLoginFailure(
+            $account['id'],
+            $failure['failed_attempts'],
+            date('Y-m-d H:i:s', $failure['last_failed_at']),
+            $failure['locked_until'] === null ? null : date('Y-m-d H:i:s', $failure['locked_until'])
+        );
     }
 }
 ?>
