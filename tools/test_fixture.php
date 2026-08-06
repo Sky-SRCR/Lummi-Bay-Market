@@ -524,8 +524,11 @@ $GLOBALS['_reported'] = false;
 // "0 failed" while genuinely broken, all closed here:
 //
 //   1. A PHP warning was invisible. Thirty-six "Undefined array key" warnings
-//      from inside a module still printed a clean run, and on the 7.1 target
-//      they are quieter still. Any diagnostic is now a failed check.
+//      from inside a module still printed a clean run. The reason to treat any
+//      diagnostic as a failure was originally that they were quieter still on the
+//      old 7.1 target, where most were notices; the floor is 8.2 now and they are
+//      warnings, which does not make an invisible one any less of a defect.
+//      Any diagnostic is a failed check.
 //   2. A fatal part-way through printed no summary line at all, so anything
 //      reading the output — rather than the exit code — learned nothing, and
 //      every check after the crash was silently skipped.

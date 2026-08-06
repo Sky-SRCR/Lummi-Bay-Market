@@ -5,8 +5,20 @@ name: PHP lint and self-test
 # on the live server is caught here instead of on the sign, and the layout
 # self-test guards the publish path, which can empty every Display at once.
 #
+# The PHP version below is not incidental: it is the floor the repo declares
+# (CLAUDE.md, BUILD-REFERENCE §4k). It used to exceed the 7.1 target, which meant
+# this lint enforced nothing about the rule the repo was actually obeying — 8.2
+# accepts everything 7.1 does and more. Now they match, so a parse error here is a
+# parse error on a conforming host. Keep the two in step: raising one without the
+# other silently restores that gap.
+#
+# What this still cannot tell you is what the *live* host runs. The floor is a
+# decision, not a measurement; Admin Panel → Settings → This Server is the only
+# thing that answers it.
+#
 # `php -l` cannot see the inline JavaScript that most of builder.php is made of.
-# Changes to that file still need reading.
+# Changes to that file still need reading, and the two node suites in tools/ are
+# not run here — see decision #51.
 
 on:
   push:

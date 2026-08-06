@@ -87,7 +87,7 @@ written down rather than remembered:
 | 48 | The test database differs from MySQL in twelve ways, including row locking stubbed out entirely. | Test against real MySQL as well. | Open | — |
 | 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | Part done — `schema.php`'s *decision* is now a pure function with 43 checks (§4o); its statements are still MySQL-only. | §4o |
 | 50 | About 29 checks in the suite could not fail, and five invariants had no automated check at all. | Replace the hollow ones, and cover the missing rules. | Open — the harness itself was hardened so a suite that stops early now fails, but the 29 have not been swept. | — |
-| 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | Part done — **the live PHP version is still unknown.** Settings → This Server answers it the first time an admin opens it after deploy; until then the 7.1 rule stands. | §4g |
+| 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | Part done — the mismatch is closed from the *other* end: the repo now declares 8.2 as its floor, so CI's pin matches the target it lints. **The live version is still unknown** — this was a decision, not a measurement, and Settings → This Server is what confirms or refutes it on the first admin sign-in after deploy. Still not run in CI: the consistency greps, the rehearsal, and the two node suites. | §4g, §4k |
 
 ## Where this stands
 

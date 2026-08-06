@@ -312,10 +312,20 @@ kiosk scroll lock. `git log origin/main` has the detail.
 
 - **Data access lives in `lib/`.** A new query means a new method on the owning
   module, not a `$pdo` handed to a page script. One module per table (§3).
-- **PHP 7.1-compatible syntax** — the live server's version is unverified and
-  `.htaccess` still carries `mod_php7` blocks. No typed properties, constructor
-  promotion, enums, `readonly`, `match`, or arrow functions. This container has a
-  much newer PHP, for `php -l` only.
+- **PHP 8.2 is the floor** (was 7.1). Typed properties, constructor promotion, enums,
+  `readonly`, `match` and arrow functions are all allowed now, and CI's `php -l` at
+  8.2 finally enforces the target it is pinned to. The `mod_php7` blocks are gone
+  from `.htaccess`; the `mod_php8` ones remain, and `auth.php` sets the same cookie
+  attributes in code regardless of SAPI.
+  **The live version is still unverified — this was a decision, not a measurement.**
+  If the host turns out to be below 8.2, two things follow in this order:
+  `session_set_cookie_params()`'s array form sets *nothing*, so the sign-in cookie
+  silently loses HttpOnly, Secure and SameSite; and any 8.x-only syntax is a parse
+  error, which on a TV is a blank sign. Both are visible in one place — **Admin
+  Panel → Settings → This Server**, which prints `PHP version` (noted only when it
+  is *below* the floor) and reads all three cookie flags back off the live cookie.
+  Read that screen on the first admin sign-in after deploy, and after any host PHP
+  change. This container has PHP 8.4, for `php -l` only.
 - Before pushing: `php -l` every touched file, then `php tools/selftest_layout.php`,
   then both node suites (`tools/selftest_builder_readonly.js` and
   `tools/selftest_builder_uploads.js`) if `builder.php` was touched. A self-test

@@ -39,20 +39,19 @@
       </Files>
   </IfModule>
 
+  # The mod_php7 twin of each block below was removed when the app declared PHP 8.2
+  # as its floor. Note what that does and does not change: under mod_php7 these
+  # hardening flags now go unset, but auth.php sets the same three cookie
+  # attributes in code on every SAPI, which is the mechanism this app trusts (a
+  # php_flag is silently ignored under CGI/FPM — see BUILD-REFERENCE §4m). So this
+  # is one less place claiming to be in force when it is not.
+
   # Hide PHP version from response headers
-  <IfModule mod_php7.c>
-      php_flag expose_php Off
-  </IfModule>
   <IfModule mod_php8.c>
       php_flag expose_php Off
   </IfModule>
 
   # Force PHP session cookies to HttpOnly (prevents JS from reading them)
-  <IfModule mod_php7.c>
-      php_flag session.cookie_httponly On
-      php_flag session.use_strict_mode On
-      php_value session.cookie_samesite "Lax"
-  </IfModule>
   <IfModule mod_php8.c>
       php_flag session.cookie_httponly On
       php_flag session.use_strict_mode On
@@ -66,8 +65,5 @@
 
   # Mark session cookie as Secure (HTTPS only)
   <IfModule mod_php8.c>
-      php_flag session.cookie_secure On
-  </IfModule>
-  <IfModule mod_php7.c>
       php_flag session.cookie_secure On
   </IfModule>

@@ -60,7 +60,12 @@ edited in place and every change reaches the sign by hand.
   holds a sign disagree silently. Then make sure the Builder *says so*: `applyLockAnswer()`
   ignores a failed heartbeat on purpose, and `LOCK_TERMINAL` is the fixed list of refusals
   that never come back — each with its own sentence, because what to do next differs.
-- **PHP 7.1-compatible syntax** — the live server's version is unverified.
+- **PHP 8.2 is the floor**, replacing the old 7.1 rule. Modern syntax is allowed.
+  This was a *decision, not a measurement*: the live host is still unverified, and
+  under 8.2 `auth.php`'s session cookie call sets nothing at all while any 8.x-only
+  syntax is a blank page. **Admin Panel → Settings → This Server** prints the real
+  version and reads the three cookie flags back — that row is the check, and it is
+  worth reading once after any host PHP change.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.
 

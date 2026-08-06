@@ -413,10 +413,14 @@ decisions already made, not new decisions.
   its lowest row to carry the old background onto the Display that replaces it —
   the one reader, and the reason invariant 2 says "retired to one reader" rather
   than "unread".
-- **PHP 7.1-compatible syntax.** The live server's PHP version is unverified and
-  `.htaccess` still carries `mod_php7` blocks, so no typed properties,
-  constructor promotion, enums, `readonly`, `match`, or arrow functions. This
-  container has PHP 8.4 for `php -l` only.
+- **PHP 8.2 is the declared floor.** Modern syntax — typed properties, constructor
+  promotion, enums, `readonly`, `match`, arrow functions — is allowed. This replaced
+  the 7.1 rule as a *decision taken without measuring the host* (§4k), so the
+  invariant that matters is the one below it: nothing may assume the floor holds
+  silently. `auth.php` uses one cookie form and documents what it does under the
+  floor; `ServerReport` prints the real version and notes it only when it is *below*
+  8.2, and reads the cookie flags back. This container has PHP 8.4 for `php -l`,
+  and CI pins 8.2 — which now matches the target rather than exceeding it.
 - **An inactive Display returns no elements from `get_layout`.** The API reports
   `status: "inactive"` and the Phase 2 Viewer renders the notice. A Phase 1
   Viewer would show an empty canvas — unreachable in practice, since nothing can
@@ -908,14 +912,28 @@ role-only banner test fails 2, and dropping `loadAssets`'s guard fails 1.
 ### 4k. Two things this repo believed without ever looking
 
 **"PHP 7.1-compatible syntax — the live server's version is unverified."** That
-sentence has shaped every file here. It is also the only rule in the project with
+sentence shaped every file here. It was also the only rule in the project with
 no way to check it, and the one real violation it ever caught was not syntax at
 all: `session_set_cookie_params()`'s options-array form arrived in 7.3, and on 7.1
 it is a warning-and-no-op that silently drops HttpOnly, Secure and SameSite from
 the sign-in cookie. A syntax rule cannot catch a library signature, and neither
 can `php -l` at any version. Meanwhile, if the host is actually on 8.x — which a
-shared cPanel account usually is by now — the repo has been paying that price for
+shared cPanel account usually is by now — the repo was paying that price for
 nothing.
+
+**That rule has since been replaced by a declared floor of 8.2** — and the honest
+description of the change is that the project stopped paying for an unverified
+guess by adopting a different unverified guess, in the direction the evidence
+favours. The evidence is real but circumstantial: 8.2 is unremarkable on shared
+cPanel hosting in 2026, `.htaccess` already carried `mod_php8` blocks beside the
+7 ones, and all 826 self-test checks pass on PHP 8.4. None of that is the host.
+What changed is where the risk sits: under the old rule a wrong guess cost
+features, and under this one it costs a silent downgrade of the sign-in cookie and
+a blank sign on a parse error. So the compensating requirement is that neither
+failure be silent, which is what this screen is for — the `PHP version` row is
+annotated *only* when it is below the floor, so a note there is the alarm, and the
+`Session cookie` row reads the three flags back off the live cookie rather than
+restating what the code asked for.
 
 **And whether the schema converged.** Invariant 10 says assume nothing about what
 columns exist, and `schemaTry()` swallows the failure of a statement that cannot
@@ -955,10 +973,23 @@ outright and asserts the report goes red and says why. Verified against two
 mutations — hard-coding the column check to true, and letting the no-catalogue
 fallback answer true on error — each of which fails 3.
 
-**Still open:** what the live server actually runs. The screen answers it the
-first time an admin opens Settings after this deploys; until then the 7.1 rule
-stands unchanged, because guessing in the other direction is the one mistake that
-breaks sign-in on the live site.
+**Still open:** what the live server actually runs. The screen answers it the first
+time an admin opens Settings after this deploys — and that reading is now more
+urgent than it was, not less. The 7.1 rule was the conservative direction: guessing
+low cost features and nothing else. The 8.2 floor guesses the other way, which is
+precisely the mistake this paragraph used to warn against, taken deliberately with
+the failure mode written down. Two consequences follow, both of them cheap to check
+and neither of them self-announcing:
+
+- **Sign-in cookie.** Below 7.3 the array form sets nothing. Read the `Session
+  cookie` row: `HttpOnly yes, Secure yes, SameSite Lax` is the pass.
+- **Parse errors.** Any 8.x-only syntax is a blank page below the floor, and on a
+  Screen that is a blank sign rather than a message anybody reads.
+
+Until the number is known, treat modern syntax as *permitted but not yet paid for*:
+there is no cost to writing 7-compatible code where it makes no difference, and the
+first genuinely 8.x-only construct is best added after somebody has opened that
+screen once.
 
 ### 4l. An account number is never handed to a second person
 

@@ -2,13 +2,18 @@
 // ============================================================
 // SERVER REPORT — what is this machine, and did the schema converge?
 // ============================================================
-// This project has been written to a PHP version nobody ever checked. The rule in
-// CLAUDE.md — "PHP 7.1-compatible syntax, the live server's version is unverified"
-// — has shaped every file in the repo, and the one real violation it ever caught
-// was not a syntax feature at all but a library signature that changed in 7.3
-// (auth.php's session cookie parameters). A rule that costs this much should not
-// rest on a guess, and there is no shell on the live host: the only place the
-// answer can appear is a page an admin can open.
+// This project was written for years to a PHP version nobody ever checked. The old
+// rule in CLAUDE.md — "PHP 7.1-compatible syntax, the live server's version is
+// unverified" — shaped every file in the repo, and the one real violation it ever
+// caught was not a syntax feature at all but a library signature that changed in 7.3
+// (auth.php's session cookie parameters).
+//
+// The rule has since been replaced by a declared floor of 8.2, which was a decision
+// rather than a measurement: the host is still unverified and there is no shell on
+// it. So this screen matters more now, not less. It is the only place the real
+// version can appear, and the only place that reads the session cookie flags back
+// off the live cookie — which is the thing that breaks, silently, if the floor
+// turns out to be wrong.
 //
 // The second half is the same problem wearing different clothes. Invariant 10 says
 // the live database is behind the repo and every schema change is an idempotent
@@ -40,11 +45,13 @@ require_once __DIR__ . '/schema.php';
 class ServerReport
 {
     /**
-     * The oldest PHP this code is written to run on. Not a check that the server
-     * is modern — a check that the rule the repo has been obeying still matches
-     * the machine it was obeyed for.
+     * The oldest PHP this code is written to run on — the declared floor, not a
+     * measurement of the live host. Below it the repo's syntax may not parse and
+     * auth.php's session cookie call sets nothing at all, so this is the number
+     * the report holds the machine against.
      */
-    const ASSUMED_PHP = '7.1';
+    const ASSUMED_PHP = '8.2';
+    const ASSUMED_PHP_ID = 80200;
 
     private $pdo;
     private $facts = null;
@@ -62,12 +69,17 @@ class ServerReport
     {
         $out = [];
 
-        $out['PHP version'] = [PHP_VERSION, PHP_VERSION_ID >= 70300
-            ? 'Newer than the ' . self::ASSUMED_PHP . ' this code is written for, so the '
-              . 'session cookie is hardened by the modern call. Worth telling the '
-              . 'developer: the repo is still avoiding features this server has.'
-            : 'At or below 7.2. The ' . self::ASSUMED_PHP . ' rule in the repo is right, '
-              . 'and the pre-7.3 session cookie form is the one in use.'];
+        // The note carries a consequence or it is empty. Meeting the floor is the
+        // expected case and needs no sentence; falling below it is the one reading
+        // on this screen that says the repo's own premise is wrong.
+        $out['PHP version'] = [PHP_VERSION, PHP_VERSION_ID >= self::ASSUMED_PHP_ID
+            ? ''
+            : 'OLDER than the ' . self::ASSUMED_PHP . ' this code declares as its '
+              . 'minimum. Two consequences, in this order: the session cookie call in '
+              . 'auth.php sets nothing at all below 7.3, so read the Session cookie row '
+              . 'below before trusting sign-in; and the repo is now allowed to use '
+              . 'syntax this server cannot parse, which is a blank page rather than a '
+              . 'wrong answer. Tell the developer this number.'];
 
         $out['MySQL version'] = [$this->mysqlVersion(), ''];
 
@@ -209,10 +221,15 @@ class ServerReport
     }
 
     /**
-     * Before 7.3 there was no samesite key: the attribute is appended to the path
-     * instead (auth.php does exactly that), so that is where it has to be read
-     * back from. Reporting "not set" for a server where it *is* set would send
-     * somebody chasing a problem that does not exist.
+     * Before 7.3 there was no samesite key: the attribute was appended to the path
+     * instead, so that is where it would have to be read back from.
+     *
+     * `auth.php` no longer writes it that way — the 8.2 floor means the options
+     * array is the only form it uses. This is kept because it is now a *diagnostic
+     * for a violated floor* rather than a reader for a supported one: on such a
+     * host the samesite key is absent and this at least distinguishes "the old
+     * form set it" from "nothing set it", which is the question somebody reading
+     * this screen after a surprise host downgrade actually has.
      */
     private function sameSiteFromPath($cookie)
     {

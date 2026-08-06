@@ -9,23 +9,23 @@ if (!defined('AUTH_NO_SESSION') && session_status() === PHP_SESSION_NONE) {
     // Harden the session cookie: unreadable to page scripts (HttpOnly),
     // HTTPS-only (Secure), and not sent on cross-site requests (SameSite=Lax).
     //
-    // Two forms, because the options-array signature arrived in PHP 7.3 and this
-    // app targets 7.1 with the live version unverified. On 7.1 the array form is
-    // not a partial success — it fails argument parsing and sets *nothing*, so
-    // the cookie loses HttpOnly and Secure as well as SameSite, and the warning
-    // it emits lands before session_start() and can break sign-in outright. The
-    // pre-7.3 idiom appends the attribute to the path, which the header accepts
-    // verbatim.
-    if (PHP_VERSION_ID >= 70300) {
-        session_set_cookie_params([
-            'path'     => '/',
-            'httponly' => true,
-            'secure'   => true,
-            'samesite' => 'Lax',
-        ]);
-    } else {
-        session_set_cookie_params(0, '/; SameSite=Lax', '', true, true);
-    }
+    // One form, because the app now declares PHP 8.2 as its floor. It used to
+    // carry two: the options-array signature arrived in 7.3, and below that it is
+    // not a partial success — it fails argument parsing and sets *nothing*, so the
+    // cookie loses HttpOnly and Secure as well as SameSite, and the warning it
+    // emits lands before session_start() where it can break sign-in outright.
+    //
+    // That is still exactly what happens if this ever runs under the floor, and it
+    // is silent — which is why the floor is not merely assumed. Admin Panel →
+    // Settings → This Server reads all three flags back off the live cookie and
+    // says so when one did not apply, and prints the PHP version beside them.
+    // Read that screen once after any host PHP change.
+    session_set_cookie_params([
+        'path'     => '/',
+        'httponly' => true,
+        'secure'   => true,
+        'samesite' => 'Lax',
+    ]);
     session_start();
 }
 require_once __DIR__ . '/config.php';
