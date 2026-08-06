@@ -1871,7 +1871,9 @@ SELFTEST_MYSQL_USER=... SELFTEST_MYSQL_PASS=... php tools/selftest_layout.php
 ```
 
 On MySQL the fixture is built by running `schema.sql`, the `FOR UPDATE` stub is
-gone, and fifteen further checks run that SQLite cannot be asked — see §4u.
+gone, and twenty-three further checks run that SQLite cannot be asked — see §4u.
+Eight of those are the publish collision (§4v), which needs two database sessions
+and so cannot exist on an in-memory fixture at all.
 
 **The greps below are what `tools/check_invariants.php` automates.** They are kept
 here because the annotations are the reasoning, and because five of them cannot be
@@ -2132,6 +2134,140 @@ is worth more than the line — but it is not coverage and is not counted as any
 so it cannot be mistaken for full coverage: five §5 greps that no pattern can
 decide, and the rehearsal against a database that genuinely *lags* the repo, which
 needs a copy of live data and remains a deploy-day step.
+
+---
+
+### 4v. The publish coerced everything and refused nothing (#23, #24, #25, #29–#32, #35)
+
+Seven decisions, one shape. Every field of a published layout arrived through
+`intval($el['x_pos'] ?? 0)` or `$el['font_family'] ?? 'Arial'` — and that is not a
+rule, it is a coercion with an answer for everything and a report on nothing.
+`"abc"` became 0. An array became 1, silently, which for `asset_id` meant the block
+pointed at library row 1 — whatever that is on this installation. A `type` of
+`"script"` was stored as `''` by a non-strict MySQL: a row that renders as nothing,
+matches no type filter, and is invisible in the Work Area. A width of 999999999 was
+either a failed publish reported as "Publish failed" or a truncation reported as
+success, depending on a MySQL setting nobody here has looked at.
+
+None of that had anywhere to be caught, because there was no step between "the JSON
+decoded" and "delete the layout and insert this". So the fix is a step, and the
+rule it applies is the one this app applies everywhere else: **refuse the write.**
+
+**`lib/layout_rules.php` is a pure function.** No PDO, no Display, no transaction.
+That is deliberate and it is the same lesson as `schema.php`'s decision half
+(§4o): a function with no I/O can be asked several hundred questions in a
+millisecond, so the vocabulary, the bounds, the column widths and the message
+wording are all covered exhaustively without a database anywhere near them. It runs
+**before `beginTransaction()`** — a refused publish has not opened a transaction,
+has not taken the row lock, and has not touched a row.
+
+What it decides, and why each one is not a coercion:
+
+| Decision | The rule |
+|---|---|
+| #29 | `type` and `block_subtype` must be in the vocabulary. `'Section'` mattered most: `insertContent` skips sections with `!==`, so a mis-cased one slipped past the skip and was inserted as top-level content — by a `basic` account, which is the rule ADR-0005 exists to hold. |
+| #30 | Numbers must be numbers and inside bounds; strings must be strings and inside their column widths. Refused, never clamped — except where the owner said clamp. |
+| #31 | Two sections cannot share a `temp_id`. The map is a plain array, so the second write replaced the first and every block belonging to the first section was inserted into the second: a whole column moved across the sign, silently, reporting success. |
+| #32 | `line_height` is **clamped** to 0.5–5, and written with an explicit empty thousands separator. `number_format($v, 2)` handed a DECIMAL(4,2) column the string `"2,000.00"`. |
+
+The clamp is the one place the answer is not "refuse", and it is not an
+inconsistency — it is the owner's decision on #32, recorded as such. A line height
+that is not a number at all is still refused; only an out-of-range *number* is
+clamped.
+
+**One vocabulary, not two.** `SCHEMA_ELEMENT_TYPE_ENUM` and
+`SCHEMA_BLOCK_SUBTYPE_ENUM` are now generated from `LayoutRules::ELEMENT_TYPES` and
+`::BLOCK_SUBTYPES` rather than spelled out again in `schema.php`. The drift between
+the list the column stored and the list the publish accepted *was* #29; two hand-
+written copies are how it got there. The generated strings are pinned by checks
+against the literals that used to be there, so a rebuild cannot quietly widen one.
+
+**A refusal is its own kind.** `PublishResult` gained `invalid` and `busy` beside
+`stale`, `locked` and `failed`, because `failed` means "something broke, try again"
+and these two mean the opposite things: `invalid` will be refused identically until
+the payload changes, and `busy` will very likely work in ten seconds. Both were
+added to the Builder's **alert** branch rather than its toast branch, for the reason
+the four already there are: a publish that was refused looks exactly like one that
+worked if the only trace is a toast that has already faded, and the next thing
+somebody does with a sign they believe they published is walk away from it.
+
+**#25 — the hidden blocks were public.** `api.php?action=get_layout` needs no
+sign-in, by design: a TV in a shop window cannot log in. It answered with the whole
+layout and let the Viewer's JavaScript skip the hidden blocks on the way to the DOM
+— a *rendering* rule standing in for an *access* rule. Anything an admin had hidden
+was one `curl` away, content and all: next month's prices, a promotion with a date
+on it, a section pulled because it was wrong. `publicSnapshot()` leaves them out at
+the query, along with the children of hidden sections. The Viewer's own filter
+stays where it is; that page runs unattended on a TV and a payload it did not
+expect must not be the thing between a customer and a price list.
+
+**#24 and #23 — the background address.** The rules lived near the admin panel and
+nowhere else, so the API had none of them. `bg_val` is written into `displays` by a
+publish and read back by the Viewer as `background-image: url('…')`, which makes an
+unvalidated colour field an address every Screen in the building fetches on every
+render. It did not even need an `image` background to reach: publish a "colour" of
+`https://elsewhere/x.png`, then publish `image` with no file, and the `keep-image`
+arm promotes the stored string to the image path. The rules moved onto `Background`
+itself, which is the thing that knows what a background is.
+
+That `keep-image` arm is also #23 — choosing Image on a Display that has never had
+one leaves `url('#1a1a2e')`, which loads nothing and takes the sign near black. It
+is the same two lines as #24's hole, so it was closed with it rather than left as a
+known defect in code being rewritten. **#23 was not in the batch that was asked
+for**; it is marked Done in `reviewed-decisions.md` and named here rather than
+folded in quietly.
+
+The check asks about the *intent*, and for `keep-image` about the value already
+stored — never about a stored value the intent is going to replace. A Display
+sitting on a bad value from before these rules can still be published to; it just
+cannot be switched onto it. Anything else would have locked an admin out of a sign
+because of a row written years ago.
+
+**#35 — a collision was a timeout.** InnoDB waits `innodb_lock_wait_timeout`
+seconds for a row lock and that defaults to **50**; PHP's `max_execution_time`
+defaults to **30**. So the second of two publishes to one Display was never told
+anything — it was killed mid-wait, with the `Content-Type` header already promising
+JSON, the transaction left for the connection's teardown, and "Network error." in
+the Builder for a publish whose fate nobody could determine. Five seconds now, set
+per session before the transaction opens, and 1205/1213 caught and turned into a
+sentence that says the true thing: try again in a moment.
+
+The detector is engine-neutral and message-based, which is #11's rule rather than a
+preference: PDO puts the *SQLSTATE* in `getCode()` and leaves 1205 in the message,
+and a check gated on a MySQL-only number is a check the SQLite leg can never reach,
+so nothing ever runs it.
+
+**The deliberate breakages the tests catch.** Verified by injection, not assumed:
+
+- Removing the shortened lock wait leaves the collision check *passing* — PHP CLI
+  has no time limit, so the second publish still eventually gets 1205 and still
+  comes back `busy`. What fails is the assertion that it gave up in **seconds**,
+  which waited the full 50. That timing assertion is the load-bearing one and the
+  only thing standing between #35 and a check that cannot fail.
+- The collision test needs two database sessions and is therefore MySQL-only. A row
+  lock is only a row lock across connections: the same PDO handle re-entering its
+  own transaction waits for nothing, so a same-connection version would have been
+  a check that passes for the wrong reason. `secondConnectionToLatestTestDb()`
+  exists for this one test and says so.
+- Two pre-existing checks changed from `failed` to `invalid` — the hostile-payload
+  pair from §4g. Their *surviving-layout* assertions are untouched, because the
+  point was never which kind came back, it was that two DELETEs did not run.
+
+**Left standing, and named rather than skipped:**
+
+- **A `basic` account can still publish content at root level.** ADR-0005 says they
+  work inside sections, and refusing an unresolvable parent would enforce it — but
+  a Display with admin-made root-level content would then refuse that clerk's every
+  publish, because their Builder resubmits what it loaded. Distinguishing
+  "resubmitted existing root content" from "new root content" is not something the
+  payload supports. Considered and left; it needs a payload change, not a check.
+- **Colour *semantics* are not validated on the publish path**, only shape and
+  length. `font_color` is checked as a string within 50 bytes and no further,
+  because "an unreadable stored colour" is #41 and "the panel coerced a colour it
+  could not parse" is #21, both open. Doing half of either here would have made
+  them harder to do properly.
+- **`DisplayAdmin::cleanColor()` still coerces to `#1a1a2e`.** That is #21's
+  subject and was left alone deliberately, so the fix has one clean place to land.
 
 ---
 

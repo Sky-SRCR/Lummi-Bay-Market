@@ -288,7 +288,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_layout') {
         exit;
     }
 
-    $payload = $layouts->snapshot($resolution->display());
+    // publicSnapshot, not snapshot: this endpoint needs no sign-in, so whatever it
+    // returns is readable by anyone who knows a screen name tag. A hidden block is
+    // hidden from them too, content included (#25).
+    $payload = $layouts->publicSnapshot($resolution->display());
     $payload['status'] = 'success';
     echo json_encode($payload);
     exit;
@@ -393,7 +396,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
     } else {
         echo json_encode([
             'status'  => 'error',
-            'reason'  => $result->kind(),      // 'stale' | 'failed'
+            // 'stale' | 'locked' | 'invalid' | 'busy' | 'failed'
+            'reason'  => $result->kind(),
             'message' => $result->message(),
         ]);
     }

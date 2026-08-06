@@ -60,19 +60,19 @@ written down rather than remembered:
 | 20 | Deleting an account freed its number for the next person, leaving "last published by" naming a stranger. | Keep the username as text, and never reuse an account number — close accounts instead of deleting them. | **Done** | §4l |
 | 21 | The admin panel coerced values it could not parse and reported success — an unreadable colour, an account id that isn't one. | Refuse, and say so. | Open | — |
 | 22 | Turning off a Display, suspending an account, or renaming a tag each left the edit lock behind, and never re-checked whether the holder may still sign in. | Free the lock when reach changes, never honour a lock whose holder cannot sign in, and tell the person. A rename tells them but keeps their lock. | **Done** | §4t |
-| 23 | Choosing "Image" for a background when no image is stored leaves a colour where a filename goes — the sign goes near-black. | Refuse the change. | Open | — |
-| 24 | The background address was validated in the admin panel but not in the API, so a publish could point every screen at any host. | Validate it in the module. | Open | — |
-| 25 | The public feed served blocks an admin had deliberately hidden, content and all. | Leave them out. | Open | — |
+| 23 | Choosing "Image" for a background when no image is stored leaves a colour where a filename goes — the sign goes near-black. | Refuse the change. | **Done** — closed with #24: it is the same `keep-image` arm. Not in the batch asked for; see §4v. | §4v |
+| 24 | The background address was validated in the admin panel but not in the API, so a publish could point every screen at any host. | Validate it in the module. | **Done** | §4v |
+| 25 | The public feed served blocks an admin had deliberately hidden, content and all. | Leave them out. | **Done** | §4v |
 | 26 | A reply that failed to encode sent back a zero-length success, and the sign kept its old layout forever with no notice. | Send a real error, and let the sign notice. | Open | — |
 | 27 | `?display[]=x` became the tag "array" and printed a warning above the document. | Treat it as no sign named. | Open | — |
 | 28 | Missing, unknown and switched-off signs all answered "200 OK", and nothing anywhere set caching rules. | Real error codes, and stop caching. | Open | — |
-| 29 | Publish accepted any block type, so a basic account could insert top-level content. | Accept only known types and refuse the rest. | Open | — |
-| 30 | Wrong-shaped and absurd values were coerced and written rather than refused. | Refuse the publish. | Open | — |
-| 31 | Two blocks sharing a temporary id silently reparented one of them into the wrong section. | Refuse the publish. | Open | — |
-| 32 | Line height was stored with a thousands separator, so some values could not be read back. *(First framed as a prices problem. It never touched prices — no sign has ever shown a stray comma.)* | Clamp it to 0.5–5 and store it plain. | Open | — |
+| 29 | Publish accepted any block type, so a basic account could insert top-level content. | Accept only known types and refuse the rest. | **Done** | §4v |
+| 30 | Wrong-shaped and absurd values were coerced and written rather than refused. | Refuse the publish. | **Done** | §4v |
+| 31 | Two blocks sharing a temporary id silently reparented one of them into the wrong section. | Refuse the publish. | **Done** | §4v |
+| 32 | Line height was stored with a thousands separator, so some values could not be read back. *(First framed as a prices problem. It never touched prices — no sign has ever shown a stray comma.)* | Clamp it to 0.5–5 and store it plain. | **Done** | §4v |
 | 33 | An account with no signs assigned could still write the shared asset library and upload files. | Nothing until it has a sign. | Open | — |
 | 34 | A file bigger than the server's real limit was reported as a security problem. | Detect it and say so plainly. | **Done** | §4n |
-| 35 | A publish that collided with another died as a PHP timeout before it could reach its own clean message. | Give up on the collision sooner, and report it properly. | Open | — |
+| 35 | A publish that collided with another died as a PHP timeout before it could reach its own clean message. | Give up on the collision sooner, and report it properly. | **Done** | §4v |
 | 36 | The branding file was written in place with no locking, so a short write took the whole app down. | Write a temporary file, then swap it in. | Open | — |
 | 37 | The asset editor read the file type from a hidden form field instead of the stored record. | Read it from the record. | Open | — |
 | 38 | Two login problems: a secure-cookie setting causes an invisible sign-in loop on plain HTTP, and the suspended-account message tells a guesser the password was right. | Fix both. | Open | — |
@@ -91,12 +91,27 @@ written down rather than remembered:
 
 ## Where this stands
 
-**24 done, 1 part done (#49), 26 open.**
+**32 done, 1 part done (#49), 18 open.**
 
 #48 and #51 were taken together because they are the same subject — what the tests
 run against, and whether anybody runs them. Both are Done; the version question
 inside #51 was answered rather than worked around, and the answer was that the
 premise was wrong.
+
+**#24, #25, #29, #30, #31, #32 and #35** were then taken as one batch, for the same
+reason: they are all one subject, which is that the publish path coerced every value
+it was given and refused none of them. They are written up together in §4v.
+
+**#23 was not in that batch and is Done anyway.** Its fix is literally the same arm
+of the same `switch` as #24's — choosing "Image" with nothing stored, and a poisoned
+colour being promoted to an image path, are the same two lines. Closing one and
+leaving the other would have meant knowingly shipping a near-black sign in code that
+had just been rewritten. Recorded here rather than folded in quietly.
+
+Two things #30 deliberately did **not** cover, so the items that own them stay
+clean: colour *semantics* on the publish path (that is #41), and
+`DisplayAdmin::cleanColor()` still coercing an unreadable colour to `#1a1a2e`
+(that is #21). Both are named in §4v.
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

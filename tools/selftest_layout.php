@@ -891,12 +891,18 @@ section('A hostile publish payload is a refusal, never an escaping error');
 // TypeError — which extends Error, not Exception. `catch (Exception)` let it escape
 // *after* both DELETEs had run: no rollback of the module's own, no result object,
 // and the Builder reported "Network error." for a rejected publish.
+//
+// Both of these now stop at LayoutRules instead, before the transaction opens, so
+// the refusal is 'invalid' rather than 'failed' and it names the block. The
+// surviving-layout checks are the ones that matter and they are unchanged: the
+// point was never which kind came back, it was that two DELETEs did not run.
 $victim = $store->forId($victim->id());
 $res = $layouts->publish($victim, new PublishRequest(
     [['type' => 'text', 'manual_content' => ['not' => 'a string'], 'temp_id' => 't1']],
     Background::unchanged(), 1, true, $victim->layoutStamp()
 ));
-checkSame('failed', $res->kind(), 'manual_content as an object is a failed result, not a fatal');
+checkSame('invalid', $res->kind(), 'manual_content as an object is a refusal, not a fatal');
+checkMentions($res->message(), 'Block 1 (text)', 'and the refusal says which block');
 checkSame(2, count(elementsOf($pdo, $victim->id())), 'and the layout it would have replaced survives');
 checkSame(false, $pdo->inTransaction(), 'with no transaction left open behind it');
 
@@ -905,7 +911,7 @@ $res = $layouts->publish($victim, new PublishRequest(
     [['type' => 'section', 'temp_id' => ['an', 'array']]],
     Background::unchanged(), 1, true, $victim->layoutStamp()
 ));
-checkSame('failed', $res->kind(), 'an array where a temp_id belongs is refused the same way');
+checkSame('invalid', $res->kind(), 'an array where a temp_id belongs is refused the same way');
 checkSame(2, count(elementsOf($pdo, $victim->id())), 'and again nothing was lost');
 
 // ─────────────────────────────────────────────────────────────
@@ -3219,6 +3225,497 @@ check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
 // ─────────────────────────────────────────────────────────────
+section('What a publishable layout is, as a pure function (#29, #30, #31, #32)');
+
+// LayoutRules has no database, no Display and no transaction in it, which is the
+// whole reason it was pulled out of the publish path: the question "can this
+// payload be stored faithfully?" can then be asked several hundred times in a
+// millisecond, instead of once or twice through a transaction that has to be set
+// up and torn down. Everything in this section is that function alone. The section
+// after it proves the store actually asks it.
+
+/** A layout that is fine, as the baseline every case below varies from. */
+function goodLayout()
+{
+    return [
+        ['type' => 'section', 'temp_id' => 's1', 'x_pos' => 10, 'y_pos' => 20,
+         'width' => 600, 'height' => 380],
+        ['type' => 'text', 'block_subtype' => 'price', 'parent_temp_id' => 's1',
+         'manual_content' => 'Sockeye 18.99', 'x_pos' => 5, 'y_pos' => 5,
+         'width' => 160, 'height' => 60, 'font_size' => 48, 'line_height' => 1.4],
+    ];
+}
+
+/** The baseline with one field of one block replaced. */
+function layoutWithField($index, $key, $value)
+{
+    $elements = goodLayout();
+    $elements[$index][$key] = $value;
+    return $elements;
+}
+
+/** Shorthand: is this payload refused? */
+function refuses(array $elements)
+{
+    return !LayoutRules::check($elements)->isOk();
+}
+
+check(LayoutRules::check(goodLayout())->isOk(), 'an ordinary layout is publishable');
+check(LayoutRules::check([])->isOk(), 'and so is an empty one — that is somebody who deleted everything');
+check(LayoutRules::check([[]])->isOk(),
+      'a block with no fields at all is fine: every one of them has an insert default');
+
+// ---- The type vocabulary (#29) --------------------------------------------------
+// `$el['type'] ?? 'text'` accepted anything at all. On a MySQL that is not in strict
+// mode an unknown value is stored as '' — a row that renders as nothing, cannot be
+// selected by type, and is invisible in the Work Area's type filter.
+foreach (LayoutRules::ELEMENT_TYPES as $type) {
+    check(LayoutRules::check([['type' => $type]])->isOk(),
+          'a block of type ' . $type . ' is accepted');
+}
+check(refuses([['type' => 'script']]), 'a type that is not one of the seven is refused');
+check(refuses([['type' => 'Section']]), 'and so is one that differs only in case');
+check(refuses([['type' => 'section ']]), 'or by a trailing space');
+check(refuses([['type' => '']]), 'or is empty');
+check(refuses([['type' => ['section']]]), 'or is not even a string');
+checkMentions(LayoutRules::check([['type' => 'script']])->message(), 'carousel',
+              'and the refusal lists the types that would have worked');
+
+// A casing variant is the one that mattered most: `insertContent` skips a section
+// with `!==`, so 'Section' slipped past the skip and was inserted as content — at
+// top level, by a basic account, which is the rule ADR-0005 exists to hold.
+check(refuses([['type' => 'SECTION', 'parent_temp_id' => 's1']]),
+      'a mis-cased section cannot sneak past the skip that keeps basic accounts out of the layout');
+
+foreach (LayoutRules::BLOCK_SUBTYPES as $subtype) {
+    check(LayoutRules::check([['type' => 'text', 'block_subtype' => $subtype]])->isOk(),
+          'the ' . $subtype . ' block style is accepted');
+}
+check(refuses([['type' => 'text', 'block_subtype' => 'headline']]),
+      'a block style that is not one of the seven is refused');
+check(LayoutRules::check([['type' => 'section', 'block_subtype' => 'nonsense']])->isOk(),
+      'but a section is not asked about one — it has no block style to store');
+
+// ---- Two sections, one handle (#31) ---------------------------------------------
+// The temp-id map is a plain array, so the second write to a key replaced the
+// first. Every block belonging to the first section was then inserted into the
+// second: a whole column moved across the sign, silently, reporting success.
+$dup = [
+    ['type' => 'section', 'temp_id' => 'same'],
+    ['type' => 'section', 'temp_id' => 'same'],
+    ['type' => 'text', 'parent_temp_id' => 'same', 'manual_content' => 'Halibut 24.99'],
+];
+check(refuses($dup), 'two sections sharing a temporary id are refused');
+checkMentions(LayoutRules::check($dup)->message(), 'shares its temporary id',
+              'and the refusal says so in those words');
+checkMentions(LayoutRules::check($dup)->message(), 'block 1',
+              'naming the other block it collides with');
+check(LayoutRules::check([
+        ['type' => 'section', 'temp_id' => 'a'],
+        ['type' => 'section', 'temp_id' => 'b'],
+      ])->isOk(), 'while two sections with their own handles are fine');
+check(LayoutRules::check([
+        ['type' => 'section', 'temp_id' => 'a'],
+        ['type' => 'text', 'temp_id' => 'a'],
+      ])->isOk(),
+      'and a content block reusing a section handle is not a collision — only sections are mapped');
+
+// PHP's `empty()` counts the string "0", so the store skips a temp_id of '0'
+// entirely and nothing is ever parented by it. The check mirrors that rather than
+// inventing a rule the store does not apply: two of them collide with nothing,
+// because neither one is a handle.
+check(LayoutRules::check([
+        ['type' => 'section', 'temp_id' => '0'],
+        ['type' => 'section', 'temp_id' => '0'],
+      ])->isOk(), 'two sections whose handle is "0" are not a collision — the store maps neither');
+
+check(refuses([['type' => 'section', 'temp_id' => ['an', 'array']]]),
+      'a temporary id that cannot be an array key is refused');
+check(refuses([['type' => 'text', 'parent_temp_id' => ['an', 'array']]]),
+      'and so is a parent named by one');
+check(LayoutRules::check([['type' => 'section', 'temp_id' => 7]])->isOk(),
+      'an integer handle is usable and accepted');
+check(refuses([['type' => 'section', 'temp_id' => str_repeat('x', 200)]]),
+      'a handle longer than any client sends is refused');
+
+// ---- Wrong-shaped and absurd numbers (#30) --------------------------------------
+// Every one of these used to go through `intval()`, which has an answer for
+// everything and reports none of them.
+check(refuses(layoutWithField(0, 'x_pos', 'abc')), 'a position that is not a number is refused');
+check(refuses(layoutWithField(0, 'x_pos', ['x'])),
+      'and so is one that is a list — `intval` on an array is 1, silently');
+check(refuses(layoutWithField(0, 'x_pos', true)), 'and a true/false is not a coordinate');
+check(LayoutRules::check(layoutWithField(0, 'x_pos', '250'))->isOk(),
+      'a numeric string is a number and is accepted');
+check(LayoutRules::check(layoutWithField(0, 'x_pos', 250.0))->isOk(),
+      'so is a float that is a whole number — JSON has no integer type');
+check(refuses(layoutWithField(0, 'x_pos', 250.5)),
+      'but a fractional position is not, because the column cannot hold it');
+check(LayoutRules::check(layoutWithField(0, 'x_pos', -500))->isOk(),
+      'a negative position is fine — a block may hang off the edge of the canvas');
+check(refuses(layoutWithField(0, 'x_pos', 999999)), 'an absurd position is refused');
+check(refuses(layoutWithField(0, 'y_pos', -999999)), 'in both directions');
+check(LayoutRules::check(layoutWithField(0, 'x_pos', LayoutRules::POS_MAX))->isOk(),
+      'the bound itself is inside');
+check(refuses(layoutWithField(0, 'x_pos', LayoutRules::POS_MAX + 1)), 'and one past it is not');
+
+check(refuses(layoutWithField(0, 'width', 0)), 'a width of nothing is refused');
+check(refuses(layoutWithField(0, 'width', -10)), 'and a negative one');
+check(refuses(layoutWithField(0, 'height', 999999)), 'and a height no screen could show');
+check(refuses(layoutWithField(1, 'font_size', 0)), 'text of no size is refused');
+check(refuses(layoutWithField(1, 'font_size', 100000)), 'and text taller than any sign');
+check(refuses(layoutWithField(0, 'z_index', 0)),
+      'a layer below the floor is refused rather than quietly raised to 1');
+check(refuses(layoutWithField(0, 'sort_order', -1)), 'and so is a negative order');
+checkMentions(LayoutRules::check(layoutWithField(0, 'width', 999999))->message(), 'outside',
+              'an out-of-range value is reported as out of range, not as the wrong shape');
+
+// The library link is the one where a coerced value points at real data: `intval`
+// on an array is 1, so a wrong-shaped asset_id aimed the block at library row 1 —
+// whatever that happens to be on this installation.
+check(refuses(layoutWithField(1, 'asset_id', ['x'])),
+      'a library link that is a list is refused, not read as item 1');
+check(refuses(layoutWithField(1, 'asset_id', 'seventeen')), 'nor is a word a library item');
+check(LayoutRules::check(layoutWithField(1, 'asset_id', '17'))->isOk(), 'while "17" is');
+check(LayoutRules::check(layoutWithField(1, 'asset_id', ''))->isOk(),
+      'and an empty one means no link at all, which is how the Builder sends it');
+
+check(refuses(layoutWithField(1, 'locked', ['yes'])), 'a locked flag that is a list is refused');
+check(LayoutRules::check(layoutWithField(1, 'locked', true))->isOk(),
+      'while a real true/false is exactly what a flag is');
+check(LayoutRules::check(layoutWithField(1, 'hidden', 1))->isOk(), 'and so is 1');
+
+// ---- Stored strings and the widths of their columns (#30) -----------------------
+// Past the column width, a MySQL in strict mode fails the whole publish with
+// "Publish failed" and one that is not truncates and says nothing.
+check(refuses(layoutWithField(1, 'font_family', str_repeat('A', 101))),
+      'a font name past the column width is refused');
+check(LayoutRules::check(layoutWithField(1, 'font_family', str_repeat('A', 100)))->isOk(),
+      'and one exactly at it is not');
+check(refuses(layoutWithField(1, 'text_align', str_repeat('x', 17))), 'so is an alignment');
+check(refuses(layoutWithField(1, 'font_color', str_repeat('x', 51))), 'and a colour');
+check(refuses(layoutWithField(0, 'section_bg', str_repeat('p', 256))),
+      'and a section background path');
+check(refuses(layoutWithField(1, 'manual_content', str_repeat('t', 65536))),
+      'content past what TEXT holds is refused rather than cut in half');
+check(refuses(layoutWithField(1, 'font_family', ['Arial'])), 'a font name that is a list is refused');
+check(refuses(layoutWithField(1, 'manual_content', ['not' => 'a string'])),
+      'and content that is an object — the payload that used to be a TypeError');
+checkMentions(LayoutRules::check(layoutWithField(1, 'font_family', str_repeat('A', 101)))->message(),
+              '101 characters', 'a too-long value is told how long it was');
+
+check(refuses(['not a block']), 'a payload entry that is not a block at all is refused');
+check(refuses([['type' => 'text'], 'and this one']), 'even when the others are fine');
+
+// ---- Line height (#32) ------------------------------------------------------------
+check(refuses(layoutWithField(1, 'line_height', 'tall')),
+      'a line height that is not a number is refused');
+check(LayoutRules::check(layoutWithField(1, 'line_height', 2000))->isOk(),
+      'but an absurd *number* is accepted here, because the decision was to clamp it');
+
+checkSame('1.40', LayoutRules::lineHeight(1.4), 'an ordinary line height is stored as written');
+checkSame('5.00', LayoutRules::lineHeight(2000), 'an absurd one is clamped to the top of the range');
+checkSame('0.50', LayoutRules::lineHeight(0.01), 'and a tiny one to the bottom');
+checkSame('1.40', LayoutRules::lineHeight('nonsense'), 'something that is not a number becomes the default');
+checkSame('1.40', LayoutRules::lineHeight(null), 'and so does nothing at all');
+checkSame('1.46', LayoutRules::lineHeight(1.456), 'two decimal places, which is what the column holds');
+checkSame('2.50', LayoutRules::lineHeight('2.5'), 'a numeric string is read as the number it is');
+
+// The actual defect: `number_format($v, 2)` uses a comma for thousands, so a line
+// height of 2000 was handed to a DECIMAL(4,2) column as the string "2,000.00".
+check(strpos(LayoutRules::lineHeight(2000), ',') === false,
+      'and no clamped value can carry a thousands separator into the column');
+check(strpos(LayoutRules::lineHeight(999999), ',') === false, 'however large the number was');
+// Not clamped to the top of the range but sent to the default, deliberately: an
+// infinity is not a large line height somebody typed, it is a value that arrived
+// through arithmetic nobody meant to do. JSON cannot carry either of these, so both
+// are here as a statement about what the clamp does with a non-number rather than
+// about anything the Builder can send.
+checkSame('1.40', LayoutRules::lineHeight(INF), 'an infinity is not a line height');
+checkSame('1.40', LayoutRules::lineHeight(NAN), 'and neither is a NaN');
+
+// ---- What the refusal says --------------------------------------------------------
+$many = LayoutRules::check([
+    ['type' => 'text', 'x_pos' => 'abc'],
+    ['type' => 'text', 'width' => 0],
+    ['type' => 'nope'],
+]);
+checkSame(3, count($many->problems()), 'every problem is found, not just the first');
+checkMentions($many->message(), 'Block 1', 'the message leads with the first one');
+checkMentions($many->message(), '2 other problems', 'and says how many others there are');
+checkMentions($many->message(), 'nothing was saved', 'it says nothing was saved');
+checkMentions($many->message(), 'still on screen', 'and that the work is still there');
+checkSame('', LayoutCheck::ok()->message(), 'while a layout with nothing wrong has nothing to say');
+
+$one = LayoutRules::check([['type' => 'nope'], ['type' => 'text', 'width' => 0]]);
+checkSame(2, count($one->problems()), 'two problems are two problems');
+checkMentions($one->message(), '1 other problem', 'and the second is reported in the singular');
+check(strpos(LayoutRules::check([['type' => 'nope']])->message(), 'other problem') === false,
+      'and a single problem mentions no others at all');
+
+// A JSON object rather than a list decodes to string keys, and "block 3" would then
+// be a number nobody could find on their canvas.
+$named = LayoutRules::check(['header' => ['type' => 'nope']]);
+checkMentions($named->message(), '"header"', 'a named entry is reported by its name, not by a position');
+
+// ---- One vocabulary, not two --------------------------------------------------------
+// The list the publish accepts and the list the column stores are now generated from
+// the same array. These pin the generated strings to what schema.php spelled out by
+// hand before, so a rebuild cannot quietly widen the ENUM by editing one of them.
+checkSame("enum('section','text','image','video','carousel','marquee','table')",
+          SCHEMA_ELEMENT_TYPE_ENUM, 'the element ENUM is exactly what it always was');
+checkSame("enum('free','section_header','item_title','item_title_2','price','price_2','description')",
+          SCHEMA_BLOCK_SUBTYPE_ENUM, 'and so is the block-style ENUM');
+checkMentions(file_get_contents(__DIR__ . '/../schema.sql'),
+              "ENUM('section','text','image','video','carousel','marquee','table')",
+              'and schema.sql declares the same seven types');
+
+// ─────────────────────────────────────────────────────────────
+section('The store refuses a layout it cannot store, before deleting the old one');
+
+$vPdo     = newTestDb();
+$vStore   = newTestDisplayStore($vPdo);
+$vLayouts = newTestLayoutStore($vPdo);
+$vSign    = makeTestDisplay($vPdo, 'valid', 'Validation');
+
+check($vLayouts->publish($vSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), 1, true, $vSign->layoutStamp()))->isOk(),
+      'a good layout publishes');
+checkSame(2, count(elementsOf($vPdo, $vSign->id())), 'and lands as two elements');
+
+/** Try to publish this payload over the layout that is already there. */
+function refusedPublish(LayoutStore $layouts, DisplayStore $store, Display $sign, array $elements,
+                        $isAdmin = true, Background $bg = null)
+{
+    $fresh = $store->forId($sign->id());
+    return $layouts->publish($fresh, new PublishRequest(
+        $elements, $bg ?: Background::unchanged(), 1, $isAdmin, $fresh->layoutStamp()));
+}
+
+$res = refusedPublish($vLayouts, $vStore, $vSign, layoutWithField(0, 'type', 'script'));
+checkSame('invalid', $res->kind(), 'an unknown block type is refused as invalid, not as failed');
+checkSame(2, count(elementsOf($vPdo, $vSign->id())), 'and the published layout is untouched');
+checkSame(false, $vPdo->inTransaction(), 'with no transaction opened at all');
+
+$res = refusedPublish($vLayouts, $vStore, $vSign, [
+    ['type' => 'section', 'temp_id' => 'same'],
+    ['type' => 'section', 'temp_id' => 'same'],
+]);
+checkSame('invalid', $res->kind(), 'so are two sections sharing a handle');
+checkSame(2, count(elementsOf($vPdo, $vSign->id())), 'and again nothing was deleted');
+
+$res = refusedPublish($vLayouts, $vStore, $vSign, layoutWithField(0, 'width', 999999));
+checkSame('invalid', $res->kind(), 'and an absurd width');
+checkSame(2, count(elementsOf($vPdo, $vSign->id())), 'still nothing deleted');
+
+// A basic account's publish is checked by the same rules. It has to be: the delete
+// it performs is narrower, but it is still a delete with no undo behind it.
+$res = refusedPublish($vLayouts, $vStore, $vSign, layoutWithField(1, 'type', 'script'), false);
+checkSame('invalid', $res->kind(), "a basic account's publish is checked the same way");
+checkSame(2, count(elementsOf($vPdo, $vSign->id())), 'and its narrower delete did not run either');
+
+// The stamp is untouched by a refusal, so the Builder that sent it can fix the block
+// and publish again without being told it is now stale as well.
+$vSign = $vStore->forId($vSign->id());
+checkSame('1', $vSign->layoutStamp(), 'a refused publish does not advance the stamp');
+check($vLayouts->publish($vSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), 1, true, $vSign->layoutStamp()))->isOk(),
+      'so the corrected layout publishes on the next try');
+
+// And the clamp reaches the column, which is the half a pure function cannot prove.
+$vSign = $vStore->forId($vSign->id());
+check($vLayouts->publish($vSign, new PublishRequest(
+        layoutWithField(1, 'line_height', 2000), Background::unchanged(), 1, true,
+        $vSign->layoutStamp()))->isOk(),
+      'a layout with an absurd line height publishes, clamped');
+$stored = elementsOf($vPdo, $vSign->id());
+$content = null;
+foreach ($stored as $row) { if ($row['type'] === 'text') { $content = $row; } }
+checkSame('5.00', number_format(floatval($content['line_height']), 2),
+          'and the stored line height is the top of the range, not a truncated 2000');
+
+// ─────────────────────────────────────────────────────────────
+section('A hidden block is not in what a Screen is sent (#25)');
+
+// get_layout needs no sign-in — a TV in a shop window cannot log in — so whatever
+// this returns is readable by anyone who knows a screen name tag. It used to return
+// the whole layout and let the Viewer's JavaScript skip the hidden blocks on the way
+// to the DOM: a rendering rule standing in for an access rule.
+$hPdo     = newTestDb();
+$hStore   = newTestDisplayStore($hPdo);
+$hLayouts = newTestLayoutStore($hPdo);
+$hSign    = makeTestDisplay($hPdo, 'window', 'Window Board');
+
+check($hLayouts->publish($hSign, new PublishRequest([
+        ['type' => 'section', 'temp_id' => 'open',   'x_pos' => 0,   'y_pos' => 0,
+         'width' => 600, 'height' => 400],
+        ['type' => 'section', 'temp_id' => 'closed', 'x_pos' => 620, 'y_pos' => 0,
+         'width' => 600, 'height' => 400, 'hidden' => 1],
+        ['type' => 'text', 'parent_temp_id' => 'open',   'manual_content' => 'Sockeye 18.99'],
+        ['type' => 'text', 'parent_temp_id' => 'open',   'manual_content' => 'NEXT MONTH 24.99',
+         'hidden' => 1],
+        ['type' => 'text', 'parent_temp_id' => 'closed', 'manual_content' => 'Closed for the season'],
+        ['type' => 'text', 'manual_content' => 'Open daily'],
+      ], Background::unchanged(), 1, true, $hSign->layoutStamp()))->isOk(),
+      'a layout with hidden blocks publishes');
+
+$hSign  = $hStore->forId($hSign->id());
+$editor = $hLayouts->snapshot($hSign);
+$public = $hLayouts->publicSnapshot($hSign);
+
+checkSame(6, count($editor['elements']), 'the Builder is sent every block, hidden ones included');
+checkSame(3, count($public['elements']), 'a Screen is sent only the three that are on the sign');
+
+$publicJson = json_encode($public);
+check(strpos($publicJson, 'NEXT MONTH') === false,
+      'next month\'s price is not in the public payload at all');
+check(strpos($publicJson, 'Closed for the season') === false,
+      'nor is the content inside a hidden section');
+checkMentions($publicJson, 'Sockeye 18.99', 'while what is actually on the sign still is');
+checkMentions($publicJson, 'Open daily', 'including a block at root level');
+checkMentions(json_encode($editor), 'NEXT MONTH',
+              'and the Builder still receives it, or nothing could ever unhide it');
+
+// The Display's own facts survive an empty layout: a Screen showing nothing must
+// show a blank sign of the right size and colour, not an error.
+$hBlank = makeTestDisplay($hPdo, 'allhidden', 'Everything Hidden');
+$hLayouts->publish($hBlank, new PublishRequest([
+    ['type' => 'text', 'manual_content' => 'Not yet', 'hidden' => 1],
+], Background::unchanged(), 1, true, $hBlank->layoutStamp()));
+$hBlank = $hStore->forId($hBlank->id());
+$blankPublic = $hLayouts->publicSnapshot($hBlank);
+checkSame(0, count($blankPublic['elements']), 'a Display whose every block is hidden sends none');
+checkSame('allhidden', $blankPublic['display']['tag'], 'but still says which Display it is');
+check(isset($blankPublic['block_styles']), 'and still carries the shared typography');
+checkSame($hBlank->layoutStamp(), $blankPublic['layout_stamp'],
+          'and the stamp, which is what the poll compares');
+
+// Hiding on one Display says nothing about another.
+checkSame(3, count($hLayouts->publicSnapshot($hStore->forId($hSign->id()))['elements']),
+          'and hiding everything on one sign leaves the other sign alone');
+
+// ─────────────────────────────────────────────────────────────
+section('A background address is checked by the module, not only by the panel (#23, #24)');
+
+// The rules lived in admin_panel.php's neighbourhood and nowhere else, so a publish
+// — which writes the same column — had none of them. `bg_val` is read back by the
+// Viewer as `background-image: url('…')`, which makes an unvalidated colour field an
+// address every Screen in the building fetches on every render.
+checkSame(null, Background::color('#1a1a2e')->problemWith('#000000'),
+          'a six-digit hex colour is a colour');
+checkSame(null, Background::color('#ABCDEF')->problemWith('#000000'), 'in either case');
+check(Background::color('https://elsewhere.example/tracker.png')->problemWith('#000000') !== null,
+      'a URL is not a colour, however much the column would have accepted it');
+check(Background::color('red')->problemWith('#000000') !== null, 'nor is a colour name');
+check(Background::color('#fff')->problemWith('#000000') !== null, 'nor a three-digit hex');
+check(Background::color('')->problemWith('#000000') !== null, 'nor an empty field');
+checkMentions(Background::color('red')->problemWith('#000000'), 'Nothing was saved',
+              'and the refusal says nothing was saved');
+
+checkSame(null, Background::image('uploads/bg_1234.jpg')->problemWith('#000000'),
+          'an upload this server made is a background image');
+checkSame(null, Background::image('uploads/bg_68a.1b2c3d.png')->problemWith(''),
+          'including the dotted names uniqid produces');
+check(Background::image('https://elsewhere.example/x.png')->problemWith('') !== null,
+      'a full URL is refused');
+check(Background::image('//elsewhere.example/x.png')->problemWith('') !== null,
+      'and a protocol-relative one');
+check(Background::image('/etc/passwd')->problemWith('') !== null, 'and an absolute path');
+check(Background::image('uploads/../../../etc/passwd')->problemWith('') !== null,
+      'and one that climbs out of the uploads directory');
+check(Background::image('uploads\\evil.png')->problemWith('') !== null, 'and a backslash path');
+check(Background::image('uploads/')->problemWith('') !== null, 'and the directory itself');
+check(Background::image('')->problemWith('') !== null, 'and nothing at all');
+check(Background::image('uploads/' . str_repeat('x', 300) . '.png')->problemWith('') !== null,
+      'and a name longer than the column');
+
+// keep-image is the arm that makes the colour hole reachable without ever sending an
+// image: publish a "colour" of https://…, then publish image with no file, and this
+// promotes the stored string to the image path. It is also #23 — choosing Image on a
+// Display that has never had one leaves `url('#1a1a2e')`, which loads nothing and
+// takes the sign near black.
+checkSame(null, Background::keepImage()->problemWith('uploads/bg_1234.jpg'),
+          'switching back to a stored image is fine when there is one');
+check(Background::keepImage()->problemWith('#1a1a2e') !== null,
+      'and refused when what is stored is a colour');
+check(Background::keepImage()->problemWith('') !== null, 'or nothing');
+checkMentions(Background::keepImage()->problemWith('#1a1a2e'), 'no background image stored',
+              'and says which of the two things went wrong');
+
+checkSame(null, Background::unchanged()->problemWith('anything at all'),
+          'and leaving the background alone is never refused, whatever is stored');
+
+// ---- Through a real publish ------------------------------------------------------
+$bPdo     = newTestDb();
+$bStore   = newTestDisplayStore($bPdo);
+$bLayouts = newTestLayoutStore($bPdo);
+$bSign    = makeTestDisplay($bPdo, 'poison', 'Background');
+$bLayouts->publish($bSign, new PublishRequest(
+    goodLayout(), Background::unchanged(), 1, true, $bSign->layoutStamp()));
+
+$res = refusedPublish($bLayouts, $bStore, $bSign, goodLayout(), true,
+                      Background::color('https://elsewhere.example/tracker.png'));
+checkSame('invalid', $res->kind(), 'a publish carrying a URL as its colour is refused');
+checkSame(2, count(elementsOf($bPdo, $bSign->id())), 'and the layout it came with is not saved either');
+checkSame('#1a1a2e', $bStore->forId($bSign->id())->backgroundValue(),
+          'and the stored background is exactly what it was');
+
+$res = refusedPublish($bLayouts, $bStore, $bSign, goodLayout(), true, Background::keepImage());
+checkSame('invalid', $res->kind(),
+          'switching a colour-backed Display to Image with no file is refused (#23)');
+checkSame('color', $bStore->forId($bSign->id())->backgroundType(),
+          'and it is still on a colour, not on url(#1a1a2e)');
+
+$bSign = $bStore->forId($bSign->id());
+check($bLayouts->publish($bSign, new PublishRequest(
+        goodLayout(), Background::color('#2c3e50'), 1, true, $bSign->layoutStamp()))->isOk(),
+      'while a real colour publishes');
+checkSame('#2c3e50', $bStore->forId($bSign->id())->backgroundValue(), 'and is stored');
+
+// A basic account never sends a background at all, so it is never asked. Worth
+// pinning: the check is inside the isAdmin branch, and moving it out would refuse
+// every basic publish on a Display whose stored value predates these rules.
+//
+// The admin's lock has to go first. A publish keeps its publisher's lock alive
+// (ADR-0007), so without this the clerk is refused for a reason that has nothing to
+// do with backgrounds — and the check would pass while proving something else.
+$bStore->releaseLock($bStore->forId($bSign->id()), 1);
+$bSign = $bStore->forId($bSign->id());
+check($bLayouts->publish($bSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), 2, false, $bSign->layoutStamp()))->isOk(),
+      "a basic account's publish is not held up by a background it cannot change");
+
+// ─────────────────────────────────────────────────────────────
+section('Two publishes colliding is a sentence, not a timeout (#35)');
+
+// InnoDB waits 50 seconds for a row lock and PHP gives up after 30, so the second of
+// two publishes to one Display was killed mid-wait: no result object, a truncated
+// body behind a Content-Type that had already promised JSON, and "Network error." in
+// the Builder for a publish whose fate nobody could tell.
+check(errorSaysLockWait('HY000', 'SQLSTATE[HY000]: General error: 1205 Lock wait timeout exceeded; try restarting transaction'),
+      'a MySQL lock wait timeout is recognised');
+check(errorSaysLockWait('40001', 'SQLSTATE[40001]: Serialization failure: 1213 Deadlock found when trying to get lock'),
+      'and a deadlock, which the person experiences identically');
+check(errorSaysLockWait('HY000', 'SQLSTATE[HY000]: General error: 5 database is locked'),
+      'and SQLite\'s version of the same thing');
+check(errorSaysLockWait('HY000', 'General error: 6 database table is locked'),
+      'in both of the spellings it uses');
+
+// The other half of #11's rule: a detector that says yes to everything is not a
+// detector, and this is the one that used to be a bare MySQL error number.
+check(!errorSaysLockWait('42S02', "Base table or view not found: 1146 Table 'x.displays' doesn't exist"),
+      'a missing table is not a lock wait');
+check(!errorSaysLockWait('HY000', 'SQLSTATE[HY000]: General error: 1364 Field \'email\' doesn\'t have a default value'),
+      'nor is a column with no default');
+check(!errorSaysLockWait('23000', 'Integrity constraint violation: 1062 Duplicate entry'),
+      'nor a duplicate key');
+check(!errorSaysLockWait('', ''), 'and nothing at all is not a lock wait');
+
+$wStore = newTestDisplayStore(newTestDb());
+checkSame(testIsMysql(), $wStore->limitPublishLockWait(),
+          'shortening the wait is something only the engine with row locks can do');
+
+// ─────────────────────────────────────────────────────────────
 // Everything above this line runs on both engines. What follows can only be asked
 // of a real MySQL database, and is skipped entirely on the SQLite default — which
 // is why reportChecks() below is given two numbers.
@@ -3291,6 +3788,59 @@ checkSame(1, intval($lockStore->lockLayoutRevision(loadTestDisplay($lockPdo, $lo
           'leaving the stamp advanced where the next transaction will read it');
 $lockPdo->rollBack();
 
+// ---- Two publishes colliding, for real (#35) --------------------------------------
+// The one check in this suite that needs two database sessions. A row lock is only a
+// row lock across connections — the same PDO handle re-entering its own transaction
+// waits for nothing — so nothing short of a second session can show what the second
+// publish does while the first is still holding the Display.
+
+/** The real store, giving up after a second instead of five. */
+class FastLockWaitStore extends DisplayStore
+{
+    public function limitPublishLockWait($seconds = 1)
+    {
+        return parent::limitPublishLockWait(1);
+    }
+}
+
+$colPdo     = newTestDb();
+$colStore   = new DisplayStore($colPdo);
+$colLayouts = new LayoutStore($colPdo, $colStore);
+$colSign    = makeTestDisplay($colPdo, 'collide', 'Collision');
+check($colLayouts->publish($colSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), 1, true, $colSign->layoutStamp()))->isOk(),
+      'a Display to collide on starts with a published layout');
+
+// A second session takes the Display's row and holds it, which is exactly what the
+// first of two simultaneous publishes is doing while the second arrives.
+$holder = secondConnectionToLatestTestDb();
+$holder->beginTransaction();
+$holder->prepare("SELECT layout_revision FROM displays WHERE id = ? FOR UPDATE")
+       ->execute([$colSign->id()]);
+
+$colSign     = $colStore->forId($colSign->id());
+$fastLayouts = new LayoutStore($colPdo, new FastLockWaitStore($colPdo));
+$startedAt   = microtime(true);
+$res = $fastLayouts->publish($colSign, new PublishRequest(
+    goodLayout(), Background::unchanged(), 1, true, $colSign->layoutStamp()));
+$waited = microtime(true) - $startedAt;
+
+checkSame('busy', $res->kind(), 'a publish that collides with another comes back as busy');
+check($waited < 15,
+      'having given up in seconds, rather than being killed by PHP part-way through the wait');
+checkMentions($res->message(), 'publish again',
+              'and it tells the person the one thing that is true here — try again');
+checkMentions($res->message(), 'still here', 'and that their work has not gone anywhere');
+checkSame(2, count(elementsOf($colPdo, $colSign->id())),
+          'the layout it collided with is untouched — the wait is before the first DELETE');
+checkSame(false, $colPdo->inTransaction(), 'and no transaction is left open behind it');
+
+$holder->rollBack();
+$colSign = $colStore->forId($colSign->id());
+check($colLayouts->publish($colSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), 1, true, $colSign->layoutStamp()))->isOk(),
+      'and once the other session lets go, the same publish succeeds');
+
 // ---- Changed rows are not affected rows ------------------------------------------
 // A divergence the audit recorded in a comment and could not check: MySQL reports
 // *changed* rows, so writing a password hash identical to the stored one updates
@@ -3310,4 +3860,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Two numbers because the MySQL run adds a section the SQLite one cannot ask for.
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
-reportChecks(testIsMysql() ? 842 : 827);
+reportChecks(testIsMysql() ? 1017 : 994);

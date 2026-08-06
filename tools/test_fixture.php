@@ -364,6 +364,36 @@ function newMysqlTestDb()
     return $pdo;
 }
 
+/**
+ * A *second* connection to the database `newMysqlTestDb()` most recently made.
+ *
+ * There is exactly one thing this exists for, and it cannot be faked: two publishes
+ * colliding on the same Display row (#35). A row lock is only a row lock across
+ * connections — the same PDO handle re-entering its own transaction waits for
+ * nothing — so proving that the second publish gives up cleanly rather than being
+ * killed by PHP's time limit needs a genuine second session.
+ *
+ * MySQL only, and it says so rather than returning something that looks usable:
+ * SQLite's fixture is `:memory:`, which no second connection can even reach.
+ */
+function secondConnectionToLatestTestDb()
+{
+    if (!testIsMysql()) {
+        throw new RuntimeException('a second connection needs the MySQL leg (SELFTEST_MYSQL_DSN)');
+    }
+    if (!$GLOBALS['_testMysqlDbs']) {
+        throw new RuntimeException('no test database has been created yet');
+    }
+    $name = $GLOBALS['_testMysqlDbs'][count($GLOBALS['_testMysqlDbs']) - 1];
+
+    return new PDO(testMysqlDsnFor($name), getenv('SELFTEST_MYSQL_USER') ?: null,
+                   getenv('SELFTEST_MYSQL_PASS') ?: null, [
+        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES   => false,
+    ]);
+}
+
 $GLOBALS['_testMysqlDbs'] = [];
 
 register_shutdown_function(function () {

@@ -47,6 +47,122 @@ class Background
 
     public function kind()  { return $this->kind; }
     public function value() { return $this->value; }
+
+    /**
+     * Is this background applicable to a Display that currently stores `$stored`?
+     *
+     * The rules were in the admin panel and nowhere else, so the API had none of
+     * them (#24). `bg_val` is written straight into `displays` by a publish and
+     * read back by the Viewer, which sets it as `background-image: url('…')` — so
+     * an unvalidated colour field was an address every Screen in the building
+     * would fetch, from any host, on every render. The two-step is what made it
+     * reachable without ever sending an `image` background at all: publish a
+     * "colour" of `https://elsewhere/x.png`, then publish `image` with no file,
+     * and `keep-image` promotes the stored string to the image path.
+     *
+     * So this asks about the *intent* and, for keep-image, about the value already
+     * stored — never about a stored value the intent is going to replace. A
+     * Display sitting on a bad value from before this check existed can still be
+     * published to; it just cannot be switched onto it.
+     *
+     * @param string $stored the Display's current bg_val
+     * @return string|null the problem, or null if there is none
+     */
+    public function problemWith($stored)
+    {
+        switch ($this->kind) {
+            case 'color':
+                if (!self::isValidColor($this->value)) {
+                    return 'That background colour is not a colour ("' . self::snippet($this->value)
+                         . '"). Use a six-digit hex colour such as #1a1a2e. Nothing was saved.';
+                }
+                return null;
+
+            case 'image':
+                if (!self::isValidImagePath($this->value)) {
+                    return 'That background image is not one of this server\'s uploads ("'
+                         . self::snippet($this->value) . '"). Nothing was saved.';
+                }
+                return null;
+
+            case 'keep-image':
+                // #23 as well as #24: choosing Image when the Display has never had
+                // one leaves the colour where the filename goes, and the sign
+                // renders `url('#1a1a2e')` — which loads nothing and goes near
+                // black. Refusing is the only answer that does not need an undo.
+                if (!self::isValidImagePath($stored)) {
+                    return 'This display has no background image stored, so it cannot be switched '
+                         . 'to one. Choose an image file as well, or leave the background on a '
+                         . 'colour. Nothing was saved.';
+                }
+                return null;
+        }
+        return null;
+    }
+
+    /** Six-digit hex, the one colour form this app stores. */
+    public static function isValidColor($value)
+    {
+        return is_string($value) && preg_match('/^#[0-9a-fA-F]{6}$/', $value) === 1;
+    }
+
+    /**
+     * A file this server put in its own uploads directory.
+     *
+     * Deliberately permissive about the *name* and strict about everything around
+     * it. Backgrounds have been uploaded by this app for years under more than one
+     * naming scheme, and refusing a legacy filename would mean an admin could not
+     * publish that Display at all. What is refused is anything that could address
+     * somewhere else: a scheme or host (both need a colon), a leading slash, a
+     * backslash, a parent-directory step, or a control character.
+     */
+    public static function isValidImagePath($value)
+    {
+        if (!is_string($value) || $value === '') { return false; }
+        if (strlen($value) > 255)                { return false; }
+        if (strpos($value, 'uploads/') !== 0)    { return false; }
+        if (strpos($value, '..') !== false)      { return false; }
+        if (strpbrk($value, ":\\\r\n\t") !== false) { return false; }
+        // A directory, not a file — nothing to render, and it is how a traversal
+        // attempt that survived the checks above would most likely look.
+        if (substr($value, -1) === '/')          { return false; }
+        return true;
+    }
+
+    /** Enough of a rejected value to recognise it, without pasting a URL into a page. */
+    private static function snippet($value)
+    {
+        if (!is_string($value)) { return gettype($value); }
+        return strlen($value) > 60 ? substr($value, 0, 57) . '…' : $value;
+    }
+}
+
+/**
+ * Did this failure come from waiting on somebody else's row lock (#35)?
+ *
+ * Engine-neutral by both of the means available, because neither alone is: the
+ * SQLSTATE is shared with unrelated errors ('HY000' is MySQL's general error), and
+ * the driver's own number is not in `getCode()` at all — PDO puts the SQLSTATE
+ * there and leaves 1205 in the message. So the message is what carries the signal,
+ * and the SQLSTATE narrows which messages are worth reading.
+ *
+ * SQLite is included for the reason #11 exists: a check gated on a MySQL-only code
+ * is a check the self-test can never reach, so nothing ever runs it.
+ */
+function errorSaysLockWait($code, $message)
+{
+    $code    = (string)$code;
+    $message = strtolower((string)$message);
+
+    // MySQL: 1205 lock wait timeout (HY000), 1213 deadlock (40001). A deadlock is
+    // reported to the person the same way — the other publish got there first.
+    if ($code === '40001') { return true; }
+    foreach (['lock wait timeout', 'deadlock found',
+              // SQLite's equivalents, which its own busy handler raises.
+              'database is locked', 'database table is locked'] as $needle) {
+        if (strpos($message, $needle) !== false) { return true; }
+    }
+    return false;
 }
 
 /**
@@ -463,6 +579,39 @@ class DisplayStore
         $stmt = $this->pdo->prepare("SELECT layout_revision FROM displays WHERE id = ? FOR UPDATE");
         $stmt->execute([$display->id()]);
         return $stmt->fetchColumn();
+    }
+
+    /**
+     * How long the statement above may wait before giving up (#35).
+     *
+     * InnoDB waits `innodb_lock_wait_timeout` seconds for a row lock, and that
+     * defaults to 50 — comfortably longer than PHP's `max_execution_time`, which
+     * is 30 on a stock install and is what this host runs. So two publishes to one
+     * Display arriving together did not produce the clean "somebody else got there
+     * first" this module is built to return: the second one was killed mid-wait by
+     * PHP, with the Content-Type header already promising JSON and the transaction
+     * left for the connection's teardown to roll back. The Builder read a truncated
+     * body, showed "Network error.", and the person had no idea whether their
+     * layout had been saved.
+     *
+     * Five seconds is far longer than an uncontended publish needs and far shorter
+     * than any request budget. The session setting is not restored afterwards, on
+     * purpose: it lasts as long as this connection, which is this one request, and
+     * every other statement in that request is better off giving up early too.
+     *
+     * Quiet on failure. A managed host may forbid the SET, and a publish that would
+     * have worked must not be refused because its timeout could not be shortened —
+     * that only puts back the behaviour this is fixing.
+     */
+    public function limitPublishLockWait($seconds = 5)
+    {
+        if ($this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'mysql') { return false; }
+        try {
+            $this->pdo->exec('SET SESSION innodb_lock_wait_timeout = ' . max(1, intval($seconds)));
+            return true;
+        } catch (Throwable $e) {
+            return false;
+        }
     }
 
     /** Apply a background intent. Only ever reached for an admin publish. */

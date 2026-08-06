@@ -2392,13 +2392,22 @@ function publishCanvas() {
                           + 'That screen updates within 30 seconds.');
                 loadAssets();
             } else if (res.reason === 'stale' || res.reason === 'locked'
+                       || res.reason === 'invalid' || res.reason === 'busy'
                        || isTerminalLockReason(res.reason)) {
                 // Nothing was saved, and none of these refusals may be glimpsed and
                 // missed: the layout on screen is still the editor's, and what to do
                 // next differs — reload for a stale stamp, wait for somebody else's
-                // edit lock, reload for a screen name tag that moved, ask an admin for
-                // a display that is no longer yours, sign in again for an account that
-                // no longer may. The message says which; a toast would not be read.
+                // edit lock, fix the named block for a layout the server would not
+                // store, publish again in a moment for a collision, reload for a
+                // screen name tag that moved, ask an admin for a display that is no
+                // longer yours, sign in again for an account that no longer may. The
+                // message says which; a toast would not be read.
+                //
+                // 'invalid' and 'busy' are here rather than in the toast branch for
+                // the same reason as the rest: a publish that was refused looks
+                // exactly like one that worked if the only trace is a toast that
+                // has already faded, and the next thing somebody does with a sign
+                // they believe they published is walk away from it.
                 //
                 // The terminal ones also raise the bar, so it is still on screen after
                 // the alert is dismissed. Reaching one here rather than from a beat
