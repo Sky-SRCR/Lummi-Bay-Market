@@ -357,6 +357,32 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
     check(codeOnly.indexOf('no data') === -1,
           'nor is the one that sat beside it');
 
+    section('Nor does a marquee with nothing to say (#45, second pass)');
+
+    // Not a sentence this time — a colour. An unfinished marquee painted a solid
+    // #c0392b band across the sign and scrolled an empty span along it, because
+    // `block.style.background = bg` was assigned four lines above the block's own
+    // `if (!text) return;`. The code already meant to draw nothing and drew a red
+    // bar anyway, which is why only running it could show this.
+    drewNothing('{"text":""}',                 renderMarquee, 'a marquee with no text');
+    drewNothing('',                            renderMarquee, 'a marquee never configured');
+    drewNothing('{"text":"   "}',              renderMarquee, 'a marquee holding only spaces');
+    drewNothing('{"text":',                    renderMarquee, 'a marquee whose content will not parse');
+    drewNothing('{"text":{}}',                 renderMarquee, 'a marquee whose text is not a message');
+    drewNothing('{"text":"","bg":"#e67e22"}',  renderMarquee, 'a marquee with a colour picked but nothing to say');
+
+    section('Nor a carousel whose slides are empty (#45, second pass)');
+
+    // The other half of the same pass, one layer further in. A slide with no image
+    // filled its image well with #1a1a2e — a navy rectangle standing in for a
+    // picture nobody had chosen — so a carousel of blank slides rotated coloured
+    // panels past the customer every five seconds without ever saying anything.
+    drewNothing('{"slides":[{}]}',                        renderCarousel, 'a carousel whose one slide is empty');
+    drewNothing('{"slides":[{},{},{}]}',                  renderCarousel, 'a carousel of three empty slides');
+    drewNothing('{"slides":[{"imageOnly":true}]}',        renderCarousel, 'an image-only slide with no image');
+    drewNothing('{"slides":[{"title":"","price":null}]}', renderCarousel, 'a slide with every field left blank');
+    drewNothing('{"slides":[null,"three",7]}',            renderCarousel, 'a carousel whose slides are not slides');
+
     // Guarding the other way. "Draw nothing" is about blocks with nothing in them,
     // and a fix that quietened a carousel which does have slides would be a far
     // worse fault than the one #45 reports.
@@ -371,6 +397,44 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
     check(table.children.length > 0,                    'a table that has rows still draws them');
     check(inkIn(table).indexOf('Sockeye 18.99') > -1,   'with the prices in them');
 
+    const running = stubEl('div');
+    renderMarquee(running, JSON.stringify({ text: 'Fresh sockeye landed this morning', bg: '#c0392b' }));
+    check(inkIn(running).indexOf('Fresh sockeye landed this morning') > -1,
+          'a marquee that has something to say still says it');
+    checkSame('#c0392b', running.style.background, 'on the bar the author picked for it');
+
+    /** Every colour this block would paint, at any depth. */
+    function paintUnder(el) {
+        return [paintOn(el)].concat(el.children.map(paintUnder)).filter(Boolean).join(' ');
+    }
+    /** Every picture it would put on the sign. */
+    function picturesUnder(el) {
+        return (el.tagName === 'img' && el.src ? [el.src] : [])
+               .concat(el.children.map(picturesUnder).reduce((a, b) => a.concat(b), []));
+    }
+
+    // A slide can be a picture and no words at all — that is what `imageOnly` is
+    // for — so "has something in it" must count an image as something. Without
+    // this, deciding a slide is empty whenever it has no text passes every check
+    // above and quietly takes every photograph off every sign in the store.
+    const picture = stubEl('div');
+    renderCarousel(picture, JSON.stringify({ slides: [{ image: 'assets/crab.jpg', imageOnly: true }] }), {});
+    check(picture.children.length > 0, 'a slide that is only a photograph is still drawn');
+    check(picturesUnder(picture).indexOf('assets/crab.jpg') > -1, 'with the photograph on it');
+
+    // The case in between, and the one that says most about what this pass is: a
+    // carousel that is part empty draws the part that isn't, and nothing for the
+    // rest. Skipping the blanks in the same place the slides are built is what
+    // keeps the rotation honest too — three slides, one showable, no timer.
+    const mixed = stubEl('div');
+    renderCarousel(mixed, JSON.stringify({ slides: [
+        {}, { title: 'Dungeness', price: '$14/lb' }, { imageOnly: true }
+    ] }), {});
+    check(inkIn(mixed).indexOf('Dungeness') > -1,   'a real slide among empty ones is still drawn');
+    checkSame(1, mixed.children[0].children.length, 'and the empty ones are not drawn beside it');
+    check(paintUnder(mixed).indexOf('#1a1a2e') === -1,
+          'no navy panel stands in for a picture nobody chose');
+
     // Drawing nothing here is only safe because the warning still exists where it
     // can be acted on. The Builder labels the same two blocks on its own canvas,
     // and that is the surface the author is looking at while they forget to add
@@ -381,6 +445,12 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
           'the Builder still tells the author how many slides the carousel has');
     check(builder.indexOf("'⋞ Table — ' + headers.length") > -1,
           'and how many columns the table has');
+    // The marquee's is not a count but the instruction itself, which is the whole
+    // argument for the Viewer saying nothing: the words the customer used to get a
+    // red bar instead of are sitting on the author's screen, next to the box that
+    // fixes it. Matched on the ASCII half, for the reason given above.
+    check(builder.indexOf('click to edit in inspector') > -1,
+          'and tells the author outright when a marquee has no text yet');
 
     // End to end, through the real poll: an empty carousel and an empty table
     // beside a price. The blocks are still appended — .element-block paints
@@ -396,14 +466,21 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
         elements: [
             el(1, 'text',     'Sockeye 18.99'),
             el(2, 'carousel', '{"slides":[]}'),
-            el(3, 'table',    '{"headers":[],"rows":[]}')
+            el(3, 'table',    '{"headers":[],"rows":[]}'),
+            el(4, 'marquee',  '{"text":""}'),
+            el(5, 'carousel', '{"slides":[{},{"imageOnly":true}]}')
         ],
         block_styles: {}
     });
     loadLayout(); await settle();
-    checkSame(3, canvas.children.length, 'all three blocks are laid out');
+    checkSame(5, canvas.children.length, 'all five blocks are laid out');
     checkSame('Sockeye 18.99', inkIn(canvas),
               'and a customer reads the price, and nothing addressed to the author');
+    // The blocks only — the canvas paints its own colour, which is the Display's
+    // background and nothing to do with what is drawn on top of it.
+    const onTheBlocks = canvas.children.map(paintUnder).join(' ');
+    check(onTheBlocks.indexOf('#c0392b') === -1, 'with no red bar over an unwritten marquee');
+    check(onTheBlocks.indexOf('#1a1a2e') === -1, 'and no navy panel over an unchosen picture');
 
     section('One poll at a time');
 

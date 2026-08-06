@@ -82,7 +82,7 @@ written down rather than remembered:
 | 42 | Six smaller Builder rough edges: section minimum size measured in screen pixels, Fit cannot fit a very large canvas, no way to unhide a section, deleting a slide field cannot be undone, marquee "Transparent" loses the colour, and dead code. | All six. | Open | — |
 | 43 | Deleting an account wrote to three tables with no transaction, going around the owning module. | All-or-nothing, through the module. | **Done** — settled by #20: closing is one transaction in `AccountAdmin`, and no `DELETE FROM users` exists anywhere. | §4l |
 | 44 | Nothing set a timezone, so "editing since 2:15pm" followed whatever the host's `php.ini` happened to say. | A store timezone setting on the Branding page. | Open | — |
-| 45 | The sign itself printed "Carousel — no slides added yet" where a customer could read it. | Draw nothing. | **Done** — and it was two blocks, not one: `renderTable()` printed "Table — no data" over a grey panel drawn to hold it, and both are closed. Drawing nothing loses no warning, because the Builder already labels the same blocks `↻ Carousel — 0 slides` and `⋞ Table — 0 cols, 0 rows` on its own canvas — the surface the author is actually looking at. Three other empty blocks draw something and are **not** closed here, because none of them is a sentence written for the author: see §4aa. | §4aa |
+| 45 | The sign itself printed "Carousel — no slides added yet" where a customer could read it. | Draw nothing. | **Done** — and it was two blocks, not one: `renderTable()` printed "Table — no data" over a grey panel drawn to hold it, and both are closed. Drawing nothing loses no warning, because the Builder already labels the same blocks `↻ Carousel — 0 slides` and `⋞ Table — 0 cols, 0 rows` on its own canvas — the surface the author is actually looking at. A second pass then took the two cases that are the same defect in colour rather than in English: a marquee with no text painted a solid `#c0392b` bar and scrolled an empty span along it, and a carousel slide with no image filled its image well with `#1a1a2e`. An **image** with no asset and a **video** with no source are still open, for a number of their own: see §4aa. | §4aa |
 | 46 | Deployment step 3 had no do-not-overwrite list, so re-uploading reverted live branding and restored `setup.php`. | Write down what to skip. | Open | — |
 | 48 | The test database differs from MySQL in twelve ways, including row locking stubbed out entirely. | Test against real MySQL as well. | **Done** | §4u |
 | 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | Part done — `schema.php`'s *decision* is a pure function with 43 checks (§4o). Its *statements* now run for real on the MySQL leg (#48), which leaves the mutation coverage on `plain_text.php` as the open half. | §4o, §4u |
@@ -153,13 +153,21 @@ obvious enough to leave to memory.
 **#45 was the first item that suite paid for.** The Viewer's renderers had never been
 run by anything, so the placeholder it names had survived every gate the repo has —
 it parses, and parsing is all `php -l` and `node --check` can ask. The item names the
-carousel; the identical construction in `renderTable()` is closed with it. What #45
-deliberately does **not** close is the wider question it gestures at — an image with
-no asset, a video with no source, and a marquee with no text all still draw
-something. None of those is a sentence written for the author, the marquee's red bar
-could be somebody's divider, and no undo exists anywhere in this app, so each is
-named in §4aa and left for a number of its own rather than changed quietly under
-this one.
+carousel; the identical construction in `renderTable()` is closed with it.
+
+The first pass stopped there and named three blocks that still drew something,
+because none of them was a sentence and this app has no undo. The owner took two of
+the three: a **marquee** with no text painted a solid red bar and scrolled an empty
+span along it, and a **carousel slide** with no image filled its image well with
+navy. Both are closed in a second pass under the same number (§4aa) — the marquee's
+own `if (!text) return;` was already there, four lines below the paint. The suite
+went 75 → 129, and the injection that matters most is the one that *passed*: making
+an image stop counting as something a slide shows broke nothing, which would have
+taken every photograph off every sign in the store. That gap is covered now.
+
+What is still open is the **image** with no asset and the **video** with no source.
+Those are a browser rendering a missing file rather than this page choosing to draw
+something, which is a different question, and they are left for a number of their own.
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

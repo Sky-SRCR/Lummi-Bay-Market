@@ -570,6 +570,27 @@ $canvasH = $display->canvasHeight();
     }
 
     // ── Carousel ────────────────────────────────────────────────
+
+    /** The same three-way test the text panel below applies to each of its fields. */
+    function slideFieldSet(v) { return v !== null && v !== undefined && v !== ''; }
+
+    /**
+     * Whether a slide holds anything a customer could read or look at.
+     *
+     * Element content is unvalidated for the non-text types (invariant 6), so a
+     * slide can be null, a string, or an object with every field left blank — and
+     * each of those used to draw. A blank slide still got its image well, and the
+     * well painted itself #1a1a2e when there was no image to put in it: a navy
+     * rectangle standing in for a picture nobody had chosen, rotating past the
+     * customer every five seconds.
+     */
+    function slideShowsSomething(s) {
+        if (!s || typeof s !== 'object') { return false; }
+        if (s.image)     { return true;  }
+        if (s.imageOnly) { return false; }   // the image is the whole slide, and there is none
+        return slideFieldSet(s.title) || slideFieldSet(s.price) || slideFieldSet(s.description);
+    }
+
     function renderCarousel(block, content, blockStyles) {
         var data = {};
         try { data = JSON.parse(content || '{}'); } catch(e) {}
@@ -595,7 +616,15 @@ $canvasH = $display->canvasHeight();
         // down. Element content is deliberately unvalidated for the non-text types
         // (invariant 6), and "not a list of slides" is a block with nothing
         // showable in it, which is this case.
-        if (!Array.isArray(slides) || slides.length === 0) { return; }
+        if (!Array.isArray(slides)) { return; }
+
+        // And a list of slides with nothing in them is the same block by a longer
+        // route (#45, second pass). Filtering here rather than skipping inside the
+        // loop is what makes the rotation right as well as the drawing: `slideEls`
+        // then holds only slides that show something, so a carousel of three where
+        // two are blank no longer spends ten seconds of every fifteen on nothing.
+        var showable = slides.filter(slideShowsSomething);
+        if (showable.length === 0) { return; }
 
         var wrap = document.createElement('div');
         wrap.className = 'carousel-wrap';
@@ -620,7 +649,7 @@ $canvasH = $display->canvasHeight();
         }
 
         var slideEls = [];
-        slides.forEach(function(s) {
+        showable.forEach(function(s) {
             var pos   = s.textPosition || 'right';
             var slide = document.createElement('div');
             slide.className = s.imageOnly ? 'carousel-slide' : 'carousel-slide pos-' + pos;
@@ -648,9 +677,13 @@ $canvasH = $display->canvasHeight();
                     img.style.objectFit = fit; // contain / cover / fill
                 }
                 imgWrap.appendChild(img);
-            } else {
-                imgWrap.style.background = '#1a1a2e';
             }
+            // No `else`. A slide that reaches here without an image has text, and
+            // the well used to fill itself with #1a1a2e to mark the space a picture
+            // would have taken — placeholder ink, hardcoded, drawn only because
+            // something was missing. It is still appended, empty: the 40/60 split is
+            // the layout the author arranged around their words, and taking the well
+            // away as well would reflow a slide that is not the one at fault.
             slide.appendChild(imgWrap);
 
             if (!s.imageOnly) {
@@ -772,12 +805,34 @@ $canvasH = $display->canvasHeight();
         var data = {};
         try { data = JSON.parse(content || '{}'); } catch(e) {}
 
-        var text   = data.text   || '';
         var speed  = Math.max(1, data.speed  || 80);  // px/sec; clamp to ≥1 to prevent idle loop
         var color  = data.color  || '#ffffff';
         var size   = data.size   || 28;
         var weight = data.weight || 'bold';
         var bg     = data.bg === 'transparent' ? 'transparent' : (data.bg || '#c0392b');
+
+        // Only a string or a number is a message. Anything else — an object, a
+        // list, a boolean — used to reach textContent all the same and scroll
+        // "[object Object]" past the customer, because element content is
+        // unvalidated for the non-text types (invariant 6) and this end never asked.
+        var text = (typeof data.text === 'string' || typeof data.text === 'number')
+                 ? String(data.text) : '';
+
+        // A marquee with nothing to say draws nothing at all (#45, second pass).
+        // This block already meant to do nothing here — `if (!text) return;` sat
+        // four lines below — but the background was assigned before it, so an
+        // unfinished marquee painted a solid #c0392b band across the sign and then
+        // scrolled an empty span along it. A red bar with no message on a price
+        // board is not a quieter version of the message; it is a different sign,
+        // and one nobody chose.
+        //
+        // The author keeps the warning, as with the carousel and the table: the
+        // Builder draws this same block as "▶ Marquee text — click to edit in
+        // inspector", on that same bar, on the surface where it can be acted on.
+        //
+        // Spaces are not a message either. `'   '` is truthy, so it used to paint
+        // the bar and animate an invisible span along it forever.
+        if (text.trim() === '') { return; }
 
         block.style.background = bg;
 
@@ -786,7 +841,7 @@ $canvasH = $display->canvasHeight();
 
         var span = document.createElement('span');
         span.className        = 'marquee-text';
-        span.textContent      = text || '';
+        span.textContent      = text;
         span.style.color      = color;
         span.style.fontSize   = size + 'px';
         span.style.fontWeight = weight;
@@ -794,8 +849,6 @@ $canvasH = $display->canvasHeight();
 
         wrap.appendChild(span);
         block.appendChild(wrap);
-
-        if (!text) return;
 
         var cancelled = false;
         var pos       = 0;

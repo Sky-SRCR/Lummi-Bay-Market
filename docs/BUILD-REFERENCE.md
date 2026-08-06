@@ -2774,21 +2774,74 @@ restoring the table's fails 10; making the carousel return unconditionally fails
 led by *a carousel that has a slide still draws it*; and deleting the Builder's
 label fails 1.
 
-**Not covered here, and deliberately.** Three more blocks draw something when they
-have nothing, and none of them is a sentence written for the author, so each is a
-separate judgement rather than this item:
+#### Second pass: the marquee and the empty slide
+
+The first pass took out two sentences. The owner then asked for the two cases that
+are the same defect in colour rather than in English, and they turn out to be the
+worse pair, because a sentence at least looks like a mistake.
+
+**A marquee with no text painted a red bar and scrolled nothing along it.** The
+block already meant to draw nothing — `if (!text) return;` was in the function — but
+`block.style.background = bg` sat four lines above it, so the return ran after the
+paint. Default `#c0392b`: a solid red band across a price board, with no message on
+it, and an invisible span animating along it at 80 px/sec for as long as the sign is
+on. The guard moved above the paint, and the same lossless argument holds as for the
+carousel and the table, more directly than either: the Builder draws this block as
+**"▶ Marquee text — click to edit in inspector"** (`builder.php:3444`), on that same
+bar, on the screen where the box that fixes it is. The words the customer was
+getting a red bar instead of are already sitting in front of the author.
+
+Two smaller things the same guard settles. `'   '` is truthy, so a marquee of spaces
+used to paint and animate exactly like an empty one; it is trimmed now. And only a
+string or a number is a message — an object reached `textContent` and scrolled
+`[object Object]` past the customer, for the invariant-6 reason the carousel's
+`Array.isArray` exists.
+
+**A carousel slide with no image filled its image well with `#1a1a2e`.** A navy
+rectangle standing in for a picture nobody had chosen, hardcoded, drawn only in the
+`else` of `if (s.image)` — which is what separates it from the marquee's bar: the
+bar is a colour the author picked in the inspector, the navy is a colour the code
+picked because something was missing. So a carousel of blank slides rotated coloured
+panels past the customer every five seconds without ever saying anything.
+
+A slide now draws only if it holds something: an image, or — when it is not
+`imageOnly` — a title, price or description that is set. Slides with nothing in them
+are filtered out *before* the loop rather than skipped inside it, which is what makes
+the rotation right as well as the drawing: `slideEls` holds only slides that show
+something, so three slides of which one is real is one slide, not one slide and ten
+seconds of blank. A carousel whose every slide is empty draws nothing, exactly as one
+with no slides at all. A slide that is `null` or a string reaches that same answer by
+answering, where it used to throw on `s.textPosition`.
+
+The empty well is still **appended**, just not painted. Taking it away would give the
+text panel the full width and reflow a slide that is not the one at fault; the 40/60
+split is the layout the author arranged around their words. Only the colour goes.
+
+**Coverage.** 75 checks to 129. Eleven more empty shapes through `drewNothing` — six
+marquees, five carousels — plus a `paintUnder()` walk that fails on `#c0392b` or
+`#1a1a2e` appearing anywhere beneath a block, and the Builder's marquee sentence
+asserted from here like the other two labels.
+
+**Verified by injection, five times.** Painting the bar before the guard fails 7;
+restoring the navy well and drawing every slide fails 8, including *a carousel whose
+slides are not slides decides that without throwing*; a marquee that never draws
+fails 2; deleting the Builder's sentence fails 1.
+
+The fourth injection — making `s.image` stop counting as something a slide shows —
+**passed all 127 checks**, which is the useful result of the five. A slide can be a
+picture and no words at all; that is what `imageOnly` is for. Deciding a slide is
+empty whenever it has no text would have taken every photograph off every sign in the
+store and nothing would have said so. Two checks now cover it, and the suite is 129.
+
+**Still not covered, and still deliberately.** Two blocks are left:
 
 - an **image** with no asset sets `img.src = ''`, which resolves to the page URL and
   can leave a broken-image icon;
-- a **video** with no source is an empty `<video>` element;
-- a **marquee** with no text still paints its background bar — `#c0392b` by default,
-  a solid red band across the sign. The code already means to do nothing (`if
-  (!text) return;`), but the background is assigned four lines above it.
+- a **video** with no source is an empty `<video>` element.
 
-The marquee is the visible one and the tempting one, and it is left alone on
-purpose: unlike a sentence in English, a coloured bar could be somebody's divider,
-and no undo exists anywhere in this app. Worth its own number rather than a silent
-change to what live signs draw.
+Neither is a sentence and neither is a painted panel — they are a browser's own
+rendering of a missing file, which is a different question from what this page
+chooses to draw, and no undo exists anywhere in this app. Worth their own number.
 
 ---
 
