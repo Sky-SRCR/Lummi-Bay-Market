@@ -54,11 +54,42 @@
 // When the catalogue cannot be read at all — not MySQL, or a host that hides it —
 // `SchemaFacts::unknown()` says so and every statement goes into the plan. That is
 // exactly the old behaviour, which is the right thing to fall back to.
+//
+// ---- Saying so when one really does fail ------------------------------------
+// `schemaTry()` has always swallowed failures, because most of them mean "already
+// applied". The cost was that a statement which genuinely could not run — no CREATE
+// privilege, a tighten refused by data that violates it — was indistinguishable
+// from the twelve that failed by design every request, and nothing anywhere said so.
+// The login-lockout columns were missing on the live database for months.
+//
+// Gating made that distinguishable for the first time, and this reports it. The rule
+// is narrow on purpose, and it is the whole safety argument:
+//
+//   **Only a statement the catalogue positively said was missing is ever reported.**
+//
+// Each plan entry carries the `need` it was included on. `true` means the catalogue
+// was read and the thing is not there; `null` means it could not be read and the
+// statement is a guess. A guess that fails is not news — on a host with no readable
+// catalogue, twelve of them fail every request — so `null` is never reported, and an
+// admin's inbox cannot be filled by a host that hides `information_schema`.
+//
+// Throttled to one report an hour per distinct set of failures, log included, since
+// a permanently refused statement is retried on every signed-in page load and on the
+// Viewer's self-heal path every 30 seconds per Screen.
+//
+// The message names the statements in words and points at Settings → Database
+// Structure rather than restating what each missing column costs. That list already
+// exists, in `ServerReport::convergence()`, and two lists of consequences would
+// eventually disagree about one.
 
-// Nothing is required here on purpose: this file must be includable without
-// starting a session or loading page-level helpers (see BUILD-REFERENCE.md §1).
+// This depends on ErrorPolicy, and only for reporting. Safe because ErrorPolicy
+// depends on nothing itself — no database, no session, no config — so requiring it
+// keeps the rule that this file is includable without starting a session or loading
+// page-level helpers (see BUILD-REFERENCE.md §1).
 // The login-lockout columns stay where ADR-0001 put them — added by the pre-auth
 // login/reset pages, never from a data-access path.
+
+require_once __DIR__ . '/error_policy.php';
 
 // The name tag of the Display that the pre-multi-display layout becomes.
 // Referenced by the Phase 2 cutover ("…/viewer.php?display=drive-thru").
@@ -390,8 +421,14 @@ function readSchemaFacts(PDO $pdo)
  * The whole of convergence as an ordered list of work, decided from facts alone.
  *
  * Each entry is one of:
- *   ['why' => …, 'sql'  => …]   a statement to run
- *   ['why' => …, 'step' => …]   a named step that has to read rows to decide
+ *   ['why' => …, 'need' => …, 'sql'  => …]   a statement to run
+ *   ['why' => …, 'need' => …, 'step' => …]   a named step that has to read rows
+ *
+ * `need` is carried through rather than discarded because it is what makes a
+ * failure meaningful: `true` says the catalogue was read and this really is
+ * missing, so a failure is worth telling an admin about. `null` says the catalogue
+ * could not be read and the statement is a guess, so a failure is the normal case
+ * and reporting it would be noise. See reportSchemaFailures().
  *
  * The steps are here rather than after the statements because the order matters:
  * the drive-thru Display has to exist before elements can be backfilled to it,
@@ -410,11 +447,11 @@ function signageSchemaPlan(SchemaFacts $facts)
     // try it, and let schemaTry() swallow the failure that means "already done".
     $sql = function ($need, $why, $statement) use (&$plan) {
         if ($need === false) { return; }
-        $plan[] = ['why' => $why, 'sql' => $statement];
+        $plan[] = ['why' => $why, 'need' => $need, 'sql' => $statement];
     };
     $step = function ($need, $name) use (&$plan) {
         if ($need === false) { return; }
-        $plan[] = ['why' => $name, 'step' => $name];
+        $plan[] = ['why' => $name, 'need' => $need, 'step' => $name];
     };
 
     // ---- canvas_elements: columns added since the original install ----------
@@ -443,8 +480,16 @@ function signageSchemaPlan(SchemaFacts $facts)
          . SCHEMA_BLOCK_SUBTYPE_ENUM . " DEFAULT 'free'");
 
     // ---- block_styles: one row per branded block type -----------------------
-    // A row count, not a catalogue fact, so it is a step. Skipped outright when
-    // there is no table to seed into.
+    // A row count, not a catalogue fact, so it is a step. Skipped outright when the
+    // catalogue says there is no table to seed into.
+    //
+    // Its need is `true`, not `null`, on a host whose catalogue cannot be read — and
+    // that is deliberate, because the need never came from the catalogue in the
+    // first place. A row count runs and answers on any host, so a failure here means
+    // something real (no table to read, or an INSERT refused) and is worth reporting
+    // wherever it happens. Same for the Display seed below. Every *statement* in the
+    // plan is the other way round: its need is the catalogue's word, and without the
+    // catalogue it is a guess. See reportSchemaFailures().
     $step(!$facts->tableMissing('block_styles'), 'seed_block_styles');
 
     // ---- assets: which rows a publish made, rather than a person ------------
@@ -510,8 +555,9 @@ function signageSchemaPlan(SchemaFacts $facts)
          "ALTER TABLE displays ADD CONSTRAINT displays_ibfk_2
           FOREIGN KEY (lock_holder_id) REFERENCES users (id) ON DELETE SET NULL");
 
-    // Always: only a row count can say whether the drive-thru Display is there,
-    // and a fresh install from schema.sql has the table with nothing in it.
+    // Always, and on a known need for the reason given above the block-style seed:
+    // only a row count can say whether the drive-thru Display is there, and a fresh
+    // install from schema.sql has the table with nothing in it.
     $step(true, 'seed_legacy_display');
 
     // ---- canvas_elements.display_id ----------------------------------------
@@ -585,35 +631,142 @@ function signageSchemaPlan(SchemaFacts $facts)
  */
 function ensureSignageSchema(PDO $pdo)
 {
-    static $done = false;
-    if ($done) { return; }
-    $done = true;
+    if (!SchemaLatch::take()) { return; }
 
-    runSchemaPlan($pdo, signageSchemaPlan(readSchemaFacts($pdo)));
+    reportSchemaFailures(runSchemaPlan($pdo, signageSchemaPlan(readSchemaFacts($pdo))));
 }
 
 /**
- * Do the work the plan describes, and return the entries that failed.
+ * The "at most once per request" latch, as something that can be cleared.
  *
- * The return value is new and matters: a statement the catalogue said was missing
- * and which then failed anyway is a *genuine* failure, and until convergence
- * gated itself there was no way to tell one of those from the twelve that fail
- * by design every request. Nothing acts on it yet — that is a separate decision —
- * but the caller that wants to alert an admin now has something true to alert on.
+ * It used to be a `static` inside ensureSignageSchema(), which meant the self-test
+ * could exercise the entry point exactly once per run — so whether the entry point
+ * actually *reports* a failure, rather than the reporting function working when
+ * called by hand, was untested. A mutation that removed the reporting call from the
+ * entry point altogether failed nothing. This is what closes that.
+ */
+class SchemaLatch
+{
+    private static $done = false;
+
+    /** True if the caller got the latch; false if convergence already ran. */
+    public static function take()
+    {
+        if (self::$done) { return false; }
+        self::$done = true;
+        return true;
+    }
+
+    /** For the self-test. Nothing in the app clears this. */
+    public static function forget()
+    {
+        self::$done = false;
+    }
+}
+
+/**
+ * Do the work the plan describes, and return the entries that failed, each with the
+ * database's own reason under `error`.
+ *
+ * A statement the catalogue said was missing and which then failed anyway is a
+ * *genuine* failure, and until convergence gated itself there was no way to tell one
+ * of those from the twelve that fail by design every request. That is what makes the
+ * return value worth having, and reportSchemaFailures() is what does something
+ * with it.
  */
 function runSchemaPlan(PDO $pdo, array $plan)
 {
     $failed = [];
     foreach ($plan as $entry) {
-        $ok = true;
+        $ok    = true;
+        $error = '';
         if (isset($entry['sql'])) {
-            $ok = schemaTry($pdo, $entry['sql']);
+            $ok = schemaTry($pdo, $entry['sql'], $error);
         } elseif (isset($entry['step'])) {
-            $ok = runSchemaStep($pdo, $entry['step']);
+            $ok = runSchemaStep($pdo, $entry['step'], $error);
         }
-        if (!$ok) { $failed[] = $entry; }
+        if (!$ok) {
+            $entry['error'] = $error;
+            $failed[] = $entry;
+        }
     }
     return $failed;
+}
+
+/**
+ * Tell somebody about the statements that genuinely could not run.
+ *
+ * Two rules, and the first is the one that matters:
+ *
+ *   * **Only `need === true`.** That is "the catalogue was read, and this is not
+ *     there". A `null` need is a guess made because the catalogue could not be read,
+ *     and on such a host twelve statements fail every single request — reporting
+ *     those would fill an inbox with the normal case and teach an admin to ignore
+ *     the alert that matters.
+ *   * **Once an hour per distinct set.** A refused statement is retried on every
+ *     signed-in page load, and on the Viewer's self-heal path every 30 seconds per
+ *     Screen. The key is the failures themselves, so a *new* failure appearing sends
+ *     a new report immediately rather than waiting out the old window.
+ *
+ * The message names the statements in the words the plan gave them and points at the
+ * Settings screen, which already lists every runtime-added column and what a missing
+ * one costs. Restating that here would be a second list of consequences to keep in
+ * agreement with the first.
+ *
+ * Returns true when something was written or sent, for the self-test.
+ */
+function reportSchemaFailures(array $failed)
+{
+    $real = schemaFailuresWorthReporting($failed);
+    if (!$real) { return false; }
+
+    $names = [];
+    $lines = [];
+    foreach ($real as $entry) {
+        $why     = isset($entry['why']) ? (string)$entry['why'] : 'an unnamed change';
+        $names[] = $why;
+        $reason  = isset($entry['error']) ? trim(str_replace(["\r", "\n"], ' ', $entry['error'])) : '';
+        if (strlen($reason) > 200) { $reason = substr($reason, 0, 200) . '…'; }
+        $lines[] = '  * ' . $why . ($reason === '' ? '' : ' — ' . $reason);
+    }
+
+    // The key is what failed, not when: the same set stays quiet for an hour, and a
+    // different set is a different problem and says so straight away.
+    sort($names);
+    $key = 'schema-refused|' . sha1(implode('|', $names));
+
+    $count  = count($real);
+    $detail = $count . ' schema ' . ($count === 1 ? 'update' : 'updates')
+            . ' the database says it needs could not be applied. The app is still '
+            . "running; whatever they were meant to add is not there.\n\n"
+            . implode("\n", array_slice($lines, 0, 10))
+            . ($count > 10 ? "\n  * … and " . ($count - 10) . " more\n" : "\n")
+            . "\nAdmin Panel → Settings → Database Structure lists every column this "
+            . "app adds by itself and what a missing one costs. A row that is green "
+            . "there is already in place, and the statement is being refused for some "
+            . "other reason — most likely a name the database chose for itself — in "
+            . "which case nothing is wrong with the data.\n\n"
+            . "This is retried on the next signed-in page load. At most one of these "
+            . "is sent per hour, and a different set of failures sends a new one "
+            . "straight away.";
+
+    return ErrorPolicy::report($key, $detail, 'Schema updates are being refused',
+                               ErrorPolicy::REPORT_WINDOW);
+}
+
+/**
+ * The subset of failures that mean something. See reportSchemaFailures() for why
+ * `need === true` is the whole test, and note that it is deliberately strict about
+ * the *type*: an entry with no `need` at all — one a caller assembled by hand — is
+ * not reported either, because nothing established that it was needed.
+ */
+function schemaFailuresWorthReporting(array $failed)
+{
+    $out = [];
+    foreach ($failed as $entry) {
+        if (isset($entry['need']) && $entry['need'] === true) { $out[] = $entry; }
+    }
+    return $out;
 }
 
 /**
@@ -621,13 +774,14 @@ function runSchemaPlan(PDO $pdo, array $plan)
  * rows rather than structure. Named rather than passed as callables so the plan
  * stays a plain array a test can compare against.
  */
-function runSchemaStep(PDO $pdo, $step)
+function runSchemaStep(PDO $pdo, $step, &$error = null)
 {
+    $error = '';
     switch ($step) {
-        case 'seed_block_styles':    return seedBlockStyles($pdo);
-        case 'backfill_auto_pooled': return backfillPooledMarker($pdo);
-        case 'seed_legacy_display':  return seedLegacyDisplay($pdo);
-        case 'backfill_display_id':  return backfillDisplayId($pdo);
+        case 'seed_block_styles':    return seedBlockStyles($pdo, $error);
+        case 'backfill_auto_pooled': return backfillPooledMarker($pdo, $error);
+        case 'seed_legacy_display':  return seedLegacyDisplay($pdo, $error);
+        case 'backfill_display_id':  return backfillDisplayId($pdo, $error);
     }
     return true;   // an unknown step is nothing to do, not a failure to report
 }
@@ -637,15 +791,17 @@ function runSchemaStep(PDO $pdo, $step)
  * costs less than a six-row INSERT IGNORE, and unlike the insert it takes no locks
  * on a table the Brand Standards form may be saving to at the same moment.
  */
-function seedBlockStyles(PDO $pdo)
+function seedBlockStyles(PDO $pdo, &$error = null)
 {
+    $error = '';
     try {
         $have = intval($pdo->query("SELECT COUNT(*) FROM block_styles")->fetchColumn());
     } catch (Throwable $e) {
+        $error = 'block_styles could not be read: ' . $e->getMessage();
         return false;   // no table to count, and none to seed into
     }
     if ($have >= SCHEMA_BLOCK_STYLE_COUNT) { return true; }
-    return schemaTry($pdo, SCHEMA_BLOCK_STYLE_SEED);
+    return schemaTry($pdo, SCHEMA_BLOCK_STYLE_SEED, $error);
 }
 
 /**
@@ -657,19 +813,26 @@ function seedBlockStyles(PDO $pdo)
  * to name "Auto: …" is claimed by this, and the consequence is that an unused one
  * can be tidied away. That is why the label field says what it says in crud.php.
  */
-function backfillPooledMarker(PDO $pdo)
+function backfillPooledMarker(PDO $pdo, &$error = null)
 {
     return schemaTry($pdo, "UPDATE assets SET auto_pooled = 1
-                             WHERE auto_pooled = 0 AND label LIKE 'Auto: %'");
+                             WHERE auto_pooled = 0 AND label LIKE 'Auto: %'", $error);
 }
 
 /** Point every element that predates Display scoping at the drive-thru sign. */
-function backfillDisplayId(PDO $pdo)
+function backfillDisplayId(PDO $pdo, &$error = null)
 {
+    $error    = '';
     $legacyId = legacyDisplayId($pdo);
-    if (!$legacyId) { return false; }   // nothing to backfill to; the tighten will refuse
+    if (!$legacyId) {
+        // Nothing to backfill to, which means the seed above did not manage to make
+        // the drive-thru Display. That is the failure worth reporting; this one is
+        // its consequence, and the tighten after it will refuse for the same reason.
+        $error = 'there is no Display to hand unscoped elements to';
+        return false;
+    }
     return schemaTry($pdo, "UPDATE canvas_elements SET display_id = " . intval($legacyId)
-                         . " WHERE display_id IS NULL");
+                         . " WHERE display_id IS NULL", $error);
 }
 
 /**
@@ -680,12 +843,14 @@ function backfillDisplayId(PDO $pdo)
  * renamed this one, since the tag is theirs to change (ADR-0003) and a second
  * "drive-thru" must not appear behind their back.
  */
-function seedLegacyDisplay(PDO $pdo)
+function seedLegacyDisplay(PDO $pdo, &$error = null)
 {
+    $error = '';
     try {
         $count = $pdo->query("SELECT COUNT(*) FROM displays")->fetchColumn();
     } catch (Throwable $e) {
-        return false;   // table missing — CREATE TABLE above failed; nothing to seed into
+        $error = 'the displays table is not there: ' . $e->getMessage();
+        return false;   // CREATE TABLE above failed; nothing to seed into
     }
     if (intval($count) > 0) { return true; }
 
@@ -710,7 +875,14 @@ function seedLegacyDisplay(PDO $pdo)
         )->execute([LEGACY_DISPLAY_TAG, 'Drive-Thru', $bgType, $bgVal]);
         return true;
     } catch (Throwable $e) {
-        return false;   // unique tag collision — another request seeded it first
+        // A unique-tag collision means another request seeded it between the count
+        // above and this insert. Nothing is wrong — the Display exists, which is all
+        // this was for — and reporting it would send an admin an email about two
+        // people signing in at the same moment on the first request after a deploy.
+        if (legacyDisplayId($pdo) > 0) { return true; }
+
+        $error = 'the drive-thru Display could not be created: ' . $e->getMessage();
+        return false;
     }
 }
 
@@ -739,15 +911,20 @@ function legacyDisplayId(PDO $pdo)
  * applied". Still swallows, because the catalogue can be silent about a
  * constraint or wrong about a partly applied ALTER, and a convergence failure
  * must never break the request that happened to trigger it — the statement is
- * simply re-attempted on the next authenticated request. What changed is that the
- * failure is now *reported upward* by runSchemaPlan() instead of vanishing here.
+ * simply re-attempted on the next authenticated request.
+ *
+ * What changed is that the reason no longer dies here. `$error` carries the
+ * database's own message up to runSchemaPlan(), which is what lets an alert say
+ * *why* a statement was refused rather than only that it was.
  */
-function schemaTry(PDO $pdo, $sql)
+function schemaTry(PDO $pdo, $sql, &$error = null)
 {
     try {
         $pdo->exec($sql);
+        $error = '';
         return true;
     } catch (Throwable $e) {
+        $error = $e->getMessage();
         return false;
     }
 }

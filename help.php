@@ -780,7 +780,13 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
             the site runs, this is the answer.</li>
         <li><strong>Database Structure</strong> — one green or red line per column the app adds to
             the database by itself. A red line names what stops working because of it. If one
-            stays red, signing out and back in as an admin usually applies it.</li>
+            stays red, signing out and back in as an admin usually applies it.
+            <br>If a change the database says it needs keeps being refused, admins get an email
+            titled <em>&ldquo;Schema updates are being refused&rdquo;</em> &mdash; at most one an
+            hour. <strong>Read this readout first when one arrives.</strong> A red line here is a
+            real missing piece and the email says what it costs. Every line green means the
+            database is refusing the change for its own reasons and nothing is wrong with your
+            content or your signs; forward the email to whoever looks after the site.</li>
         <li><strong>Errors and Alerts</strong> — where problems are being written down, when the
             last one was, and who gets an email about them. Nothing is ever printed on the page
             when something breaks: a screen shows a plain "temporarily unavailable" notice and

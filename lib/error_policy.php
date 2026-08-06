@@ -46,6 +46,9 @@ class ErrorPolicy
 
     const LOG_NAME = 'lbm-error.log';
 
+    /** How often the app is willing to repeat itself about the same problem. */
+    const REPORT_WINDOW = 3600;
+
     private static $installed = false;
     private static $mode      = self::PAGE;
     private static $sentence  = '';
@@ -178,12 +181,24 @@ class ErrorPolicy
 
     /**
      * Something went wrong, was handled, and the app carried on — but an admin
-     * should still hear about it. The seam #9 (schema failures) attaches to.
+     * should still hear about it.
+     *
+     * `$every` throttles the *log as well as the email*, which is the difference
+     * between this and the handlers above. Those run on a request that is ending;
+     * this one is for a problem that recurs on its own schedule. A schema statement
+     * the database keeps refusing is retried on every signed-in page load, and on
+     * the Viewer's self-heal path every 30 seconds per Screen — thousands of
+     * identical lines a day, in a 2 MB file that rotates, burying everything worth
+     * reading. Pass 0 (the default) for a problem a person had to cause.
+     *
+     * Returns true when something was actually written or sent.
      */
-    public static function report($key, $detail, $subject = 'Problem')
+    public static function report($key, $detail, $subject = 'Problem', $every = 0)
     {
+        if ($every > 0 && !self::firstInWindow($key, $every)) { return false; }
         self::log('REPORT (' . $key . '): ' . $detail);
         self::alert($key, $subject, $detail);
+        return true;
     }
 
     // ---- The last thing a visitor sees --------------------------------------
@@ -426,6 +441,43 @@ class ErrorPolicy
             if (self::$mode === self::API) { @header('Content-Type: application/json'); }
         }
         echo self::noticeFor(self::$mode, $sentence, $partial);
+    }
+
+    /**
+     * True the first time this key is seen in the window, false while still inside
+     * it. `AlertMailer` keeps a stamp of its own, and this deliberately does not
+     * reuse it: that one is written only when there is somebody to email, so on a
+     * site where no admin has an address on file it would never be written and the
+     * throttle would never engage — which is the exact case where the log is the
+     * only record and the last thing that should be flooded.
+     *
+     * Stamped before reporting, not after, so a slow mail relay cannot let a second
+     * request through behind the first. A stamp that cannot be written means the
+     * report is dropped, matching `AlertMailer`: not being able to remember having
+     * said something is the one state in which saying it again is unbounded.
+     */
+    private static function firstInWindow($key, $seconds)
+    {
+        try {
+            $dir = self::stateDir();
+            if ($dir === '') { return true; }   // nothing is being written anyway
+
+            $stamp = $dir . '/report-' . substr(sha1((string)$key), 0, 16) . '.stamp';
+            // Checked before statting: the usual case is a problem that has never
+            // happened, and statting a path that is not there raises a warning from
+            // inside the machinery that exists to handle warnings.
+            if (@is_file($stamp)) {
+                $at = @filemtime($stamp);
+                // A stamp from the future — a clock corrected backwards — must not
+                // hold the report off until the clock catches up.
+                if ($at !== false && $at <= time() && (time() - $at) < $seconds) {
+                    return false;
+                }
+            }
+            return @file_put_contents($stamp, gmdate('c') . "\n", LOCK_EX) !== false;
+        } catch (Throwable $e) {
+            return true;
+        }
     }
 
     private static function alert($key, $subject, $detail)

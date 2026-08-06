@@ -1942,6 +1942,228 @@ checkSame(false, $jammed->notify('wedged|viewer.php:1', 'Fatal error', 'detail')
 checkSame(0, count($jammed->sent), 'so an outage cannot turn into an email per poll');
 
 // ─────────────────────────────────────────────────────────────
+section('A schema statement that really was refused says so');
+
+// schemaTry() has always swallowed failures, because most of them mean "already
+// applied" — so a statement that genuinely could not run was indistinguishable from
+// the twelve that fail by design every request, and nothing said so. The lockout
+// columns were missing on the live database for months.
+//
+// The rule that makes reporting safe is narrow: only a statement the *catalogue*
+// said was missing is ever reported. A statement included because the catalogue
+// could not be read is a guess, and guesses fail all the time.
+
+$sPdo2 = newTestDb();
+
+// The reason now survives the catch, which is what lets an alert say why.
+$err = 'untouched';
+checkSame(false, schemaTry($sPdo2, "ALTER TABLE nope ADD COLUMN x INT", $err),
+          'a statement that cannot run still fails quietly');
+check(strpos($err, 'nope') !== false, 'but hands back the database\'s own reason');
+checkSame(true, schemaTry($sPdo2, "UPDATE assets SET label = label", $err),
+          'one that works still succeeds');
+checkSame('', $err, 'and leaves no reason behind it');
+
+// Every plan entry carries the need it was included on. In a blind plan every
+// *statement* is a guess — its need was the catalogue's word and there was no
+// catalogue — but the two row-count steps are not, because their need never came
+// from the catalogue at all. A count runs and answers on any host, so a failure
+// there means something real wherever it happens, and it stays reportable.
+$blindPlan = signageSchemaPlan(SchemaFacts::unknown());
+$guessed = $certain = [];
+foreach ($blindPlan as $entry) {
+    if ($entry['need'] === null) { $guessed[] = $entry['why']; }
+    if ($entry['need'] === true) { $certain[] = $entry['why']; }
+}
+checkSame(19, count($guessed), 'with no catalogue, every statement in the plan is a guess');
+checkSame(['seed_block_styles', 'seed_legacy_display'], $certain,
+          'and the only certainties are the two steps that ask the rows, not the catalogue');
+$statementNeeds = [];
+foreach ($blindPlan as $entry) {
+    if (isset($entry['sql'])) { $statementNeeds[] = $entry['need']; }
+}
+checkSame([null], array_values(array_unique($statementNeeds, SORT_REGULAR)),
+          'not one blind statement claims the catalogue backed it');
+
+$shape = convergedSchemaShape();
+unset($shape['columns']['assets']['auto_pooled']);
+$known = schemaPlanFor($shape);
+checkSame(true, $known[0]['need'], 'a statement the catalogue proved missing is marked as known');
+
+$shape = convergedSchemaShape();
+unset($shape['columns']['assets']['auto_pooled']);
+$known = schemaPlanFor($shape);
+checkSame(true, $known[0]['need'], 'a statement the catalogue proved missing is marked as known');
+
+checkSame(1, count(schemaFailuresWorthReporting([
+    ['why' => 'the catalogue said so', 'need' => true],
+    ['why' => 'a guess',               'need' => null],
+    ['why' => 'assembled by hand'],
+])), 'only the known one is worth reporting');
+
+// ---- The case that must stay silent -------------------------------------------
+// A host that hides information_schema converges by trying everything. Most of
+// these statements are MySQL-only, so on SQLite nearly all of them fail — which is
+// exactly the shape of that host, and exactly what must never reach an inbox.
+$stateDir9 = newTestStateDir();
+ErrorPolicy::useLogFile($stateDir9 . '/lbm-error.log');
+$mailer9 = new TestAlertMailer($stateDir9, 'Lummi Bay Market');
+$mailer9->remember(['sky@example.test']);
+ErrorPolicy::useAlerts($mailer9);
+
+$blindFailures = runSchemaPlan(newTestDb(), signageSchemaPlan(SchemaFacts::unknown()));
+check(count($blindFailures) > 5, 'a blind plan against the wrong engine fails most of its statements');
+checkSame(false, reportSchemaFailures($blindFailures),
+          'and not one of them is reported, because none of them was known to be needed');
+checkSame(0, count($mailer9->sent), 'so a host that hides its catalogue cannot fill an inbox');
+checkSame(false, file_exists($stateDir9 . '/lbm-error.log'),
+          'nor write a line to the log');
+
+// ---- The case that must not ---------------------------------------------------
+// The catalogue says `assets` has no auto_pooled column; the fixture's table has
+// one. So the ALTER is included on a known need and then genuinely refused, which
+// is the live shape of "this could not be applied and nobody would ever know".
+$realFailures = runSchemaPlan($sPdo2, $known);
+checkSame(1, count($realFailures), 'a statement the catalogue asked for and the database refused');
+check(isset($realFailures[0]['error']) && $realFailures[0]['error'] !== '',
+      'is carried back with the reason attached');
+
+checkSame(true, reportSchemaFailures($realFailures), 'that one is reported');
+checkSame(1, count($mailer9->sent), 'an admin is emailed about it');
+$body = $mailer9->sent[0]['body'];
+checkMentions($body, 'assets.auto_pooled', 'the message names the change in the plan\'s own words');
+checkMentions($body, 'duplicate column', 'and the reason the database gave');
+checkMentions($body, 'Database Structure', 'and where to see what a missing column costs');
+check(strpos($body, 'ALTER TABLE') === false,
+      'and never the SQL — the words are for a person, not a DBA');
+checkMentions($mailer9->sent[0]['subject'], 'refused', 'the subject says what happened');
+$logged = file_get_contents($stateDir9 . '/lbm-error.log');
+checkMentions($logged, 'assets.auto_pooled', 'and it is in the log as well as the email');
+
+// ---- Once an hour, and not once per page load ---------------------------------
+// A refused statement is retried on every signed-in page load, and on the Viewer's
+// self-heal path every 30 seconds per Screen. Unthrottled that is thousands of
+// identical lines a day in a file that rotates at 2 MB.
+checkSame(false, reportSchemaFailures($realFailures),
+          'the same failures again inside the hour are not reported');
+checkSame(1, count($mailer9->sent), 'no second email');
+checkSame(1, count(array_filter(explode("\n", $logged))),
+          'and the log still has the one entry');
+clearstatcache();
+checkSame(1, count(array_filter(explode("\n", file_get_contents($stateDir9 . '/lbm-error.log')))),
+          'confirmed against the file rather than the copy read earlier');
+
+// Per set of failures, not per hour: something new breaking is news immediately.
+checkSame(true, reportSchemaFailures([
+    ['why' => 'display_id is NOT NULL', 'need' => true, 'error' => 'data too long'],
+]), 'a different failure in the same hour is reported straight away');
+checkSame(2, count($mailer9->sent), 'so the new one is not held behind the old one');
+
+// ---- Through the entry point, not just the reporting function -----------------
+// The checks above call reportSchemaFailures() directly, which proves the rule and
+// not the wiring: removing the call from ensureSignageSchema() altogether would
+// leave every one of them passing. This is the one that fails if nothing reports.
+$wiredDir = newTestStateDir();
+ErrorPolicy::useLogFile($wiredDir . '/lbm-error.log');
+$wiredMailer = new TestAlertMailer($wiredDir, 'Lummi Bay Market');
+$wiredMailer->remember(['sky@example.test']);
+ErrorPolicy::useAlerts($wiredMailer);
+
+// A fixture whose catalogue disagrees with it about one column: the plan asks for
+// the ALTER on a known need, the table already has the column, the database refuses.
+$wiredPdo = newTestDb();
+$wiredShape = convergedSchemaShape();
+unset($wiredShape['columns']['assets']['auto_pooled']);
+fakeCatalogue($wiredShape, $wiredPdo);
+
+SchemaLatch::forget();
+ensureSignageSchema($wiredPdo);
+checkSame(1, count($wiredMailer->sent), 'the entry point itself reports a refused statement');
+checkMentions($wiredMailer->sent[0]['body'], 'assets.auto_pooled', 'naming it');
+
+// And the latch: once per request means once, so a second call does nothing at all.
+ensureSignageSchema($wiredPdo);
+checkSame(1, count($wiredMailer->sent), 'and converging twice in one request reports once');
+SchemaLatch::forget();
+checkSame(true, SchemaLatch::take(), 'a cleared latch can be taken again');
+checkSame(false, SchemaLatch::take(), 'but only once');
+SchemaLatch::forget();
+
+// With nowhere to write, the throttle cannot remember — and nothing is being
+// written either, so letting the report through costs nothing.
+ErrorPolicy::useLogFile('');
+checkSame(true, ErrorPolicy::report('nowhere', 'detail', 'Problem', ErrorPolicy::REPORT_WINDOW),
+          'with no writable directory a throttled report is not held back');
+
+// Put the policy back where the rest of the suite expects it.
+ErrorPolicy::useAlerts(new TestAlertMailer('', 'Lummi Bay Market'));
+
+// ---- The two steps that can fail for a reason worth naming --------------------
+
+// The drive-thru Display is what unscoped elements are handed to. Without it the
+// backfill has nothing to point at and the tighten after it refuses — so the seed
+// is the failure worth reporting and the other two are its consequences.
+$noDisplay = newTestDb();
+$noDisplay->exec("DELETE FROM canvas_elements");
+$noDisplay->exec("DELETE FROM displays");
+$err = '';
+checkSame(false, backfillDisplayId($noDisplay, $err), 'with no Display, the backfill refuses');
+checkMentions($err, 'no Display', 'and says that is why');
+
+// An empty database is what the seed is for: it creates the Display the
+// pre-multi-display layout belongs to, and says so by succeeding.
+$seeded = newTestDb();
+$err = 'untouched';
+checkSame(true, seedLegacyDisplay($seeded, $err), 'an empty database gets the drive-thru Display');
+checkSame('', $err, 'with nothing to report');
+checkSame(LEGACY_DISPLAY_TAG, $seeded->query("SELECT tag FROM displays")->fetchColumn(),
+          'under the tag the Viewer URL contract uses');
+
+// And a Display already there means somebody got here first — nothing to do, and
+// certainly nothing to create a second of.
+$err = 'untouched';
+checkSame(true, seedLegacyDisplay($seeded, $err), 'a second pass leaves it alone');
+checkSame('', $err, 'still with nothing to report');
+checkSame(1, intval($seeded->query("SELECT COUNT(*) FROM displays")->fetchColumn()),
+          'and no second Display is created');
+
+// The seed's other quiet path is a tag collision — two first-ever requests racing,
+// where the loser's insert fails on a Display that is now there. It asks
+// legacyDisplayId() and reports nothing, so that answer is what the branch rests on.
+// The interleaving itself cannot be produced inside one process; this covers the
+// question it asks.
+$idPdo = newTestDb();
+checkSame(0, legacyDisplayId($idPdo), 'with no Display at all there is nothing to point at');
+makeTestDisplay($idPdo, LEGACY_DISPLAY_TAG, 'Drive-Thru');
+check(legacyDisplayId($idPdo) > 0, 'the drive-thru Display is found by its tag');
+$idPdo->exec("UPDATE displays SET tag = 'renamed-by-an-admin'");
+check(legacyDisplayId($idPdo) > 0, 'and by being the oldest when an admin has renamed it');
+
+// A seed that genuinely cannot write is the one an admin needs to hear about.
+$refuses = newTestDb();
+$refuses->exec("DELETE FROM canvas_elements");
+$refuses->exec("DELETE FROM displays");
+$refuses->exec("CREATE TRIGGER no_displays BEFORE INSERT ON displays
+                BEGIN SELECT RAISE(ABORT, 'displays is read-only'); END");
+$err = '';
+checkSame(false, seedLegacyDisplay($refuses, $err), 'a seed the database refuses fails');
+checkMentions($err, 'drive-thru Display could not be created', 'and names what is missing');
+
+// And a table that is not there at all reads differently from one that refused.
+$noTable = newTestDb();
+$noTable->exec("DROP TABLE display_permissions");
+$noTable->exec("DROP TABLE canvas_elements");
+$noTable->exec("DROP TABLE displays");
+$err = '';
+checkSame(false, seedLegacyDisplay($noTable, $err), 'no displays table at all also fails');
+checkMentions($err, 'not there', 'and says the table is missing rather than blaming the data');
+
+$err = 'untouched';
+checkSame(true, runSchemaStep(newTestDb(), 'no_such_step', $err),
+          'an unknown step still reports nothing to do');
+checkSame('', $err, 'and leaves no reason');
+
+// ─────────────────────────────────────────────────────────────
 section('Who counts as an admin worth alerting');
 
 $mailPdo = newTestDb();
@@ -2040,4 +2262,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(565);
+reportChecks(618);

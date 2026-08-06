@@ -20,6 +20,12 @@
 // is there to make that a decision rather than an accident.
 //
 // Safe to run twice: it converges the schema, then cleans up after itself.
+//
+// One side effect worth knowing about: convergence now writes a line to the app's
+// error log when a statement the catalogue said was missing is refused anyway, so a
+// run against a database that cannot take one of them creates the log directory and
+// an entry in it. No email goes out — that needs the recipient cache an admin page
+// writes — and this tool prints its own report either way.
 
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 

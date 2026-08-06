@@ -26,7 +26,8 @@ edited in place and every change reaches the sign by hand.
   Convergence asks `information_schema` first and sends only what is missing, so an
   ungated `schemaTry()` re-runs on every signed-in page load — and an `ALTER` locks
   the table every sign's layout lives in. Add the gate and a check that the plan
-  asks for it.
+  asks for it. Its gate is also what decides whether a failure emails an admin, so
+  a gate that cannot tell must answer `null`, never `false`.
 - **PHP 7.1-compatible syntax** — the live server's version is unverified.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.

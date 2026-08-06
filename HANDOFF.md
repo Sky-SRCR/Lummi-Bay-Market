@@ -52,18 +52,18 @@ it is the standing contract, with the invariants and where later work attaches.
 
 | File | Role |
 |------|------|
-| `lib/schema.php` | `ensureSignageSchema()` — every idempotent `CREATE`/`ALTER`, the drive-thru seed, the `display_id` backfill, the Brand Standards seed. Reads `information_schema` once and runs only what is actually missing, so a converged database is issued no `ALTER` at all |
+| `lib/schema.php` | `ensureSignageSchema()` — every idempotent `CREATE`/`ALTER`, the drive-thru seed, the `display_id` backfill, the Brand Standards seed. Reads `information_schema` once and runs only what is actually missing, so a converged database is issued no `ALTER` at all — and emails an admin when a statement the catalogue said it needed is refused anyway |
 | `lib/displays.php` | `Display`, `Background`, `LockState`, `DisplayStore` — the **only** SQL against `displays`; screen name tag rules; the edit lock |
 | `lib/layout_store.php` | `LayoutStore` — the **only** place that touches `canvas_elements`: publish transaction, staleness + lock checks, layout copy, scoped hide/delete |
 | `lib/grants.php` | `GrantStore`, `Actor` — the **only** SQL against `display_permissions`; `Actor` answers "may this account open this Display" |
 | `lib/display_admin.php` | `DisplayAdmin` — create/edit/delete a Display across all three tables; writes no SQL itself |
 | `lib/display_request.php` | Which Display a request means, and whether the actor may have it. Both the Builder and every API write resolve through here |
 | `lib/plain_text.php` | `toPlainText()` — signage content is plain text (ADR-0002) |
-| `lib/error_policy.php` | The error policy, set in code: errors off, logging on, the three handlers, and the notice a Screen / an endpoint / a person gets when something breaks |
+| `lib/error_policy.php` | The error policy, set in code: errors off, logging on, the three handlers, and the notice a Screen / an endpoint / a person gets when something breaks. `report()` is for a problem the app survived, and throttles the log as well as the email when the problem repeats on its own |
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **565 checks**. Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **618 checks**. Run before pushing |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **16 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end, **37 checks** |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data |
@@ -184,6 +184,15 @@ anything, they hold every Display by role.
   noisier, never wrong. `tools/rehearse_phase1.php` reports what is still wanted
   after converging a copy, which is the fastest way to see whether the live
   database is actually finished.
+- **An email titled "Schema updates are being refused" means a statement the
+  database said it needed would not apply.** It lists them in words and gives the
+  database's reason. Read **Settings → Database Structure** before doing anything
+  else: a red row there is a real missing column and the email says what it costs;
+  **all rows green** means the refusal is a foreign key or an index the database
+  will not create under the name this app asks for — most likely `users.id` being
+  `unsigned` on the live table while `displays.last_published_by` is signed — and
+  the data is fine. One email per hour per set of failures, and only on a host whose
+  catalogue can be read, so this cannot arrive because of a hosting quirk.
 
 ## 6. The multi-display build (this branch)
 
@@ -220,7 +229,7 @@ staleness check, no version history), 0007 (one editor per Display).
   URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
   account, two browsers, and one unavoidable 15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 565 self-test checks against SQLite, 53 node checks over `builder.php`'s
+  `php -l`, 618 self-test checks against SQLite, 53 node checks over `builder.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare

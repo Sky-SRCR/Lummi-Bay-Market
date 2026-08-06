@@ -53,7 +53,7 @@ Design rules, applied to every module added by this build:
 
 | Module | Interface, in one line | Hides |
 |--------|------------------------|-------|
-| `schema.php` | `ensureSignageSchema(PDO): void`, plus the three pieces it is made of: `readSchemaFacts(PDO) → SchemaFacts`, `signageSchemaPlan(SchemaFacts) → array`, `runSchemaPlan(PDO, array) → array` | Every idempotent `ALTER`/`CREATE`, the `displays` and `display_permissions` tables, `display_id` + backfill + index + FK, the drive-thru seed, the Brand Standards row seed, the "run at most once per request" latch — and **whether any of it needs to run at all**. The one place in the repo that reads `information_schema`; `ServerReport` asks this rather than writing its own catalogue query. `signageSchemaPlan()` is pure (facts in, ordered work out), which is the only reason this file has any automated coverage: its statements are MySQL-only and the fixture is SQLite. `runSchemaPlan()` returns the entries that failed, which is newly worth something — see invariant 19. |
+| `schema.php` | `ensureSignageSchema(PDO): void`, plus the three pieces it is made of: `readSchemaFacts(PDO) → SchemaFacts`, `signageSchemaPlan(SchemaFacts) → array`, `runSchemaPlan(PDO, array) → array` | Every idempotent `ALTER`/`CREATE`, the `displays` and `display_permissions` tables, `display_id` + backfill + index + FK, the drive-thru seed, the Brand Standards row seed, the "run at most once per request" latch — and **whether any of it needs to run at all**. The one place in the repo that reads `information_schema`; `ServerReport` asks this rather than writing its own catalogue query. `signageSchemaPlan()` is pure (facts in, ordered work out), which is the only reason this file has any automated coverage: its statements are MySQL-only and the fixture is SQLite. `runSchemaPlan()` returns the entries that failed, each with the database's own reason, and `reportSchemaFailures()` tells an admin — but only about a statement the catalogue said was missing, never about one included as a guess (invariant 20). `SchemaLatch` is the "once per request" latch, as something a test can clear. |
 | `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the whole access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. |
@@ -64,7 +64,7 @@ Design rules, applied to every module added by this build:
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `redeem` / `discard` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. |
 | `accounts.php` | `AccountStore`, `AccountAdmin` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. Not a gatekeeper for all of `users`: creating, role changes and password resets are still written by `admin_panel.php`, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means. |
 | `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
-| `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. Depends on nothing: no database, no session, no config. |
+| `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. Depends on nothing: no database, no session, no config. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
@@ -263,6 +263,16 @@ through the app again:
     consequence of getting this wrong is not a slow page: an `ALTER` takes an
     exclusive metadata lock on the table holding every sign's layout, and the
     Screens' 30-second polls queue behind one that is waiting on a publish.
+20. **Only a schema statement the catalogue said was missing is ever reported to an
+    admin.** A statement included because the catalogue could not be read is a guess,
+    and on a host that hides `information_schema` twelve of them fail on every
+    request — reporting those would fill an inbox with the normal case and teach the
+    one person who can act to ignore the alert that matters. The `need` on each plan
+    entry is the test, and it is checked for `=== true`, not for truthiness. Anything
+    that reports a failure the app *expected* is a defect in this invariant, not a
+    tuning problem: the two seeds carry `true` on any host because their need comes
+    from a row count rather than the catalogue, and a benign seed race is turned back
+    into a success before it can be mistaken for one.
 
 ---
 
@@ -1202,13 +1212,99 @@ Left standing:
   unmarked and Tidy up reports zero forever. No sign is affected and nothing is
   deleted; it is a button that under-reports. The recovery is one statement by hand,
   and HANDOFF §5 says which.
-- **`runSchemaPlan()` returns the failures and nothing reads them.** A gated
-  statement that fails is a real failure, and this is the first build in which that
-  sentence is true — before, twelve failed every request by design. Logging it and
-  telling an admin is the obvious next thing and is deliberately not done here.
+- ~~**`runSchemaPlan()` returns the failures and nothing reads them**~~ **Fixed** —
+  see §4p, which is the whole of what the return value was for.
 - **`schemaTry()` still swallows.** The catalogue can be silent about a constraint
   under a name MySQL chose itself, and a convergence failure must never break the
-  request that happened to trigger it.
+  request that happened to trigger it. What changed in §4p is that the reason no
+  longer dies with it.
+
+### 4p. A statement that genuinely could not run now says so
+
+`schemaTry()` has swallowed every failure since the pattern was invented, because
+most of them mean "already applied". The cost is stated in invariant 10 and it was
+paid in full once already: the login-lockout columns were missing on the live
+database for months, the feature silently did not work, and nothing anywhere said
+so. `ServerReport` closed half of that — an admin who *opens* Settings sees a red
+row — but a diagnostic nobody looks at is not a diagnostic when the person who would
+look is the one who does not know to.
+
+What made this fixable was §4o. Once convergence asks the catalogue first, the
+statements it sends are the ones the database said it needed, so one that fails is
+information. Before, twelve failed every request by design and there was no way to
+tell one kind from the other.
+
+The rule is deliberately narrow, and it is the whole safety argument:
+
+> **Only a statement the catalogue positively said was missing is ever reported.**
+
+Every plan entry carries the `need` it was included on. `true` means the catalogue
+was read and the thing is not there. `null` means the catalogue could not be read and
+the statement is a guess — and on such a host twelve of them fail on every single
+request, so reporting those would fill an inbox with the normal case and teach
+whoever reads it to ignore the one that matters. `null` is never reported. That is
+what stops a host which hides `information_schema` from becoming a mailing list.
+
+Two entries carry `true` even on a host with no readable catalogue, and that is not
+an exception to the rule but the rule applied honestly: the block-style seed and the
+Display seed are decided by a row count, not by the catalogue, and a count runs and
+answers everywhere. Their failure means something real wherever it happens.
+
+Three further choices:
+
+- **The throttle covers the log, not just the email.** `AlertMailer` has always
+  limited itself to one message per problem per hour. The log had no limit, and a
+  refused statement is retried on every signed-in page load *and* on the Viewer's
+  self-heal path every 30 seconds per Screen — thousands of identical lines a day in
+  a file that rotates at 2 MB, burying everything worth reading. `ErrorPolicy::report()`
+  takes a window and skips both. It keeps its own stamp rather than reusing
+  `AlertMailer`'s, because that one is only written when there is somebody to email:
+  on a site where no admin has an address on file it would never be written, the
+  throttle would never engage, and the log — the only record left — is exactly what
+  would flood.
+- **The key is the set of failures, not the clock.** So the same problem stays quiet
+  for an hour and a *new* one is reported immediately rather than waiting out the old
+  window.
+- **The message says what, not how.** It names each statement in the words the plan
+  gave it (`display_id is NOT NULL`), carries the database's own reason, and points
+  at Settings → Database Structure for what a missing column costs. It never contains
+  SQL. Restating the consequences here would be a second list to keep in agreement
+  with `ServerReport::convergence()`, and eventually they would disagree about one.
+  It also says the thing an admin most needs to hear: a row that is green on that
+  screen is already in place, so the statement is being refused for some other reason
+  — most likely a name the database chose for itself — and nothing is wrong with the
+  data.
+
+One quiet path was found while wiring this up and is now not reported: two
+first-ever requests racing to seed the drive-thru Display means the loser's `INSERT`
+fails on a unique tag. The Display exists, which is all the seed was for, so
+`seedLegacyDisplay()` re-asks `legacyDisplayId()` and returns success. Without that,
+the first deploy would have emailed an admin about two people signing in at the same
+moment.
+
+**Fifty-three checks.** Two are worth naming. The first runs a blind plan against the
+SQLite fixture — the shape of a host with no catalogue, where nearly every statement
+fails — and asserts that not one line is logged and not one email is sent. The second
+exists because a mutation exposed it: every other check called
+`reportSchemaFailures()` directly, so deleting the call from `ensureSignageSchema()`
+altogether failed nothing at all. Closing that needed the "once per request" latch to
+become something a test can clear, which is `SchemaLatch`. Twelve mutations, all
+killed (kill counts 9, 11, 6, 3, 2, 2, 2, 2, 2, 2, 1, 1).
+
+Left standing:
+
+- **The race branch in `seedLegacyDisplay()` cannot be reached in one process.**
+  SQLite rolls a trigger's writes back with the statement that failed, so the
+  interleaving is not constructible. The branch is three lines with no logic of its
+  own; what it asks — `legacyDisplayId()` — is covered directly, including the
+  renamed-tag fallback.
+- **Nothing reports a *skipped* statement.** If the catalogue says a column is there
+  and it is not — a catalogue this app has no reason to distrust, but still — nothing
+  notices. `ServerReport` is the answer to that, and it asks the same reader, so the
+  two would be wrong together.
+- **`api.php`'s upload-fault report is still unthrottled.** Its window is a person
+  clicking, which bounds it. Worth revisiting if a broken temp directory ever turns
+  out to produce a run of them.
 
 ---
 
@@ -1241,6 +1337,13 @@ grep -rn "schemaTry(\$pdo" --include=*.php .   # only lib/schema.php, and only f
                                               # named steps. A statement added anywhere else
                                               # bypasses signageSchemaPlan() and is therefore
                                               # ungated and untested — invariant 19
+grep -rn "ErrorPolicy::report" --include=*.php .  # api.php (an upload the server refused),
+                                              # lib/schema.php (a schema statement it refused),
+                                              # and one check in the self-test. A new caller is
+                                              # a new thing an admin gets emailed about: check
+                                              # it cannot fire on a condition the app expected,
+                                              # and give it a window if it can repeat on its
+                                              # own — invariant 20
 grep -rn "DELETE FROM users" --include=*.php . # nothing outside tools/ (invariant 14). Accounts
                                               # are closed, never deleted, so a freed id can
                                               # never be handed to somebody new
