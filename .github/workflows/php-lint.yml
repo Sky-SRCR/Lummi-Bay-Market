@@ -32,7 +32,7 @@ on:
 
 jobs:
   php:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
@@ -112,7 +112,7 @@ jobs:
   # one against a stubbed XMLHttpRequest driven through every way an upload ends.
   # Their own job because they are the same JavaScript whichever PHP is installed.
   builder-js:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
