@@ -151,7 +151,11 @@ let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
 js = js.replace(/^var READ_ONLY\s*=.*$/m,        'var READ_ONLY = false;')
        .replace(/^var IS_ADMIN\s*=.*$/m,         'var IS_ADMIN = true;')
        .replace(/^var UPLOAD_MAX_BYTES\s*=.*$/m, 'var UPLOAD_MAX_BYTES = 8388608;')
-       .replace(/^var UPLOAD_MAX_LABEL\s*=.*$/m, 'var UPLOAD_MAX_LABEL = "8 MB";');
+       .replace(/^var UPLOAD_MAX_LABEL\s*=.*$/m, 'var UPLOAD_MAX_LABEL = "8 MB";')
+       // Named, so a check can read the sentence a person would and see the sign
+       // named in it — "published!" not saying which one is half of §4h.
+       .replace(/^var DISPLAY_TITLE\s*=.*$/m,    'var DISPLAY_TITLE = "Deli Board";')
+       .replace(/^var DISPLAY_TAG\s*=.*$/m,      'var DISPLAY_TAG = "deli";');
 
 check(/var UPLOAD_MAX_BYTES = 8388608;/.test(js), 'the page carries a server-set upload ceiling');
 check(/var UPLOAD_MAX_LABEL = "8 MB";/.test(js),  'and a wording for it');
@@ -416,11 +420,156 @@ beatRefusedWith('', 'Something went wrong.');
 checkSame('none', document.getElementById('lock-access-bar').style.display,
           'and so is a failure with no reason at all, which is what a dropped beat looks like');
 
+// ---- Publishing, which is the other thing this page can only do once ---------
+
+/**
+ * Let a fetch chain reach its next link.
+ *
+ * The page's handlers do not return their promises — nothing in a browser would
+ * want them — so calling `publishCanvas()` proves only that its synchronous part
+ * ran. `setTimeout` is a no-op here, which leaves draining the microtask queue as
+ * the way to arrive two `.then`s down.
+ */
+async function settle() { for (let i = 0; i < 12; i++) { await Promise.resolve(); } }
+
+/**
+ * A fetch that answers `get_assets` immediately and holds `publish` open until a
+ * check says how it ends — which is the only way to be inside a publish, which is
+ * the whole subject here.
+ */
+function armFetch() {
+    const state = { publishes: 0, pending: [], bodies: [] };
+    global.fetch = function (url, opts) {
+        if (String(url).indexOf('action=publish') < 0) {
+            return Promise.resolve({ json: () => Promise.resolve([]) });
+        }
+        state.publishes++;
+        state.bodies.push(opts && opts.body);
+        return new Promise(function (resolve, reject) { state.pending.push({ resolve, reject }); });
+    };
+    state.reply    = (res) => state.pending.shift().resolve({ json: () => Promise.resolve(res) });
+    state.unreadable = ()  => state.pending.shift().resolve({ json: () => Promise.reject(new SyntaxError('Unexpected token <')) });
+    state.drop     = ()    => state.pending.shift().reject(new TypeError('Failed to fetch'));
+    return state;
+}
+
+const publishBtn = () => document.getElementById('publish-btn');
+let alerted = '';
+global.alert = function (m) { alerted = m; };
+
+(async function publishSuite() {
+
+section('A second click on Publish is a duplicate, not a conflict');
+
+// The defect: two clicks are two requests carrying the same layout stamp, because
+// the second was assembled before the first's reply could update it. The server
+// commits the first and refuses the second as stale — correctly, it cannot tell a
+// duplicate from a colleague — and the page printed both answers at once: a green
+// "Published to Deli Board" beside an alert saying the sign had changed underneath
+// them and they should reload. Reloading is what throws away unpublished work.
+
+reset();
+alerted = '';
+let f = armFetch();
+publishBtn().textContent = '✓ Publish';
+
+publishCanvas();
+checkSame(1, f.publishes, 'the first click sends a publish');
+checkSame(true, publishBtn().disabled, 'and the button goes out of service while it runs');
+checkSame('Publishing…', publishBtn().textContent, 'saying what it is doing, because a publish can carry a background image');
+
+publishCanvas();
+checkSame(1, f.publishes, 'a second click while it is in flight sends nothing');
+checkSame(false, isErr(), 'and is not reported as an error — they asked for something already happening');
+checkMentions(toast(), 'Deli Board', 'the note names the sign being published to');
+
+publishCanvas();
+publishCanvas();
+checkSame(1, f.publishes, 'nor does a third or a fourth');
+
+// The first one lands, and it is the only answer on screen.
+f.reply({ status: 'success', layout_stamp: 'stamp-2' });
+await settle();
+checkMentions(toast(), 'Published to Deli Board', 'when it lands, the success is what the person reads');
+checkSame(false, isErr(), 'and nothing contradicts it');
+checkSame('', alerted, 'no stale-layout alert was raised over the top of it');
+checkSame('stamp-2', LAYOUT_STAMP, 'and the stamp this publish created is adopted, so the next one is not stale either');
+checkSame(false, publishBtn().disabled, 'the button comes back');
+checkSame('✓ Publish', publishBtn().textContent, 'with its own label, not the busy one');
+
+// And it is usable again — the guard is a gate, not a latch.
+reset();
+publishCanvas();
+checkSame(2, f.publishes, 'once the first has landed, Publish works again');
+f.reply({ status: 'success', layout_stamp: 'stamp-3' });
+await settle();
+
+section('Every way a publish ends puts the button back');
+
+// A guard that is not released is worse than no guard: it takes Publish away for
+// the rest of the session, on a page whose whole job is publishing, with unsaved
+// work on the canvas and no undo anywhere in this app.
+
+// A genuine stale refusal — a colleague really did publish. This one must still
+// alert, because it is the one the person has to act on.
+reset();
+alerted = '';
+publishCanvas();
+f.reply({ status: 'error', reason: 'stale',
+          message: 'Somebody else published to this display while you were editing.' });
+await settle();
+checkMentions(alerted, 'Somebody else published', 'a real stale refusal is still raised, and in the server\'s words');
+checkSame(false, publishBtn().disabled, 'and the button is back afterwards');
+
+// The connection dies.
+reset();
+publishCanvas();
+f.drop();
+await settle();
+check(isErr(), 'a publish whose connection drops is reported');
+checkSame(false, publishBtn().disabled, 'and does not leave Publish out of service');
+
+// A 200 whose body is not JSON: `r.json()` rejecting, which is the §4n failure on
+// the one path still using fetch. It used to read "Network error." — which names
+// the wrong cause and, worse, the wrong remedy.
+reset();
+publishCanvas();
+f.unreadable();
+await settle();
+check(isErr(), 'a reply that cannot be read is reported');
+checkMentions(toast(), 'Check the sign', 'and says what to do, because whether it landed is unknown');
+checkSame(false, publishBtn().disabled, 'with the button back');
+
+// A refusal the server explains in full.
+reset();
+publishCanvas();
+f.reply({ status: 'error', message: 'Line height must be between 0.5 and 5.' });
+await settle();
+checkSame('Line height must be between 0.5 and 5.', toast(), 'a refusal the server explains is passed through verbatim');
+checkSame(false, publishBtn().disabled, 'and the button is back for the correction');
+
+section('A success is never talked over');
+
+// The success branch does more than print: it adopts the stamp and reloads the
+// asset list. If any of that throws, the promise rejects and lands in the catch —
+// which would print a connection failure over the green toast already on screen.
+// That is the same two-answers-at-once defect through a different door.
+reset();
+const realLoadAssets = loadAssets;
+loadAssets = function () { throw new Error('the asset list blew up'); };
+publishCanvas();
+f.reply({ status: 'success', layout_stamp: 'stamp-9' });
+await settle();
+checkMentions(toast(), 'Published to Deli Board', 'a throw after the reply was acted on leaves the success message standing');
+checkSame(false, isErr(), 'rather than replacing it with a connection failure that did not happen');
+checkSame(false, publishBtn().disabled, 'and the button is still released');
+loadAssets = realLoadAssets;
+
 // ---- Total ------------------------------------------------------------------
 
 // The expected total, for the same reason the other two suites carry one: without
 // it, deleting half this file still reports a clean run.
-const expected = 53;
+const expected = 79;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }
@@ -428,3 +577,5 @@ if (checks !== expected) {
 console.log('\n' + checks + ' checks, ' + fails.length + ' failed');
 fails.forEach(function (f) { console.log('  FAILED: ' + f); });
 process.exit(fails.length ? 1 : 0);
+
+})();

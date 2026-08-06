@@ -76,7 +76,7 @@ written down rather than remembered:
 | 36 | The branding file was written in place with no locking, so a short write took the whole app down. | Write a temporary file, then swap it in. | Open | — |
 | 37 | The asset editor read the file type from a hidden form field instead of the stored record. | Read it from the record. | **Done** | §4u |
 | 38 | Two login problems: a secure-cookie setting causes an invisible sign-in loop on plain HTTP, and the suspended-account message tells a guesser the password was right. | Fix both. | Open | — |
-| 39 | Double-clicking Publish produced a success message and a stale-sign warning together. | Ignore the second while the first is still running. | Open | — |
+| 39 | Double-clicking Publish produced a success message and a stale-sign warning together. | Ignore the second while the first is still running. | **Done** | §4v |
 | 40 | A basic account with the sign open read-only threw an error on every canvas click. | Guard the lookup. | Open | — |
 | 41 | An unreadable stored colour round-tripped through the colour picker and published back as black. | Validate on the way in and on the way out. | Open | — |
 | 42 | Six smaller Builder rough edges: section minimum size measured in screen pixels, Fit cannot fit a very large canvas, no way to unhide a section, deleting a slide field cannot be undone, marquee "Transparent" loses the colour, and dead code. | All six. | Open | — |
@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**23 done, 2 part done, 26 open.**
+**24 done, 2 part done, 25 open.**
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

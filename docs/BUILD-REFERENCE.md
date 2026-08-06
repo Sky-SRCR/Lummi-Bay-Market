@@ -154,6 +154,15 @@ through the app again:
    *decode* is not an empty layout: `PublishRequest::fromPostedJson()` refuses it,
    because publishing an empty layout deletes every element and the old
    `json_decode(...) ?: []` read an unreadable request as exactly that.
+   **The other half is the client's, because the server cannot do it.** A second
+   publish on an already-spent stamp is indistinguishable, from the server, from a
+   colleague's — so it is refused, correctly, and a double-click therefore earned a
+   green success and a "somebody else changed this sign, reload" alert at once, with
+   the alert being the one acted on and reloading being what discards unpublished
+   work. Only the tab that sent both requests can tell a duplicate from a conflict.
+   `publishInFlight` in `builder.php` is where it does, and anything else added that
+   writes on a stamp — a save button, a keyboard shortcut, an autosave — needs the
+   same guard or it manufactures the same false conflict.
 6. **Text-block content is plain text** (ADR-0002). `toPlainText()` on save for
    `type = 'text'` only; render with `textContent`. Never `innerHTML`, never
    strip carousel/table/marquee JSON or media paths.
@@ -1935,6 +1944,69 @@ Left standing, and worth knowing:
   has a fallback at all. Unrelated to `#37` and not touched here, but it is a fatal on
   the Library page rather than a bad preview.
 
+### 4v. Two clicks, two answers, and the wrong one was the loud one
+
+Decision `#39`. Publish had no in-flight guard, so two clicks were two requests —
+and both carried `LAYOUT_STAMP` as it stood when the *first* was assembled, because
+the second was built before any reply could update it. The server takes the row
+lock, commits the first, and refuses the second as stale (ADR-0006).
+
+That refusal is correct and must stay correct. From the server, a second publish on
+a spent stamp is indistinguishable from a colleague's, and the alternative —
+guessing — is guessing about somebody's work in an app with no undo. What was wrong
+was upstream of it: the page raised **both answers at once**, a green *Published to
+Deli Board* toast and a modal alert saying the sign had changed underneath them and
+this page should be reloaded. Both were about their own click. The alert is the one
+that gets acted on, because it is the one that blocks, and reloading is precisely
+what throws away everything on the canvas that had not been published.
+
+**The guard goes where the duplicate can be recognised**, which is the only place it
+can be: the tab that sent both requests. `publishInFlight` is raised after the last
+refusal that returns without sending — a background image over the server's limit
+must not leave Publish dead for the session — and dropped by `endPublish()` on every
+ending. The button is disabled and reads *Publishing…* while it runs, which is what
+actually prevents the second click; the flag is what catches the one that happens
+anyway, and the second click gets a plain toast rather than a red one, because they
+asked for something that is already happening.
+
+Three details that are decisions rather than mechanics:
+
+- **The stamp is adopted before the guard comes off.** Otherwise the click landing
+  the instant Publish is usable again would carry the stamp this publish just
+  replaced — the same false conflict, one line later.
+- **`endPublish()` has no latch.** Both endings can arrive for one request, so it is
+  written as assignments rather than toggles and costs nothing when called twice.
+  A latch would be a line no test could fail on, which is decision `#50`'s complaint
+  about this suite, and it was caught by exactly that: the mutation removing it
+  killed nothing.
+- **`.catch()` no longer says "Network error."** Two endings reach it and neither is
+  only a dropped connection: the other is `r.json()` rejecting, which is what a reply
+  with anything printed above the JSON does — the §4n failure, on the one path still
+  using `fetch`. Neither knows whether the publish landed, so the message says to
+  check the sign rather than claiming either way. It also returns early when the
+  reply was already acted on: a throw in the success branch would otherwise print a
+  connection failure over the green toast it had just written, which is this very
+  defect wearing a different hat.
+
+**Twenty-six checks** across the two node suites (23 + 3), and nine deliberate
+mutations, all nine killed (4, 3, 1, 2, 1, 2, 1, 1, 1). The guard itself is invisible
+to `php -l` and to `node --check` — a page with no guard parses perfectly — so these
+run the handler with a second click landing mid-flight and read what is on screen
+afterwards, which is the same premise `selftest_builder_uploads.js` was built on.
+The read-only suite gets three of them because the guard hangs off a button that
+page does not emit: an unguarded lookup in `setPublishBusy()` would be a TypeError
+on the one publish path a read-only page still runs.
+
+Left standing, and worth knowing:
+
+- **Publishing while an upload is still in flight is not guarded.** An admin who
+  picks an image and clicks Publish before it finishes publishes a block with no
+  path in it. `uploadsInFlight` already counts them, so the guard is cheap — but it
+  is a different defect from this one and belongs with whoever takes it.
+- **Nothing cancels a publish.** The button is out of service until the request
+  ends, and on shop Wi-Fi with a background image that can be minutes. Reloading the
+  page is the only way out, and it costs the unpublished canvas.
+
 ---
 
 ## 5. Verification
@@ -2100,6 +2172,13 @@ grep -rn "post_max_size\|upload_max_filesize\|MAX_BYTES" --include=*.php .
 grep -rn "php://input" --include=*.php .      # must be empty: UploadLimit::bodyWasDropped() infers the
                                               # post_max_size case from an empty $_POST, which only
                                               # holds while nothing reads the raw body
+grep -rn "publishInFlight\|endPublish" --include=*.php .  # builder.php only, and both must appear on
+                                              # every ending: raised once after the last refusal that
+                                              # sends nothing, dropped in the reply handler AND in the
+                                              # catch. A raise with one release is Publish out of service
+                                              # for the session, on the page whose whole job is
+                                              # publishing — see invariant 5's second half for why the
+                                              # guard cannot live on the server
 grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
                                               # DISPLAY_ID / waDisplayId() with it (invariant 12), which
                                               # omission silently opts out of. viewer.php is the one
