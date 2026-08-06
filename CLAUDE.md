@@ -71,15 +71,17 @@ php -l <every touched .php>
 php tools/selftest_layout.php
 node tools/selftest_builder_readonly.js    # if builder.php was touched
 node tools/selftest_builder_uploads.js     # if builder.php was touched
+node tools/selftest_builder_editing.js     # if builder.php was touched
 ```
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it —
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3500 lines of it —
 which is why the standing gate is not enough on its own. Extract the `<script>`
 block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
 sign rather than a stack trace anybody will read.
 
-The two node suites go further and *run* that JavaScript, under opposite premises
-— a page that may not edit, and an admin uploading a file — because the defects
-they exist for are invisible to a parse: a lookup for a control the edit lock took
-away, and a `fetch` chain with no `.catch()`.
+The three node suites go further and *run* that JavaScript, each under a different
+premise about who is at the keyboard — a page that may not edit, an admin uploading
+a file, and an admin on an ordinary good day — because the defects they exist for
+are invisible to a parse: a lookup for a control the edit lock took away, a `fetch`
+chain with no `.catch()`, and a control that quietly does less than it says.

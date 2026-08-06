@@ -363,6 +363,22 @@ through the app again:
     checks it. Invariant 12 is this same rule one level up, where a tag names a
     Display and the id proves which one — there, the pair is sent precisely so they
     can be caught disagreeing.
+24. **In the Builder, a size is a canvas measurement — screen pixels are divided by
+    `ZOOM` once, at the edge, and never compared to anything afterwards.** The canvas
+    is CSS-scaled, so a pointer that moves 100 screen pixels moves 200 canvas pixels at
+    50% zoom, and the sign is laid out in the second of those. `handleMove`,
+    `handleResize` and `getCanvasDropCenter` do the divide; everything downstream —
+    limits, clamps, the readout, the inspector's W and H — is in canvas pixels and says
+    so. The rule earns its place because the one measurement that skipped the divide
+    did not look like a measurement: `interact.modifiers.restrictSize({min:{width:100}})`
+    reads as "sections are at least 100 wide" and meant "at least 100 *on this screen,
+    at this zoom*", so the smallest a section could be dragged to was 200 canvas px
+    zoomed out and 50 zoomed in. A limit interact.js enforces is a limit in its units;
+    ours are enforced after the divide, in `handleResize`, from one table (`BLOCK_MIN`)
+    that `applyDim()` reads too — a floor a drag stops at and a floor a typed number
+    stops at must be the same floor. The zoom itself has the mirror-image rule: its
+    floor is `min(ZOOM_MIN, fitZoom())`, because a floor that a canvas cannot fit inside
+    is a Fit button that does not fit.
 
 ---
 
@@ -2090,6 +2106,129 @@ Left standing, and worth knowing:
 
 ---
 
+### 4x. Six rough edges, and the third premise a Builder page can be under
+
+Decision `#42` was one row on the list holding six unrelated complaints about the
+Builder. They are unrelated on purpose — nobody thought them worth a row each — but
+five of the six are the same *kind* of defect: **a control that quietly did less than
+it said.** No error, no toast, no red anywhere; the thing simply did not happen, and
+whoever was laying out a sign concluded they had misunderstood the button.
+
+**Fit could not fit a large canvas.** `zoomToFit()` computed the zoom that shows the
+whole canvas and handed it to `applyZoom()`, which floored every zoom at `ZOOM_MIN`
+— 10%. A 20000-wide canvas in a 1000-wide frame needs 4.6%, so the button clamped to
+10%, left two thirds of the canvas off-screen and reported nothing. The floor now
+gives way to exactly one thing:
+
+```js
+function zoomFloor() { return Math.min(ZOOM_MIN, fitZoom()); }
+```
+
+so zooming out by hand also reaches the fit and stops there, and `nudgeZoom` needs no
+special case. `fitZoom()` picked up a guard while it was being split out: a frame
+measured before the browser has laid the page out reports `clientWidth` 0, which used
+to give a negative zoom — `scale(-0.02)` is a mirrored canvas, and it says why no more
+clearly than `scale(0)` does.
+
+**How small a section could be depended on the zoom.** Sections carried
+`interact.modifiers.restrictSize({min:{width:100,height:60}})`, which interact.js
+enforces in screen pixels. Everything else in `handleResize` divides by `ZOOM`; that
+one line did not, so the floor was 200 canvas px at 50% and 50 at 200%. The modifier
+is gone and `handleResize` enforces `BLOCK_MIN` after the divide, which also gave the
+root and child blocks the floor they never had. Two details that are not obvious:
+`applyDim()` reads the same table, because typing 10 into W and dragging the edge as
+far as it goes were answering differently; and an axis that has stopped shrinking now
+stops *moving* too, or dragging the left edge past the minimum slides the block right
+across the canvas while its width sits still. This is now invariant 24.
+
+**A hidden section could not be brought back.** Hiding lives on
+`canvas_elements.hidden` and the Work Area's Show/Hide writes it directly. In the
+Builder, a hidden *block* got a fade and a HIDDEN badge; a hidden *section* got the
+fade alone, which reads as a rendering quirk rather than as something somebody
+decided — and the Builder offered no way to change either. Both halves are fixed by
+one function: `applyHiddenLook(block)` puts the class and the badge in step with
+`dataset.hidden`, and `renderSection()`, `renderBlock()` and the new inspector box all
+go through it. The box is admin-only, matching the Work Area, because two doors onto
+one column should not disagree about who may open them. It writes nothing — the change
+rides out on the next publish, like everything else on that canvas — so `publish()`
+carrying `hidden` for a section *and* for a block, in both directions, is now checked
+in `selftest_layout.php` rather than assumed.
+
+**"Restore" restored nothing.** A carousel slide's Title, Price and Description each
+have a Delete beside them, which sets the field to the stored `null` a sign reads as
+"this slide has no title". The button then relabels itself `+ Restore` — and restoring
+handed back an empty box, because deleting had done `inp.value = ''` and kept no copy.
+In an app whose first rule is that **no undo exists anywhere**, a control that offers
+to put something back has to actually have it; the value is stashed on the node and
+read back. A field that *arrived* deleted still restores empty, which is not a loss —
+there is nothing behind it.
+
+**Marquee "Transparent" ate the colour.** `md.bg` is what the sign reads and
+`'transparent'` is not a colour, so ticking the box overwrote the chosen one. Untick
+it in the same sitting and the picker still held it; reopen the block, or reload, and
+both the picker and the next publish were the factory red. The colour is kept beside
+it as `md.bgColor` — which the Viewer and the publish never look at — and the picker
+reads from there, so Transparent is a state the block is in rather than a thing it
+forgets. A marquee saved before this change has no `bgColor` and opens on its own `bg`.
+
+**The sixth is dead code**, and it was doing work: the remains of a WYSIWYG format bar
+that ADR-0002 settled against. `fmtCmd()` was called by nothing, but `trackSelection()`
+— which exists only to fill the variable `fmtCmd()` read — was still registered on
+`document`'s `selectionchange`, firing on every caret movement anywhere on the page to
+write a value nothing would ever read. That, `FONT_FAMILIES`, `#wysiwyg-bar` and
+`.fmt-btn` are out. The last `document.execCommand` in the file went with them, which
+is the one that could put markup into a text block at all.
+
+#### A third node suite
+
+`tools/selftest_builder_editing.js` is new, and the naming is the point: the two
+existing suites are named for what they hold the page to — a page that may **not**
+edit, and an upload that goes **wrong** — and none of these six lives under either
+premise. This one runs the Builder on an ordinary good day and asks whether the
+controls mean what they say. Folding it into `selftest_builder_uploads.js` would have
+put zoom arithmetic and slide fields under a name that claims neither.
+
+Its DOM is hand-written rather than derived from the markup, unlike §4w's, and for a
+reason worth stating: §4w's derivation answers *which ids a page emits*, which matters
+when you are asserting absence. Nothing here asserts absence — everything is present
+by premise. What this DOM does need, and the uploads suite's does not, is to **work**:
+`classList` really adds and removes, `appendChild` really appends, and `querySelector`
+really finds `:scope > .hidden-badge` among a node's children. A no-op `classList`
+would have made every `applyHiddenLook` check pass without the function existing.
+
+Two seams are named in the file's own header rather than left to be discovered. Slide
+rows are built by assigning a string to `innerHTML`, which this DOM does not parse, so
+the row markup is checked as the string `addSlideRow()` really emits and the
+delete/restore/save round trip is driven over nodes built to match those three claims.
+And `describe()` exists because `JSON.stringify` throws on a DOM node — several checks
+compare a node against null, and a failing check that cannot print its own failure
+takes the suite down with a stack trace instead of naming what broke.
+
+**86 checks** in the new suite, **six more** in `selftest_layout.php` (854 → 860), and
+**eighteen deliberate mutations, all eighteen killed** (6, 2, 1, 4, 9, 1, 11, 1, 4, 1,
+1, 1, 1, 4, 1, 4, 3, 1). Three are worth naming because they are the defects
+themselves: clamping Fit back to the 10% floor kills 6; comparing the resize minimum
+before the divide kills 4; and letting Transparent overwrite the colour again kills 4.
+
+Left standing, and deliberately:
+
+- **A basic account cannot unhide its own block.** The visibility box is admin-only,
+  which follows `set_element_hidden` being admin-only, not a fresh judgement. If the
+  owner wants a clerk to be able to un-hide what an admin hid, that is a change to
+  who may hide, and it belongs on both doors at once.
+- **The badge sits over a section's own label.** `.hidden-badge` spans the top edge at
+  `z-index:50` and `.section-label` is at 5. Being hidden is the more important fact,
+  and a section is not identified by that label.
+- **Nothing warns before a publish carries a hidden section.** Publishing a layout
+  where a whole section is hidden takes it off the Screens with the same green message
+  as any other publish. That is consistent with everything else on the canvas, and
+  `#19`'s decision about mid-edit warnings is where a change would start.
+- **`interact.js` is still un-run by any suite.** The drag and resize *listeners* are
+  now driven directly with the event shape interact.js passes; that it passes that
+  shape, and that dropping `restrictSize` changed nothing else, is a browser check.
+
+---
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -2103,6 +2242,10 @@ node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a D
 node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an
                                          # admin who can edit — driving a stubbed
                                          # XMLHttpRequest through every way an upload ends
+node tools/selftest_builder_editing.js   # and under the third: an ordinary good day.
+                                         # Zoom, resize floors, hide/unhide, slide fields
+                                         # and the marquee, run over a DOM whose classList
+                                         # and appendChild actually work
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
                                               # the get_canvas_elements endpoint NAME, and
                                               # server_report.php's expected-column list
@@ -2260,20 +2403,60 @@ grep -rn "publishInFlight\|endPublish" --include=*.php .  # builder.php only, an
                                               # for the session, on the page whose whole job is
                                               # publishing — see invariant 5's second half for why the
                                               # guard cannot live on the server
+grep -rn "restrictSize\|BLOCK_MIN\|blockMin" --include=*.php .  # builder.php only. The single
+                                              # `restrictSize` hit is the comment saying why there
+                                              # is no modifier: interact.js enforces a minimum in
+                                              # SCREEN pixels, so one written there moves with the
+                                              # zoom. A real `interact.modifiers.restrictSize(` is
+                                              # the defect back. BLOCK_MIN is the canvas-pixel table
+                                              # and it must keep BOTH readers — handleResize
+                                              # (dragging) and applyDim (typing) — or the two
+                                              # controls disagree about how small a section may
+                                              # be — invariant 24
+grep -rn "ZOOM_MIN\|zoomFloor\|fitZoom" --include=*.php .  # builder.php only, seven hits, and the one
+                                              # to read is applyZoom's: its floor is `zoomFloor()`,
+                                              # which is ZOOM_MIN *or the zoom Fit needs*, whichever
+                                              # is smaller. A bare `Math.max(ZOOM_MIN` back in
+                                              # applyZoom is the Fit button silently not fitting.
+                                              # fitZoom's own ZOOM_MIN is the unlaid-out-frame
+                                              # fallback and belongs there
+grep -rn "applyHiddenLook\|hidden-badge" --include=*.php .  # builder.php only, and every place that
+                                              # sets dataset.hidden must go through applyHiddenLook —
+                                              # renderSection, renderBlock, toggleHidden. A
+                                              # classList.add('hidden-block') on its own is the §4x
+                                              # defect back: a section faded with nothing saying why.
+                                              # The three preview builders name .hidden-badge only to
+                                              # avoid clearing it when they redraw
+grep -rn "fmtCmd\|savedRange\|trackSelection\|FONT_FAMILIES\|wysiwyg\|fmt-btn" --include=*.php .
+                                              # must be empty. The remains of a format bar ADR-0002
+                                              # settled against — including a `selectionchange`
+                                              # listener firing on every caret move to fill a
+                                              # variable nothing read
+grep -rn "execCommand" --include=*.php .      # exactly two, both in admin_panel.php, both
+                                              # `execCommand('copy')` — deprecated, and the only copy
+                                              # that works without HTTPS. A hit in builder.php or
+                                              # viewer.php is markup editing back in a text block,
+                                              # against ADR-0002 and invariant 6
 grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
                                               # DISPLAY_ID / waDisplayId() with it (invariant 12), which
                                               # omission silently opts out of. viewer.php is the one
                                               # exception: a Screen sends the tag alone (ADR-0003)
 ```
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it.
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3500 lines of it.
 Anything touching that file needs reading, not linting. `node --check` over the
-extracted `<script>` body proves it parses; the two node suites go further and *run*
-it. `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only page
+extracted `<script>` body proves it parses; the three node suites go further and *run*
+it, each under a different premise about who is at the keyboard.
+`selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only page
 emits, which is the only automated way to catch a lookup reaching for a control the
 lock took away. `selftest_builder_uploads.js` takes the opposite premise — an admin
 who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the only
 way to see a missing `.catch()`: the file parses perfectly without one.
+`selftest_builder_editing.js` takes the third and least dramatic — an ordinary good
+day — and is where a control that quietly does less than it says gets caught, because
+nothing about that shows up as an error anywhere (§4x). Its DOM is the one that has to
+genuinely work: `classList`, `appendChild` and `querySelector` are all real, since a
+no-op `classList` passes every check about a class without the code existing.
 
 `selftest_builder_readonly.js` derives the ids a read-only page emits by walking
 `builder.php`'s own conditionals, so there is no list to keep in step by hand — it

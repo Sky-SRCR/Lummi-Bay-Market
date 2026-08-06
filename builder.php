@@ -393,13 +393,6 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 .insp-row { display: flex; gap: 8px; align-items: flex-end; }
 .insp-row > * { flex: 1; }
 
-/* WYSIWYG bar */
-#wysiwyg-bar { display: flex; gap: 3px; flex-wrap: wrap; }
-.fmt-btn { background: #2c3e50; border: 1px solid #4a6278; color: #fff;
-           width: 30px; height: 26px; border-radius: 3px; cursor: pointer; font-size: 12px;
-           display: inline-flex; align-items: center; justify-content: center; }
-.fmt-btn:hover { background: #3d5166; }
-
 /* Brand lock badge */
 .brand-lock { background: #8e44ad; color: #fff; font-size: 11px;
               padding: 3px 8px; border-radius: 10px; display: inline-block; margin-bottom: 4px; }
@@ -940,6 +933,17 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <div style="font-size:11px;color:#bdc3c7;margin-top:4px;">Layer: <span id="insp-zindex-val">1</span></div>
     </div>
 
+    <!-- Visibility (admin only — see showInspector) -->
+    <div class="insp-section" id="insp-visibility">
+        <label>
+            <input type="checkbox" id="hidden-toggle" onchange="toggleHidden(this.checked)">
+            Hide from the screens (keeps it in the layout)
+        </label>
+        <div style="font-size:11px;color:#7f8c8d;margin-top:4px;">
+            Hiding a section hides everything inside it. Takes effect when you publish.
+        </div>
+    </div>
+
     <!-- Lock toggle -->
     <div class="insp-section">
         <label>
@@ -1074,9 +1078,14 @@ var BLOCK_DEFAULTS = {
     marquee:        { w:CANVAS_W, h:60  },
 };
 
-var FONT_FAMILIES = ['Arial','Georgia','Verdana','Tahoma',
-    "'Trebuchet MS',sans-serif","'Times New Roman',serif",
-    "'Courier New',monospace",'Impact'];
+// The smallest a block may be resized to, in CANVAS pixels — the same units the
+// inspector's W and H boxes are in, and the same ones the sign is laid out in.
+// A section keeps room for its label and something inside it; everything else
+// keeps enough to still be clickable once it is that small.
+var BLOCK_MIN = {
+    section: { w:100, h:60 },
+    other:   { w:40,  h:24 },
+};
 
 var TYPE_LABELS = {
     section_header:'Section Header', item_title:'Item Title',
@@ -1090,7 +1099,6 @@ var activeBlock    = null;   // single selected block
 var multiSel       = [];     // multi-selection array
 var _shiftDown     = false;  // tracks Shift key for interact.js drag guard
 var targetSection  = null;   // section targeted for adding (basic users + admin)
-var savedRange     = null;   // preserved text selection for WYSIWYG
 var assetsCache    = [];
 var blockStyles    = {};     // brand standards cache
 
@@ -1119,13 +1127,43 @@ document.addEventListener('DOMContentLoaded', function() {
 //
 // Every place a screen-pixel measurement becomes a canvas coordinate divides by
 // ZOOM: handleMove, handleResize, getCanvasDropCenter. Nothing else needs to know.
+//
+// The other half of that rule is that no limit is ever written in screen pixels —
+// BLOCK_MIN is in canvas px and is applied after the divide. A limit handed to
+// interact.js is enforced in its units, which is how the smallest a section could
+// be came to depend on the zoom (invariant 24).
 
-var ZOOM_MIN = 0.1;
+var ZOOM_MIN = 0.1;  // the ordinary floor, for the − button
 var ZOOM_MAX = 3;
 var ZOOM_PAD = 80;   // #editor-frame's 40px padding, both sides
 
+/** Largest zoom that shows the whole canvas, never magnifying past 100%. */
+function fitZoom() {
+    var frame = document.getElementById('editor-frame');
+    if (!frame) { return 1; }
+    var z = Math.min(
+        (frame.clientWidth  - ZOOM_PAD) / CANVAS_W,
+        (frame.clientHeight - ZOOM_PAD) / CANVAS_H
+    );
+    // A frame narrower than its own padding, or one measured before the browser
+    // has laid the page out, gives zero or a negative: scale(0) is an invisible
+    // canvas and scale(-0.2) is a mirrored one, and neither says why.
+    if (!isFinite(z) || z <= 0) { return ZOOM_MIN; }
+    return Math.min(1, z);
+}
+
+/**
+ * The floor a zoom is clamped to. 10% ordinarily — but a canvas so much bigger
+ * than the window that fitting it needs less than that is exactly the canvas the
+ * Fit button exists for, and clamping Fit to 10% left it not fitting and saying
+ * nothing. The floor gives way to the fit, and to nothing else.
+ */
+function zoomFloor() {
+    return Math.min(ZOOM_MIN, fitZoom());
+}
+
 function applyZoom(z) {
-    ZOOM = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+    ZOOM = Math.max(zoomFloor(), Math.min(ZOOM_MAX, z));
     var canvas = document.getElementById('builder-canvas');
     var sizer  = document.getElementById('canvas-sizer');
     canvas.style.transform = (ZOOM === 1) ? 'none' : 'scale(' + ZOOM + ')';
@@ -1135,14 +1173,8 @@ function applyZoom(z) {
     if (readout) readout.textContent = Math.round(ZOOM * 100) + '%';
 }
 
-/** Largest zoom that shows the whole canvas, never magnifying past 100%. */
 function zoomToFit() {
-    var frame = document.getElementById('editor-frame');
-    var z = Math.min(
-        (frame.clientWidth  - ZOOM_PAD) / CANVAS_W,
-        (frame.clientHeight - ZOOM_PAD) / CANVAS_H
-    );
-    applyZoom(Math.min(1, z));
+    applyZoom(fitZoom());
 }
 
 function nudgeZoom(direction) {
@@ -1284,7 +1316,7 @@ function renderSection(el) {
     s.dataset.zIndex  = Math.max(1, parseInt(el.z_index) || 1);
     s.style.zIndex    = s.dataset.zIndex;
     s.dataset.hidden  = parseInt(el.hidden) ? '1' : '0';
-    if (parseInt(el.hidden)) { s.classList.add('hidden-block'); }
+    applyHiddenLook(s);
 
     // Parse path|fit format for section background
     var _bgRaw   = el.section_bg || '';
@@ -1389,13 +1421,7 @@ function renderBlock(el, parent, isNew) {
     block.dataset.zIndex  = Math.max(1, parseInt(el.z_index) || 1);
     block.style.zIndex    = block.dataset.zIndex;
     block.dataset.hidden  = parseInt(el.hidden) ? '1' : '0';
-    if (parseInt(el.hidden)) {
-        block.classList.add('hidden-block');
-        var _hb = document.createElement('div');
-        _hb.className = 'hidden-badge';
-        _hb.textContent = 'HIDDEN';
-        block.appendChild(_hb);
-    }
+    applyHiddenLook(block);
     block.style.width     = el.width  + 'px';
     block.style.height    = el.height + 'px';
     block.style.transform = 'translate('+el.x_pos+'px,'+el.y_pos+'px)';
@@ -1660,7 +1686,10 @@ function showInspector(block) {
         document.getElementById('marquee-weight').value        = md.weight || 'bold';
         var isTrans = (md.bg === 'transparent');
         document.getElementById('marquee-bg-transparent').checked = isTrans;
-        document.getElementById('marquee-bg').value            = isTrans ? '#c0392b' : (md.bg || '#c0392b');
+        // The remembered colour first, so a transparent marquee reopens with the
+        // colour it would go back to rather than with the default.
+        document.getElementById('marquee-bg').value            =
+            md.bgColor || (isTrans ? '#c0392b' : (md.bg || '#c0392b'));
         document.getElementById('marquee-bg').disabled         = isTrans;
     }
 
@@ -1672,6 +1701,11 @@ function showInspector(block) {
 
     // Z-index / layer order
     document.getElementById('insp-zindex-val').textContent = parseInt(block.dataset.zIndex) || 1;
+
+    // Visibility. Admin-only, matching the Work Area's Show/Hide: two doors onto
+    // one column should not disagree about who may open them.
+    document.getElementById('insp-visibility').style.display = IS_ADMIN ? 'block' : 'none';
+    document.getElementById('hidden-toggle').checked = block.dataset.hidden === '1';
 
     // Lock toggle
     document.getElementById('lock-toggle').checked = block.dataset.locked === '1';
@@ -1849,6 +1883,42 @@ function sendToBack() {
     _setZIndex(1); // 1 is the minimum; background is 0
 }
 
+/**
+ * Make a block look the way its `dataset.hidden` says it is.
+ *
+ * One function for both halves, because they used to disagree: a hidden block got
+ * the fade *and* a HIDDEN badge, a hidden section got only the fade. 45% opacity
+ * on its own reads as a rendering quirk, not as something somebody decided — so
+ * the one element type an admin is most likely to hide was the one that never
+ * said it was hidden, and the Builder offered nothing to change it back.
+ */
+function applyHiddenLook(block) {
+    var isHidden = block.dataset.hidden === '1';
+    if (isHidden) { block.classList.add('hidden-block'); }
+    else          { block.classList.remove('hidden-block'); }
+    var badge = block.querySelector(':scope > .hidden-badge');
+    if (isHidden && !badge) {
+        badge = document.createElement('div');
+        badge.className   = 'hidden-badge';
+        badge.textContent = 'HIDDEN';
+        block.appendChild(badge);
+    } else if (!isHidden && badge) {
+        badge.remove();
+    }
+}
+
+/**
+ * Hide or show the selected block on the Screens. Nothing is written here: the
+ * change rides out on the next publish, like everything else on this canvas.
+ * The Work Area's own Show/Hide writes immediately and does not — the two are
+ * different doors onto one column on purpose, and both are admin-only.
+ */
+function toggleHidden(hidden) {
+    if (!activeBlock) return;
+    activeBlock.dataset.hidden = hidden ? '1' : '0';
+    applyHiddenLook(activeBlock);
+}
+
 function toggleLock(locked) {
     if (!activeBlock) return;
     activeBlock.dataset.locked = locked ? '1' : '0';
@@ -1910,7 +1980,6 @@ function setupCanvas() {
         if (!e.shiftKey) { deselectAll(); clearMultiSel(); }
         clearTargetSection();
     });
-    document.addEventListener('selectionchange', trackSelection);
     document.addEventListener('keydown', function(e) {
         if (e.key === 'Shift') _shiftDown = true;
         if (e.key === 'Delete' && !READ_ONLY) {
@@ -1928,35 +1997,6 @@ function setupCanvas() {
         }
     });
     document.addEventListener('keyup',   function(e) { if (e.key === 'Shift') _shiftDown = false; });
-}
-
-// ============================================================
-// WYSIWYG
-// ============================================================
-function trackSelection() {
-    if (!activeBlock || activeBlock.dataset.type !== 'text' || activeBlock.dataset.subtype !== 'free') return;
-    var sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return;
-    try {
-        var inner = activeBlock.querySelector('.text-inner');
-        if (inner && inner.contains(sel.getRangeAt(0).commonAncestorContainer)) {
-            savedRange = sel.getRangeAt(0).cloneRange();
-        }
-    } catch(e) {}
-}
-
-function fmtCmd(evt, cmd) {
-    evt.preventDefault();
-    if (savedRange) {
-        var sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(savedRange);
-    }
-    document.execCommand(cmd, false, null);
-    if (activeBlock) {
-        var _ti = activeBlock.querySelector('.text-inner');
-        if (_ti) _ti.focus();
-    }
 }
 
 // ============================================================
@@ -2821,7 +2861,13 @@ function setupInteract() {
     };
 
     if (IS_ADMIN) {
-        // Sections: drag + resize, constrained to canvas
+        // Sections: drag + resize, constrained to canvas.
+        //
+        // No restrictSize modifier, deliberately: interact.js measures one in
+        // SCREEN pixels, so the 100×60 that used to be here meant 200×120 canvas
+        // px at 50% zoom and 50×30 at 200% — the smallest a section could be
+        // depended on how far you had zoomed out. handleResize enforces BLOCK_MIN
+        // after the divide instead, which is invariant 24.
         interact('.section-block').draggable({
             listeners: { start: function(e) { if (_shiftDown) e.interaction.stop(); }, move: handleMove },
             modifiers: [interact.modifiers.restrictRect({restriction: canvas})],
@@ -2829,7 +2875,6 @@ function setupInteract() {
         }).resizable({
             edges: EDGES,
             listeners: { move: handleResize, end: hideResizeLabel },
-            modifiers: [interact.modifiers.restrictSize({min:{width:100,height:60}})]
         });
 
         // Root blocks: drag + resize, constrained to canvas
@@ -2875,20 +2920,39 @@ function handleMove(event) {
     }
 }
 
+/** The BLOCK_MIN entry that applies to one block. */
+function blockMin(el) {
+    return (el && el.classList && el.classList.contains('section-block'))
+        ? BLOCK_MIN.section
+        : BLOCK_MIN.other;
+}
+
 function handleResize(event) {
     var t = event.target;
     if (t.dataset.locked === '1') return;
     // event.deltaRect and event.rect are screen pixels; ZOOM converts to canvas.
-    var x = (parseFloat(t.getAttribute('data-x'))||0) + event.deltaRect.left / ZOOM;
-    var y = (parseFloat(t.getAttribute('data-y'))||0) + event.deltaRect.top  / ZOOM;
-    t.style.width  = (event.rect.width  / ZOOM) + 'px';
-    t.style.height = (event.rect.height / ZOOM) + 'px';
+    // The minimum is a canvas measurement, so it is applied after the divide —
+    // before it, the smallest a block could get would move with the zoom.
+    var min = blockMin(t);
+    var cw  = event.rect.width  / ZOOM;
+    var ch  = event.rect.height / ZOOM;
+    var atMinW = cw < min.w;
+    var atMinH = ch < min.h;
+    if (atMinW) { cw = min.w; }
+    if (atMinH) { ch = min.h; }
+    // An edge that has stopped shrinking must also stop moving. Dragging the left
+    // edge past the minimum would otherwise slide the block right while its width
+    // stayed put, so the pointer walks it across the canvas.
+    var x = (parseFloat(t.getAttribute('data-x'))||0) + (atMinW ? 0 : event.deltaRect.left / ZOOM);
+    var y = (parseFloat(t.getAttribute('data-y'))||0) + (atMinH ? 0 : event.deltaRect.top  / ZOOM);
+    t.style.width  = cw + 'px';
+    t.style.height = ch + 'px';
     t.style.transform = 'translate('+x+'px,'+y+'px)';
     t.setAttribute('data-x', x);
     t.setAttribute('data-y', y);
 
-    var w = Math.round(event.rect.width  / ZOOM);
-    var h = Math.round(event.rect.height / ZOOM);
+    var w = Math.round(cw);
+    var h = Math.round(ch);
     var lbl = document.getElementById('resize-label');
     lbl.textContent = w + ' × ' + h + ' px';
     var r = t.getBoundingClientRect();
@@ -2916,13 +2980,16 @@ function _parentBounds() {
 function applyDim(which, val) {
     if (!activeBlock) return;
     val = parseInt(val) || 0;
-    var pb = _parentBounds();
+    var pb  = _parentBounds();
+    // The same floor a drag stops at, so typing 20 into W and dragging the edge
+    // as far as it goes do not disagree about how small a section may be.
+    var min = blockMin(activeBlock);
     if (which === 'w') {
-        val = Math.max(40, Math.min(val, pb.w));
+        val = Math.max(min.w, Math.min(val, pb.w));
         activeBlock.style.width = val + 'px';
         document.getElementById('insp-w').value = val;
     } else {
-        val = Math.max(24, Math.min(val, pb.h));
+        val = Math.max(min.h, Math.min(val, pb.h));
         activeBlock.style.height = val + 'px';
         document.getElementById('insp-h').value = val;
     }
@@ -3165,7 +3232,14 @@ function addSlideRow(data) {
 function deleteSlideField(btn, field) {
     var sf  = btn.closest('.slide-field');
     var inp = sf.querySelector('input[type="text"], textarea');
-    if (inp) { inp.disabled = true; inp.style.opacity = '0.3'; inp.dataset.deleted = '1'; inp.value = ''; }
+    if (inp) {
+        // Keep what was typed. Restore used to hand back an empty box, so the
+        // button labelled Restore was the second half of a delete — and in an app
+        // with no undo anywhere, a control that offers to put something back has
+        // to actually have it.
+        inp.dataset.wasValue = inp.value;
+        inp.disabled = true; inp.style.opacity = '0.3'; inp.dataset.deleted = '1'; inp.value = '';
+    }
     btn.innerHTML = '+ Restore';
     btn.classList.remove('danger'); btn.classList.add('gray');
     btn.setAttribute('onclick', "restoreSlideField(this,'" + field + "')");
@@ -3174,7 +3248,13 @@ function deleteSlideField(btn, field) {
 function restoreSlideField(btn, field) {
     var sf  = btn.closest('.slide-field');
     var inp = sf.querySelector('input[type="text"], textarea');
-    if (inp) { inp.disabled = false; inp.style.opacity = ''; inp.dataset.deleted = '0'; }
+    if (inp) {
+        inp.disabled = false; inp.style.opacity = ''; inp.dataset.deleted = '0';
+        // Only what this session deleted comes back. A field that arrived deleted
+        // — stored as null — has nothing behind it, and an empty box is the truth
+        // there rather than a loss.
+        if (inp.dataset.wasValue !== undefined) { inp.value = inp.dataset.wasValue; }
+    }
     btn.innerHTML = '&#10005; Delete';
     btn.classList.remove('gray'); btn.classList.add('danger');
     btn.setAttribute('onclick', "deleteSlideField(this,'" + field + "')");
@@ -3471,7 +3551,13 @@ function updateMarqueeStyle() {
     md.color  = document.getElementById('marquee-color').value;
     md.size   = parseInt(document.getElementById('marquee-size').value)   || 28;
     md.weight = document.getElementById('marquee-weight').value;
-    md.bg     = isTrans ? 'transparent' : document.getElementById('marquee-bg').value;
+    // `bg` is what the sign reads, and 'transparent' is not a colour — so ticking
+    // the box used to overwrite the chosen one, and unticking it later handed back
+    // the factory red. The colour is kept beside it, and the picker reads from
+    // there, so Transparent is a state the block is in rather than a thing it
+    // forgets. Viewer and publish never look at `bgColor`.
+    md.bgColor = document.getElementById('marquee-bg').value;
+    md.bg      = isTrans ? 'transparent' : md.bgColor;
     activeBlock.dataset.marqueeData = JSON.stringify(md);
     buildMarqueePreview(activeBlock, md);
 }

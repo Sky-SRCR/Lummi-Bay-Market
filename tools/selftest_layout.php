@@ -344,6 +344,29 @@ $driveT = loadTestDisplay($pdo, $driveT->id());
 $res = publishAs($layouts, $driveT, layoutWith('After hide'), $stampBefore);
 checkSame('stale', $res->kind(), 'a Builder holding the pre-hide stamp is refused');
 
+// Decision #42. The Builder's own visibility box writes nothing when it is ticked
+// — the change rides out on the next publish, like everything else on that canvas.
+// So a publish has to carry it, on a section as well as on a block, and it has to
+// carry the way back: unticking is the only route out of hidden the Builder has.
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$withHidden = layoutWith('Sunday only', 's-hide');
+$withHidden[0]['hidden'] = 1;
+$withHidden[1]['hidden'] = 1;
+$res = publishAs($layouts, $driveT, $withHidden, $driveT->layoutStamp());
+check($res->isOk(), 'a layout with a hidden section publishes');
+$hiddenByType = [];
+foreach (elementsOf($pdo, $driveT->id()) as $row) { $hiddenByType[$row['type']] = intval($row['hidden']); }
+checkSame(1, $hiddenByType['section'], 'the section is stored hidden');
+checkSame(1, $hiddenByType['text'],    'and so is the block inside it');
+
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$res = publishAs($layouts, $driveT, layoutWith('Sunday only', 's-hide'), $driveT->layoutStamp());
+check($res->isOk(), 'publishing the same layout with the box unticked works');
+$hiddenByType = [];
+foreach (elementsOf($pdo, $driveT->id()) as $row) { $hiddenByType[$row['type']] = intval($row['hidden']); }
+checkSame(0, $hiddenByType['section'], 'the section is on the screens again');
+checkSame(0, $hiddenByType['text'],    'and so is the block — the way back the Builder never had');
+
 // Deleting a section takes its children with it, within one Display only.
 $driveT = loadTestDisplay($pdo, $driveT->id());
 $res = publishAs($layouts, $driveT, layoutWith('Cascade check'), $driveT->layoutStamp());
@@ -3249,4 +3272,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(854);
+reportChecks(860);

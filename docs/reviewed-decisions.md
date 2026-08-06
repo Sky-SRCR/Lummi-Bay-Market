@@ -79,7 +79,7 @@ written down rather than remembered:
 | 39 | Double-clicking Publish produced a success message and a stale-sign warning together. | Ignore the second while the first is still running. | **Done** | §4v |
 | 40 | A basic account with the sign open read-only threw an error on every canvas click. | Guard the lookup. | **Done** — settled by #3: §4j guarded it via `setSectionBanner()` while making the read-only page what the file claimed. Re-confirmed by mutation, and the harness that proves it is now derived from the markup rather than hand-listed, having drifted in four places. | §4j, §4w |
 | 41 | An unreadable stored colour round-tripped through the colour picker and published back as black. | Validate on the way in and on the way out. | Open | — |
-| 42 | Six smaller Builder rough edges: section minimum size measured in screen pixels, Fit cannot fit a very large canvas, no way to unhide a section, deleting a slide field cannot be undone, marquee "Transparent" loses the colour, and dead code. | All six. | Open | — |
+| 42 | Six smaller Builder rough edges: section minimum size measured in screen pixels, Fit cannot fit a very large canvas, no way to unhide a section, deleting a slide field cannot be undone, marquee "Transparent" loses the colour, and dead code. | All six. | **Done** — all six. Five of them were controls that quietly did less than they said; the sixth was a dead format bar still running a listener. A third node suite covers the good-day premise the other two do not. | §4x |
 | 43 | Deleting an account wrote to three tables with no transaction, going around the owning module. | All-or-nothing, through the module. | **Done** — settled by #20: closing is one transaction in `AccountAdmin`, and no `DELETE FROM users` exists anywhere. | §4l |
 | 44 | Nothing set a timezone, so "editing since 2:15pm" followed whatever the host's `php.ini` happened to say. | A store timezone setting on the Branding page. | Open | — |
 | 45 | The sign itself printed "Carousel — no slides added yet" where a customer could read it. | Draw nothing. | Open | — |
@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**25 done, 2 part done, 24 open.**
+**26 done, 2 part done, 23 open.**
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which
