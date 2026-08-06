@@ -579,8 +579,7 @@ $deli   = makeTestDisplay($pdo, 'deli', 'Deli Case');
 
 // Accounts 1 (admin) and 2 (clerk) come from the fixture; jane is a second basic
 // account, so that a write covering one account can be shown not to touch another.
-$pdo->exec("INSERT INTO users (username, role) VALUES ('jane','basic')");
-$janeId = intval($pdo->lastInsertId());
+$janeId = makeTestAccount($pdo, 'jane', 'basic');
 
 $asAdmin = newTestActor($pdo, 1, 'admin');
 $asClerk = newTestActor($pdo, 2, 'basic');
@@ -872,7 +871,7 @@ checkSame([], $emptyReq->elements(),    'and it carries no elements');
 
 // End to end, on a Display that has something to lose.
 $pdo     = newTestDb();
-$store   = new TestDisplayStore($pdo);
+$store   = newTestDisplayStore($pdo);
 $layouts = newTestLayoutStore($pdo);
 $victim  = makeTestDisplay($pdo, 'victim', 'Victim');
 $layouts->publish($victim, new PublishRequest(
@@ -913,7 +912,7 @@ checkSame(2, count(elementsOf($pdo, $victim->id())), 'and again nothing was lost
 section('The edit lock covers every element write, not just publishing');
 
 $pdo     = newTestDb();
-$store   = new TestDisplayStore($pdo);
+$store   = newTestDisplayStore($pdo);
 $layouts = newTestLayoutStore($pdo);
 $sign    = makeTestDisplay($pdo, 'deli', 'Deli Case');
 $layouts->publish($sign, new PublishRequest(
@@ -954,20 +953,20 @@ $sign = $store->forId($sign->id());
 $layouts->publish($sign, new PublishRequest(
     layoutWith('Cascade, explicitly'), Background::unchanged(), 1, true, $sign->layoutStamp()
 ));
-$pdo->exec("PRAGMA foreign_keys = OFF");
+setTestForeignKeys($pdo, false);
 $sectionId = 0;
 foreach (elementsOf($pdo, $sign->id()) as $row) { if ($row['type'] === 'section') { $sectionId = intval($row['id']); } }
 checkSame(true, $layouts->deleteElement($store->forId($sign->id()), $sectionId, 1)->isOk(),
           'a section is deleted with foreign keys switched off');
 checkSame(0, count(elementsOf($pdo, $sign->id())),
           'and its children go with it without relying on ON DELETE CASCADE');
-$pdo->exec("PRAGMA foreign_keys = ON");
+setTestForeignKeys($pdo, true);
 
 // ─────────────────────────────────────────────────────────────
 section('Brand Standards: shared typography, and what may change it');
 
 $pdo   = newTestDb();
-$store = new TestDisplayStore($pdo);
+$store = newTestDisplayStore($pdo);
 $brand = new BrandStyles($pdo);
 $one   = makeTestDisplay($pdo, 'one', 'Sign One');
 $two   = makeTestDisplay($pdo, 'two', 'Sign Two');
@@ -1084,7 +1083,7 @@ $tzWas = date_default_timezone_get();
 date_default_timezone_set('America/Los_Angeles');   // the store's own zone, 7-8h off UTC
 
 $pdo   = newTestDb();
-$store = new TestDisplayStore($pdo);
+$store = newTestDisplayStore($pdo);
 $tz    = makeTestDisplay($pdo, 'tz', 'Timezone');
 
 $store->claimLock($tz, 1);
@@ -1121,7 +1120,7 @@ date_default_timezone_set($tzWas);
 section('An Asset Library entry knows which signs depend on it');
 
 $pdo     = newTestDb();
-$store   = new TestDisplayStore($pdo);
+$store   = newTestDisplayStore($pdo);
 $layouts = newTestLayoutStore($pdo);
 $a = makeTestDisplay($pdo, 'aa', 'Sign A');
 $b = makeTestDisplay($pdo, 'bb', 'Sign B');
@@ -1173,7 +1172,7 @@ section('Publishing clears up the copies it leaves behind');
 // pointed at by nothing. Rows nothing points at are what an admin scrolls past
 // looking for the promo banner.
 $pdo     = newTestDb();
-$store   = new TestDisplayStore($pdo);
+$store   = newTestDisplayStore($pdo);
 $layouts = newTestLayoutStore($pdo);
 $library = new AssetLibrary($pdo);
 $sign    = makeTestDisplay($pdo, 'sweep', 'Deli Board');
@@ -1254,7 +1253,7 @@ section('The sweep looks at every sign, not just the one publishing');
 // sweeping it here would blank a line over there with nothing to say so, which is
 // the exact failure that ended the sharing in the first place.
 $pdo     = newTestDb();
-$store   = new TestDisplayStore($pdo);
+$store   = newTestDisplayStore($pdo);
 $layouts = newTestLayoutStore($pdo);
 $library = new AssetLibrary($pdo);
 $one = makeTestDisplay($pdo, 'one', 'Deli Board');
@@ -1297,9 +1296,8 @@ section('A library that cannot be written to leaves the words on the block');
 // dropping it would fail the element insert as well and prove nothing about the
 // pool. A trigger refuses exactly the one write under test.
 $noLib   = newTestDb();
-$noLib->exec("CREATE TRIGGER no_pool_writes BEFORE INSERT ON assets
-              BEGIN SELECT RAISE(ABORT, 'library is read-only'); END");
-$noStore = new TestDisplayStore($noLib);
+makeTableUnwritable($noLib, 'assets');
+$noStore = newTestDisplayStore($noLib);
 $noLay   = newTestLayoutStore($noLib);
 $noSign  = makeTestDisplay($noLib, 'nolib', 'Deli Board');
 
@@ -1650,11 +1648,17 @@ check($missing !== null && strpos($missing['note'], 'Do not publish') !== false,
 // Built by giving the real fixture tables a catalogue that is silent about
 // password_resets. The table is there and so is its column; the catalogue does not
 // mention it.
+//
+// SQLite even on a MySQL run: the premise is a catalogue that disagrees with the
+// tables underneath it, and MySQL's cannot be made to disagree with anything. That
+// is a property of the engine rather than a gap in the run — what a real
+// information_schema says about a real database is checked directly, in the MySQL
+// section at the end of this file.
 $shape = convergedSchemaShape();
 $shape['columns']['users']['failed_attempts'] = ['type' => 'int(11)',  'nullable' => false];
 $shape['columns']['users']['last_failed_at']  = ['type' => 'datetime', 'nullable' => true];
 $shape['columns']['users']['locked_until']    = ['type' => 'datetime', 'nullable' => true];
-$pPdo = newTestDb();
+$pPdo = newSqliteTestDb();
 fakeCatalogue($shape, $pPdo);
 $partial = new ServerReport($pPdo);
 $attempts = null;
@@ -1707,9 +1711,12 @@ checkSame(false, SchemaFacts::unknown()->known(), 'and it says so rather than an
 checkSame(null, SchemaFacts::unknown()->hasColumn('assets', 'auto_pooled'),
           'an unknown catalogue answers "cannot tell", never "not there"');
 
-// The fixture is SQLite: no information_schema. This is the case the fallback
-// exists for, so it is worth proving it is reached rather than assumed.
-checkSame(false, readSchemaFacts(newTestDb())->known(),
+// A SQLite database has no information_schema. This is the case the fallback
+// exists for, so it is worth proving it is reached rather than assumed — and it
+// is asked of SQLite explicitly, because on a MySQL run the catalogue is really
+// there and "unknown" would be the wrong answer. What a real catalogue reports is
+// checked in the MySQL section at the end of this file.
+checkSame(false, readSchemaFacts(newSqliteTestDb())->known(),
           'a database with no catalogue to read reports itself unknown');
 
 // ---- The catalogue read itself, run rather than trusted -----------------------
@@ -1855,7 +1862,10 @@ check(!in_array('backfill_display_id', planSteps($plan), true),
 
 // SQLite rejects `INSERT IGNORE`, which makes it a useful witness: a true return
 // can only mean the count found all six types and the statement was never sent.
-$bPdo = newTestDb();
+// That is the whole technique, so this pair stays on SQLite even on a MySQL run —
+// where the statement is valid, is sent, and succeeds, which proves the opposite
+// thing. Both are worth knowing; the MySQL half is checked at the end of the file.
+$bPdo = newSqliteTestDb();
 checkSame(true, seedBlockStyles($bPdo), 'a complete set of branded block types is not re-seeded');
 $bPdo->exec("DELETE FROM block_styles WHERE block_type = 'price_2'");
 checkSame(false, seedBlockStyles($bPdo), 'a missing one makes it try the seed');
@@ -1886,7 +1896,7 @@ section('An account is closed, never deleted, so its number is never reused');
 $aPdo   = newTestDb();
 $aStore = new AccountStore($aPdo);
 $aAdmin = newTestAccountAdmin($aPdo);
-$aDisps = new TestDisplayStore($aPdo);
+$aDisps = newTestDisplayStore($aPdo);
 $aSign  = makeTestDisplay($aPdo, 'lobby', 'Lobby');
 
 // Account 2 is the clerk. Give them a Display to edit and let them hold the lock,
@@ -1946,15 +1956,17 @@ checkSame(false, $aAdmin2->close(0, 1)->isOk(),   'and so is closing nothing at 
 
 // A database that predates the column has never closed anybody, and must say so
 // rather than throwing — this is what the live server looks like before deploy.
+// Dropping the column rather than rebuilding the table around it: `displays` and
+// `display_permissions` both hold foreign keys into `users`, so on MySQL the old
+// copy-and-swap could not drop the original at all, and on either engine the
+// rebuilt table lost the constraints that make the rest of the fixture behave.
 $oldPdo = newTestDb();
-$oldPdo->exec("CREATE TABLE u2 AS SELECT id, username, email, role, is_active FROM users");
-$oldPdo->exec("DROP TABLE users");
-$oldPdo->exec("ALTER TABLE u2 RENAME TO users");
+$oldPdo->exec("ALTER TABLE users DROP COLUMN closed_at");
 $oldStore = new AccountStore($oldPdo);
 checkSame(false, $oldStore->isClosed(1), 'without the column, no account reads as closed');
 checkSame(2, count($oldStore->open()),   'and every account is still in service');
 checkSame([], $oldStore->closed(),       'with none of them closed');
-checkSame(false, (new AccountAdmin($oldPdo, $oldStore, new GrantStore($oldPdo), new TestDisplayStore($oldPdo)))
+checkSame(false, (new AccountAdmin($oldPdo, $oldStore, new GrantStore($oldPdo), newTestDisplayStore($oldPdo)))
                  ->close(2, 1)->isOk(),
           'and closing refuses rather than half-doing it');
 
@@ -1981,7 +1993,7 @@ class RefusingGrantStore extends GrantStore
 }
 
 $xPdo    = newTestDb();
-$xStore  = new TestDisplayStore($xPdo);
+$xStore  = newTestDisplayStore($xPdo);
 $xAdmin  = newTestDisplayAdmin($xPdo);
 $xGrants = new GrantStore($xPdo);
 
@@ -2097,7 +2109,7 @@ checkSame(false, $xStore->forId($xDrive->id())->lockState()->isHeld(), 'and free
 // The point of invariant 22: if the revoke fails, the freed lock has to come back
 // with it, or the admin is told nothing changed while a sign sits unlocked.
 $yPdo   = newTestDb();
-$yStore = new TestDisplayStore($yPdo);
+$yStore = newTestDisplayStore($yPdo);
 $yLobby = makeTestDisplay($yPdo, 'lobby', 'Lobby');
 $yDeli  = makeTestDisplay($yPdo, 'deli', 'Deli Case');
 $yBreak = new DisplayAdmin($yPdo, $yStore, newTestLayoutStore($yPdo), new RefusingGrantStore($yPdo));
@@ -2116,7 +2128,7 @@ checkSame(false, $yPdo->inTransaction(), 'with no transaction left open');
 // ---- Promotion clears the grants; demotion frees the locks (#18) ---------------
 
 $zPdo   = newTestDb();
-$zStore = new TestDisplayStore($zPdo);
+$zStore = newTestDisplayStore($zPdo);
 $zAcc   = new AccountStore($zPdo);
 $zAdmin = newTestAccountAdmin($zPdo);
 $zLobby = makeTestDisplay($zPdo, 'lobby', 'Lobby');
@@ -2250,7 +2262,7 @@ section('The three other ways a lock outlived the reach behind it');
 // that can help the live database on the day it is deployed.
 
 $wPdo   = newTestDb();
-$wStore = new TestDisplayStore($wPdo);
+$wStore = newTestDisplayStore($wPdo);
 $wAdmin = newTestDisplayAdmin($wPdo);
 $wAcct  = newTestAccountAdmin($wPdo);
 
@@ -2710,7 +2722,7 @@ checkSame(true, reportSchemaFailures($realFailures), 'that one is reported');
 checkSame(1, count($mailer9->sent), 'an admin is emailed about it');
 $body = $mailer9->sent[0]['body'];
 checkMentions($body, 'assets.auto_pooled', 'the message names the change in the plan\'s own words');
-checkMentions($body, 'duplicate column', 'and the reason the database gave');
+checkMentionsAnyCase($body, 'duplicate column', 'and the reason the database gave');
 checkMentions($body, 'Database Structure', 'and where to see what a missing column costs');
 check(strpos($body, 'ALTER TABLE') === false,
       'and never the SQL — the words are for a person, not a DBA');
@@ -2749,7 +2761,12 @@ ErrorPolicy::useAlerts($wiredMailer);
 
 // A fixture whose catalogue disagrees with it about one column: the plan asks for
 // the ALTER on a known need, the table already has the column, the database refuses.
-$wiredPdo = newTestDb();
+//
+// SQLite even on a MySQL run, and for a second reason beyond the catalogue: the
+// refusal being reported here is a real database saying no to a statement the plan
+// was sure about. On MySQL against a schema.sql-built database the plan is empty,
+// so there is no statement to refuse and nothing to report.
+$wiredPdo = newSqliteTestDb();
 $wiredShape = convergedSchemaShape();
 unset($wiredShape['columns']['assets']['auto_pooled']);
 fakeCatalogue($wiredShape, $wiredPdo);
@@ -2821,8 +2838,7 @@ check(legacyDisplayId($idPdo) > 0, 'and by being the oldest when an admin has re
 $refuses = newTestDb();
 $refuses->exec("DELETE FROM canvas_elements");
 $refuses->exec("DELETE FROM displays");
-$refuses->exec("CREATE TRIGGER no_displays BEFORE INSERT ON displays
-                BEGIN SELECT RAISE(ABORT, 'displays is read-only'); END");
+makeTableUnwritable($refuses, 'displays');
 $err = '';
 checkSame(false, seedLegacyDisplay($refuses, $err), 'a seed the database refuses fails');
 checkMentions($err, 'drive-thru Display could not be created', 'and names what is missing');
@@ -2997,8 +3013,30 @@ $healPdo->exec("DROP TABLE displays");
 $healStore = new DisplayStore($healPdo);
 SchemaLatch::forget();
 $healThrew = false;
-try { $healStore->forTag('drive-thru'); } catch (PDOException $e) { $healThrew = true; }
-checkSame(true, $healThrew, 'a table this fixture cannot recreate still ends in the error');
+$healed    = null;
+try { $healed = $healStore->forTag('drive-thru'); } catch (PDOException $e) { $healThrew = true; }
+
+// The one place in this file where the two engines must be asserted about
+// differently, because on one of them the repair can only be *attempted* and on the
+// other it genuinely completes.
+//
+// On SQLite the statements are MySQL dialect, so the CREATE fails, the table is
+// still missing when the read is retried, and the exception comes back out. That
+// still proves the useful half — the store tried, and a repair that cannot work
+// does not swallow the error.
+//
+// On MySQL the whole sequence runs for the first time: `displays` and
+// `display_permissions` are recreated, the drive-thru Display is seeded, and the
+// read that triggered all of it returns. Until #48 this path had never been
+// executed end to end by anything except tools/rehearse_phase1.php against a copy
+// of live data. `canvas_elements` stays missing on purpose — convergence only ever
+// alters that table, it does not create it.
+if (testIsMysql()) {
+    check(!$healThrew && $healed !== null && $healed->tag() === 'drive-thru',
+          'the repair recreates the table and the read that triggered it completes');
+} else {
+    checkSame(true, $healThrew, 'a table this fixture cannot recreate still ends in the error');
+}
 checkSame(false, ErrorPolicy::firstInWindow('schema-repair', SCHEMA_REPAIR_RETRY_SECONDS),
           'but the store did attempt the repair — the window has been spent');
 
@@ -3147,4 +3185,96 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(826);
+// ─────────────────────────────────────────────────────────────
+// Everything above this line runs on both engines. What follows can only be asked
+// of a real MySQL database, and is skipped entirely on the SQLite default — which
+// is why reportChecks() below is given two numbers.
+if (testIsMysql()) {
+
+section('What only a real MySQL database can be asked (#48)');
+
+// ---- The catalogue, read for real ----------------------------------------------
+// readSchemaFacts() is executed against a fake information_schema further up, which
+// proves the query text parses and the aliases line up. What it could not prove was
+// that MySQL's catalogue actually answers the way the fixture pretends — the gap
+// BUILD-REFERENCE names in so many words. This is that gap closed.
+$mFacts = readSchemaFacts(newTestDb());
+checkSame(true, $mFacts->known(), 'a real catalogue reads as known, not as unavailable');
+checkSame(true, $mFacts->hasColumn('canvas_elements', 'display_id'),
+          'and reports the column every query is scoped by');
+checkSame(false, $mFacts->hasColumn('canvas_elements', 'no_such_column'),
+          'and answers a definite no about one that is not there, rather than "cannot tell"');
+
+// ---- schema.sql and lib/schema.php agree ---------------------------------------
+// The most valuable check in this section, and the reason the MySQL fixture is
+// built by running schema.sql rather than by DDL written here. Convergence asks the
+// catalogue what is missing; on a database freshly built from schema.sql the honest
+// answer is "nothing". Any statement in this plan is a column, index or constraint
+// that lib/schema.php believes in and schema.sql does not write — invariant 15,
+// which until now had no automated check at all and was to be diffed by eye.
+$mPlan = signageSchemaPlan($mFacts);
+$mStatements = planStatements($mPlan);
+checkSame([], $mStatements,
+          'a database built from schema.sql has nothing left for convergence to do');
+
+// The steps are row work rather than shape work — a backfill has nothing to move on
+// an empty database, but it is still asked, so they are not expected to be empty.
+check(is_array(planSteps($mPlan)), 'and the row-level steps are still offered');
+
+// ---- The seed, sent rather than refused -----------------------------------------
+// The SQLite half of this pair is up in the convergence section, where `INSERT
+// IGNORE` being invalid is used as the witness that the statement was never sent.
+// Here it is valid, so the opposite is provable: a missing row really is restored.
+$mSeed = newTestDb();
+checkSame(true, seedBlockStyles($mSeed), 'a complete set of branded block types is not re-seeded');
+$mSeed->exec("DELETE FROM block_styles WHERE block_type = 'price_2'");
+checkSame(true, seedBlockStyles($mSeed), 'and a missing one is put back rather than only attempted');
+checkSame(6, intval($mSeed->query("SELECT COUNT(*) FROM block_styles")->fetchColumn()),
+          'leaving all six branded types on the table');
+checkSame('#e74c3c', $mSeed->query(
+    "SELECT font_color FROM block_styles WHERE block_type = 'price'")->fetchColumn(),
+    'and INSERT IGNORE left the store\'s own values alone');
+
+// ---- The row lock, actually taken -----------------------------------------------
+// `SELECT … FOR UPDATE` is the statement the SQLite fixture replaces, which made the
+// line the publish transaction depends on the least-tested one in the repo. On MySQL
+// the real DisplayStore is used throughout this run, so every publish check above
+// already went through it. This asserts the seam directly: the row lock reads the
+// stamp it is supposed to, inside a transaction, from the real statement.
+$lockPdo   = newTestDb();
+$lockStore = new DisplayStore($lockPdo);
+$lockSign  = makeTestDisplay($lockPdo, 'lockable', 'Lockable');
+$lockPdo->beginTransaction();
+checkSame(0, intval($lockStore->lockLayoutRevision($lockSign)),
+          'the real FOR UPDATE statement reads the stamp of a Display nobody has published');
+$lockPdo->rollBack();
+
+$lockLayouts = newTestLayoutStore($lockPdo);
+$pubbed = $lockLayouts->publish($lockSign, new PublishRequest(
+    layoutWith('Locked publish'), Background::unchanged(), 1, true, $lockSign->layoutStamp()));
+checkSame(true, $pubbed->isOk(), 'and a publish taking that lock for real succeeds');
+$lockPdo->beginTransaction();
+checkSame(1, intval($lockStore->lockLayoutRevision(loadTestDisplay($lockPdo, $lockSign->id()))),
+          'leaving the stamp advanced where the next transaction will read it');
+$lockPdo->rollBack();
+
+// ---- Changed rows are not affected rows ------------------------------------------
+// A divergence the audit recorded in a comment and could not check: MySQL reports
+// *changed* rows, so writing a password hash identical to the stored one updates
+// nothing and looks exactly like an account that is not there. AccountStore answers
+// about the row rather than about the count, and this is the engine that can prove
+// it — on SQLite both cases report a row and the distinction never arises.
+$cPdo   = newTestDb();
+$cStore = new AccountStore($cPdo);
+checkSame(true, $cStore->setPassword(1, 'a-real-hash'), 'setting a password reports success');
+checkSame(true, $cStore->setPassword(1, 'a-real-hash'),
+          'and setting the identical hash again still does, though MySQL changed no rows');
+checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
+          'while an account that does not exist is still false');
+
+}
+
+// Two numbers because the MySQL run adds a section the SQLite one cannot ask for.
+// Both are anchored: a section deleted from either path has to show up as a failure,
+// which is the whole reason reportChecks() takes a count at all.
+reportChecks(testIsMysql() ? 841 : 826);

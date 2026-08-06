@@ -1,14 +1,36 @@
 <?php
 // ============================================================
-// TEST FIXTURE — an in-memory database for the self-tests
+// TEST FIXTURE — the database the self-tests run against
 // ============================================================
-// There is no MySQL where this code is written, and the publish path is the one
-// change in this project that can empty every sign at once. So the self-tests
-// run the *real* modules against an in-memory SQLite database shaped like the
-// live schema. What that proves is the logic: scoping predicates, the staleness
-// comparison, the section rules, sanitising, cascade behaviour. What it cannot
-// prove is MySQL dialect and DDL — that is what tools/rehearse_phase1.php does
-// against a copy of live data.
+// The publish path is the one change in this project that can empty every sign
+// at once, so the self-tests run the *real* modules against a database shaped
+// like the live schema. Two engines, chosen by the environment:
+//
+//   (default)              an in-memory SQLite database, built by the DDL below.
+//                          Needs nothing installed, runs in about a second, and
+//                          is what you get from `php tools/selftest_layout.php`.
+//
+//   SELFTEST_MYSQL_DSN set  a real MySQL/MariaDB database, built by running
+//                          schema.sql — the actual file a rebuild would use.
+//
+// SQLite proves the logic: scoping predicates, the staleness comparison, the
+// section rules, sanitising, cascade behaviour. What it could never prove was
+// anything that depends on being MySQL, and #48 counted twelve such divergences.
+// The one that mattered was row locking: `SELECT … FOR UPDATE` has no SQLite
+// equivalent, so the fixture stubbed it out and the lock the publish transaction
+// takes before it deletes anything was the single most important line in the
+// repo with no test over it at all. On MySQL that stub is gone (see
+// newTestDisplayStore) and the real statement runs.
+//
+// Running schema.sql to build the MySQL fixture is deliberate and closes a second
+// gap: nothing read that file, so a column missing from it failed silently on a
+// future rebuild and nowhere else (invariant 15). Now the whole suite runs on
+// what it produces, and a drift between schema.sql and lib/schema.php shows up
+// here rather than on the sign.
+//
+// Still out of scope for both, and still tools/rehearse_phase1.php's job against
+// a copy of live data: the convergence *statements*, which only have something to
+// do on a database that lags the repo. schema.sql produces one that does not.
 //
 // CLI only, and never reachable from the browser (tools/.htaccess).
 
@@ -27,13 +49,35 @@ require_once __DIR__ . '/../lib/assets.php';
 require_once __DIR__ . '/../lib/upload_limits.php';
 require_once __DIR__ . '/../lib/schema.php';
 
+// ---- Which engine is under the suite ----------------------------------------
+
 /**
- * DisplayStore with its one non-portable statement swapped out.
+ * The MySQL DSN to run against, or null for the in-memory SQLite default.
+ *
+ * A DSN rather than a flag because CI, a developer's laptop and a throwaway
+ * container all name the database differently, and none of them should have to
+ * edit this file to say so.
+ */
+function testMysqlDsn()
+{
+    $dsn = getenv('SELFTEST_MYSQL_DSN');
+    return ($dsn === false || $dsn === '') ? null : $dsn;
+}
+
+function testIsMysql()   { return testMysqlDsn() !== null; }
+function testEngineName(){ return testIsMysql() ? 'MySQL' : 'SQLite'; }
+
+/**
+ * DisplayStore with its one non-portable statement swapped out — SQLite only.
  *
  * `SELECT … FOR UPDATE` has no SQLite equivalent. Replacing that single method
  * leaves every other statement in the publish path — the deletes, the inserts,
  * the scoping predicates, the stamp arithmetic — exactly the code that runs in
  * production. Nothing else is stubbed.
+ *
+ * This class must never be constructed directly by a test. Ask
+ * newTestDisplayStore(), which hands back the *real* store on MySQL, so the row
+ * lock the publish transaction depends on is genuinely taken there.
  */
 class TestDisplayStore extends DisplayStore
 {
@@ -53,22 +97,39 @@ class TestDisplayStore extends DisplayStore
     }
 }
 
-/** The real LayoutStore, wired to the SQLite-safe DisplayStore. */
+/**
+ * The store the rest of the fixture builds on: real on MySQL, stubbed on SQLite.
+ *
+ * One function so that "is the row lock real in this run?" has a single answer,
+ * rather than each factory below deciding for itself and one of them being missed.
+ */
+function newTestDisplayStore(PDO $pdo)
+{
+    return testIsMysql() ? new DisplayStore($pdo) : new TestDisplayStore($pdo);
+}
+
+/** The real LayoutStore, wired to whichever DisplayStore this engine allows. */
 function newTestLayoutStore(PDO $pdo)
 {
-    return new LayoutStore($pdo, new TestDisplayStore($pdo));
+    return new LayoutStore($pdo, newTestDisplayStore($pdo));
 }
 
 /** The real AccountAdmin over the real stores — nothing about it is stubbed. */
 function newTestAccountAdmin(PDO $pdo)
 {
-    return new AccountAdmin($pdo, new AccountStore($pdo), new GrantStore($pdo), new TestDisplayStore($pdo));
+    return new AccountAdmin($pdo, new AccountStore($pdo), new GrantStore($pdo), newTestDisplayStore($pdo));
 }
 
-/** Add an account the fixture did not seed, and return its id. */
+/**
+ * Add an account the fixture did not seed, and return its id.
+ *
+ * password_hash is written explicitly rather than left to a column default: the
+ * SQLite fixture below gives it one, schema.sql deliberately does not, and MySQL
+ * in strict mode refuses the insert rather than inventing an empty string.
+ */
 function makeTestAccount(PDO $pdo, $username, $role = 'basic')
 {
-    $pdo->prepare("INSERT INTO users (username, email, role) VALUES (?, ?, ?)")
+    $pdo->prepare("INSERT INTO users (username, email, role, password_hash) VALUES (?, ?, ?, '')")
         ->execute([$username, $username . '@example.test', $role]);
     return intval($pdo->lastInsertId());
 }
@@ -76,7 +137,7 @@ function makeTestAccount(PDO $pdo, $username, $role = 'basic')
 /** The real DisplayAdmin over the real stores — nothing about it is stubbed. */
 function newTestDisplayAdmin(PDO $pdo)
 {
-    $displays = new TestDisplayStore($pdo);
+    $displays = newTestDisplayStore($pdo);
     return new DisplayAdmin($pdo, $displays, new LayoutStore($pdo, $displays), new GrantStore($pdo));
 }
 
@@ -100,8 +161,32 @@ function grantTestAccess(PDO $pdo, $displayId, $accountId)
     (new GrantStore($pdo))->grant($displayId, $accountId);
 }
 
-/** A fresh database with the live structure and one admin + one basic account. */
+/**
+ * A fresh database with the live structure and one admin + one basic account.
+ *
+ * Whichever engine this run is on. Tests call this and stay engine-agnostic; the
+ * two that cannot — the ones that need a catalogue which *disagrees* with the
+ * tables — call newSqliteTestDb() and say why.
+ */
 function newTestDb()
+{
+    return testIsMysql() ? newMysqlTestDb() : newSqliteTestDb();
+}
+
+/**
+ * The two seed accounts every test starts from: account 1 admin, account 2 basic.
+ *
+ * Shared by both engines so a fixture cannot drift into meaning something
+ * different depending on what it is running against.
+ */
+function seedTestAccounts(PDO $pdo)
+{
+    $pdo->exec("INSERT INTO users (username, email, role, password_hash) VALUES
+        ('sky','sky@example.test','admin',''), ('clerk','clerk@example.test','basic','')");
+}
+
+/** A fresh in-memory SQLite database with the live structure. */
+function newSqliteTestDb()
 {
     $pdo = new PDO('sqlite::memory:', null, null, [
         PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
@@ -230,10 +315,145 @@ function newTestDb()
         ('price_2',       'Arial',30,'#e74c3c','bold','normal',1.20),
         ('description',   'Arial',16,'#bdc3c7','normal','normal',1.40)");
 
-    $pdo->exec("INSERT INTO users (username, email, role) VALUES
-        ('sky','sky@example.test','admin'), ('clerk','clerk@example.test','basic')");
+    seedTestAccounts($pdo);
 
     return $pdo;
+}
+
+/**
+ * A fresh MySQL database with the live structure, built by running schema.sql.
+ *
+ * A whole database per call, not a cleaned-out one. The suite builds 63 fixtures
+ * and several of them are alive at the same time on purpose — the scoping checks
+ * hold one database while a second proves a rename cannot reach into it — so a
+ * shared connection that wiped itself on each call would quietly delete the rows
+ * an earlier `$pdo` was still being asserted against. SQLite gives every
+ * `sqlite::memory:` its own database for free, and this is the MySQL equivalent.
+ *
+ * Databases are named from the one in the DSN plus this process's pid, so two
+ * runs on one server cannot collide, and all of them are dropped on the way out.
+ *
+ * PDO is configured exactly as db_connect.php configures it in production —
+ * ERRMODE_EXCEPTION, FETCH_ASSOC, and emulated prepares OFF. That last one is not
+ * cosmetic: with emulation on, every column comes back as a string, and a suite
+ * full of `checkSame(1, $row['hidden'])` would be asserting against a fixture
+ * that behaves differently from the app it is testing.
+ */
+function newMysqlTestDb()
+{
+    static $n = 0;
+
+    $name = testMysqlDbName() . '_t' . getmypid() . '_' . (++$n);
+    $admin = testMysqlAdminConnection();
+    $admin->exec("DROP DATABASE IF EXISTS `$name`");
+    $admin->exec("CREATE DATABASE `$name` CHARACTER SET utf8mb4");
+    $GLOBALS['_testMysqlDbs'][] = $name;
+
+    $pdo = new PDO(testMysqlDsnFor($name), getenv('SELFTEST_MYSQL_USER') ?: null,
+                   getenv('SELFTEST_MYSQL_PASS') ?: null, [
+        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        PDO::ATTR_EMULATE_PREPARES   => false,
+    ]);
+
+    foreach (sqlStatements(file_get_contents(__DIR__ . '/../schema.sql')) as $sql) {
+        $pdo->exec($sql);
+    }
+    seedTestAccounts($pdo);
+
+    return $pdo;
+}
+
+$GLOBALS['_testMysqlDbs'] = [];
+
+register_shutdown_function(function () {
+    if (!testIsMysql() || !$GLOBALS['_testMysqlDbs']) { return; }
+    try {
+        $admin = testMysqlAdminConnection();
+        foreach ($GLOBALS['_testMysqlDbs'] as $name) {
+            $admin->exec("DROP DATABASE IF EXISTS `$name`");
+        }
+    } catch (Throwable $e) {
+        // A server that has gone away has already taken the throwaway databases
+        // with it, and a shutdown handler is the wrong place to fail a run.
+    }
+});
+
+/** The connection used to create and drop the throwaway databases. */
+function testMysqlAdminConnection()
+{
+    static $admin = null;
+    if ($admin === null) {
+        $admin = new PDO(testMysqlDsn(), getenv('SELFTEST_MYSQL_USER') ?: null,
+                         getenv('SELFTEST_MYSQL_PASS') ?: null,
+                         [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
+    }
+    return $admin;
+}
+
+/** The `dbname` out of the configured DSN — the stem every fixture is named from. */
+function testMysqlDbName()
+{
+    if (preg_match('/(?:^|;)dbname=([^;]+)/', testMysqlDsn(), $m)) { return $m[1]; }
+    return 'lbm_selftest';
+}
+
+/** The configured DSN pointed at a different database. */
+function testMysqlDsnFor($name)
+{
+    $dsn = testMysqlDsn();
+    if (preg_match('/(?:^|;)dbname=([^;]+)/', $dsn)) {
+        return preg_replace('/((?:^|;)dbname=)[^;]+/', '${1}' . $name, $dsn);
+    }
+    return rtrim($dsn, ';') . ';dbname=' . $name;
+}
+
+/**
+ * Split a .sql file into executable statements.
+ *
+ * Naive splitting on ";" is wrong for this file and quietly so: two of the
+ * column COMMENTs in schema.sql contain a semicolon ('Owning Display; every
+ * query is scoped by this'), so a plain explode cuts a CREATE TABLE in half and
+ * the error names a syntax problem that is not there. Quote state is tracked,
+ * `--` line comments are dropped, and `\\` escapes inside a string are honoured.
+ */
+function sqlStatements($sql)
+{
+    $lines = [];
+    foreach (preg_split('/\R/', $sql) as $line) {
+        if (preg_match('/^\s*--/', $line)) { continue; }
+        $lines[] = $line;
+    }
+    $sql = implode("\n", $lines);
+
+    $statements = [];
+    $current    = '';
+    $inString   = false;
+    $quote      = '';
+
+    for ($i = 0, $n = strlen($sql); $i < $n; $i++) {
+        $c = $sql[$i];
+
+        if ($inString) {
+            $current .= $c;
+            if ($c === '\\' && $i + 1 < $n) { $current .= $sql[++$i]; continue; }
+            if ($c === $quote) { $inString = false; }
+            continue;
+        }
+
+        if ($c === "'" || $c === '"') { $inString = true; $quote = $c; $current .= $c; continue; }
+
+        if ($c === ';') {
+            if (trim($current) !== '') { $statements[] = trim($current); }
+            $current = '';
+            continue;
+        }
+
+        $current .= $c;
+    }
+
+    if (trim($current) !== '') { $statements[] = trim($current); }
+    return $statements;
 }
 
 /**
@@ -310,9 +530,20 @@ function schemaFactsFrom(array $shape)
  * Pass an existing database as $onto to give the real fixture tables a catalogue
  * that disagrees with them — which is how the case worth worrying about is built:
  * a column that is really there, on a table the catalogue never mentioned.
+ *
+ * SQLite only, in both forms, and unavoidably: making a catalogue lie is the whole
+ * technique, and MySQL's information_schema cannot be made to. A caller passing
+ * $onto must therefore build it with newSqliteTestDb() rather than newTestDb(),
+ * even on a MySQL run — which is checked below rather than left as a convention,
+ * because the failure otherwise is a confusing one about ATTACH.
  */
 function fakeCatalogue(array $shape, PDO $onto = null)
 {
+    if ($onto !== null && $onto->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
+        throw new RuntimeException(
+            'fakeCatalogue() needs a SQLite database — build this one with newSqliteTestDb().');
+    }
+
     $pdo = $onto;
     if ($pdo === null) {
         $pdo = new PDO('sqlite::memory:', null, null, [
@@ -414,7 +645,7 @@ function makeTestDisplay(PDO $pdo, $tag, $title = 'Sign', $w = 1920, $h = 1080)
  */
 function loadTestDisplay(PDO $pdo, $id)
 {
-    return (new TestDisplayStore($pdo))->forId(intval($id));
+    return newTestDisplayStore($pdo)->forId(intval($id));
 }
 
 /**
@@ -441,6 +672,48 @@ function expireTestResetToken(PDO $pdo, $accountId)
 {
     $pdo->prepare("UPDATE password_resets SET expires_at = ? WHERE user_id = ?")
         ->execute([gmdate('Y-m-d H:i:s', time() - 60), intval($accountId)]);
+}
+
+/**
+ * Make one table refuse every insert, whichever engine this is.
+ *
+ * A trigger rather than dropping the table, because the tables this is used on are
+ * referenced by others: dropping `assets` would fail the element insert too and
+ * prove nothing about the pool write specifically. The two engines spell "refuse
+ * this" quite differently — SQLite raises, MySQL signals a SQLSTATE — and what is
+ * under test is how the app handles a refusal, not how the refusal was worded.
+ */
+function makeTableUnwritable(PDO $pdo, $table)
+{
+    $table   = preg_replace('/[^a-z_]/', '', $table);
+    $trigger = 'no_writes_' . $table;
+
+    if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+        $pdo->exec("CREATE TRIGGER $trigger BEFORE INSERT ON $table
+                    BEGIN SELECT RAISE(ABORT, '$table is read-only'); END");
+    } else {
+        $pdo->exec("CREATE TRIGGER $trigger BEFORE INSERT ON $table
+                    FOR EACH ROW SIGNAL SQLSTATE '45000'
+                    SET MESSAGE_TEXT = '$table is read-only'");
+    }
+}
+
+/**
+ * Switch referential integrity off and on, whichever engine this is.
+ *
+ * Used by exactly one check, and it earns its place: it proves the app deletes a
+ * section's children itself rather than leaning on ON DELETE CASCADE — which
+ * matters because the constraint that would do it is one lib/schema.php never
+ * converges, so a live database that predates schema.sql does not have it.
+ */
+function setTestForeignKeys(PDO $pdo, $on)
+{
+    $sqlite = $pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite';
+    if ($sqlite) {
+        $pdo->exec("PRAGMA foreign_keys = " . ($on ? 'ON' : 'OFF'));
+    } else {
+        $pdo->exec("SET FOREIGN_KEY_CHECKS = " . ($on ? '1' : '0'));
+    }
 }
 
 /** How many reset tokens exist for one account, spent or not. */
@@ -583,6 +856,19 @@ function checkSame($expected, $actual, $label)
 function checkMentions($haystack, $needle, $label)
 {
     $found = strpos((string)$haystack, (string)$needle) !== false;
+    check($found, $label . ($found ? '' : ' — "' . $haystack . '" does not mention "' . $needle . '"'));
+}
+
+/**
+ * The message must mention this, in whatever case the speaker chose.
+ *
+ * For text the *database* wrote rather than the app: SQLite says "duplicate column
+ * name", MySQL says "Duplicate column name". Which of them is talking is not
+ * something a check about error reporting should care about.
+ */
+function checkMentionsAnyCase($haystack, $needle, $label)
+{
+    $found = stripos((string)$haystack, (string)$needle) !== false;
     check($found, $label . ($found ? '' : ' — "' . $haystack . '" does not mention "' . $needle . '"'));
 }
 
