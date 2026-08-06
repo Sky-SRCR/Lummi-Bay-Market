@@ -63,7 +63,7 @@ Design rules, applied to every module added by this build:
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `verify` / `consume` / `redeem` / `discard`, and `PasswordResetCompletion(PDO, ResetTokenStore, AccountStore)` → `ResetOutcome` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. It is now the composition of two halves that have to fall on opposite sides of a transaction boundary: `verify()` spends the guess and must never be rolled back, `consume()` spends the code and must be. `PasswordResetCompletion` is the use case (invariant 22) — code consumed, password changed, lockout released, or nothing at all — and `ResetOutcome` has three answers rather than two, because "refused" and "the database would not take it" have to look different to the visitor and identical to a stranger probing for usernames. |
 | `accounts.php` | `AccountStore`, `AccountAdmin` — `close()` / `edit()` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. And `edit()`, the other three-table change: the role, the active flag and the email in one write, then the grants a **promotion** makes meaningless (an admin holds every Display by role, so the rows would sit there displayed nowhere and removable by nothing) and the locks a **demotion** puts out of reach (no grants left, so the account cannot even release what it is holding). Not a gatekeeper for all of `users`: creating an account and setting somebody's password from the panel are still written there, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means — plus the three `users` writes that have to happen inside somebody else's transaction, `setPassword()`, `clearLoginLockout()` and `updateProfile()`, because a page cannot hold a transaction over SQL it writes itself. Those three are the only methods in the class that let an exception out, deliberately: everything else answers a question, and a question is better answered "no" than not at all, but these are halves of a change that must not half-happen. `clearLoginLockout()` answers true when the three ADR-0001 columns are absent, for the same reason `isClosed()` answers false: a database without them has never locked anybody out. |
-| `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
+| `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the syntax rule rested on it, and still does — the rule says 8.2 because this card said 8.2) and whether a `schemaTry()` statement landed, which by design fails silently. `phpVersionNote()` is public and pure so its three bands can be tested on a machine that is none of them. |
 | `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. `firstInWindow()` and `stateFile()` are public for the same reason `report()` needs them: a repeated *attempt to fix* something needs the same restraint as a repeated report of it, and this module is where the state directory is decided. Depends on nothing: no database, no session, no config. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
@@ -413,10 +413,13 @@ decisions already made, not new decisions.
   its lowest row to carry the old background onto the Display that replaces it —
   the one reader, and the reason invariant 2 says "retired to one reader" rather
   than "unread".
-- **PHP 7.1-compatible syntax.** The live server's PHP version is unverified and
-  `.htaccess` still carries `mod_php7` blocks, so no typed properties,
-  constructor promotion, enums, `readonly`, `match`, or arrow functions. This
-  container has PHP 8.4 for `php -l` only.
+- **PHP 8.2 syntax.** The live server's version, reported by Settings → This
+  Server rather than assumed (#51, §4k). Typed properties, constructor promotion,
+  enums, `readonly`, `match` and arrow functions are available; no file uses one
+  yet, because the rule said 7.1 until the answer came back. The two 7.1-era
+  fallbacks — `.htaccess`'s `mod_php7` blocks and `auth.php`'s pre-7.3
+  session-cookie form — stay, because they are free and they are what covers a
+  move to a different host. This container has PHP 8.4 for `php -l` only.
 - **An inactive Display returns no elements from `get_layout`.** The API reports
   `status: "inactive"` and the Phase 2 Viewer renders the notice. A Phase 1
   Viewer would show an empty canvas — unreachable in practice, since nothing can
@@ -908,8 +911,9 @@ role-only banner test fails 2, and dropping `loadAssets`'s guard fails 1.
 ### 4k. Two things this repo believed without ever looking
 
 **"PHP 7.1-compatible syntax — the live server's version is unverified."** That
-sentence has shaped every file here. It is also the only rule in the project with
-no way to check it, and the one real violation it ever caught was not syntax at
+sentence — the rule as it stood until the end of this section — shaped every file
+here. It was also the only rule in the project with no way to check it, and the one
+real violation it ever caught was not syntax at
 all: `session_set_cookie_params()`'s options-array form arrived in 7.3, and on 7.1
 it is a warning-and-no-op that silently drops HttpOnly, Secure and SameSite from
 the sign-in cookie. A syntax rule cannot catch a library signature, and neither
@@ -955,10 +959,24 @@ outright and asserts the report goes red and says why. Verified against two
 mutations — hard-coding the column check to true, and letting the no-catalogue
 fallback answer true on error — each of which fails 3.
 
-**Still open:** what the live server actually runs. The screen answers it the
-first time an admin opens Settings after this deploys; until then the 7.1 rule
-stands unchanged, because guessing in the other direction is the one mistake that
-breaks sign-in on the live site.
+**Answered: 8.2.** The screen was opened and the live server reports PHP 8.2, so
+the rule in `CLAUDE.md`, `README.md`, `HANDOFF.md` and the invariant list above now
+says 8.2 and no longer says "unverified". Three things did *not* change with it,
+each for its own reason:
+
+- **`auth.php` keeps the pre-7.3 branch.** The rule is about what may be written;
+  the branch is about what happens if the host moves. It costs one `if` and it is
+  the only thing standing between a different server and a sign-in cookie with no
+  HttpOnly, Secure or SameSite. `.htaccess`'s `mod_php7` blocks stay for the same
+  reason, next to the `mod_php8` ones that were already there.
+- **No file was rewritten to use 8.x syntax.** Nothing gains from `match` or a typed
+  property today, and a sweep like that is a large diff through code that has just
+  been changed, on an app with no undo and no CI running.
+- **`ServerReport` still reports the version, and now points the other way.**
+  `ASSUMED_PHP` was the *oldest* PHP this might have to run on, so anything newer
+  was merely wasteful. It is now the version the code is written to use, and an
+  *older* server is the failure — `phpVersionNote()` says so, in three bands, and
+  is pure so all three are testable on a machine that is none of them.
 
 ### 4l. An account number is never handed to a second person
 
@@ -1851,7 +1869,7 @@ could check), against two engines: SQLite and a real MySQL 5.7 service. Run it
 locally before every push anyway; the loop is faster than a push.
 
 ```
-php -l <every touched .php>              # syntax; also in CI, on both PHP versions
+php -l <every touched .php>              # syntax; also in CI, on 8.2
 php tools/check_invariants.php           # the greps below, run rather than read —
                                          # comment-aware, so a module documenting a
                                          # rule does not fail it

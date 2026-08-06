@@ -1347,9 +1347,10 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
     <?php
     // Read-only, and outside the form on purpose: nothing here is a setting and
     // there is nothing to submit. See lib/server_report.php for why it exists —
-    // in short, the repo has been written to a PHP version nobody ever checked,
-    // and the schema converges silently enough that a column can fail to apply
-    // for months without anyone noticing.
+    // in short, the repo was written to a PHP version nobody had ever checked (this
+    // card is what checked it, and the rule now says 8.2 because of what it said),
+    // and the schema converges silently enough that a column can fail to apply for
+    // months without anyone noticing.
     $server = new ServerReport($pdo);
     ?>
     <div class="card">

@@ -312,10 +312,14 @@ kiosk scroll lock. `git log origin/main` has the detail.
 
 - **Data access lives in `lib/`.** A new query means a new method on the owning
   module, not a `$pdo` handed to a page script. One module per table (§3).
-- **PHP 7.1-compatible syntax** — the live server's version is unverified and
-  `.htaccess` still carries `mod_php7` blocks. No typed properties, constructor
-  promotion, enums, `readonly`, `match`, or arrow functions. This container has a
-  much newer PHP, for `php -l` only.
+- **PHP 8.2 syntax** — the live server's version, reported by Settings → This
+  Server rather than assumed (#51). Typed properties, constructor promotion,
+  enums, `readonly`, `match` and arrow functions are all available; nothing in the
+  repo uses one yet, because the rule said 7.1 until the answer came back. Two
+  7.1-era fallbacks stay on purpose: `.htaccess` carries `mod_php7` blocks
+  alongside its `mod_php8` ones, and `auth.php` keeps the pre-7.3 session-cookie
+  form behind a version check. Both are free, and both are what stops a move to a
+  different host from silently dropping HttpOnly and Secure off the sign-in cookie.
 - Before pushing: `php -l` every touched file, then `php tools/selftest_layout.php`,
   then both node suites (`tools/selftest_builder_readonly.js` and
   `tools/selftest_builder_uploads.js`) if `builder.php` was touched. A self-test

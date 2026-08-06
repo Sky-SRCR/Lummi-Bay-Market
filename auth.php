@@ -9,13 +9,15 @@ if (!defined('AUTH_NO_SESSION') && session_status() === PHP_SESSION_NONE) {
     // Harden the session cookie: unreadable to page scripts (HttpOnly),
     // HTTPS-only (Secure), and not sent on cross-site requests (SameSite=Lax).
     //
-    // Two forms, because the options-array signature arrived in PHP 7.3 and this
-    // app targets 7.1 with the live version unverified. On 7.1 the array form is
-    // not a partial success — it fails argument parsing and sets *nothing*, so
-    // the cookie loses HttpOnly and Secure as well as SameSite, and the warning
-    // it emits lands before session_start() and can break sign-in outright. The
-    // pre-7.3 idiom appends the attribute to the path, which the header accepts
-    // verbatim.
+    // Two forms, because the options-array signature arrived in PHP 7.3. The live
+    // server runs 8.2 (#51, reported by Settings → This Server), so the branch below
+    // always takes the modern call today and the fallback is dead code on this host.
+    // It stays anyway: it is one `if`, and it is what covers the app being moved to
+    // an older one. Before 7.3 the array form is not a partial success — it fails
+    // argument parsing and sets *nothing*, so the cookie loses HttpOnly and Secure
+    // as well as SameSite, and the warning it emits lands before session_start() and
+    // can break sign-in outright. The pre-7.3 idiom appends the attribute to the
+    // path, which the header accepts verbatim.
     if (PHP_VERSION_ID >= 70300) {
         session_set_cookie_params([
             'path'     => '/',

@@ -164,7 +164,8 @@ module map and the invariants any change has to preserve.
   php tools/selftest_layout.php     # expect "N checks, 0 failed"
   ```
 
-- **PHP 7.1-compatible syntax only** — the live server's version is unverified.
+- **PHP 8.2 syntax** — the live server's version, read off Settings → This Server
+  rather than guessed at.
 - `builder.php` is large and mostly inline JS — `php -l` cannot see those errors,
   so read edited JavaScript carefully.
 - **There is no undo anywhere in this app.** Publishing overwrites. Prefer

@@ -60,7 +60,9 @@ edited in place and every change reaches the sign by hand.
   holds a sign disagree silently. Then make sure the Builder *says so*: `applyLockAnswer()`
   ignores a failed heartbeat on purpose, and `LOCK_TERMINAL` is the fixed list of refusals
   that never come back — each with its own sentence, because what to do next differs.
-- **PHP 7.1-compatible syntax** — the live server's version is unverified.
+- **PHP 8.2 syntax** — the live server's version, read off Settings → This Server
+  rather than guessed at. The 7.1-era fallbacks already in `auth.php` and
+  `.htaccess` stay; they cost nothing and are what covers a host that moves.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.
 

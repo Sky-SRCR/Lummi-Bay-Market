@@ -1687,6 +1687,30 @@ foreach ($runtime as $fact) {
 }
 check($allStrings, 'every fact is a printable pair, so the panel cannot be handed an object');
 
+// The PHP-version note now points the opposite way to the one it started as. While
+// the live version was a guess, ASSUMED_PHP was the *oldest* PHP this might have to
+// run on and anything newer was merely wasteful; #51 answered it, so the rule states
+// what the code is written to use and an *older* server is the failure. Three bands,
+// and this machine is only ever one of them — which is why phpVersionNote() takes
+// the version id rather than reading PHP_VERSION_ID.
+checkSame('', ServerReport::phpVersionNote(80200),
+          'a server on the version the rule names has nothing to say about it');
+checkSame('', ServerReport::phpVersionNote(80400),
+          'and neither does a newer one — being ahead of the rule is not a problem');
+$behind = ServerReport::phpVersionNote(80100);
+check($behind !== '', 'a server behind the rule does say so');
+checkMentions($behind, ServerReport::ASSUMED_PHP,
+              'and names the version the code is written for');
+check(strpos($behind, 'still hardened') !== false,
+      'and says the sign-in cookie is unaffected, because above 7.3 it is');
+$ancient = ServerReport::phpVersionNote(70100);
+checkMentions($ancient, '7.3',
+              'below 7.3 the note reaches for the one thing that actually breaks');
+check(strpos($ancient, 'pre-7.3 session cookie form') !== false,
+      'and names which cookie form is in use, which is what auth.php branches on');
+check($behind !== $ancient,
+      'the two failing bands do not print the same sentence — what to do next differs');
+
 // ─────────────────────────────────────────────────────────────
 section('Convergence asks the catalogue before it alters anything');
 
@@ -3860,4 +3884,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Two numbers because the MySQL run adds a section the SQLite one cannot ask for.
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
-reportChecks(testIsMysql() ? 1017 : 994);
+reportChecks(testIsMysql() ? 1025 : 1002);
