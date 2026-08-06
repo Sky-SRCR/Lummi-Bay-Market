@@ -19,6 +19,7 @@ require_once __DIR__ . '/../lib/layout_store.php';
 require_once __DIR__ . '/../lib/grants.php';
 require_once __DIR__ . '/../lib/display_request.php';
 require_once __DIR__ . '/../lib/display_admin.php';
+require_once __DIR__ . '/../lib/password_resets.php';
 
 /**
  * DisplayStore with its one non-portable statement swapped out.
@@ -125,6 +126,19 @@ function newTestDb()
         UNIQUE (display_id, user_id)
     )");
 
+    // The reset-token table, minus the AUTO_INCREMENT spelling. `attempts` is
+    // the guess budget the self-test cares about; it is created here rather than
+    // added by ensureSchema() so the tests exercise the shape a converged live
+    // database actually has.
+    $pdo->exec("CREATE TABLE password_resets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        passcode TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used INTEGER NOT NULL DEFAULT 0,
+        attempts INTEGER NOT NULL DEFAULT 0
+    )");
+
     $pdo->exec("CREATE TABLE assets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
@@ -213,6 +227,24 @@ function ageTestLock(PDO $pdo, $displayId, $seconds)
         // gmdate, matching what DisplayStore writes. Local time here would agree
         // with a UTC container by accident and hide the bug this mirrors.
         ->execute([gmdate('Y-m-d H:i:s', time() - intval($seconds)), intval($displayId)]);
+}
+
+/**
+ * Push an issued passcode's expiry into the past, so the 30-minute lifetime can
+ * be tested without waiting for it. gmdate, matching what the store writes.
+ */
+function expireTestResetToken(PDO $pdo, $accountId)
+{
+    $pdo->prepare("UPDATE password_resets SET expires_at = ? WHERE user_id = ?")
+        ->execute([gmdate('Y-m-d H:i:s', time() - 60), intval($accountId)]);
+}
+
+/** How many reset tokens exist for one account, spent or not. */
+function resetTokenCount(PDO $pdo, $accountId)
+{
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM password_resets WHERE user_id = ?");
+    $stmt->execute([intval($accountId)]);
+    return intval($stmt->fetchColumn());
 }
 
 function elementsOf(PDO $pdo, $displayId)

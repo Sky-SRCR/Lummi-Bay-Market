@@ -59,6 +59,7 @@ Design rules, applied to every module added by this build:
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the whole access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. |
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, and `assetUsage()` — which Displays depend on a shared library entry. |
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
+| `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `redeem` / `discard` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 
@@ -178,7 +179,17 @@ through the app again:
     optional by design (a Viewer URL on a TV carries the tag and nothing else),
     so anything added to `builder.php` or the Work Area that names a Display must
     send the id too, or it opts itself out of the check without a word.
-13. **`schema.sql` is what `schema.php` converges to.** They are two statements of
+13. **A guess budget is stored with the secret, never in the guesser's session.**
+    ADR-0001 moved the login lockout onto the account row for this reason; the
+    password-reset limiter was still counting in `$_SESSION`, so clearing a cookie
+    bought five more tries against the one live passcode and forty cookie jars
+    bought two hundred. It now lives in `password_resets.attempts`, spent by the
+    same `UPDATE` that checks it so two simultaneous guesses cannot both spend the
+    last one. Anything added that rations attempts at anything — a code, a token,
+    a one-time link — counts them somewhere the person guessing cannot reach, and
+    says the same sentence for every refusal, or the count itself becomes the
+    oracle it was rationing against.
+14. **`schema.sql` is what `schema.php` converges to.** They are two statements of
     one structure, and the runtime one is authoritative — a column that exists only
     in `schema.sql` never reaches the live server. Add to both in the same commit,
     and remember `CREATE TABLE IF NOT EXISTS` is a no-op on a database that already
@@ -495,7 +506,7 @@ than skipping it.
 - **`schema.sql` is a rebuild artefact, not a description of the server, and it
   says so.** Its header now names the two runtime convergence functions and states
   the order of authority: `lib/schema.php` and `auth.php` decide what the live
-  database becomes, and `schema.sql` has to agree with them (invariant 13). The
+  database becomes, and `schema.sql` has to agree with them (invariant 14). The
   alternative — documenting the live server's current lagging structure — describes
   something that changes the next time an admin signs in, and would have to be
   rewritten after every deploy.
@@ -584,9 +595,7 @@ fail against the unfixed code — that verification is the point, not the check.
 Known and not fixed, so nobody assumes otherwise:
 
 - ~~**The Builder addresses its Display by mutable tag**~~ **Fixed** — see §4h.
-- **The password reset's guess limiter lives in `$_SESSION`**, which the attacker
-  owns — the exact bypass ADR-0001 rewrote *login* to avoid. It needs the same
-  account-keyed treatment.
+- ~~**The password reset's guess limiter lives in `$_SESSION`**~~ **Fixed** — see §4i.
 - **Read-only Builder is only partly server-rendered.** The control bar honours
   it; `#inspector`, `#align-bar` and the editor modals are emitted unconditionally,
   so `READ_ONLY = false` in a console offers a full publish. Server-side refusal is
@@ -631,6 +640,43 @@ the check that exists for it. Fourteen checks in the self-test, verified against
 two mutations: dropping the check outright fails six, and relaxing the comparison
 to `==` fails the two that pad and suffix the number.
 
+### 4i. The guess budget moved to where the secret is
+
+ADR-0001 rewrote the login lockout onto the account row precisely because a
+counter in `$_SESSION` belongs to whoever is guessing. The password-reset passcode
+still had the session-side version: five tries, counted in a cookie the guesser
+controls. Clearing it bought five more against the same live code, and the step-2
+lookup was keyed on `(user_id, passcode)` with no tie to the session that had
+requested the code — so forty cookie jars all tested the one live six-digit number
+in parallel. That is an evening's work, and it ends in someone else's account.
+
+`password_resets.attempts` is now the budget, and `lib/password_resets.php` is the
+only thing that touches the table. Three details are load-bearing:
+
+- **The guess is spent before it is judged.** `redeem()` increments with
+  `UPDATE … WHERE … AND attempts < 5` and reads the row afterwards. Read-then-write
+  would let two simultaneous guesses both see four spent and both spend the fifth;
+  the `UPDATE` takes the row's write lock, so one waits for the other.
+- **The page cannot tell the refusals apart.** `redeem()` returns a bare boolean,
+  and step 2 prints one sentence for wrong code, expired code, exhausted budget and
+  *no such account*. This cost the "3 attempt(s) remaining" counter, deliberately: a
+  real shared count answers "does this username exist?" out loud, where the old
+  fake one — the same for everybody, because it was per-cookie — did not.
+- **Comparison is `hash_equals`, not `==`.** A six-digit code compared loosely is a
+  numeric-string comparison, and `'000123' == '123'` has been true on some of the
+  versions this app might be running on.
+
+Twenty-nine checks, each building a *new* `ResetTokenStore` per guess — which is
+what a fresh cookie jar looks like to the server, and the only shape that can tell
+an account-keyed limiter from a session-keyed one. Verified against four mutations:
+counting per-caller instead of per-row fails 3, not consuming a correct code fails
+4, `intval()` comparison fails 2, and skipping the discard on reissue fails 1.
+
+One deploy note: `expires_at` is written and compared in UTC now (`gmdate`, like
+the edit lock), where it used to be server-local on both sides. Any reset code
+issued in the half-hour before the deploy reads as expired afterwards; the person
+holding it requests another. Nothing else in the app reads that column.
+
 ---
 
 ## 5. Verification
@@ -651,7 +697,13 @@ grep -rEn "WHERE +`?id`? *= *'?1'?" --include=*.php .  # must be empty — white
 grep -rn "1920\|1080" --include=*.php .        # admin size presets, the seed, tools/, and prose
 grep -rn "viewer.php\"\|viewer.php'" --include=*.php .  # every link must carry ?display=
 grep -rn "catch (Exception" --include=*.php lib/  # must be empty: a TypeError is an Error, not an Exception
-grep -rn "hash_equals(" --include=*.php .     # only auth.php's csrfOk(), which fails closed on an empty token
+grep -rn "hash_equals(" --include=*.php .     # auth.php's csrfOk(), which fails closed on an empty token,
+                                              # and the passcode comparison in lib/password_resets.php
+grep -rEn "(INTO|UPDATE|FROM|TABLE) +password_resets|reset_attempts" --include=*.php .
+                                              # only lib/password_resets.php, plus tools/. A statement in
+                                              # reset_password.php means the token table grew a second
+                                              # writer; `reset_attempts` anywhere means the guess budget
+                                              # crept back into the session — invariant 13's whole point
 grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
                                               # DISPLAY_ID / waDisplayId() with it (invariant 12), which
                                               # omission silently opts out of. viewer.php is the one
@@ -663,7 +715,7 @@ Anything touching that file needs reading, not linting.
 
 `schema.sql` has no automated check at all — nothing reads it, so a column missing
 from it fails silently on a future rebuild and nowhere else. Diff it against
-`lib/schema.php` by eye whenever either changes (invariant 13), and use
+`lib/schema.php` by eye whenever either changes (invariant 14), and use
 `tools/rehearse_phase1.php` on a copy of live data to see what MySQL actually ends
 up with.
 

@@ -1145,4 +1145,92 @@ $own = $pdo->query("SELECT manual_content FROM canvas_elements WHERE asset_id = 
 checkSame([null, null], array_column($own, 'manual_content'),
           'a pooled block holds no content of its own, so losing the entry loses the words');
 
-reportChecks(330);
+// ─────────────────────────────────────────────────────────────
+section('A reset code gets five guesses in total, not five per browser');
+
+// The defect these cover: the budget used to live in $_SESSION, which belongs to
+// whoever is guessing. Clearing a cookie bought five more tries against the one
+// live code, so the six-digit space was reachable in an evening. Every check here
+// is written the way the attack was — a *new* caller each time, with no shared
+// state — because that is exactly what a fresh cookie jar looks like to the
+// server, and it is the only way to tell an account-keyed limiter from a
+// session-keyed one.
+$rPdo = newTestDb();
+
+$code = (new ResetTokenStore($rPdo))->issue(1);
+checkSame(6, strlen($code),          'issuing a code returns six digits');
+checkSame(1, resetTokenCount($rPdo, 1), 'and stores exactly one token for the account');
+checkSame(0, (new ResetTokenStore($rPdo))->attemptsSpent(1), 'a fresh code has spent no guesses');
+
+// Four wrong guesses, each from a store built from scratch.
+for ($i = 1; $i <= 4; $i++) {
+    checkSame(false, (new ResetTokenStore($rPdo))->redeem(1, '000000'),
+              'wrong guess ' . $i . ' is refused');
+}
+checkSame(4, (new ResetTokenStore($rPdo))->attemptsSpent(1),
+          'and all four were counted against the code, not against a session');
+
+// The one that matters: the right code still works while budget remains.
+checkSame(true, (new ResetTokenStore($rPdo))->redeem(1, $code), 'the real code is accepted on the fifth try');
+checkSame(false, (new ResetTokenStore($rPdo))->redeem(1, $code),
+          'and cannot be used a second time — a consumed code is dead');
+
+// Now spend the budget completely and prove the code dies with it.
+$rPdo = newTestDb();
+$code = (new ResetTokenStore($rPdo))->issue(1);
+for ($i = 1; $i <= 5; $i++) { (new ResetTokenStore($rPdo))->redeem(1, '000000'); }
+checkSame(0, resetTokenCount($rPdo, 1), 'the fifth wrong guess destroys the token');
+checkSame(false, (new ResetTokenStore($rPdo))->redeem(1, $code),
+          'so the correct code is worthless afterwards — this is what a cleared cookie used to undo');
+
+// A sixth guess must not resurrect a budget, however it is presented.
+checkSame(false, (new ResetTokenStore($rPdo))->redeem(1, '000001'), 'and a sixth guess is refused too');
+
+// Issuing again is the only way back, and it starts a fresh budget with a fresh
+// code — the old one must not survive the reissue.
+$rPdo  = newTestDb();
+$first = (new ResetTokenStore($rPdo))->issue(1);
+(new ResetTokenStore($rPdo))->redeem(1, '000000');
+$second = (new ResetTokenStore($rPdo))->issue(1);
+checkSame(1, resetTokenCount($rPdo, 1), 'requesting a new code leaves only one token');
+checkSame(0, (new ResetTokenStore($rPdo))->attemptsSpent(1), 'with the guess budget back at zero');
+checkSame(false, (new ResetTokenStore($rPdo))->redeem(1, $first), 'the superseded code no longer works');
+checkSame(true,  (new ResetTokenStore($rPdo))->redeem(1, $second), 'and the new one does');
+
+// Expiry is enforced by the same statement that spends the guess, so an expired
+// code cannot be guessed at at all.
+$rPdo = newTestDb();
+$code = (new ResetTokenStore($rPdo))->issue(1);
+expireTestResetToken($rPdo, 1);
+checkSame(false, (new ResetTokenStore($rPdo))->redeem(1, $code), 'an expired code is refused even when correct');
+checkSame(0, resetTokenCount($rPdo, 1), 'and is cleared away rather than left to be guessed at');
+
+// An account that does not exist is the enumeration case: someone typed a
+// username matching nobody, and step 2 must behave identically. There is no
+// token for id 0, so there is nothing to find and nothing to leak.
+$rPdo = newTestDb();
+checkSame(false, (new ResetTokenStore($rPdo))->redeem(0, '000000'), 'a guess for no account is refused');
+checkSame(false, (new ResetTokenStore($rPdo))->redeem(0, ''),       'including an empty one');
+checkSame(0, resetTokenCount($rPdo, 0), 'and creates nothing');
+
+// One account's budget is not another's. Both hold codes; burning one out must
+// leave the other untouched.
+$rPdo   = newTestDb();
+$codeA  = (new ResetTokenStore($rPdo))->issue(1);
+$codeB  = (new ResetTokenStore($rPdo))->issue(2);
+for ($i = 1; $i <= 5; $i++) { (new ResetTokenStore($rPdo))->redeem(1, '000000'); }
+checkSame(0, resetTokenCount($rPdo, 1), 'burning one account\'s budget destroys its token');
+checkSame(1, resetTokenCount($rPdo, 2), 'and leaves the other account\'s alone');
+checkSame(0, (new ResetTokenStore($rPdo))->attemptsSpent(2), 'with no guesses charged to it');
+checkSame(true, (new ResetTokenStore($rPdo))->redeem(2, $codeB), 'so the other account can still reset');
+
+// A near-miss must not be accepted by a loose comparison: '000000' and 0 and
+// '0' are all different things to a six-digit code, and hash_equals is typed.
+$rPdo = newTestDb();
+(new ResetTokenStore($rPdo))->issue(1);
+$rPdo->exec("UPDATE password_resets SET passcode = '000123' WHERE user_id = 1");
+checkSame(false, (new ResetTokenStore($rPdo))->redeem(1, '123'),  'a code without its leading zeros is not the code');
+checkSame(false, (new ResetTokenStore($rPdo))->redeem(1, '0001230'), 'nor is one with a digit added');
+checkSame(true,  (new ResetTokenStore($rPdo))->redeem(1, '000123'), 'the exact six characters are');
+
+reportChecks(359);

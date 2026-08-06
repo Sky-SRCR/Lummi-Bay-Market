@@ -218,6 +218,11 @@ CREATE TABLE IF NOT EXISTS display_permissions (
 
 -- ─────────────────────────────────────────────────────────────
 -- password_resets — one-time emailed 6-digit passcodes (30-min expiry).
+--
+-- `attempts` is the guess budget, and it is on this row rather than in the
+-- visitor's session on purpose: session state belongs to whoever is guessing, so
+-- a counter kept there was reset by clearing a cookie and five tries became as
+-- many as anyone wanted. See lib/password_resets.php.
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS password_resets (
     id         INT(11) NOT NULL AUTO_INCREMENT,
@@ -225,6 +230,7 @@ CREATE TABLE IF NOT EXISTS password_resets (
     passcode   CHAR(6) NOT NULL,
     expires_at DATETIME NOT NULL,
     used       TINYINT(1) NOT NULL DEFAULT 0,
+    attempts   INT(11) NOT NULL DEFAULT 0 COMMENT 'guesses spent against this code, all browsers',
     PRIMARY KEY (id),
     KEY user_id (user_id),
     CONSTRAINT password_resets_ibfk_1 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE

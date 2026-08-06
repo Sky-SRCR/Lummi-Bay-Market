@@ -1,14 +1,29 @@
 <?php
 require_once 'auth.php';
 require_once 'db_connect.php';
+require_once __DIR__ . '/lib/password_resets.php';
 
 if (isLoggedIn()) { header('Location: builder.php'); exit; }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') { verifyCsrf(); }
 
+$tokens = new ResetTokenStore($pdo);
+$tokens->ensureSchema();
+
 $step    = intval($_SESSION['reset_step'] ?? 1);
 $message = '';
 $msgType = 'info';
+
+// The one thing step 2 ever says when it will not let you through.
+//
+// One sentence for every refusal — wrong code, expired code, no such account,
+// guesses used up — because a stranger typing usernames into step 1 must not be
+// able to tell those apart. The count that used to be in here ("3 attempt(s)
+// remaining") was safe only while the counter lived in the visitor's own session
+// and therefore said the same thing to everybody; now that the budget is real and
+// shared, showing it would answer "does this account exist?" out loud.
+const RESET_CODE_REFUSED =
+    'That code is incorrect or has expired. A code allows 5 tries — use "Start over" below to request a new one.';
 
 // ---- STEP 1: Look up user and send passcode ----
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['find_user'])) {
@@ -25,26 +40,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['find_user'])) {
 
         if ($user) {
             // Real, active account: invalidate old tokens, issue a fresh
-            // passcode, and email it (best effort).
-            $pdo->prepare("DELETE FROM password_resets WHERE user_id = ?")->execute([$user['id']]);
+            // passcode, and email it (best effort). Issuing also resets the
+            // guess budget, because it is a property of the code, not of the
+            // account — that is the whole point of the new column.
+            $passcode = $tokens->issue($user['id']);
 
-            $passcode  = str_pad(random_int(0, 999999), 6, '0', STR_PAD_LEFT);
-            $expiresAt = date('Y-m-d H:i:s', time() + 1800); // 30 minutes
-            $pdo->prepare("INSERT INTO password_resets (user_id, passcode, expires_at) VALUES (?, ?, ?)")
-                ->execute([$user['id'], $passcode, $expiresAt]);
-
-            $to      = $user['email'];
-            $subject = SITE_NAME . ' – Password Reset Code';
-            $body    = "Hello {$user['username']},\r\n\r\n"
-                     . "Your password reset code is:\r\n\r\n"
-                     . "    {$passcode}\r\n\r\n"
-                     . "This code expires in 30 minutes.\r\n\r\n"
-                     . "If you did not request a password reset, you can ignore this email.\r\n\r\n"
-                     . "— " . SITE_NAME;
-            $headers = "From: " . MAIL_FROM_NAME . " <" . MAIL_FROM . ">\r\n"
-                     . "Reply-To: " . MAIL_FROM . "\r\n"
-                     . "X-Mailer: PHP/" . phpversion();
-            @mail($to, $subject, $body, $headers);
+            // No passcode means the write failed, and an email reading "Your
+            // code is:" followed by nothing is worse than no email at all — the
+            // screen already tells everyone to check their inbox, so someone who
+            // gets no message does the same thing either way: start over.
+            if ($passcode !== '') {
+                $to      = $user['email'];
+                $subject = SITE_NAME . ' – Password Reset Code';
+                $body    = "Hello {$user['username']},\r\n\r\n"
+                         . "Your password reset code is:\r\n\r\n"
+                         . "    {$passcode}\r\n\r\n"
+                         . "This code expires in 30 minutes.\r\n\r\n"
+                         . "If you did not request a password reset, you can ignore this email.\r\n\r\n"
+                         . "— " . SITE_NAME;
+                $headers = "From: " . MAIL_FROM_NAME . " <" . MAIL_FROM . ">\r\n"
+                         . "Reply-To: " . MAIL_FROM . "\r\n"
+                         . "X-Mailer: PHP/" . phpversion();
+                @mail($to, $subject, $body, $headers);
+            }
 
             $_SESSION['reset_user_id'] = $user['id'];
         } else {
@@ -56,8 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['find_user'])) {
 
         // Always advance to the code-entry screen with the same message,
         // regardless of whether the account exists.
-        $_SESSION['reset_step']     = 2;
-        $_SESSION['reset_attempts'] = 0;
+        $_SESSION['reset_step'] = 2;
         $step    = 2;
         $message = 'If an account matches, a 6-digit code has been sent to the email on file. Enter it below.';
         $msgType = 'success';
@@ -71,19 +88,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_reset'])) {
     $confirm  = $_POST['confirm']       ?? '';
     // May be 0 for an unknown/inactive account that reached this screen. We do
     // NOT bounce back to step 1 (that would reveal the account doesn't exist);
-    // instead the passcode lookup below simply finds no token and reports the
-    // same "incorrect code" as a real account with a wrong code.
+    // redeem() finds no token for id 0 and refuses in the same words it uses for
+    // a real account with a wrong code.
     $userId   = intval($_SESSION['reset_user_id'] ?? 0);
 
-    $_SESSION['reset_attempts'] = ($_SESSION['reset_attempts'] ?? 0);
-
-    // After 5 wrong guesses, invalidate the token and restart
-    if ($_SESSION['reset_attempts'] >= 5) {
-        $pdo->prepare("DELETE FROM password_resets WHERE user_id = ?")->execute([$userId]);
-        unset($_SESSION['reset_user_id'], $_SESSION['reset_step'], $_SESSION['reset_attempts']);
-        header('Location: reset_password.php?restart=1');
-        exit;
-    }
+    // Nothing about the guess budget is read or written here any more. It lives
+    // on the token row, where clearing a cookie cannot reach it, and the page
+    // only learns yes or no (lib/password_resets.php).
 
     if ($passcode === '' || $newPass === '') {
         $message = 'Please fill in all fields.';
@@ -97,38 +108,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_reset'])) {
         $message = 'Passwords do not match.';
         $msgType = 'error';
         $step = 2;
+    } elseif (!$tokens->redeem($userId, $passcode)) {
+        // Wrong code, expired code, no such account, or the five guesses are
+        // gone — one answer for all four, deliberately (RESET_CODE_REFUSED).
+        $message = RESET_CODE_REFUSED;
+        $msgType = 'error';
+        $step = 2;
     } else {
-        $stmt = $pdo->prepare(
-            "SELECT id FROM password_resets
-             WHERE user_id = ? AND passcode = ? AND used = 0 AND expires_at > NOW()
-             LIMIT 1"
-        );
-        $stmt->execute([$userId, $passcode]);
-        $reset = $stmt->fetch();
+        // The code was right and is now spent: it cannot be replayed, and a
+        // second browser holding the same code gets the refusal above.
+        $pdo->prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+            ->execute([password_hash($newPass, PASSWORD_DEFAULT), $userId]);
 
-        if (!$reset) {
-            $_SESSION['reset_attempts']++;
-            $attemptsLeft = 5 - $_SESSION['reset_attempts'];
-            $message = $attemptsLeft > 0
-                ? 'That code is incorrect or has expired. ' . $attemptsLeft . ' attempt(s) remaining.'
-                : 'Too many incorrect attempts. Please request a new code.';
-            $msgType = 'error';
-            $step = 2;
-        } else {
-            // Mark token used + update password
-            $pdo->prepare("UPDATE password_resets SET used = 1 WHERE id = ?")->execute([$reset['id']]);
-            $pdo->prepare("UPDATE users SET password_hash = ? WHERE id = ?")
-                ->execute([password_hash($newPass, PASSWORD_DEFAULT), $userId]);
+        // A completed reset is a recovery path — release any login lockout.
+        ensureLockoutColumns($pdo);
+        clearLockout($pdo, $userId);
 
-            // A completed reset is a recovery path — release any login lockout.
-            ensureLockoutColumns($pdo);
-            clearLockout($pdo, $userId);
-
-            unset($_SESSION['reset_user_id'], $_SESSION['reset_step'], $_SESSION['reset_attempts']);
-            session_regenerate_id(true);
-            header('Location: login.php?reset=1');
-            exit;
-        }
+        unset($_SESSION['reset_user_id'], $_SESSION['reset_step']);
+        session_regenerate_id(true);
+        header('Location: login.php?reset=1');
+        exit;
     }
 }
 
