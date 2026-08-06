@@ -182,6 +182,25 @@ try {
 }
 report($ranTwice, 'convergence can be re-run without error');
 
+// The stronger claim, and the one only a real MySQL database can settle: after
+// converging, the catalogue says there is nothing left to do. This is what proves
+// the gating in signageSchemaPlan() matches what MySQL actually reports — the
+// self-test can only check the plan against a hand-written expectation of the
+// catalogue, never against the catalogue itself.
+$after = signageSchemaPlan(readSchemaFacts($pdo));
+$leftDdl = $steps = [];
+foreach ($after as $entry) {
+    if (isset($entry['sql']))  { $leftDdl[] = $entry['why']; }
+    if (isset($entry['step'])) { $steps[]   = $entry['step']; }
+}
+report(count($leftDdl) === 0,
+    'a converged database is issued no further ALTER or CREATE (' . count($leftDdl) . ' still wanted)');
+foreach ($leftDdl as $why) { echo "  still wanted: $why\n"; }
+
+// Two steps have to remain: no catalogue can answer "are there any rows".
+report($steps === ['seed_block_styles', 'seed_legacy_display'],
+    'and only the two row counts remain (' . implode(', ', $steps) . ')');
+
 // ---- Scoping on the real engine --------------------------------------------
 
 heading('Publishing is scoped (two throwaway Displays)');

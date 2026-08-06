@@ -53,7 +53,7 @@ Design rules, applied to every module added by this build:
 
 | Module | Interface, in one line | Hides |
 |--------|------------------------|-------|
-| `schema.php` | `ensureSignageSchema(PDO): void` | Every idempotent `ALTER`/`CREATE`, the `displays` and `display_permissions` tables, `display_id` + backfill + index + FK, the drive-thru seed, the Brand Standards row seed, and the "run at most once per request" latch. |
+| `schema.php` | `ensureSignageSchema(PDO): void`, plus the three pieces it is made of: `readSchemaFacts(PDO) → SchemaFacts`, `signageSchemaPlan(SchemaFacts) → array`, `runSchemaPlan(PDO, array) → array` | Every idempotent `ALTER`/`CREATE`, the `displays` and `display_permissions` tables, `display_id` + backfill + index + FK, the drive-thru seed, the Brand Standards row seed, the "run at most once per request" latch — and **whether any of it needs to run at all**. The one place in the repo that reads `information_schema`; `ServerReport` asks this rather than writing its own catalogue query. `signageSchemaPlan()` is pure (facts in, ordered work out), which is the only reason this file has any automated coverage: its statements are MySQL-only and the fixture is SQLite. `runSchemaPlan()` returns the entries that failed, which is newly worth something — see invariant 19. |
 | `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the whole access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. |
@@ -63,7 +63,7 @@ Design rules, applied to every module added by this build:
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `redeem` / `discard` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. |
 | `accounts.php` | `AccountStore`, `AccountAdmin` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. Not a gatekeeper for all of `users`: creating, role changes and password resets are still written by `admin_panel.php`, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means. |
-| `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads `information_schema` and PHP's own configuration and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
+| `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
 | `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. Depends on nothing: no database, no session, no config. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
@@ -121,7 +121,9 @@ through the app again:
    would arrive among hits already classified as normal, so read them, don't count
    them. `lib/server_report.php` is a third standing exception and a deliberately
    inert one: it names the table in a list of columns it expects to find, and asks
-   `information_schema` whether they are there. It reads no rows, from any table.
+   the catalogue whether they are there. It reads no rows, from any table — and
+   `lib/schema.php` is where that catalogue question is actually asked, which is the
+   same exception one file further in.
    There is also a back door the grep cannot see at all: a pooled text block keeps
    no content of its own, so deleting its `assets` row blanks that line without the
    string `canvas_elements` appearing anywhere. `LayoutStore::assetUsage()` exists
@@ -248,6 +250,19 @@ through the app again:
     file that will never fit. Every refusal names the real number, `api.php` answers
     the dropped-body case before its CSRF gate, and the Builder refuses in the file
     picker so the wait is not spent first.
+19. **Convergence asks the catalogue before it alters anything, and a converged
+    database is issued no DDL at all.** `signageSchemaPlan()` decides; only what it
+    returns runs. Two rules make the decision safe. First, a `null` from
+    `SchemaFacts` means *cannot tell*, never *not there* — an unreadable catalogue
+    puts every statement back in the plan, which is exactly what this file did
+    before it started asking, so nothing stops converging on a host that hides
+    `information_schema`. Second, the plan may only ever *remove* work the catalogue
+    proves is done; a statement whose need cannot be established still runs.
+    Adding a statement here means adding its gate and a check that the plan asks for
+    it, or the gate is untested and the statement may as well not have one. The
+    consequence of getting this wrong is not a slow page: an `ALTER` takes an
+    exclusive metadata lock on the table holding every sign's layout, and the
+    Screens' 30-second polls queue behind one that is waiting on a publish.
 
 ---
 
@@ -632,9 +647,9 @@ What it found, by class:
   every autumn. See the amendment on ADR-0007.
 - **A shared row nobody owned.** `block_styles` had two writers that disagreed
   about what a partial POST means, and `assets` had none at all — which is why
-  deleting one library row could blank a line on every sign. `block_styles` now
-  has `lib/brand_styles.php`; `assets` still has no owner, and `assetUsage()` is
-  the seam that lets `crud.php` refuse rather than the module that should exist.
+  deleting one library row could blank a line on every sign. `block_styles` got
+  `lib/brand_styles.php` in that pass; `assets` got `lib/assets.php` later, along
+  with the reason the sharing existed at all — see §4n.
 
 And the test suite was itself audited by mutation: **60% of realistic single-point
 defects survived it.** The scoping checks were real — the unscoped publish DELETE
@@ -651,11 +666,14 @@ Known and not fixed, so nobody assumes otherwise:
 - ~~**The Builder addresses its Display by mutable tag**~~ **Fixed** — see §4h.
 - ~~**The password reset's guess limiter lives in `$_SESSION`**~~ **Fixed** — see §4i.
 - ~~**Read-only Builder is only partly server-rendered**~~ **Fixed** — see §4j.
-- **Convergence issues three real `ALTER TABLE`s on every authenticated request.**
-  Harmless until a slow publish holds the table, at which point every Screen's poll
-  can queue behind the metadata lock. It should read `information_schema` once.
-- **`schema.php` has no automated coverage at all** — its syntax is MySQL-only, so
-  the SQLite fixture cannot execute it. Only a MySQL service container can.
+- ~~**Convergence issues three real `ALTER TABLE`s on every authenticated
+  request**~~ **Fixed** — see §4o. Three was right, and one of the other seventeen
+  turned out to be an active bug rather than a wasted round trip.
+- ~~**`schema.php` has no automated coverage at all**~~ **Partly fixed** — see
+  §4o. Its *decision* is now a pure function with 43 checks on it. Its *statements*
+  are still MySQL-only and still only reachable by `tools/rehearse_phase1.php`
+  against a copy of live data, which is the tool that now also asserts the plan is
+  empty once that database has converged.
 
 ### 4h. The tag addresses a Display; it does not identify one
 
@@ -1072,6 +1090,126 @@ Left standing, and worth knowing:
 - **Uploads still have no cancel button.** A ten-minute timeout ends a stuck one;
   nothing lets somebody stop one deliberately. `xhr.onabort` is wired for it.
 
+### 4o. Convergence rebuilt every sign's table on every page load
+
+`ensureSignageSchema()` ran twenty statements on every authenticated request and
+swallowed the twelve that failed. That was recorded above as a cost worth paying
+until a slow publish held the table. Reading all twenty properly turned up three
+separate things, only one of which was about speed.
+
+**Three of them rewrote the layout table's definition every time.** The two ENUM
+widenings and the `display_id NOT NULL` tighten are all `ALTER TABLE
+canvas_elements MODIFY COLUMN`, and all three *succeed* on a database where the
+column already says exactly what they ask for: MySQL has no "nothing to do here"
+path for `MODIFY COLUMN`, it performs the ALTER. An ALTER takes an exclusive
+metadata lock on `canvas_elements`, the table holding every Display's layout. A
+publish transaction holding that table makes the ALTER *wait*, and in MySQL
+everything arriving behind a waiting exclusive lock waits too — including the
+Screens' `get_layout` polls, the one query in this app that must never block. So one
+person opening the Builder while somebody else published could stall every sign in
+the store. Nobody had seen it, and it needed no bug to happen.
+
+**One of them was an outright bug, not a wasted round trip.** The
+`assets.auto_pooled` backfill reads the `Auto: ` label prefix, and it ran every
+request. Adopting a pooled row in the Library — saving it — clears the marker and
+leaves the label alone, which is exactly what §4n's "renaming an auto entry makes it
+yours" means. The backfill re-marked it on the next page load, and Tidy up could
+then delete what somebody had claimed. The self-test now demonstrates that: adopt a
+row, run the statement directly, watch the marker come back. What stops it is not a
+change to the statement but the gate that lets it run only on the request that adds
+the column — the one request where no row can have been adopted yet.
+
+**And DDL commits the surrounding transaction in MySQL, silently.** Nothing calls
+convergence inside one today. With a converged database there is now no DDL to do
+it with either.
+
+The fix is to ask first, and the design point is *where* the asking lives:
+
+- **`readSchemaFacts()`** does three `information_schema` reads — columns with their
+  types and nullability, index names, constraint names — filtered to the eight tables
+  this app has an opinion about, because on shared hosting one MySQL database can
+  hold several applications.
+- **`SchemaFacts`** is a pure value object over those three maps, and every answer is
+  three-valued. `null` means *cannot tell*, and that is the whole safety argument: an
+  unreadable catalogue puts every statement back in the plan, which is precisely the
+  behaviour this file had before it started asking. Reading `null` as "not there"
+  would issue `CREATE TABLE` against a live database; reading it as "there" would
+  stop converging. Both mutations are in the check.
+- **`signageSchemaPlan()`** is pure — facts in, an ordered list of work out. That is
+  the only reason this file has automated coverage at all: its statements are
+  MySQL-only, so the SQLite fixture can never run them, but it can run the decision.
+
+Three gates needed care:
+
+- **A column versus a constraint on a table being created.** A `CREATE TABLE` here
+  declares its columns, so the follow-up `ADD COLUMN lock_taken_at` is redundant when
+  the table is absent — but it does *not* declare its foreign keys, which are added by
+  their own `ALTER`, so those are still needed on a table created a moment ago. The
+  two helpers answer the missing-table case oppositely and say why.
+- **The ENUM comparison.** `COLUMN_TYPE` is compared with whitespace stripped and
+  case folded, and both ENUM definitions are written once as constants used by the
+  statement *and* the comparison, so they cannot drift. Anything that does not match —
+  including a future MySQL that words it differently — counts as a difference and the
+  ALTER runs. A needless ALTER is what this removes; a skipped one would be a missing
+  column definition.
+- **`display_id`'s three-statement sequence.** Added nullable, backfilled, then
+  tightened, in that order, because a `NOT NULL` column with no default cannot be
+  added to a table that already holds rows. So "needs tightening" has to answer *yes*
+  for a column that is absent, since the plan is about to add it nullable. The backfill
+  is gated on the same fact: while the column can hold a `NULL`, an unscoped row can
+  still be hiding, and once it cannot, there is nothing to find.
+
+Two steps stay in every plan, because no catalogue can answer "are there any rows":
+seeding the six branded block types, and creating the drive-thru Display. Both are
+now a small `COUNT` that usually finds what it is looking for and stops — the block
+style seed in particular used to send a six-row `INSERT IGNORE` at a table the Brand
+Standards form might be saving to at that moment.
+
+`ServerReport` was doing the same catalogue read with its own query, one statement
+per column. It now asks `readSchemaFacts()`, which makes `lib/schema.php` the single
+answer to "how do we find out what columns exist" — and drops the report from seven
+queries to three. It trusts that answer only for a table the read actually covered;
+anything outside it still falls back to `SELECT … LIMIT 0`, because a confident
+"missing" from the one screen in this app that exists to be trusted would send
+somebody hunting for a column sitting right there.
+
+The result on a converged database: three catalogue reads, two small `COUNT`s, and
+no DDL. On a database that cannot be read: exactly what it did before.
+
+**43 checks**, and one of them is worth naming because it is the check that made the
+rest credible: the old and new code were run side by side with `schemaTry()` stubbed
+to record, and the twenty statements they issue when nothing can be gated are a
+byte-identical set. Nothing about *what* convergence does changed — only when.
+`tools/selftest_layout.php` also runs the catalogue reader for real, against a SQLite
+database wearing an attached schema called `information_schema` with a
+`sqliteCreateFunction`-supplied `DATABASE()`, so the query text itself — three table
+names, four column aliases, the `IN` list, the `YES`/`NO` of `IS_NULLABLE` — is
+executed rather than trusted. A typo there would otherwise have surfaced as a live
+server that had quietly stopped converging. Fourteen mutations, all killed (kill
+counts 9, 3, 3, 2, 1, 1, 1, 2, 2, 1, 1, 5, 15, 2). `tools/rehearse_phase1.php`
+carries the claim only MySQL can settle: after converging a copy of live data, the
+plan for that database is empty, and it prints what is still wanted if it is not.
+
+Left standing:
+
+- **The plan is built from facts read before any of it runs.** That is fine because
+  the order already works from any starting state and gating only removes proven-done
+  work — but it means a statement that fails is not re-decided within the same
+  request. It is re-attempted on the next one.
+- **The pool-marker backfill has one shot.** If the `ALTER` that adds
+  `auto_pooled` lands and the backfill that follows it does not, the column exists,
+  so no later request will queue the backfill again — the accumulated pool stays
+  unmarked and Tidy up reports zero forever. No sign is affected and nothing is
+  deleted; it is a button that under-reports. The recovery is one statement by hand,
+  and HANDOFF §5 says which.
+- **`runSchemaPlan()` returns the failures and nothing reads them.** A gated
+  statement that fails is a real failure, and this is the first build in which that
+  sentence is true — before, twelve failed every request by design. Logging it and
+  telling an admin is the obvious next thing and is deliberately not done here.
+- **`schemaTry()` still swallows.** The catalogue can be silent about a constraint
+  under a name MySQL chose itself, and a convergence failure must never break the
+  request that happened to trigger it.
+
 ---
 
 ## 5. Verification
@@ -1090,9 +1228,19 @@ node tools/selftest_builder_uploads.js   # the same JS under the opposite premis
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
                                               # the get_canvas_elements endpoint NAME, and
                                               # server_report.php's expected-column list
-grep -rn "information_schema" --include=*.php .  # only lib/server_report.php — the one file
-                                              # allowed to name a table it does not own,
-                                              # because it reads the catalogue and no rows
+grep -rn "information_schema\." --include=*.php lib/  # only lib/schema.php: the three reads
+                                              # plus one comment. server_report.php asks
+                                              # readSchemaFacts() instead of writing a fourth
+                                              # query, so there is one answer to "which columns
+                                              # exist". A new hit in lib/ is a second opinion —
+                                              # put the question on SchemaFacts instead.
+                                              # (tools/ has its own: rehearse_phase1.php reads
+                                              # KEY_COLUMN_USAGE against real MySQL, and
+                                              # test_fixture.php *builds* a fake catalogue)
+grep -rn "schemaTry(\$pdo" --include=*.php .   # only lib/schema.php, and only from inside the
+                                              # named steps. A statement added anywhere else
+                                              # bypasses signageSchemaPlan() and is therefore
+                                              # ungated and untested — invariant 19
 grep -rn "DELETE FROM users" --include=*.php . # nothing outside tools/ (invariant 14). Accounts
                                               # are closed, never deleted, so a freed id can
                                               # never be handed to somebody new

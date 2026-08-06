@@ -81,7 +81,9 @@ migration tool here and the live database is edited in place: `ensureSignageSche
 in `lib/schema.php` runs on every authenticated request (never on the public poll)
 and `ensureLockoutColumns()` in `auth.php` runs on the first login. On an existing
 database, signing in as an admin once is what applies the multi-display structure
-and hands every pre-existing element to the drive-thru Display.
+and hands every pre-existing element to the drive-thru Display. It checks the
+database catalogue before altering anything, so once the structure is in place those
+requests issue no `ALTER TABLE` at all.
 
 ### 3. First-run admin
 
@@ -100,7 +102,7 @@ and are thin adapters. **Data access lives in `lib/`**, one module per table:
 
 | Module | Owns |
 |--------|------|
-| `lib/schema.php` | `ensureSignageSchema()` — every idempotent `CREATE`/`ALTER`, the drive-thru seed, the `display_id` backfill |
+| `lib/schema.php` | `ensureSignageSchema()` — every idempotent `CREATE`/`ALTER`, the drive-thru seed, the `display_id` backfill. Asks `information_schema` first, so a database that is already up to date is altered not at all |
 | `lib/displays.php` | `Display`, `Background`, `LockState`, `DisplayStore` — the only place that writes SQL against `displays` |
 | `lib/layout_store.php` | `LayoutStore` — the only place that touches `canvas_elements`: the publish transaction, the staleness and lock checks, scoped hide/delete |
 | `lib/grants.php` | `GrantStore`, `Actor` — the only place that writes SQL against `display_permissions` |

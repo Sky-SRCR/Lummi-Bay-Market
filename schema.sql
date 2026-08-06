@@ -15,9 +15,12 @@
 --
 --   * ensureSignageSchema() in lib/schema.php, on every authenticated request —
 --     the newer canvas_elements columns, the widened ENUMs, `displays`,
---     `display_permissions`, and the display_id backfill that hands every
---     pre-existing element to the drive-thru Display. Never run on the public
---     get_layout poll.
+--     `display_permissions`, the assets pool marker, and the display_id backfill
+--     that hands every pre-existing element to the drive-thru Display. Never run
+--     on the public get_layout poll. It reads information_schema first and sends
+--     only the statements that are actually missing, so a database matching this
+--     file is not altered at all — see docs/BUILD-REFERENCE.md §4o for why an
+--     ALTER that "does nothing" is not free.
 --   * ensureLockoutColumns() in auth.php, on the first login or password reset —
 --     failed_attempts, last_failed_at, locked_until. Those stay in the pre-auth
 --     path by design; see docs/adr/0001-account-keyed-login-lockout.md.

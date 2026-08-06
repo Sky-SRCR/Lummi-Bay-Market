@@ -1434,6 +1434,30 @@ check($missing !== null && $missing['ok'] === false, 'and names the column that 
 check($missing !== null && strpos($missing['note'], 'Do not publish') !== false,
       'with the consequence spelled out rather than left to be inferred');
 
+// The report asks lib/schema.php's catalogue reader rather than writing its own
+// query, so there is one answer to "how do we find out what columns exist". What it
+// must not do is trust that answer about a table the read never covered: a
+// confident "missing" from the one report in the app that exists to be trusted
+// would send somebody looking for a column that is sitting right there.
+//
+// Built by giving the real fixture tables a catalogue that is silent about
+// password_resets. The table is there and so is its column; the catalogue does not
+// mention it.
+$shape = convergedSchemaShape();
+$shape['columns']['users']['failed_attempts'] = ['type' => 'int(11)',  'nullable' => false];
+$shape['columns']['users']['last_failed_at']  = ['type' => 'datetime', 'nullable' => true];
+$shape['columns']['users']['locked_until']    = ['type' => 'datetime', 'nullable' => true];
+$pPdo = newTestDb();
+fakeCatalogue($shape, $pPdo);
+$partial = new ServerReport($pPdo);
+$attempts = null;
+foreach ($partial->convergence() as $col) {
+    if ($col['table'] === 'password_resets') { $attempts = $col; }
+}
+check($attempts !== null && $attempts['ok'],
+      'a column on a table the catalogue never covered is confirmed by reading the table');
+check($partial->isConverged(), 'so a partial catalogue does not make a converged database look behind');
+
 // The runtime facts are reported for whatever this machine is; what the report
 // must not do is throw, or hand the page something it cannot print.
 $runtime = (new ServerReport(newTestDb()))->runtime();
@@ -1445,6 +1469,205 @@ foreach ($runtime as $fact) {
     if (!is_string($fact[0]) || !is_string($fact[1])) { $allStrings = false; }
 }
 check($allStrings, 'every fact is a printable pair, so the panel cannot be handed an object');
+
+// ─────────────────────────────────────────────────────────────
+section('Convergence asks the catalogue before it alters anything');
+
+// This file's statements are MySQL-only, so the SQLite fixture cannot run them —
+// which for a long time meant lib/schema.php had no automated coverage at all. The
+// *decision* is now separable from the doing: signageSchemaPlan() takes facts and
+// returns work, with no database anywhere near it. That is what these check.
+//
+// Why it matters more than a speed figure: three of the old statements were an
+// ALTER on canvas_elements that succeeded on every single request, and an ALTER takes
+// an exclusive metadata lock on the table holding every sign's layout. A publish
+// holding that table makes the ALTER wait, and the Screens' 30-second polls queue up
+// behind the waiting ALTER.
+
+$converged = schemaPlanFor(convergedSchemaShape());
+checkSame(0, count(planStatements($converged)),
+          'a converged database is issued no ALTER or CREATE at all');
+checkSame(['seed_block_styles', 'seed_legacy_display'], planSteps($converged),
+          'only the two steps a catalogue cannot answer are left, and both are a small COUNT');
+
+// The fallback has to be the old behaviour exactly, or a host whose catalogue
+// cannot be read would quietly stop converging.
+$blind = signageSchemaPlan(SchemaFacts::unknown());
+checkSame(17, count(planStatements($blind)),
+          'a database whose catalogue cannot be read is issued every statement, as before');
+checkSame(4, count(planSteps($blind)), 'and every step');
+checkSame(false, SchemaFacts::unknown()->known(), 'and it says so rather than answering false');
+checkSame(null, SchemaFacts::unknown()->hasColumn('assets', 'auto_pooled'),
+          'an unknown catalogue answers "cannot tell", never "not there"');
+
+// The fixture is SQLite: no information_schema. This is the case the fallback
+// exists for, so it is worth proving it is reached rather than assumed.
+checkSame(false, readSchemaFacts(newTestDb())->known(),
+          'a database with no catalogue to read reports itself unknown');
+
+// ---- The catalogue read itself, run rather than trusted -----------------------
+// fakeCatalogue() attaches a second SQLite database called information_schema and
+// supplies DATABASE(), so the real query text executes: the three table names, the
+// four column aliases, the IN list, the YES/NO of IS_NULLABLE. A typo in any of
+// them would otherwise surface as a live server that had stopped converging.
+
+$read = readSchemaFacts(fakeCatalogue(convergedSchemaShape()));
+check($read->known(), 'a catalogue that can be read is read');
+checkSame(0, count(planStatements(signageSchemaPlan($read))),
+          'and what it says round-trips to the same empty plan');
+checkSame(true, $read->hasColumn('canvas_elements', 'display_id'), 'a column it lists is found');
+checkSame(false, $read->hasColumn('canvas_elements', 'nonsense'), 'one it does not list is not');
+checkSame(false, $read->columnAllowsNull('canvas_elements', 'display_id'),
+          'and IS_NULLABLE = NO is read as NOT NULL');
+check($read->hasIndex('canvas_elements', 'display_id'), 'an index it lists is found');
+check($read->hasConstraint('canvas_elements', 'canvas_elements_ibfk_3'),
+      'and so is a foreign key');
+
+// IS_NULLABLE is what decides whether the tighten still has to run, so it has to
+// come off the catalogue rather than be assumed from the column existing.
+$shape = convergedSchemaShape();
+$shape['columns']['canvas_elements']['display_id']['nullable'] = true;
+$plan = signageSchemaPlan(readSchemaFacts(fakeCatalogue($shape)));
+check(planWants($plan, 'MODIFY COLUMN display_id INT(11) NOT NULL'),
+      'a column the catalogue reports as nullable is tightened');
+
+// A catalogue that answers but knows nothing about this app is not a database with
+// no tables — it is a question that did not land. Reading it as "everything is
+// missing" would issue two CREATE TABLEs and five foreign keys against a database
+// that has them all.
+$empty = readSchemaFacts(fakeCatalogue(['columns' => [], 'indexes' => [], 'constraints' => []]));
+checkSame(false, $empty->known(), 'a catalogue with nothing to say about this app is unknown, not empty');
+checkSame(17, count(planStatements(signageSchemaPlan($empty))),
+          'so it falls back to trying everything rather than creating what already exists');
+
+// ---- One thing missing asks for exactly that thing ---------------------------
+
+$shape = convergedSchemaShape();
+unset($shape['columns']['assets']['auto_pooled']);
+$plan = schemaPlanFor($shape);
+checkSame(1, count(planStatements($plan)), 'a database without the pool marker is issued one statement');
+check(planWants($plan, 'ALTER TABLE assets ADD COLUMN auto_pooled'), 'and it is the one that adds it');
+check(in_array('backfill_auto_pooled', planSteps($plan), true),
+      'with the backfill that marks what the old pooling left behind');
+
+// The backfill reads the `Auto: ` label prefix, and it used to run on every
+// authenticated request. Saving a pooled row adopts it by clearing the marker and
+// leaves the label alone — so the statement un-adopted it within one page load and
+// the Library's Tidy up could then delete what somebody had claimed. Show the
+// statement really does that, then show the plan is what stops it running.
+$aPdo = newTestDb();
+$lib  = new AssetLibrary($aPdo);
+$pooledId = $lib->pool('text', 'OPEN 7 DAYS');
+check($pooledId > 0, 'a published text block leaves a marked row in the library');
+$lib->update($pooledId, 'Auto: OPEN 7 DAYS', 'OPEN 7 DAYS');   // adopted; label left alone
+$marked = function () use ($aPdo, $pooledId) {
+    $stmt = $aPdo->prepare("SELECT auto_pooled FROM assets WHERE id = ?");
+    $stmt->execute([$pooledId]);
+    return intval($stmt->fetchColumn());
+};
+checkSame(0, $marked(), 'saving it adopts it, so no sweep can take it');
+backfillPooledMarker($aPdo);
+checkSame(1, $marked(), 'but the backfill statement claims it straight back, from the label it still has');
+check(!in_array('backfill_auto_pooled', planSteps($converged), true),
+      'which is why a converged database never runs that statement again');
+
+// ---- The column that scopes everything --------------------------------------
+
+$shape = convergedSchemaShape();
+unset($shape['columns']['canvas_elements']['display_id']);
+unset($shape['indexes']['canvas_elements']['display_id']);
+unset($shape['constraints']['canvas_elements']['canvas_elements_ibfk_3']);
+$plan = schemaPlanFor($shape);
+checkSame(['canvas_elements.display_id', 'backfill_display_id', 'display_id is NOT NULL',
+           'display_id indexed', 'canvas_elements → displays'],
+          array_values(array_filter(planOrder($plan), function ($why) {
+              return strpos($why, 'display_id') !== false || $why === 'canvas_elements → displays';
+          })),
+          'display_id is added nullable, backfilled, tightened, indexed and keyed — in that order');
+
+// A database that got the column but never the tighten: the ALTER that adds it
+// must not be re-issued, and the backfill must still run, because a nullable
+// column is exactly where an unscoped row can still be hiding.
+$shape = convergedSchemaShape();
+$shape['columns']['canvas_elements']['display_id']['nullable'] = true;
+$plan = schemaPlanFor($shape);
+check(!planWants($plan, 'ADD COLUMN display_id'), 'a column already added is not added again');
+check(in_array('backfill_display_id', planSteps($plan), true),
+      'but a nullable display_id is still swept for unscoped rows');
+check(planWants($plan, 'MODIFY COLUMN display_id INT(11) NOT NULL'), 'and still tightened');
+
+// ---- The two statements that used to run every single time -------------------
+
+$shape = convergedSchemaShape();
+$shape['columns']['canvas_elements']['type']['type'] =
+    "enum('section','text','image','video','carousel','marquee')";      // no 'table'
+$plan = schemaPlanFor($shape);
+checkSame(1, count(planStatements($plan)), 'an ENUM missing a value is widened');
+check(planWants($plan, 'MODIFY COLUMN type'), 'by the statement that lists every value');
+
+// MySQL reports COLUMN_TYPE lower case and unspaced, but nothing in this app
+// depends on that: a needless rewrite of the layout table is the thing being
+// removed, so the comparison must not be defeated by formatting.
+$shape = convergedSchemaShape();
+$shape['columns']['canvas_elements']['type']['type'] =
+    "ENUM('section', 'text', 'image', 'video', 'carousel', 'marquee', 'table')";
+checkSame(0, count(planStatements(schemaPlanFor($shape))),
+          'the same ENUM spelled with capitals and spaces is not rewritten');
+
+// ---- Tables, and the difference between a column and a constraint ------------
+
+$shape = convergedSchemaShape();
+unset($shape['columns']['displays'], $shape['indexes']['displays'],
+      $shape['constraints']['displays']);
+$plan = schemaPlanFor($shape);
+check(planWants($plan, 'CREATE TABLE IF NOT EXISTS displays'), 'an absent Displays table is created');
+check(!planWants($plan, 'ADD COLUMN lock_taken_at'),
+      'and its columns are not then added again — the CREATE declares them');
+check(planWants($plan, 'displays_ibfk_1') && planWants($plan, 'displays_ibfk_2'),
+      'but its two foreign keys are, because the CREATE does not declare those');
+
+$shape = convergedSchemaShape();
+unset($shape['constraints']['display_permissions']['display_permissions_ibfk_2']);
+$plan = schemaPlanFor($shape);
+checkSame(1, count(planStatements($plan)), 'a single missing foreign key asks for one statement');
+check(planWants($plan, 'display_permissions_ibfk_2'), 'the one that was missing');
+
+// An installation that does not have the layout table at all cannot be altered
+// into having one — schema.sql creates it. Issuing five ALTERs that must fail is
+// noise, and noise is what hid the failures worth seeing.
+$shape = convergedSchemaShape();
+unset($shape['columns']['canvas_elements'], $shape['indexes']['canvas_elements'],
+      $shape['constraints']['canvas_elements']);
+$plan = schemaPlanFor($shape);
+check(!planWants($plan, 'ALTER TABLE canvas_elements ADD COLUMN'),
+      'a table nothing here creates is not altered when it is missing');
+check(!in_array('backfill_display_id', planSteps($plan), true),
+      'nor backfilled');
+
+// ---- The steps, and what a failure now looks like ----------------------------
+
+// SQLite rejects `INSERT IGNORE`, which makes it a useful witness: a true return
+// can only mean the count found all six types and the statement was never sent.
+$bPdo = newTestDb();
+checkSame(true, seedBlockStyles($bPdo), 'a complete set of branded block types is not re-seeded');
+$bPdo->exec("DELETE FROM block_styles WHERE block_type = 'price_2'");
+checkSame(false, seedBlockStyles($bPdo), 'a missing one makes it try the seed');
+
+checkSame(true, runSchemaStep(newTestDb(), 'no_such_step'),
+          'a step name nothing knows is nothing to do, not a failure');
+
+// Until convergence gated itself, every request failed twelve statements by
+// design, so a real failure was indistinguishable from the normal case. Now the
+// statements that run are the ones the catalogue said were missing, and one that
+// fails is worth something.
+$fPdo   = newTestDb();
+$failed = runSchemaPlan($fPdo, [
+    ['why' => 'a statement that works',       'sql' => "UPDATE assets SET label = label"],
+    ['why' => 'a statement that cannot work', 'sql' => "ALTER TABLE nope ADD COLUMN x INT"],
+    ['why' => 'seed_legacy_display',          'step' => 'seed_legacy_display'],
+]);
+checkSame(1, count($failed), 'the plan reports back the statement that failed');
+checkSame('a statement that cannot work', $failed[0]['why'], 'and names it in words, not SQL');
 
 // ─────────────────────────────────────────────────────────────
 section('An account is closed, never deleted, so its number is never reused');
@@ -1817,4 +2040,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(520);
+reportChecks(565);

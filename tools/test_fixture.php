@@ -25,6 +25,7 @@ require_once __DIR__ . '/../lib/accounts.php';
 require_once __DIR__ . '/../lib/error_policy.php';   // pulls in lib/alerts.php
 require_once __DIR__ . '/../lib/assets.php';
 require_once __DIR__ . '/../lib/upload_limits.php';
+require_once __DIR__ . '/../lib/schema.php';
 
 /**
  * DisplayStore with its one non-portable statement swapped out.
@@ -223,6 +224,161 @@ function newTestDb()
         ('sky','sky@example.test','admin'), ('clerk','clerk@example.test','basic')");
 
     return $pdo;
+}
+
+/**
+ * What `information_schema` reports for a fully converged live database.
+ *
+ * Written out by hand, and it has to be: the statements convergence issues are
+ * MySQL-only, so a SQLite fixture can never execute them and can never be asked
+ * what they produced. This is the *expectation* — "after every ALTER has landed,
+ * the catalogue says this" — which is the same reason `ServerReport::convergence()`
+ * lists its columns rather than deriving them. A derived list agrees with the
+ * database by construction and proves nothing.
+ *
+ * Only the columns, indexes and constraints the plan actually consults are here.
+ * A converged `canvas_elements` has more columns than these six; none of them
+ * changes a decision, and listing them would suggest they did. Take something away
+ * from a copy of this shape and the plan should ask for exactly that thing back.
+ */
+function convergedSchemaShape()
+{
+    $col = function ($type, $nullable = false) {
+        return ['type' => $type, 'nullable' => $nullable];
+    };
+
+    return [
+        'columns' => [
+            'canvas_elements' => [
+                'id'            => $col('int(11)'),
+                'type'          => $col(SCHEMA_ELEMENT_TYPE_ENUM),
+                'block_subtype' => $col(SCHEMA_BLOCK_SUBTYPE_ENUM, true),
+                'text_align'    => $col('varchar(16)'),
+                'z_index'       => $col('int(11)'),
+                'hidden'        => $col('tinyint(1)'),
+                'display_id'    => $col('int(11)'),
+            ],
+            'assets'   => ['id' => $col('int(11)'), 'auto_pooled' => $col('tinyint(1)')],
+            'displays' => ['id' => $col('int(11)'), 'lock_taken_at' => $col('datetime', true)],
+            'display_permissions' => ['id' => $col('int(11)')],
+            'block_styles'        => ['block_type' => $col('varchar(50)')],
+            'users'               => ['id' => $col('int(11)')],
+        ],
+        'indexes' => [
+            'canvas_elements' => ['PRIMARY' => true, 'display_id' => true],
+            'displays'        => ['PRIMARY' => true, 'tag' => true],
+        ],
+        'constraints' => [
+            'canvas_elements'     => ['canvas_elements_ibfk_3' => true],
+            'displays'            => ['displays_ibfk_1' => true, 'displays_ibfk_2' => true],
+            'display_permissions' => ['display_permissions_ibfk_1' => true,
+                                      'display_permissions_ibfk_2' => true],
+        ],
+    ];
+}
+
+/** A SchemaFacts from a shape, converged or deliberately damaged. */
+function schemaFactsFrom(array $shape)
+{
+    return SchemaFacts::of($shape['columns'], $shape['indexes'], $shape['constraints']);
+}
+
+/**
+ * A SQLite database wearing MySQL's catalogue, so `readSchemaFacts()` can be run
+ * for real instead of trusted.
+ *
+ * SQLite will attach a second database under any name, `information_schema`
+ * included, and `sqliteCreateFunction` supplies the `DATABASE()` the queries call.
+ * That means the actual query text is executed here — the table names, the column
+ * aliases, the `IN` list, the YES/NO of `IS_NULLABLE`. A renamed alias or a typo in
+ * one of the three catalogue tables would otherwise show up first on the live
+ * server, as a database that had silently stopped converging.
+ *
+ * What it does not prove is that MySQL's catalogue says what this pretends it says.
+ * Only tools/rehearse_phase1.php can settle that, against a copy of live data.
+ *
+ * Pass an existing database as $onto to give the real fixture tables a catalogue
+ * that disagrees with them — which is how the case worth worrying about is built:
+ * a column that is really there, on a table the catalogue never mentioned.
+ */
+function fakeCatalogue(array $shape, PDO $onto = null)
+{
+    $pdo = $onto;
+    if ($pdo === null) {
+        $pdo = new PDO('sqlite::memory:', null, null, [
+            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+        ]);
+    }
+    $pdo->exec("ATTACH DATABASE ':memory:' AS information_schema");
+    $pdo->sqliteCreateFunction('DATABASE', function () { return 'lbm'; }, 0);
+
+    $pdo->exec("CREATE TABLE information_schema.COLUMNS
+                (TABLE_SCHEMA TEXT, TABLE_NAME TEXT, COLUMN_NAME TEXT,
+                 COLUMN_TYPE TEXT, IS_NULLABLE TEXT)");
+    $pdo->exec("CREATE TABLE information_schema.STATISTICS
+                (TABLE_SCHEMA TEXT, TABLE_NAME TEXT, INDEX_NAME TEXT)");
+    $pdo->exec("CREATE TABLE information_schema.TABLE_CONSTRAINTS
+                (TABLE_SCHEMA TEXT, TABLE_NAME TEXT, CONSTRAINT_NAME TEXT)");
+
+    $col = $pdo->prepare("INSERT INTO information_schema.COLUMNS VALUES ('lbm',?,?,?,?)");
+    foreach ($shape['columns'] as $table => $columns) {
+        foreach ($columns as $name => $spec) {
+            $col->execute([$table, $name, $spec['type'], !empty($spec['nullable']) ? 'YES' : 'NO']);
+        }
+    }
+    $ix = $pdo->prepare("INSERT INTO information_schema.STATISTICS VALUES ('lbm',?,?)");
+    foreach ($shape['indexes'] as $table => $names) {
+        foreach (array_keys($names) as $name) { $ix->execute([$table, $name]); }
+    }
+    $ct = $pdo->prepare("INSERT INTO information_schema.TABLE_CONSTRAINTS VALUES ('lbm',?,?)");
+    foreach ($shape['constraints'] as $table => $names) {
+        foreach (array_keys($names) as $name) { $ct->execute([$table, $name]); }
+    }
+    return $pdo;
+}
+
+/** The plan for a shape, in one step. */
+function schemaPlanFor(array $shape)
+{
+    return signageSchemaPlan(schemaFactsFrom($shape));
+}
+
+/** Just the statements a plan would run, whitespace flattened for comparing. */
+function planStatements(array $plan)
+{
+    $out = [];
+    foreach ($plan as $entry) {
+        if (isset($entry['sql'])) { $out[] = preg_replace('/\s+/', ' ', trim($entry['sql'])); }
+    }
+    return $out;
+}
+
+/** Just the named row-reading steps, in the order the plan puts them. */
+function planSteps(array $plan)
+{
+    $out = [];
+    foreach ($plan as $entry) {
+        if (isset($entry['step'])) { $out[] = $entry['step']; }
+    }
+    return $out;
+}
+
+/** Every entry's `why` in order — statements and steps together, so order is testable. */
+function planOrder(array $plan)
+{
+    $out = [];
+    foreach ($plan as $entry) { $out[] = $entry['why']; }
+    return $out;
+}
+
+/** True when any statement in the plan mentions the given fragment. */
+function planWants(array $plan, $fragment)
+{
+    foreach (planStatements($plan) as $sql) {
+        if (strpos($sql, $fragment) !== false) { return true; }
+    }
+    return false;
 }
 
 function makeTestDisplay(PDO $pdo, $tag, $title = 'Sign', $w = 1920, $h = 1080)

@@ -52,7 +52,7 @@ it is the standing contract, with the invariants and where later work attaches.
 
 | File | Role |
 |------|------|
-| `lib/schema.php` | `ensureSignageSchema()` — every idempotent `CREATE`/`ALTER`, the drive-thru seed, the `display_id` backfill, the Brand Standards seed |
+| `lib/schema.php` | `ensureSignageSchema()` — every idempotent `CREATE`/`ALTER`, the drive-thru seed, the `display_id` backfill, the Brand Standards seed. Reads `information_schema` once and runs only what is actually missing, so a converged database is issued no `ALTER` at all |
 | `lib/displays.php` | `Display`, `Background`, `LockState`, `DisplayStore` — the **only** SQL against `displays`; screen name tag rules; the edit lock |
 | `lib/layout_store.php` | `LayoutStore` — the **only** place that touches `canvas_elements`: publish transaction, staleness + lock checks, layout copy, scoped hide/delete |
 | `lib/grants.php` | `GrantStore`, `Actor` — the **only** SQL against `display_permissions`; `Actor` answers "may this account open this Display" |
@@ -63,7 +63,7 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **520 checks**. Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **565 checks**. Run before pushing |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **16 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end, **37 checks** |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data |
@@ -95,15 +95,24 @@ produce. **The live server lags it** and closes the gap itself:
 - `ensureSignageSchema()` in `lib/schema.php`, on every authenticated request —
   the newer `canvas_elements` columns (`text_align`, `z_index`, `hidden`), the
   widened ENUMs, `displays`, `display_permissions`, the publish stamp and lock
-  columns, the Brand Standards rows, and the `display_id` backfill that hands
-  every pre-existing element to the drive-thru Display.
+  columns, the `assets` pool marker, the Brand Standards rows, and the `display_id`
+  backfill that hands every pre-existing element to the drive-thru Display.
 - `ensureLockoutColumns()` in `auth.php`, on the first login or password reset —
   the three lockout columns on `users`.
 
-Every statement is idempotent, and the backfill re-runs on every authenticated
-request: if a partly applied migration ever left elements unscoped (which shows as
-a **blank sign**), loading an admin page repairs it. The check is
-`SELECT COUNT(*) FROM canvas_elements WHERE display_id IS NULL` — it should be 0.
+Every statement is idempotent, and **only the ones the database actually needs are
+sent**: convergence reads `information_schema` once per request and skips whatever
+is already there, so once the live database has caught up it is issued no
+`ALTER TABLE` at all. That matters because an `ALTER` locks `canvas_elements` — the
+table every sign's layout lives in — and a lock that waits on a publish makes the
+Screens' polls wait too. See BUILD-REFERENCE §4o.
+
+The `display_id` backfill re-runs on every authenticated request *while the column
+can still hold a `NULL`*: if a partly applied migration ever left elements unscoped
+(which shows as a **blank sign**), loading an admin page repairs it. Once the column
+is `NOT NULL` there can be no unscoped row to find, which is when it stops. The
+check is `SELECT COUNT(*) FROM canvas_elements WHERE display_id IS NULL` — it should
+be 0.
 
 The public `get_layout` poll deliberately runs **no** DDL; every Screen hits it
 every 30 seconds forever.
@@ -162,6 +171,19 @@ anything, they hold every Display by role.
 - `assets.auto_pooled` is added by schema convergence on the first signed-in
   request. Until it lands, the tidy-up identifies a pooled row by its `Auto: ` label
   prefix instead — workable, and reported in **Settings → Database Structure**.
+  The statement that marks the *existing* pool runs in the same request that adds the
+  column, and only that request, because re-running it would un-adopt a row somebody
+  had renamed. So if the `ALTER` lands and that one `UPDATE` does not — a dropped
+  connection between the two — Tidy up will report 0 forever on a library full of
+  `Auto:` rows. Nothing is lost and no sign is affected; the recovery is one
+  statement by hand:
+  `UPDATE assets SET auto_pooled = 1 WHERE auto_pooled = 0 AND label LIKE 'Auto: %';`
+- **Schema convergence issues no `ALTER TABLE` once the live database has caught
+  up.** It reads `information_schema` first. If a host ever hides the catalogue it
+  falls back to attempting everything, exactly as earlier builds did — slower and
+  noisier, never wrong. `tools/rehearse_phase1.php` reports what is still wanted
+  after converging a copy, which is the fastest way to see whether the live
+  database is actually finished.
 
 ## 6. The multi-display build (this branch)
 
@@ -198,7 +220,7 @@ staleness check, no version history), 0007 (one editor per Display).
   URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
   account, two browsers, and one unavoidable 15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 520 self-test checks against SQLite, 53 node checks over `builder.php`'s
+  `php -l`, 565 self-test checks against SQLite, 53 node checks over `builder.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare

@@ -22,6 +22,11 @@ edited in place and every change reaches the sign by hand.
   `lib/assets.php` against `assets`.
 - **Deep modules**: small interface, substantial implementation. A new query
   means a new method on the module, not a `$pdo` handed to a caller.
+- **A new schema statement goes into `signageSchemaPlan()`, with its gate.**
+  Convergence asks `information_schema` first and sends only what is missing, so an
+  ungated `schemaTry()` re-runs on every signed-in page load — and an `ALTER` locks
+  the table every sign's layout lives in. Add the gate and a check that the plan
+  asks for it.
 - **PHP 7.1-compatible syntax** — the live server's version is unverified.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.

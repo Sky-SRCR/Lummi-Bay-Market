@@ -18,16 +18,24 @@
 // exactly that state for months. So this reports, per column, whether it is
 // actually there.
 //
-// Deliberately narrow: it reads `information_schema` and PHP's own configuration,
-// and it does not read a single row of application data. That is why it can name
-// `users`, `displays` and `canvas_elements` without being the second writer the
-// module rules forbid — it asks the catalogue what columns exist, never the table
-// what it contains.
+// Deliberately narrow: it reads the database *catalogue* and PHP's own
+// configuration, and it does not read a single row of application data. That is
+// why it can name `users`, `displays` and `canvas_elements` without being the
+// second writer the module rules forbid — it asks what columns exist, never the
+// table what it contains.
+//
+// It does not ask `information_schema` itself. `lib/schema.php` owns that read,
+// because convergence has to ask the same question before it alters anything and
+// two files with their own catalogue query could disagree about what "the column
+// is there" means. This one asks `readSchemaFacts()` and falls back to reading a
+// table's shape only when the catalogue cannot be read at all — which is the
+// self-test's SQLite fixture, and any host that hides the catalogue.
 //
 // Nothing here decides anything. It reports, the admin panel renders, and no code
 // path branches on the answers.
 
 require_once __DIR__ . '/upload_limits.php';
+require_once __DIR__ . '/schema.php';
 
 class ServerReport
 {
@@ -39,6 +47,7 @@ class ServerReport
     const ASSUMED_PHP = '7.1';
 
     private $pdo;
+    private $facts = null;
 
     public function __construct(PDO $pdo)
     {
@@ -150,29 +159,37 @@ class ServerReport
 
     // ---- Internals ----------------------------------------------------------
 
+    /** The catalogue, read once per report rather than once per column. */
+    private function facts()
+    {
+        if ($this->facts === null) { $this->facts = readSchemaFacts($this->pdo); }
+        return $this->facts;
+    }
+
     /**
-     * Ask the catalogue, not the table. `information_schema` carries no
-     * application data, which is what keeps this file outside the one-writer rule
-     * for `users`, `displays` and `canvas_elements`.
+     * Ask the catalogue, not the table. It carries no application data, which is
+     * what keeps this file outside the one-writer rule for `users`, `displays` and
+     * `canvas_elements`.
+     *
+     * The catalogue is trusted only for a table it actually covers. A `false` for
+     * a table the read never looked at would be a confident wrong answer — and
+     * this report exists to be trusted — so anything the facts do not cover is
+     * settled by reading the table's shape instead.
      */
     private function columnExists($table, $column)
     {
+        $facts = $this->facts();
+        if ($facts->hasTable($table) === true) {
+            return $facts->hasColumn($table, $column) === true;
+        }
+
+        // No catalogue (not MySQL — the self-test's SQLite fixture, for one), or a
+        // table outside the catalogue read. Fall back to reading the shape.
         try {
-            $stmt = $this->pdo->prepare(
-                "SELECT COUNT(*) FROM information_schema.COLUMNS
-                  WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?"
-            );
-            $stmt->execute([$table, $column]);
-            return intval($stmt->fetchColumn()) > 0;
+            $this->pdo->query("SELECT " . $column . " FROM " . $table . " LIMIT 0");
+            return true;
         } catch (Throwable $e) {
-            // No information_schema means this is not MySQL — the self-test's
-            // SQLite fixture, for one. Fall back to reading the table's shape.
-            try {
-                $this->pdo->query("SELECT " . $column . " FROM " . $table . " LIMIT 0");
-                return true;
-            } catch (Throwable $e2) {
-                return false;
-            }
+            return false;
         }
     }
 
