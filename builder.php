@@ -816,6 +816,13 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                 <input type="color" id="font-color" style="width:100%;"
                        oninput="updateStyle('color',this.value)">
             </div>
+            <!-- Shown only for a stored colour the browser could not read (#41). A
+                 colour input has no way to display one — it falls back to black and
+                 looks like a deliberate choice — so the swatch is not evidence of
+                 anything here and the sentence has to say so. -->
+            <div id="font-color-unread" style="display:none; grid-column:1 / -1;
+                 font-size:11px; line-height:1.4; color:#e67e22; margin-top:4px;">
+            </div>
             <div>
                 <label>Weight</label>
                 <select id="font-weight" onchange="updateStyle('fontWeight',this.value)">
@@ -1518,18 +1525,69 @@ function applyTextStyles(block, el) {
         var bs = blockStyles[sub];
         block.style.fontFamily  = bs.font_family;
         block.style.fontSize    = bs.font_size + 'px';
-        block.style.color       = bs.font_color;
+        applyStoredColor(block, bs.font_color);
         block.style.fontWeight  = bs.font_weight;
         block.style.fontStyle   = bs.font_style;
         block.style.lineHeight  = bs.line_height;
     } else {
         block.style.fontFamily  = el.font_family  || 'Arial';
         block.style.fontSize    = (el.font_size||16) + 'px';
-        block.style.color       = el.font_color   || '#000000';
+        applyStoredColor(block, el.font_color);
         block.style.fontWeight  = el.font_weight  || 'normal';
         block.style.fontStyle   = el.font_style   || 'normal';
         block.style.lineHeight  = el.line_height  || 1.4;
     }
+}
+
+// Put a stored colour on a block without losing it if it cannot be read (#41).
+//
+// The block has to render, so an unreadable colour still gets the default on
+// screen — but the value that was actually stored is kept on the element, and
+// collectElements() publishes *that* rather than what the swatch ended up showing.
+// The publish path then refuses it and names the block (LayoutRules), which is how
+// an admin finds out at all. Anything else is this app quietly deciding that an
+// unreadable colour means black.
+//
+// A readable colour clears the marker, so a block whose colour was fixed stops
+// carrying the old bad value the moment the fix is loaded back.
+function applyStoredColor(block, stored) {
+    var raw = (stored === null || stored === undefined) ? '' : String(stored);
+    var hex = readHex(raw);
+    if (raw !== '' && hex === '') {
+        block.dataset.colorUnread = raw;
+    } else {
+        delete block.dataset.colorUnread;
+    }
+    block.style.color = hex || '#000000';
+}
+
+// Say so in the inspector when the selected block carries a colour nobody can read.
+//
+// Without this the only way to find out is to press Publish and read the refusal,
+// and the swatch actively misleads in the meantime: a colour input given a value it
+// cannot parse shows #000000, which is indistinguishable from somebody having
+// chosen black.
+//
+// Null-guarded because the inspector is not sent at all to a page that may not edit
+// (§4j) — a lookup for a control that isn't there is exactly the defect
+// tools/selftest_builder_readonly.js exists to catch (#40's subject too).
+//
+// `textContent`, never innerHTML: the value being quoted came out of the database
+// and is under nobody's control here.
+function showUnreadableColor(block) {
+    var note = document.getElementById('font-color-unread');
+    if (!note) return;
+    var stored = (block && block.dataset) ? (block.dataset.colorUnread || '') : '';
+    if (!stored) {
+        note.style.display = 'none';
+        note.textContent = '';
+        return;
+    }
+    if (stored.length > 40) { stored = stored.slice(0, 40) + '…'; }
+    note.textContent = 'The saved colour for this block (' + stored + ') is not one this app can '
+                     + 'read, so the swatch is showing black rather than what is saved. Choose a '
+                     + 'colour to replace it — publishing is refused until you do.';
+    note.style.display = 'block';
 }
 
 // ============================================================
@@ -1591,7 +1649,8 @@ function showInspector(block) {
     if (IS_ADMIN && type==='text' && subtype==='free') {
         document.getElementById('font-family').value  = block.style.fontFamily.replace(/['"]/g,'') || 'Arial';
         document.getElementById('font-size').value    = parseInt(block.style.fontSize) || 16;
-        document.getElementById('font-color').value   = rgbToHex(block.style.color) || '#000000';
+        document.getElementById('font-color').value   = readHex(block.style.color) || '#000000';
+        showUnreadableColor(block);
         document.getElementById('font-weight').value  = block.style.fontWeight || 'normal';
         document.getElementById('line-height').value  = parseFloat(block.style.lineHeight) || 1.4;
     }
@@ -1961,6 +2020,11 @@ function fmtCmd(evt, cmd) {
 function updateStyle(prop, val) {
     if (!activeBlock) return;
     activeBlock.style[prop] = val;
+    // Choosing a colour is the deliberate act that retires an unreadable stored one
+    // (#41). Until it happens the block keeps publishing the value it came with, so
+    // the refusal keeps coming back — which is the point: something has to change,
+    // and it has to be somebody's decision rather than this function's.
+    if (prop === 'color') { delete activeBlock.dataset.colorUnread; }
 }
 
 // ============================================================
@@ -2343,7 +2407,11 @@ function publishCanvas() {
             save_to_db_pool: savePool,
             font_family:    block.style.fontFamily  || 'Arial',
             font_size:      parseInt(block.style.fontSize) || 16,
-            font_color:     rgbToHex(block.style.color) || '#000000',
+            // The stored value wins while it is still unreadable (#41), so a publish
+            // cannot quietly replace a colour nobody could read with black. It clears
+            // the moment somebody picks a colour — see updateStyle(). A block that
+            // simply never had a colour still publishes '#000000', exactly as before.
+            font_color:     block.dataset.colorUnread || readHex(block.style.color) || '#000000',
             font_weight:    block.style.fontWeight  || 'normal',
             font_style:     block.style.fontStyle   || 'normal',
             line_height:    parseFloat(block.style.lineHeight) || 1.4,
@@ -2921,11 +2989,35 @@ function getCanvasDropCenter(defW, defH, parent) {
     return { x: cx, y: cy };
 }
 
-function rgbToHex(rgb) {
-    if (!rgb || rgb.startsWith('#')) return rgb||'#000000';
-    var m = rgb.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
-    if (!m) return '#000000';
-    return '#'+[m[1],m[2],m[3]].map(function(n){return ('0'+parseInt(n,10).toString(16)).slice(-2);}).join('');
+// A colour as `#rrggbb`, or '' when it is not one (#41).
+//
+// The old rgbToHex() answered '#000000' for anything it could not parse, and two
+// callers believed it: the inspector swatch and the publish payload. That is the
+// whole of #41. A stored colour the browser cannot read — from a hand-edited row,
+// or from before the publish path checked (§4v left colour semantics to this item)
+// — is assigned to `block.style.color`, where the CSSOM **discards it silently**
+// and leaves the property empty. rgbToHex('') then returned black, and the next
+// publish wrote black over it. Nobody typed it, nothing reported it, and there is
+// no undo. On a #1a1a2e canvas the block did not look recoloured; it looked gone.
+//
+// So this one refuses to invent. '' means "not a colour", and every caller decides
+// what to do with that for itself — see applyTextStyles() and collectElements().
+//
+// It reads the two notations the CSSOM hands back as well as the one we store,
+// because `block.style.color` is normalised by the browser and never comes back in
+// the `#rrggbb` form it went in as. `rgba()` is included for the alpha the marquee
+// controls can set; the alpha itself is dropped, which is what storing `#rrggbb`
+// has always meant.
+function readHex(value) {
+    if (typeof value !== 'string') return '';
+    var v = value.trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase();
+
+    var m = v.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,[^)]*)?\)$/);
+    if (!m) return '';
+    var parts = [m[1], m[2], m[3]].map(function (n) { return parseInt(n, 10); });
+    for (var i = 0; i < 3; i++) { if (parts[i] > 255) return ''; }
+    return '#' + parts.map(function (n) { return ('0' + n.toString(16)).slice(-2); }).join('');
 }
 
 function escHtml(s) {

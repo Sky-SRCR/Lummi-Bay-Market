@@ -28,6 +28,8 @@
 // column stores cannot drift apart — which is the drift that let an unknown type
 // through in the first place.
 
+require_once __DIR__ . '/color.php';
+
 /**
  * The vocabulary and the bounds, and the check that applies them.
  *
@@ -232,6 +234,35 @@ class LayoutRules
             }
             foreach ($strings as $key => $spec) {
                 self::checkString($problems, $where, $el, $key, $spec[0], $spec[1]);
+            }
+
+            // ---- Colour semantics (#41) ----------------------------------------
+            // `font_color` is the one stored string whose *meaning* has to be checked
+            // and not just its shape, because of what reads it back. The Builder loads
+            // a layout by assigning each colour to `block.style.color`, and the CSSOM
+            // discards a value it cannot parse without saying so — leaving the property
+            // empty, which the publish payload then rendered as `#000000`. So an
+            // unreadable stored colour did not stay unreadable: opening the Display and
+            // pressing Publish, changing nothing, rewrote that block black. On a canvas
+            // whose default is #1a1a2e the block did not change colour so much as
+            // vanish, and there is no undo to notice it with.
+            //
+            // Refused rather than corrected, for §4v's reason: a publish overwrites, so
+            // a colour nobody can read is declined at the door with the block named,
+            // and an admin fixes it deliberately. Blank stays legal — it means "no
+            // colour of its own", which is what every branded block carries.
+            //
+            // Only when the length check above passed, so one wrong value is one
+            // problem rather than two.
+            if ($type !== 'section') {
+                $fontColor = self::valueOf($el, 'font_color', null);
+                if (is_string($fontColor) && $fontColor !== ''
+                    && strlen($fontColor) <= self::FONT_COLOR_MAX
+                    && !Color::isColor($fontColor)) {
+                    $problems[] = $where . ' has a text colour that is not a colour ('
+                                . self::describe($fontColor) . '). Colours are written as '
+                                . 'six hexadecimal digits after a hash, like #1a1a2e.';
+                }
             }
 
             // manual_content is the block's own content — a price, a JSON carousel,

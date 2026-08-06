@@ -67,6 +67,7 @@ Design rules, applied to every module added by this build:
 | `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. `firstInWindow()` and `stateFile()` are public for the same reason `report()` needs them: a repeated *attempt to fix* something needs the same restraint as a repeated report of it, and this module is where the state directory is decided. Depends on nothing: no database, no session, no config. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
+| `color.php` | `Color::read` / `isColor` / `describe` | What a colour is — `#rrggbb`, and nothing else. One rule, because it used to be written out four times and the four copies disagreed about what to do when a value failed it: `DisplayAdmin` substituted `#1a1a2e`, `BrandStyles` `#ffffff`, the Branding form whatever was already saved, and the Builder's `rgbToHex()` `#000000`. All four then reported success, so "saved" meant four different things and none of them meant "what you typed" (#21, #41). **It never picks a colour.** `read()` answers the colour or `''` and the caller decides what an empty answer means for it — a form refuses and names the field, the publish path refuses and names the block, a caller with a genuine default applies it visibly at the call site. Blank is deliberately *not* a colour: "nothing supplied" and "supplied and unreadable" are different answers and collapsing them is the defect. Not a normaliser either — no trimming, no `#fff` expansion, no `rgb()` — the accepted set is exactly what the three old regexes shared, so nothing that used to be storable stopped being storable. Pure, and depends on nothing. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 
 `lib/` is denied to the browser by `lib/.htaccess`. Nothing in `lib/` prints,
@@ -1879,6 +1880,9 @@ node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a D
 node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an
                                          # admin who can edit — driving a stubbed
                                          # XMLHttpRequest through every way an upload ends
+node tools/selftest_builder_colors.js    # the same JS again, against a Display whose
+                                         # stored data is already wrong, through a `style`
+                                         # that discards and normalises as a browser does
 ```
 
 And, with a MySQL to point at — the same suite, with nothing stubbed:
@@ -2044,14 +2048,20 @@ grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request namin
                                               # exception: a Screen sends the tag alone (ADR-0003)
 ```
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it.
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3400 lines of it.
 Anything touching that file needs reading, not linting. `node --check` over the
-extracted `<script>` body proves it parses; the two node suites go further and *run*
-it. `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only page
-emits, which is the only automated way to catch a lookup reaching for a control the
-lock took away. `selftest_builder_uploads.js` takes the opposite premise — an admin
-who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the only
-way to see a missing `.catch()`: the file parses perfectly without one.
+extracted `<script>` body proves it parses; the three node suites go further and
+*run* it. `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only
+page emits, which is the only automated way to catch a lookup reaching for a control
+the lock took away. `selftest_builder_uploads.js` takes the opposite premise — an
+admin who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the
+only way to see a missing `.catch()`: the file parses perfectly without one.
+`selftest_builder_colors.js` takes a third — an admin opening a Display whose stored
+data is already wrong — and is the one place where the *stub itself* is load-bearing:
+its `style` is a Proxy that discards an unparseable colour and normalises a parseable
+one, exactly as the CSSOM does. A stub that stored whatever it was given would make
+that whole suite pass against the defect it exists for, so the fidelity of the stub
+is asserted before anything is asserted through it.
 
 `schema.sql` has no automated check at all — nothing reads it, so a column missing
 from it fails silently on a future rebuild and nowhere else. Diff it against
@@ -2279,13 +2289,147 @@ so nothing ever runs it.
   publish, because their Builder resubmits what it loaded. Distinguishing
   "resubmitted existing root content" from "new root content" is not something the
   payload supports. Considered and left; it needs a payload change, not a check.
-- **Colour *semantics* are not validated on the publish path**, only shape and
-  length. `font_color` is checked as a string within 50 bytes and no further,
-  because "an unreadable stored colour" is #41 and "the panel coerced a colour it
-  could not parse" is #21, both open. Doing half of either here would have made
-  them harder to do properly.
-- **`DisplayAdmin::cleanColor()` still coerces to `#1a1a2e`.** That is #21's
-  subject and was left alone deliberately, so the fix has one clean place to land.
+- ~~**Colour *semantics* are not validated on the publish path**, only shape and
+  length.~~ **Closed by §4w.** `font_color` was checked as a string within 50 bytes
+  and no further, because "an unreadable stored colour" is #41 and "the panel
+  coerced a colour it could not parse" is #21. Both were taken together in the
+  section after this one, and the publish path now refuses a colour it cannot read
+  and names the block.
+- ~~**`DisplayAdmin::cleanColor()` still coerces to `#1a1a2e`.**~~ **Closed by §4w.**
+  It was left alone deliberately so the fix would have one clean place to land; it
+  landed there. The method is gone and both background paths refuse.
+
+---
+
+### 4w. Refusing a value rather than guessing at it (#21, #41)
+
+Taken together because they are one defect seen from two ends. #21 is "the panel
+coerced values it could not parse and reported success". #41 is "an unreadable
+stored colour round-tripped through the colour picker and published back as black".
+The thing in the middle — the reason a colour nobody could read existed to be
+round-tripped, and the reason nothing ever said so — is that **the app had four
+different opinions about what a colour is, and all four of them substituted rather
+than refused**:
+
+| Where | Rule | Substituted | Then said |
+|---|---|---|---|
+| `DisplayAdmin::cleanColor()` | `/^#[0-9a-fA-F]{6}$/` | `#1a1a2e` | "Display created" / "Background colour set" |
+| `BrandStyles::cleanColor()` | the same regex | `#ffffff` | "Brand standards saved" |
+| Branding form, four times inline | the same regex | whatever was already saved | "Branding saved." |
+| `rgbToHex()` in `builder.php` | its own | `#000000` | nothing at all |
+
+Four copies of one rule is a smell. Four copies that disagree about the *fallback*
+is the bug: "saved" meant four different things and none of them meant "what you
+typed".
+
+**The rule is one pure function now** — `lib/color.php` — and its interface is the
+decision. `Color::read()` returns the colour or `''`. It never picks one. Every
+caller decides what an empty answer means for it, at the call site, where it is
+visible:
+
+- A form **refuses and names the field**.
+- The publish path **refuses and names the block**.
+- A caller with a genuine default — a new canvas has to have *some* background —
+  applies it explicitly, and only for the case that actually means "nothing was
+  supplied".
+
+That last distinction is most of #21. **Blank and unreadable are different
+answers.** `Color::isColor('')` is false on purpose; a predicate that said true for
+blank would collapse the two again, which is exactly how a form that submitted
+nothing and a form that submitted nonsense came to be treated identically.
+
+`Color::read()` is also deliberately **not** a normaliser: no trimming, no `#fff`
+expansion, no `rgb()`. Widening what the app stores is not what this change is for,
+and the accepted set is exactly what the three old regexes shared, so nothing that
+used to be storable stopped being storable.
+
+**What #21 changed, one caller at a time.**
+
+- `DisplayAdmin` — both background paths refuse, with the same sentence, because an
+  admin who sees two explanations for one rejected swatch will look for two causes.
+  `setBackgroundColor()` is the harsher half and the one worth stating plainly: it
+  used to substitute the dark default, **advance the layout stamp**, and report the
+  background "set". So an admin got a colour they had not chosen, every Screen took
+  it within 30 seconds, and every Builder tab open at the time was invalidated on
+  the way past. There is no undo for any of that. The test asserts all three
+  stopped — including that the stamp does not move on a refusal, which is the one
+  that would have gone unnoticed.
+- The **Branding form** refuses the whole save, logo included. A save that stored
+  the new logo and none of the colours is a half-applied change with no undo and
+  nothing saying which half landed — and `move_uploaded_file()` cannot be rolled
+  back, so the refusal has to happen *before* the upload rather than after it. That
+  is the one-token guard on the upload block, and it is load-bearing.
+- **Ids.** `intval` never fails, it guesses. `"abc"` is 0, which at least produced
+  "No account was named". The dangerous one is `"7abc"`, which is **7** — a real and
+  different account, edited, closed or password-reset with the change reported as a
+  success under the name the form had been showing. `intval([])` is 1, and account
+  number 1 is the first admin the store ever created; `intval(true)` is 1 too. So
+  the id now arrives at the module raw and the module decides. `AccountAdmin` and
+  `DisplayStore::forId()` each hold that predicate, and the panel stopped casting.
+- **`AccountAdmin::resetPassword()` is new.** The panel was running
+  `UPDATE users SET password_hash = ? WHERE id = ?` itself and printing "Password
+  reset." whatever the statement matched — including nothing, and including somebody
+  else. It goes through `AccountStore::setPassword()`, which asks whether the row
+  exists rather than reading `rowCount()` afterwards, because MySQL counts rows
+  *changed* and a re-used password comes back as zero.
+
+**What #41 changed, and why refusing is right here too.** The mechanism is worth
+writing down because every step of it is silent:
+
+1. A `font_color` holds something that is not `#rrggbb` — a row edited by hand, or
+   one written before §4v.
+2. The Builder assigns it: `block.style.color = value`.
+3. **The CSSOM discards a value it cannot parse and says nothing.** The property is
+   not set to the bad value and not set to a default; it keeps what it had, which
+   for a fresh block is `''`.
+4. `rgbToHex('')` returned `'#000000'`.
+5. Publishing — changing nothing, touching nothing — wrote black over it. On a
+   #1a1a2e canvas the block did not look recoloured, it looked deleted.
+
+`readHex()` replaces `rgbToHex()` and answers `''` rather than inventing. But not
+inventing is only half: the block still has to render, so it renders in the default
+while **the value that was actually stored is kept on the element** and published
+back unchanged. `LayoutRules` then refuses that publish and names the block, and the
+inspector says so before you get there.
+
+That combination is the part worth defending, because at first reading it looks like
+a deadlock — the Builder round-trips a value the server will refuse. It is not a
+deadlock, it is an instruction: *Block 2 has a text colour that is not a colour
+("puce").* An admin picks a colour, the marker clears, the publish goes through. The
+alternatives are both worse. Silently normalising is the defect. Refusing to *load*
+the Display would take a sign away from the person who needs to fix it.
+
+**Two things deliberately not done:**
+
+- **`BrandStyles::cleanColor()` still clamps.** That module's contract is that every
+  stored value renders, because these land on a wall-mounted Screen with nobody
+  watching. What changed is only that the rule is `Color`'s rather than a fourth
+  private copy. The caller with an admin in front of it — the panel — asks `Color`
+  directly and refuses, so by the time a value reaches the clamp it has already been
+  through that; the fallback covers the API path and a hand-built POST.
+- **The panel still says "That display no longer exists." for a malformed `d_id`.**
+  Accurate enough — no Display of that name exists — and the harmful half (deleting
+  a *different* Display on a matching typed tag) is closed. Three identical blocks
+  would need the distinction to say it better, and that is tidying rather than #21.
+
+**Coverage.** 69 new checks in `tools/selftest_layout.php` (both engines) and a
+third node suite, `tools/selftest_builder_colors.js`, at 43. The node suite is the
+one where the *stub* is load-bearing: its `style` is a Proxy that discards an
+unparseable colour and normalises a parseable one exactly as a browser does, because
+a stub that stored `'puce'` would have passed against the original bug. Its fidelity
+is asserted before anything is asserted through it.
+
+**The deliberate breakages the tests catch.** Verified by injection, not assumed:
+
+- Dropping `block.dataset.colorUnread ||` from the publish payload — the original
+  #41 line — fails with `expected "puce", got "#000000"`, which is the defect
+  reproduced verbatim.
+- Restoring `rgbToHex()`'s `return '#000000'` fails 8 checks across three sections,
+  because that one value propagates into the marker, the payload and the inspector.
+- Removing the `delete` that clears a stale marker fails exactly one: a block
+  somebody has just fixed would otherwise go on refusing to publish forever.
+- Restoring `setBackgroundColor()`'s coercion fails 4, including the layout stamp
+  moving on a refusal.
 
 ---
 

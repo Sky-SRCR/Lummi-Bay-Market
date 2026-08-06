@@ -36,10 +36,14 @@
 //   · A grant is only ever "this account may edit this Display" (ADR-0005). This
 //     module does not know what an account's *role* is — that is the panel's
 //     business, and it is why granting is offered for `basic` accounts only.
+//   · A background colour that cannot be read is refused, not replaced (#21). The
+//     rule itself is lib/color.php's; what this module adds is that both paths to
+//     a background refuse with the same sentence.
 
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/layout_store.php';
 require_once __DIR__ . '/grants.php';
+require_once __DIR__ . '/color.php';
 
 /**
  * The outcome of an administrative change, as a value.
@@ -107,6 +111,15 @@ class DisplayResult
 
 class DisplayAdmin
 {
+    /**
+     * The background a new Display gets when the form did not name one.
+     *
+     * The dark navy the canvas has always had. It is a value applied at one visible
+     * decision — "nothing was supplied" — and never a substitute for a value that
+     * was supplied and could not be read; see create().
+     */
+    const DEFAULT_BACKGROUND = '#1a1a2e';
+
     private $pdo;
     private $displays;
     private $layouts;
@@ -149,8 +162,24 @@ class DisplayAdmin
         $clean['canvas_width']  = intval($width);
         $clean['canvas_height'] = intval($height);
         $clean['bg_type']       = 'color';
-        $clean['bg_val']        = self::cleanColor(isset($fields['bg_val']) ? $fields['bg_val'] : '');
         $clean['is_active']     = 1;
+
+        // Blank and unreadable are two different answers (#21). Nothing supplied
+        // means the admin never touched the swatch, and a new canvas has to have
+        // *some* background, so the default applies. A value that is not a colour
+        // means the form said something this app cannot store, and substituting the
+        // default there is how "created" used to be reported for a Display that is
+        // not the colour anybody chose.
+        $rawBg = isset($fields['bg_val']) ? $fields['bg_val'] : '';
+        if ($rawBg === '' || $rawBg === null) {
+            $clean['bg_val'] = self::DEFAULT_BACKGROUND;
+        } else {
+            $bg = Color::read($rawBg);
+            if ($bg === '') {
+                return DisplayResult::invalid('bg_val', self::colorRefusal($rawBg));
+            }
+            $clean['bg_val'] = $bg;
+        }
 
         // "Duplicate of" is resolved before anything is written, so a stale form
         // naming a Display that has since been deleted or is the wrong shape
@@ -316,11 +345,23 @@ class DisplayAdmin
      * Only a colour. Background *images* are set from the Builder, where the
      * upload is already validated in one place and you can see the canvas you are
      * changing.
+     *
+     * A value that is not a colour is refused rather than replaced (#21). This is
+     * the harsher of the two places it mattered: the old code substituted the dark
+     * default, advanced the layout stamp anyway, and reported the background
+     * "set" — so an admin got a colour they had not chosen, every Screen showing
+     * that Display took it within 30 seconds, and every Builder tab open at the
+     * time was invalidated on the way past. There is no undo for any of that.
      */
     public function setBackgroundColor(Display $display, $hex)
     {
+        $color = Color::read($hex);
+        if ($color === '') {
+            return DisplayResult::invalid('bg_val', self::colorRefusal($hex));
+        }
+
         try {
-            $this->displays->applyBackground($display, Background::color(self::cleanColor($hex)));
+            $this->displays->applyBackground($display, Background::color($color));
             $this->displays->advanceLayoutRevision($display);
             $updated = $this->displays->forId($display->id());
         } catch (Throwable $e) {
@@ -556,9 +597,17 @@ class DisplayAdmin
         return 'viewer.php?display=' . $display->tag();
     }
 
-    /** A `#rrggbb` colour, or the dark default the canvas has always had. */
-    private static function cleanColor($value)
+    /**
+     * The one sentence both background paths refuse with.
+     *
+     * Written once because create() and setBackgroundColor() must say the same
+     * thing: an admin who sees two different explanations for the same rejected
+     * swatch will reasonably conclude the two forms accept different colours.
+     */
+    private static function colorRefusal($value)
     {
-        return preg_match('/^#[0-9a-fA-F]{6}$/', (string)$value) ? strtolower($value) : '#1a1a2e';
+        return 'That background colour could not be read (' . Color::describe($value) . '). '
+             . 'Colours are written as six hexadecimal digits after a hash, like #1a1a2e. '
+             . 'Nothing was changed.';
     }
 }

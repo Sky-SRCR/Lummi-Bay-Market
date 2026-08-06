@@ -107,10 +107,12 @@ jobs:
             --host=127.0.0.1 --port=3306 --db=lbm_rehearsal \
             --user=root --pass=root --confirm-copy
 
-  # builder.php is ~3300 lines of inline JavaScript that `php -l` cannot see. These
-  # two suites run it: one against a DOM holding only what a read-only page emits,
-  # one against a stubbed XMLHttpRequest driven through every way an upload ends.
-  # Their own job because they are the same JavaScript whichever PHP is installed.
+  # builder.php is ~3400 lines of inline JavaScript that `php -l` cannot see. These
+  # three suites run it, each under a premise the others cannot hold: a DOM holding
+  # only what a read-only page emits, a stubbed XMLHttpRequest driven through every
+  # way an upload ends, and an admin opening a Display whose stored data is already
+  # wrong. Their own job because they are the same JavaScript whichever PHP is
+  # installed.
   builder-js:
     runs-on: ubuntu-latest
     steps:
@@ -125,3 +127,8 @@ jobs:
 
       - name: Builder self-test — uploads
         run: node tools/selftest_builder_uploads.js
+
+      # #41: the CSSOM discards a colour it cannot parse without saying so, and the
+      # publish payload turned that silence into black. Only visible by running it.
+      - name: Builder self-test — colours
+        run: node tools/selftest_builder_colors.js

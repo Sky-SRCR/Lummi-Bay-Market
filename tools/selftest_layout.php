@@ -3428,6 +3428,46 @@ check(refuses(layoutWithField(1, 'manual_content', ['not' => 'a string'])),
 checkMentions(LayoutRules::check(layoutWithField(1, 'font_family', str_repeat('A', 101)))->message(),
               '101 characters', 'a too-long value is told how long it was');
 
+// ---- What a colour means, not just how long it is (#41) -------------------------
+// §4v checked font_color's shape and length and stopped there, on purpose, because
+// its semantics belong to this item. The reason they cannot stay unchecked is what
+// reads the value back: the Builder assigns it to `block.style.color`, the CSSOM
+// discards anything it cannot parse *silently*, and the publish payload then sent
+// #000000. So an unreadable colour did not survive being looked at — opening the
+// Display and pressing Publish rewrote that block black, on a canvas whose default
+// is #1a1a2e.
+check(LayoutRules::check(layoutWithField(1, 'font_color', '#ff0000'))->isOk(),
+      'a colour publishes');
+check(LayoutRules::check(layoutWithField(1, 'font_color', '#FF0000'))->isOk(),
+      'and so does one an admin typed in capitals');
+check(LayoutRules::check(layoutWithField(1, 'font_color', ''))->isOk(),
+      'and blank does, because that is what a block with no colour of its own carries');
+check(refuses(layoutWithField(1, 'font_color', 'puce')),
+      'a text colour that is not a colour is refused rather than published as black');
+check(refuses(layoutWithField(1, 'font_color', 'rgb(255,0,0)')),
+      'and so is a notation this app does not store, however readable a browser finds it');
+check(refuses(layoutWithField(1, 'font_color', '#f00')),
+      'and the three-digit shorthand, for the same reason');
+check(refuses(layoutWithField(1, 'font_color', '#12345g')),
+      'and six characters that are not all hexadecimal');
+checkMentions(LayoutRules::check(layoutWithField(1, 'font_color', 'puce'))->message(),
+              'Block 2', 'the refusal says which block, because that is what you go and fix');
+checkMentions(LayoutRules::check(layoutWithField(1, 'font_color', 'puce'))->message(),
+              '"puce"', 'and quotes the value, so a typo is distinguishable from a stale tab');
+
+// One wrong value is one problem. The length check runs first and would otherwise
+// report the same field twice, which inflates the "and 3 other problems" count that
+// tells somebody how much is left to fix.
+checkSame(1, count(LayoutRules::check(layoutWithField(1, 'font_color', 'puce'))->problems()),
+          'an unreadable colour is one problem');
+checkSame(1, count(LayoutRules::check(layoutWithField(1, 'font_color', str_repeat('x', 51)))->problems()),
+          'and one that is also too long is still one problem, reported by length');
+
+// A section has no text of its own, so font_color is not among the fields checked
+// for one — the same list the insert writes.
+check(LayoutRules::check(layoutWithField(0, 'font_color', 'puce'))->isOk(),
+      'a section is not asked about a text colour it does not carry');
+
 check(refuses(['not a block']), 'a payload entry that is not a block at all is refused');
 check(refuses([['type' => 'text'], 'and this one']), 'even when the others are fine');
 
@@ -3710,6 +3750,154 @@ check($bLayouts->publish($bSign, new PublishRequest(
       "a basic account's publish is not held up by a background it cannot change");
 
 // ─────────────────────────────────────────────────────────────
+section('Refusing a value rather than guessing what it meant (#21)');
+
+// The shape of every defect in this section is the same: the app was handed
+// something it could not read, substituted a value of its own, wrote that, and
+// reported success. Which value it substituted depended on which form you were on —
+// four copies of the colour rule with four different fallbacks — so "saved" meant
+// four different things and none of them meant "what you typed".
+//
+// The rule itself is one pure function now. Everything else here is a caller
+// declining to guess.
+
+checkSame('#1a2b3c', Color::read('#1a2b3c'), 'a colour reads back as itself');
+checkSame('#1a2b3c', Color::read('#1A2B3C'), 'and capitals are the same colour, stored one way');
+checkSame('', Color::read(''),               'blank is not a colour — that is the absent/unreadable line');
+checkSame('', Color::read('red'),            'nor is a CSS keyword this app has never stored');
+checkSame('', Color::read('rgb(255,0,0)'),   'nor a notation a browser would happily render');
+checkSame('', Color::read('#f00'),           'nor the three-digit shorthand');
+checkSame('', Color::read('#12345g'),        'nor six characters that are not all hexadecimal');
+checkSame('', Color::read('#1234567'),       'nor seven of them');
+checkSame('', Color::read('1a2b3c'),         'nor the digits with no hash');
+checkSame('', Color::read(' #1a2b3c '),      'and this is not a normaliser: padding is not trimmed away');
+checkSame('', Color::read(null),             'nothing is not a colour');
+checkSame(false, Color::isColor(''),         'so blank fails the predicate too');
+checkSame(true,  Color::isColor('#1a2b3c'),  'while a colour passes it');
+
+// The reason read() asks is_string() first rather than casting. A hand-built
+// `bg_val[]=x` used to reach `preg_match('…', (string)$value)`, and casting an array
+// prints "Array to string conversion" — a warning above the document, on a page
+// that was only trying to check a form.
+$warned = false;
+set_error_handler(function () use (&$warned) { $warned = true; return true; });
+$listAnswer = Color::read(['#1a2b3c']);
+restore_error_handler();
+checkSame('', $listAnswer, 'a list is not a colour');
+checkSame(false, $warned,  'and saying so emits no "Array to string conversion" warning');
+
+// ---- A background colour is refused, not replaced -------------------------------
+$cPdo   = newTestDb();
+$cStore = new DisplayStore($cPdo);
+$cAdmin = newTestDisplayAdmin($cPdo);
+
+$res = $cAdmin->create(['title' => 'Deli Board', 'canvas_width' => 1920,
+                        'canvas_height' => 1080, 'bg_val' => 'darkish blue']);
+checkSame(false, $res->isOk(), 'a Display is not created with a background nobody can read');
+checkSame(DisplayResult::INVALID, $res->kind(), 'it is invalid input rather than a database failure');
+checkSame('bg_val', $res->field(), 'and the refusal points at the swatch');
+checkMentions($res->message(), '#1a1a2e', 'saying what a colour looks like, since the form was wrong about it');
+checkSame(0, count($cStore->all()), 'and no Display was created — not one in the wrong colour');
+
+$res = $cAdmin->create(['title' => 'Deli Board', 'canvas_width' => 1920, 'canvas_height' => 1080]);
+checkSame(true, $res->isOk(), 'a form that named no colour at all is fine');
+checkSame(DisplayAdmin::DEFAULT_BACKGROUND, $res->display()->backgroundValue(),
+          'and gets the default, which is what "nothing supplied" has always meant');
+
+$res = $cAdmin->create(['title' => 'Bakery', 'canvas_width' => 1920,
+                        'canvas_height' => 1080, 'bg_val' => '#AABBCC']);
+checkSame(true, $res->isOk(), 'a real colour creates a Display');
+checkSame('#aabbcc', $res->display()->backgroundValue(), 'stored the one way the app stores colours');
+
+// The harsher half. This path used to substitute #1a1a2e, advance the layout stamp,
+// and report the background "set" — so an admin got a colour they had not chosen, on
+// every Screen within 30 seconds, and every Builder tab open at the time was
+// invalidated on the way past. All three of those had to stop happening.
+$bakery      = $res->display();
+$stampBefore = $cStore->forId($bakery->id())->layoutStamp();
+$res = $cAdmin->setBackgroundColor($bakery, 'not a colour');
+checkSame(false, $res->isOk(), 'setting a background to something unreadable is refused');
+checkSame('bg_val', $res->field(), 'against the same field, with the same sentence as create()');
+checkSame('#aabbcc', $cStore->forId($bakery->id())->backgroundValue(),
+          'the stored colour is exactly what it was');
+checkSame($stampBefore, $cStore->forId($bakery->id())->layoutStamp(),
+          'and the layout stamp did not move, so no open Builder was invalidated for nothing');
+
+$res = $cAdmin->setBackgroundColor($bakery, '#123456');
+checkSame(true, $res->isOk(), 'while a real colour still sets');
+checkSame('#123456', $cStore->forId($bakery->id())->backgroundValue(), 'and is stored');
+check($cStore->forId($bakery->id())->layoutStamp() !== $stampBefore,
+      'and that one does advance the stamp, because the Screens have something new to show');
+
+// ---- An id that is not an id names no account -----------------------------------
+// `intval` never fails, it guesses: "2abc" is 2, [] is 1, true is 1. So a mangled
+// form field did not error, it silently addressed a *different, real* account — and
+// account 1 is the first admin the store ever created.
+$iPdo   = newTestDb();
+$iStore = new AccountStore($iPdo);
+$iAdmin = newTestAccountAdmin($iPdo);
+
+$res = $iAdmin->close('2abc', 1);
+checkSame(false, $res->isOk(), '"2abc" closes nothing, though intval() reads it as account 2');
+checkSame(false, $iStore->isClosed(2), 'and account 2 is still open');
+checkMentions($res->message(), 'did not name an account', 'the refusal says what was actually wrong');
+$res = $iAdmin->close([], 1);
+checkSame(false, $res->isOk(), 'a list closes nothing, though intval() reads it as account 1');
+checkSame(false, $iStore->isClosed(1), 'so the first admin is still there');
+checkSame(false, $iAdmin->close(true, 1)->isOk(), 'and neither does true, which also casts to 1');
+checkSame(false, $iAdmin->edit('2abc', 'basic', true, 'x@example.com', 1)->isOk(),
+          'the same id edits nothing');
+checkSame('clerk', $iStore->names()[2], 'and account 2 is untouched');
+checkSame(true, $iAdmin->close(2, 1)->isOk(), 'while the id written plainly closes the account it names');
+
+// ---- Resetting somebody's password addresses one account or none ----------------
+// This one ran `UPDATE users SET password_hash = ? WHERE id = ?` in the panel, on an
+// id it had already cast, and printed "Password reset." whatever the statement
+// matched — including nothing, and including somebody else.
+$rPdo   = newTestDb();
+$rAdmin = newTestAccountAdmin($rPdo);
+$hashOf = function ($id) use ($rPdo) {
+    $stmt = $rPdo->prepare("SELECT password_hash FROM users WHERE id = ?");
+    $stmt->execute([$id]);
+    return (string)$stmt->fetchColumn();
+};
+$clerkHash = $hashOf(2);
+
+checkSame(false, $rAdmin->resetPassword('2abc', 'a long enough password')->isOk(),
+          '"2abc" resets nobody, though intval() reads it as account 2');
+checkSame($clerkHash, $hashOf(2), 'and account 2 keeps the password it had');
+checkSame(false, $rAdmin->resetPassword(2, 'short')->isOk(), 'a short password is refused');
+checkSame($clerkHash, $hashOf(2), 'and changes nothing either');
+checkSame(false, $rAdmin->resetPassword(9999, 'a long enough password')->isOk(),
+          'an account number nobody has is refused rather than reported as reset');
+
+$res = $rAdmin->resetPassword(2, 'a long enough password');
+checkSame(true, $res->isOk(), 'a real account and a long enough password does reset');
+check($hashOf(2) !== $clerkHash, 'and the stored hash actually changed');
+
+$rAdmin->close(2, 1);
+checkSame(false, $rAdmin->resetPassword(2, 'another long password')->isOk(),
+          'a closed account cannot be handed a working password — closing is not undoable');
+
+// ---- And the same rule for a Display id -----------------------------------------
+// Reached straight from `$_POST['d_id']` by three of the panel's forms, one of which
+// is the delete button.
+$fPdo   = newTestDb();
+$fSign  = makeTestDisplay($fPdo, 'lobby', 'Lobby');
+$fStore = new DisplayStore($fPdo);
+$fId    = $fSign->id();
+
+check($fStore->forId($fId) !== null, 'a Display is found by its number');
+check($fStore->forId((string)$fId) !== null, 'and by that number as a string, which is what a form sends');
+checkSame(null, $fStore->forId($fId . 'abc'), 'but not by a number with something stuck on the end');
+checkSame(null, $fStore->forId([]),   'nor by a list, which intval() reads as Display 1');
+checkSame(null, $fStore->forId(true), 'nor by true, for the same reason');
+checkSame(null, $fStore->forId($fId + 0.9), 'nor by a fraction that would round down onto a real one');
+checkSame(null, $fStore->forId(''),   'nor by nothing at all');
+checkSame(true, DisplayStore::isIdLike('7'), 'the predicate itself: digits as a string are an id');
+checkSame(false, DisplayStore::isIdLike('7abc'), 'and digits with a tail are not');
+
+// ─────────────────────────────────────────────────────────────
 section('Two publishes colliding is a sentence, not a timeout (#35)');
 
 // InnoDB waits 50 seconds for a row lock and PHP gives up after 30, so the second of
@@ -3884,4 +4072,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Two numbers because the MySQL run adds a section the SQLite one cannot ask for.
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
-reportChecks(testIsMysql() ? 1025 : 1002);
+reportChecks(testIsMysql() ? 1094 : 1071);

@@ -398,6 +398,22 @@ class AccountStore
  */
 class AccountAdmin
 {
+    /**
+     * What both account-id refusals say. One sentence, because an admin who sees
+     * two different explanations will look for two different causes.
+     */
+    const NOT_AN_ACCOUNT = 'That form did not name an account. Reload the page and '
+                         . 'try again. Nothing was changed.';
+
+    /**
+     * The shortest password an admin may set for somebody.
+     *
+     * The same 8 that login, setup and the reset page each write out as a literal.
+     * Named here because this class now enforces it; the other three were not swept,
+     * and doing that is its own change rather than a side effect of #21.
+     */
+    const PASSWORD_MIN = 8;
+
     private $pdo;
     private $accounts;
     private $grants;
@@ -420,6 +436,9 @@ class AccountAdmin
      */
     public function close($accountId, $actingAccountId)
     {
+        if (!self::namesAnAccount($accountId)) {
+            return AccountResult::failed(self::NOT_AN_ACCOUNT);
+        }
         $accountId = intval($accountId);
 
         if ($accountId === intval($actingAccountId)) {
@@ -507,13 +526,12 @@ class AccountAdmin
      */
     public function edit($accountId, $role, $isActive, $email, $actingAccountId)
     {
+        if (!self::namesAnAccount($accountId)) {
+            return AccountResult::failed(self::NOT_AN_ACCOUNT);
+        }
         $accountId = intval($accountId);
         $role      = ($role === 'admin') ? 'admin' : 'basic';
         $isActive  = (bool)$isActive;
-
-        if ($accountId <= 0) {
-            return AccountResult::failed('No account was named.');
-        }
         // The oldest guard on this form, and still the important one: an admin who
         // demotes or deactivates themselves is locked out of the screen that would
         // undo it, and at a one-admin store nobody can undo it at all.
@@ -599,6 +617,74 @@ class AccountAdmin
                    . ' reached a screen.';
         }
         return AccountResult::ok('User updated.' . $note);
+    }
+
+    /**
+     * Set another account's password, on an admin's behalf.
+     *
+     * Here because the Admin Panel was doing it itself, with
+     * `UPDATE users SET password_hash = ? WHERE id = ?` against an id it had already
+     * cast — so a `reset_uid` of `"7abc"` reset **account 7's** password and printed
+     * "Password reset." under the name of whoever the form had been showing. The
+     * statement matched no row when the id was 0, and printed the same sentence.
+     *
+     * Three refusals, and the account existing is one of them: AccountStore::setPassword
+     * asks before it writes rather than reading `rowCount()` afterwards, because MySQL
+     * counts rows *changed* and a re-used password would come back as zero.
+     *
+     * The hash is made here and the plain password goes no further.
+     */
+    public function resetPassword($accountId, $plainPassword)
+    {
+        if (!self::namesAnAccount($accountId)) {
+            return AccountResult::failed(self::NOT_AN_ACCOUNT);
+        }
+        $accountId = intval($accountId);
+
+        if (strlen((string)$plainPassword) < self::PASSWORD_MIN) {
+            return AccountResult::failed(
+                'Password must be at least ' . self::PASSWORD_MIN . ' characters. Nothing was changed.');
+        }
+        // A closed account can never sign in again (invariant 14), so giving it a
+        // working password is a change that reads like access being restored and is
+        // not. The panel renders no reset form for one; this covers the hand-built POST.
+        if ($this->accounts->isClosed($accountId)) {
+            return AccountResult::failed(
+                'That account is closed, and closing cannot be undone. Nothing was changed.');
+        }
+
+        try {
+            $done = $this->accounts->setPassword(
+                $accountId, password_hash((string)$plainPassword, PASSWORD_DEFAULT));
+        } catch (Throwable $e) {
+            return AccountResult::failed('That password could not be reset. Nothing was changed.');
+        }
+        if (!$done) {
+            return AccountResult::failed('That account no longer exists.');
+        }
+        return AccountResult::ok('Password reset.');
+    }
+
+    /**
+     * Does this value name an account at all? (#21)
+     *
+     * The panel used to hand these methods `intval($_POST['edit_id'] ?? 0)`, and
+     * `intval` does not fail — it guesses. `"abc"` is 0, which at least became "No
+     * account was named"; the dangerous one is `"7abc"`, which is **7**, a real and
+     * different account, edited or closed with the change reported as a success
+     * under somebody else's name. `intval([])` is 1, so a hand-built `close_id[]=x`
+     * named account number 1 — the first account the store ever created, which is
+     * an admin.
+     *
+     * So the id arrives raw now and this decides, rather than the panel deciding by
+     * casting. A whole number, written as one, positive. Floats and booleans are
+     * not ids: `true` casts to 1 by exactly the route above.
+     */
+    private static function namesAnAccount($value)
+    {
+        if (is_int($value))    { return $value > 0; }
+        if (is_string($value)) { return preg_match('/^\s*\d+\s*$/', $value) === 1 && intval($value) > 0; }
+        return false;
     }
 
     private function isOpenAdmin($accountId)

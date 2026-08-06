@@ -496,9 +496,29 @@ class DisplayStore
 
     public function forId($id)
     {
+        // Not `intval` alone (#21). This is reached straight from `$_POST['d_id']` on
+        // three of the panel's forms — turn off, delete, edit — and `intval("7abc")`
+        // is 7, so a mangled id did not fail, it silently selected a *different
+        // Display*, which the delete form would then have destroyed on a matching
+        // typed tag. `intval([])` is 1 with no warning, which is the first Display the
+        // store ever created. A value that is not a whole number names no Display.
+        if (!self::isIdLike($id)) { return null; }
         $id = intval($id);
         if ($id <= 0) { return null; }
         return $this->one("WHERE d.id = ?", [$id]);
+    }
+
+    /**
+     * Is this a value that names a row, rather than one `intval` would guess at?
+     *
+     * Whole numbers, written as whole numbers. Booleans are excluded because `true`
+     * casts to 1; floats because 7.9 would select Display 7.
+     */
+    public static function isIdLike($value)
+    {
+        if (is_int($value))    { return true; }
+        if (is_string($value)) { return preg_match('/^\s*-?\d+\s*$/', $value) === 1; }
+        return false;
     }
 
     /** Every Display, oldest first. */

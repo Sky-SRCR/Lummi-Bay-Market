@@ -27,6 +27,8 @@
 // is allowed at all. That is the edit lock's business, and it lives with the
 // callers — see DisplayStore::editedByAnyoneElse.
 
+require_once __DIR__ . '/color.php';
+
 /** The six branded block types, in the order the admin form shows them. */
 class BrandStyles
 {
@@ -126,10 +128,25 @@ class BrandStyles
         return $n;
     }
 
-    /** `#rrggbb`, lowercased. The same rule the branding colours have always used. */
+    /**
+     * `#rrggbb`, lowercased, or the fallback.
+     *
+     * Still a clamp rather than a refusal, and deliberately: this module's contract
+     * is that every stored value renders (see the header), because these land on a
+     * wall-mounted Screen with nobody watching. What changed with #21 is only that
+     * the *rule* is Color's now rather than a fourth private copy of the regex — the
+     * four copies disagreeing about the substitute is what made "saved" mean four
+     * different things.
+     *
+     * The caller that has an admin in front of it does not use this to decide
+     * whether to accept the form; admin_panel.php asks Color directly and refuses.
+     * By the time a value reaches here it has already been through that, so the
+     * fallback covers the API path and a hand-built POST, not a mistyped swatch.
+     */
     public static function cleanColor($value, $fallback = '#ffffff')
     {
-        return preg_match('/^#[0-9a-fA-F]{6}$/', (string)$value) ? strtolower($value) : $fallback;
+        $color = Color::read($value);
+        return $color !== '' ? $color : $fallback;
     }
 
     public static function cleanWeight($value)

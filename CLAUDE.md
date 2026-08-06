@@ -73,6 +73,7 @@ php -l <every touched .php>
 php tools/selftest_layout.php
 node tools/selftest_builder_readonly.js    # if builder.php was touched
 node tools/selftest_builder_uploads.js     # if builder.php was touched
+node tools/selftest_builder_colors.js      # if builder.php was touched
 ```
 
 `php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it —
@@ -81,7 +82,9 @@ block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
 sign rather than a stack trace anybody will read.
 
-The two node suites go further and *run* that JavaScript, under opposite premises
-— a page that may not edit, and an admin uploading a file — because the defects
+The three node suites go further and *run* that JavaScript, each under a premise the
+others cannot hold — a page that may not edit, an admin uploading a file, and an
+admin opening a Display whose stored data is already wrong — because the defects
 they exist for are invisible to a parse: a lookup for a control the edit lock took
-away, and a `fetch` chain with no `.catch()`.
+away, a `fetch` chain with no `.catch()`, and a colour the CSSOM discarded in
+silence and the publish payload then sent as black.

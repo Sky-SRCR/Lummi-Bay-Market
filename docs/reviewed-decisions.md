@@ -58,7 +58,7 @@ written down rather than remembered:
 | 18 | Promoting somebody to admin left individual assignments nothing could see and nothing could remove. | Clear them on promotion. | **Done** | §4s |
 | 19 | Deleting a Display never asked whether anyone was editing it, and the confirm undercounted what a mid-edit clerk loses. | Refuse while somebody else is editing. | Open | — |
 | 20 | Deleting an account freed its number for the next person, leaving "last published by" naming a stranger. | Keep the username as text, and never reuse an account number — close accounts instead of deleting them. | **Done** | §4l |
-| 21 | The admin panel coerced values it could not parse and reported success — an unreadable colour, an account id that isn't one. | Refuse, and say so. | Open | — |
+| 21 | The admin panel coerced values it could not parse and reported success — an unreadable colour, an account id that isn't one. | Refuse, and say so. | **Done** — taken with #41; they are one defect from two ends. What a colour is now lives in one pure module instead of four disagreeing copies, and an id reaches the module raw so `intval` cannot pick a different, real account. | §4w |
 | 22 | Turning off a Display, suspending an account, or renaming a tag each left the edit lock behind, and never re-checked whether the holder may still sign in. | Free the lock when reach changes, never honour a lock whose holder cannot sign in, and tell the person. A rename tells them but keeps their lock. | **Done** | §4t |
 | 23 | Choosing "Image" for a background when no image is stored leaves a colour where a filename goes — the sign goes near-black. | Refuse the change. | **Done** — closed with #24: it is the same `keep-image` arm. Not in the batch asked for; see §4v. | §4v |
 | 24 | The background address was validated in the admin panel but not in the API, so a publish could point every screen at any host. | Validate it in the module. | **Done** | §4v |
@@ -78,7 +78,7 @@ written down rather than remembered:
 | 38 | Two login problems: a secure-cookie setting causes an invisible sign-in loop on plain HTTP, and the suspended-account message tells a guesser the password was right. | Fix both. | Open | — |
 | 39 | Double-clicking Publish produced a success message and a stale-sign warning together. | Ignore the second while the first is still running. | Open | — |
 | 40 | A basic account with the sign open read-only threw an error on every canvas click. | Guard the lookup. | Open | — |
-| 41 | An unreadable stored colour round-tripped through the colour picker and published back as black. | Validate on the way in and on the way out. | Open | — |
+| 41 | An unreadable stored colour round-tripped through the colour picker and published back as black. | Validate on the way in and on the way out. | **Done** — taken with #21. Out: the Builder keeps a stored colour it cannot read instead of publishing `#000000` over it, and says so in the inspector. In: the publish path refuses one and names the block. | §4w |
 | 42 | Six smaller Builder rough edges: section minimum size measured in screen pixels, Fit cannot fit a very large canvas, no way to unhide a section, deleting a slide field cannot be undone, marquee "Transparent" loses the colour, and dead code. | All six. | Open | — |
 | 43 | Deleting an account wrote to three tables with no transaction, going around the owning module. | All-or-nothing, through the module. | **Done** — settled by #20: closing is one transaction in `AccountAdmin`, and no `DELETE FROM users` exists anywhere. | §4l |
 | 44 | Nothing set a timezone, so "editing since 2:15pm" followed whatever the host's `php.ini` happened to say. | A store timezone setting on the Branding page. | Open | — |
@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**32 done, 1 part done (#49), 18 open.**
+**34 done, 1 part done (#49), 16 open.**
 
 #48 and #51 were taken together because they are the same subject — what the tests
 run against, and whether anybody runs them. Both are Done; the version question
@@ -108,10 +108,12 @@ colour being promoted to an image path, are the same two lines. Closing one and
 leaving the other would have meant knowingly shipping a near-black sign in code that
 had just been rewritten. Recorded here rather than folded in quietly.
 
-Two things #30 deliberately did **not** cover, so the items that own them stay
-clean: colour *semantics* on the publish path (that is #41), and
-`DisplayAdmin::cleanColor()` still coercing an unreadable colour to `#1a1a2e`
-(that is #21). Both are named in §4v.
+Two things #30 deliberately did **not** cover, so the items that own them stayed
+clean: colour *semantics* on the publish path (#41), and `DisplayAdmin::cleanColor()`
+still coercing an unreadable colour to `#1a1a2e` (#21). Both were named in §4v and
+both are now closed together in **§4w** — they are one defect from two ends, which is
+that the app held four disagreeing opinions about what a colour is and every one of
+them substituted a value rather than refusing.
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

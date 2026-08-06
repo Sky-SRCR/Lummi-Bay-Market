@@ -10,6 +10,9 @@ require_once __DIR__ . '/lib/brand_styles.php';
 require_once __DIR__ . '/lib/server_report.php';
 require_once __DIR__ . '/lib/password_resets.php';
 require_once __DIR__ . '/lib/accounts.php';
+// Explicit, though display_admin.php pulls it in too: this page asks Color directly
+// when it refuses a branding colour, and a transitive include is not a dependency.
+require_once __DIR__ . '/lib/color.php';
 requireCurrentAccount($pdo);
 requireAdmin();
 
@@ -113,8 +116,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = 'All fields are required.'; $msgType = 'error';
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $msg = 'Invalid email address.'; $msgType = 'error';
-        } elseif (strlen($pass) < 8) {
-            $msg = 'Password must be at least 8 characters.'; $msgType = 'error';
+        } elseif (strlen($pass) < AccountAdmin::PASSWORD_MIN) {
+            $msg = 'Password must be at least ' . AccountAdmin::PASSWORD_MIN . ' characters.';
+            $msgType = 'error';
         } else {
             try {
                 $pdo->prepare("INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)")
@@ -145,8 +149,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $msg = 'Invalid email address.'; $msgType = 'error';
         } else {
+            // The id goes across raw. Casting it here was the panel deciding which
+            // account this form meant, and `intval` decides that for any input at
+            // all — "7abc" is account 7 (#21). AccountAdmin refuses what does not
+            // name one.
             $res = $accountAdmin->edit(
-                intval($_POST['edit_id'] ?? 0),
+                $_POST['edit_id'] ?? '',
                 in_array($_POST['edit_role'] ?? '', ['admin','basic']) ? $_POST['edit_role'] : 'basic',
                 isset($_POST['edit_active']),
                 $email,
@@ -158,18 +166,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tab = 'users';
     }
 
-    // Reset another user's password
+    // Reset another user's password. Through AccountAdmin, because the statement this
+    // used to run here matched no row for an id that named nothing and printed
+    // "Password reset." regardless — and matched the *wrong* row for an id like
+    // "7abc", which intval() reads as 7 (#21).
     if (isset($_POST['action_reset_pass'])) {
-        $uid  = intval($_POST['reset_uid'] ?? 0);
-        $pass = $_POST['new_pass'] ?? '';
-        if (strlen($pass) < 8) {
-            $msg = 'Password must be at least 8 characters.'; $msgType = 'error';
-        } else {
-            $pdo->prepare("UPDATE users SET password_hash = ? WHERE id = ?")
-                ->execute([password_hash($pass, PASSWORD_DEFAULT), $uid]);
-            $msg = 'Password reset.';
-        }
-        $tab = 'users';
+        $res     = $accountAdmin->resetPassword($_POST['reset_uid'] ?? '', $_POST['new_pass'] ?? '');
+        $msg     = $res->message();
+        $msgType = $res->isOk() ? 'success' : 'error';
+        $tab     = 'users';
     }
 
     // Close an account. Never a DELETE: the row has to stay so its id number can
@@ -177,7 +182,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // closing means, and the transaction that surrenders their access with it,
     // lives in AccountAdmin — this collects the form and prints the answer.
     if (isset($_POST['action_close_user'])) {
-        $res     = $accountAdmin->close(intval($_POST['close_id'] ?? 0), $user['id']);
+        $res     = $accountAdmin->close($_POST['close_id'] ?? '', $user['id']);
         $msg     = $res->message();
         $msgType = $res->isOk() ? 'success' : 'error';
         $tab     = 'users';
@@ -308,13 +313,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Save branding (logo + colors)
     if (isset($_POST['action_save_branding'])) {
-        $navBg     = preg_match('/^#[0-9a-fA-F]{6}$/', $_POST['nav_bg']     ?? '') ? $_POST['nav_bg']     : $curNavBg;
-        $navBorder = preg_match('/^#[0-9a-fA-F]{6}$/', $_POST['nav_border'] ?? '') ? $_POST['nav_border'] : $curBorder;
-        $accent    = preg_match('/^#[0-9a-fA-F]{6}$/', $_POST['accent']     ?? '') ? $_POST['accent']     : $curAccent;
-        $navText   = preg_match('/^#[0-9a-fA-F]{6}$/', $_POST['nav_text']   ?? '') ? $_POST['nav_text']   : $curText;
+        // Four colours, and a value that is not one is refused rather than swapped
+        // for whatever is already saved (#21). The old line did the swap silently and
+        // then reported "Branding saved." — so an admin who pasted a colour in the
+        // wrong notation was told it worked, went and looked at the navigation bar,
+        // and saw the colour they had been trying to replace. Nothing distinguished
+        // that from the save having had no effect, because it had had no effect.
+        //
+        // Blank still means "not supplied, keep what is there": these are `type=color`
+        // inputs, which always submit, so a blank one is a form that did not render
+        // the field rather than an admin clearing it.
+        $brandFields = [
+            'nav_bg'     => ['Navigation background', $curNavBg],
+            'nav_border' => ['Navigation border',     $curBorder],
+            'accent'     => ['Accent',                $curAccent],
+            'nav_text'   => ['Navigation text',       $curText],
+        ];
+        $brandKept   = [];
+        $brandUnread = [];
+        foreach ($brandFields as $field => $spec) {
+            $raw = $_POST[$field] ?? '';
+            if ($raw === '') { $brandKept[$field] = $spec[1]; continue; }
+            $read = Color::read($raw);
+            if ($read === '') {
+                $brandUnread[]       = $spec[0];
+                $brandKept[$field]   = $spec[1];
+            } else {
+                $brandKept[$field]   = $read;
+            }
+        }
+        if ($brandUnread) {
+            // The whole save is refused, logo included — see the guard on the upload
+            // below. A branding save that stored the new logo and none of the colours
+            // would be a half-applied change with no undo and nothing saying which
+            // half landed.
+            $msg = (count($brandUnread) === 1
+                    ? $brandUnread[0] . ' is not a colour this app can store.'
+                    : implode(', ', $brandUnread) . ' are not colours this app can store.')
+                 . ' Colours are written as six hexadecimal digits after a hash, like'
+                 . ' #1a1a2e. Nothing was saved.';
+            $msgType = 'error';
+        }
+        $navBg     = $brandKept['nav_bg'];
+        $navBorder = $brandKept['nav_border'];
+        $accent    = $brandKept['accent'];
+        $navText   = $brandKept['nav_text'];
         $rawExist  = $_POST['existing_logo'] ?? '';
         $logoPath  = preg_match('/^uploads\/brand_logo\.[a-z]{2,4}$/', $rawExist) ? $rawExist : $curLogo;
-        if (!empty($_FILES['logo_file']['name'])) {
+        // `$msg === ''` here is the refusal above, and it is what makes this save
+        // all-or-nothing: move_uploaded_file() cannot be rolled back, so a refused
+        // colour has to stop the upload before it happens rather than after.
+        if ($msg === '' && !empty($_FILES['logo_file']['name'])) {
             // SVG is intentionally excluded: an SVG can carry <script> and would
             // be stored XSS when served from our own origin.
             $allowed = ['image/png'=>'png','image/jpeg'=>'jpg','image/gif'=>'gif',
