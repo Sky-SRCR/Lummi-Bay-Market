@@ -49,11 +49,17 @@ edited in place and every change reaches the sign by hand.
   was on screen. A whole-table save also redirects afterwards (`flashMessage()` in
   `auth.php`), or F5 re-sends the old state over a page that has moved on.
 - **A change to what somebody may reach frees what they are holding.** A revoked grant,
-  a closed account and a demotion all leave an edit lock the account can no longer even
-  release — releasing goes through the seam that has just started refusing it. Free it
-  in the same transaction, by holder, so a colleague on the same sign keeps theirs. Then
-  make sure the Builder *says so*: `applyLockAnswer()` ignores a failed heartbeat on
-  purpose, and `forbidden` is the one answer that never comes back on its own.
+  a closed account, a demotion, a suspended account and a Display turned off all leave an
+  edit lock the account can no longer even release — releasing goes through the seam that
+  has just started refusing it. Free it in the same transaction, by holder, so a colleague
+  on the same sign keeps theirs. Renaming a tag is *not* one of these: it changes the
+  address, not who may edit, so the holder keeps the lock and is asked to reload.
+  Freeing at the moment of the change only covers the paths somebody listed, so a lock is
+  also never *honoured* for a holder who cannot sign in — the rule is in `LockState::isHeld()`
+  **and** in `claimLock()`'s `WHERE`, because a read and a write that disagree about who
+  holds a sign disagree silently. Then make sure the Builder *says so*: `applyLockAnswer()`
+  ignores a failed heartbeat on purpose, and `LOCK_TERMINAL` is the fixed list of refusals
+  that never come back — each with its own sentence, because what to do next differs.
 - **PHP 7.1-compatible syntax** — the live server's version is unverified.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.

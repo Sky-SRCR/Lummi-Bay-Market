@@ -104,7 +104,7 @@ check(emittedOnlyWhenEditable('<div id="table-modal-overlay">'),    'so is the t
 // can happen to somebody who is only watching. A read-only page has the access bar
 // and the banner above it, and nothing else the lock uses.
 const PRESENT = new Set([
-    'lock-banner', 'lock-access-bar', 'lock-holder',
+    'lock-banner', 'lock-access-bar', 'lock-access-text', 'lock-holder',
     'control-bar', 'zoom-readout', 'editor-frame', 'canvas-sizer', 'builder-canvas',
     'toast', 'resize-label', 'display-off-banner', 'top-nav'
 ]);
@@ -227,9 +227,48 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     check(document.getElementById('lock-banner').style.display === 'none',
           'while the banner offering a reload once it frees up is taken down');
 
+    section('The other ways a watcher loses a display');
+
+    // A revoked grant was only ever one of five. Retiring the display, renaming its
+    // screen name tag, giving that tag to another sign, and suspending the account
+    // itself all end the same way — this page will never get a useful answer again —
+    // and all four used to return silently right here.
+    //
+    // The notice latches on purpose (first answer wins), so each case resets it. That
+    // is a property of the page being asserted, not a convenience: without the reset
+    // these checks would pass on the forbidden notice still being up from above.
+    async function pollRefusedWith(reason, message) {
+        accessLost = false;
+        accessBar.style.display = 'none';
+        global.fetch = () => Promise.resolve({
+            json: () => Promise.resolve({ status: 'error', reason: reason, message: message })
+        });
+        pollLockState();
+        await settle();
+    }
+
+    // The negative control, and the reason the terminal list is a fixed list: a
+    // refusal nobody has thought about must stay ignorable. A page that treats every
+    // failure as fatal tells somebody their sign is gone because a request timed out.
+    await survives('a poll refused for some other reason does not throw', () =>
+        pollRefusedWith('something_new', 'Try again later.'));
+    check(accessBar.style.display !== 'flex',
+          'and a reason that is not terminal leaves the notice alone');
+
+    await survives('a poll refused because the display was turned off does not throw', () =>
+        pollRefusedWith('inactive', 'This display is turned off'));
+    check(accessBar.style.display === 'flex', 'and that puts the notice on screen too');
+    check(/turned off/i.test(document.getElementById('lock-access-text').innerHTML),
+          'saying the display was turned off, not that access was removed');
+
+    await survives('a poll refused because the account was suspended does not throw', () =>
+        pollRefusedWith('signed_out', 'Your account is no longer active. Sign in again.'));
+    check(/signed out/i.test(document.getElementById('lock-access-text').innerHTML),
+          'and that one says they have been signed out');
+
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 20;
+    const expected = 27;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

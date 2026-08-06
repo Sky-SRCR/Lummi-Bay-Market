@@ -215,6 +215,12 @@ class DisplayAdmin
      * stops working. That is the admin's call (ADR-0003) — the panel confirms it
      * and shows the new URL — so this method carries the consequence in its
      * message rather than refusing.
+     *
+     * A Builder open on the old address stops working too, and deliberately keeps its
+     * lock. A rename changes where the sign answers, not who may edit it, so taking
+     * the lock away would punish somebody for an admin's retyping. Their page says the
+     * address changed and offers a reload; reloading finds the new tag and picks the
+     * same lock back up, because it is still theirs.
      */
     public function updateDetails(Display $display, array $fields)
     {
@@ -222,7 +228,8 @@ class DisplayAdmin
         $bad = $this->validateDetails($fields, $display->id(), $clean);
         if ($bad) { return $bad; }
 
-        $renamed = $clean['tag'] !== $display->tag();
+        $renamed  = $clean['tag'] !== $display->tag();
+        $wasBeing = $renamed && $display->lockState()->isHeld();
 
         try {
             $updated = $this->displays->updateDetails($display, $clean);
@@ -236,6 +243,11 @@ class DisplayAdmin
         $note = $renamed
             ? ' Its address changed — any screen showing it must now be pointed at '
               . $this->viewerPath($updated) . '.'
+              . ($wasBeing
+                  ? ' Somebody has it open in the builder: their page says the address changed and asks'
+                    . ' them to reload, within a minute. The display is still theirs and their work is'
+                    . ' still on their screen.'
+                  : '')
             : '';
         return DisplayResult::ok($updated, 'Display "' . $updated->title() . '" updated.' . $note);
     }
@@ -245,22 +257,52 @@ class DisplayAdmin
      *
      * Retiring keeps the layout and keeps it editable; the Screens show "This
      * display is turned off" within one poll (≤30s).
+     *
+     * "Editable" is not "editable by everyone", and that is what makes retiring a
+     * change of reach: a retired Display stays an admin's to work on and stops being
+     * a `basic` account's (Actor::mayOpen). So a clerk holding the edit lock loses the
+     * sign the moment this runs — and cannot hand the lock back, because releasing goes
+     * through the seam that has just started refusing them. Their lock is freed here,
+     * by holder, so an admin working on the same Display keeps theirs. Their Builder is
+     * told within a minute (builder.php's terminal lock answers).
      */
     public function setActive(Display $display, $active)
     {
+        // Whose lock, and does this change take it off them. Two questions of the
+        // Display as it stands, asked before anything is written so the answer cannot
+        // depend on the order of the two statements below.
+        $lock       = $display->lockState();
+        $freeHolder = (!$active && $lock->isHeld() && !$display->lockHolderIsAdmin())
+            ? $lock->holderId()
+            : 0;
+
+        $freed = false;
         try {
+            $this->pdo->beginTransaction();
             $updated = $this->displays->setActive($display, $active);
+            if ($updated && $freeHolder > 0) {
+                $freed = $this->displays->releaseLockOn($display->id(), $freeHolder);
+            }
+            $this->pdo->commit();
         } catch (Throwable $e) {
+            $this->abandon();
             return DisplayResult::failed('That display could not be changed. Nothing was changed.');
         }
         if (!$updated) {
             return DisplayResult::failed('That display no longer exists.');
         }
 
-        return DisplayResult::ok($updated, $active
-            ? 'Display "' . $updated->title() . '" is on. Screens showing it update within 30 seconds.'
-            : 'Display "' . $updated->title() . '" is turned off. Its layout is kept and stays editable; '
-              . 'any screen showing it now says so within 30 seconds.');
+        if ($active) {
+            return DisplayResult::ok($updated,
+                'Display "' . $updated->title() . '" is on. Screens showing it update within 30 seconds.');
+        }
+        return DisplayResult::ok($updated,
+            'Display "' . $updated->title() . '" is turned off. Its layout is kept and stays editable by '
+            . 'admins; any screen showing it now says so within 30 seconds.'
+            . ($freed
+                ? ' Somebody without admin access was editing it — the edit lock has been released and their'
+                  . ' builder says so within a minute. Nothing they had not published reached a screen.'
+                : ''));
     }
 
     /**

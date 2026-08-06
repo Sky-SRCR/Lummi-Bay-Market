@@ -183,6 +183,19 @@ through the app again:
    account may reach — a role, a grant, a Display going out of service — answers the
    same question: what is that account holding right now that it will not be able to
    let go of?
+   The four ways that happens today are a revoked grant, a demotion, a **suspended
+   account** (`AccountAdmin::edit()`, on `!$isActive` rather than on "was just
+   deactivated") and a **Display turned off** (`DisplayAdmin::setActive()`, which frees
+   only a non-admin holder's lock, because a retired Display stays an admin's to work
+   on). Renaming a tag is deliberately *not* one of them: it changes the address, not
+   who may edit, so the holder keeps the lock and their page is asked to reload.
+   **And a lock is never honoured for a holder who cannot sign in.** Freeing at the
+   moment of the change only ever covers the paths somebody enumerated;
+   `LockState::isHeld()` returning false for an inactive holder covers the rest, and is
+   the only part that helps a row already stranded on the live database. The same rule
+   is in `claimLock()`'s `WHERE` as well as in the read, because a read and a write that
+   disagree about who holds a sign disagree *silently* — an editable canvas whose every
+   claim does nothing, and a refusal at the publish.
    **And an absence is never an instruction.** The grant matrix POSTs a tick per
    granted cell, so an unticked box, an account added since the page was rendered and
    a Display added since the page was rendered are all the same silence. The form
@@ -769,13 +782,9 @@ Known and not fixed, so nobody assumes otherwise:
 - ~~**A granted account promoted to admin keeps an invisible, unrevocable grant
   row**~~ **Fixed** — see §4s. The row was displayed nowhere and removable by
   nothing, and a demotion months later handed the old access back.
-- **A lock stranded by deactivating a Display, deactivating an account, or renaming a
-  tag.** Still open, and deliberately not half-fixed while the three revoke/promote
-  paths were closed — it is the same family (a change of reach that leaves a lock
-  behind) but a separate decision, and `AccountAdmin::edit()` says so where it would
-  have been tempting. Deactivating an account is the sharper one: that account's open
-  Builder keeps beating and holds the sign, because `claimLock` never asks whether the
-  holder is still allowed to sign in.
+- ~~**A lock stranded by deactivating a Display, deactivating an account, or renaming a
+  tag**~~ **Fixed** — see §4t. Three more doors into the room §4s closed one door of,
+  plus the reading rule that covers the doors nobody has found yet.
 
 ### 4h. The tag addresses a Display; it does not identify one
 
@@ -1743,12 +1752,8 @@ counted.
 
 Left standing, and named rather than quietly skipped:
 
-- **Deactivating an account does not free its locks**, and its open Builder keeps
-  beating: `claimLock` never asks whether the holder may still sign in. Same for
-  deactivating a Display and for renaming a tag. That is one decision of its own on
-  the reviewed list and it was left alone on purpose — the alternative was fixing a
-  third of it here, where the code makes it easy, and leaving the rest to be found by
-  whoever reads the invariant next.
+- ~~**Deactivating an account does not free its locks**~~ **Fixed** — see §4t, which
+  took the other three doors and the reading rule behind all of them.
 - **The other forms on the admin panel still answer a POST by rendering.** The
   reasoning is above; the flash helper is in `auth.php` and general, so adopting it
   elsewhere is two lines rather than a mechanism.
@@ -1756,6 +1761,83 @@ Left standing, and named rather than quietly skipped:
   it refuses to demote *you* — a one-admin store has nobody else who can press the
   button. Written down because that is a proof, not an obvious truth, and it stops
   being one the moment somebody adds an "edit any account" path that skips the actor.
+
+### 4t. A lock outliving the reach behind it
+
+§4s closed one door into this room. There were four, and the difference between them
+turns out to matter more than the thing they had in common.
+
+**The three that were open.** Turning a Display off takes it away from a `basic`
+account and leaves it with an admin (`Actor::mayOpen` — a retired Display stays an
+admin's to work on), so a clerk holding it lost the sign. Suspending an account ended
+its session outright. Renaming a screen name tag broke the address a Builder was
+holding, so every request from it resolved to `unknown`. In all three the lock stayed
+put for a full idle window, with that person's name on every colleague's read-only
+banner — and they could not hand it back even deliberately, because releasing goes
+through `DisplayRequest::forEditing()`, which had just started refusing them. The only
+way out was an admin forcing the lock, on a sign nobody was actually editing.
+
+**The one that was not open, and should not be.** A rename is not a change of reach. It
+changes where the sign answers; the same account may still edit it. Freeing that lock
+would punish somebody for an admin's retyping — so `updateDetails()` leaves it alone,
+tells the admin that the person will be asked to reload, and the reload picks the same
+lock straight back up because `claimLock` extends a lock held by the same account. The
+tests assert the lock *survives* a rename, which is the only one of the four where
+"free it" would have been the plausible-looking mistake.
+
+**The reading rule is the part that generalises.** Freeing at the moment of the change
+covers the doors somebody enumerated. It does not cover the fifth, and it does nothing
+for a row already stranded on the live database — where at least one such row plausibly
+exists, arrived at by a path that no longer exists. So `LockState::isHeld()` now answers
+false when the holder cannot sign in. Nothing is swept; there is no cron on this host and
+a sweep would have to outlive the tab that left the row. It is a rule applied on read, the
+same way "lapsed" has always been.
+
+**Which forced the read and the write to agree.** `claimLock()`'s conditional `UPDATE`
+had its own copy of "may this be taken over", and a rule added only to the read would
+have made the two disagree — *silently*, in the worst available direction: a colleague
+shown an editable canvas because the read said free, every claim quietly matching no
+row, and the first word of it at the publish. The disjunct is in both. A correlated
+`NOT EXISTS` rather than a join, because a multi-table `UPDATE` is MySQL-only and the
+fixture is SQLite.
+
+**And five ways to lose a sign needed five sentences.** `builder.php` acted on one
+refusal, `forbidden`, and ignored the rest — right for a dropped connection, wrong for
+these, because none of them ever starts working again. `LOCK_TERMINAL` is now a fixed map
+of reason to sentence, and the wording differs because what to do differs: ask an admin,
+copy your work, reload the page, sign in again. A single "you have lost this display"
+would send somebody hunting an admin over a renamed tag. It is a **fixed list**, not
+"anything with a `reason`", so a reason added to the server later cannot become fatal to
+an editor by accident — and `api.php`'s inactive-session refusal had to be given a name
+(`signed_out`) before the page could tell it from a timeout.
+
+**Sixty-one checks** across the three suites (45 + 7 + 9), and twenty-three deliberate mutations,
+all twenty-three killed (kill counts 3, 3, 1, 1, 2, 8, 2, 2, 1, 1, 1, 2, 2, 2, 2, 1, 2,
+11, 3, 6, 1, 1, 5). Four worth naming:
+
+- Asking `claimLock`'s new disjunct the wrong way round — `EXISTS` for `NOT EXISTS`, the
+  single-character version of this mistake — kills eight.
+- Freeing every lock when a Display is retired, rather than only the holders who lost it,
+  kills two: an admin retiring the sign they are editing would have kicked themselves out.
+- Making a *rename* free the lock kills one. It is the mutation that looks most like
+  consistency with the other three doors and is the one place consistency would be wrong.
+- Restoring the old `loadTestDisplay()` — a test helper carrying its own copy of the
+  store's SELECT — kills five. It had already drifted: the store learned to join two
+  columns and the helper did not, so every Display a test loaded was missing the columns
+  two rules are decided from, and those rules read their absent-means-unknown defaults
+  and the tests agreed with themselves. It now goes through `DisplayStore::forId()`. That
+  is the §4r lesson again, in a different file: a fixture that assembles a domain object
+  by hand can only test the object it assembled.
+
+Left standing, and named rather than skipped:
+
+- **Closing a Display's Builder is still best-effort.** A freed lock reaches the page on
+  its next beat, up to a minute later. Sixty seconds of somebody typing into a sign they
+  have lost is the accepted cost of not holding a socket open per editor.
+- **`is_active` is the only question asked about the holder.** Closing an account clears
+  `is_active` in the same statement (§4l), so it is covered — but by consequence rather
+  than by name. A future state that shuts an account out *without* clearing `is_active`
+  would strand locks again, and the fix would belong in `LockState`.
 
 ---
 
@@ -1838,12 +1920,24 @@ grep -rn "grants_accounts\|grants_displays" --include=*.php .  # admin_panel.php
                                               # same absence. One name here without the other is the §4s
                                               # defect back: a save that revokes what it never showed
 grep -rn "releaseLockOn\|releaseLocksHeldBy" --include=*.php .  # lib/displays.php defines both; the callers
-                                              # are the three places a change of *reach* has to free a lock
-                                              # the account can no longer let go of — DisplayAdmin (a grant
-                                              # revoked), AccountAdmin (an account closed, an admin demoted).
-                                              # builder.php's releaseLockOnLeave is a different thing and
-                                              # only matches on the name. A new caller is fine; a change of
-                                              # reach with no call is invariant 8's second paragraph
+                                              # are every place a change of *reach* has to free a lock the
+                                              # account can no longer let go of — DisplayAdmin twice (a grant
+                                              # revoked, a Display turned off) and AccountAdmin twice (an
+                                              # account closed; demoted or suspended). builder.php's
+                                              # releaseLockOnLeave is a different thing and only matches on
+                                              # the name. A new caller is fine; a change of reach with NO
+                                              # call is invariant 8's second paragraph
+grep -rn "holderActive\|lock_holder_active" --include=*.php .  # lib/displays.php only, and it must appear on
+                                              # both sides: the join that fetches it and LockState::isHeld
+                                              # that acts on it. The same rule is spelled `users.is_active = 1`
+                                              # inside claimLock's WHERE — a read and a write that disagree
+                                              # about who holds a sign disagree silently (§4t)
+grep -rn "LOCK_TERMINAL\|isTerminalLockReason" --include=*.php .  # builder.php only. The map, and three call
+                                              # sites: the heartbeat, the read-only poll, the publish refusal.
+                                              # A refusal that ends a session and is acted on in only two of
+                                              # the three leaves one kind of page silent, which is the whole
+                                              # §4t defect in miniature. `res.reason ===` next to one of them
+                                              # is the old shape coming back
 grep -rn "flashMessage\|takeFlashMessage" --include=*.php .  # auth.php defines them, admin_panel.php uses
                                               # them for the grant matrix's post/redirect/get. A `flashMessage`
                                               # with no `header('Location'` after it leaves a sentence nobody
@@ -1853,7 +1947,10 @@ grep -rEn "UPDATE users SET" --include=*.php . # lib/accounts.php (four: closed_
                                               # counters, admin_panel.php:168 where an admin sets a password
                                               # in one write, plus tools/. A fifth in a *page* means a `users`
                                               # write beside another write again — invariant 22
-grep -rn "lock_holder_id\|lock_activity_at\|lock_taken_at" --include=*.php .  # only lib/displays.php + lib/schema.php
+grep -rn "lock_holder_id\|lock_activity_at\|lock_taken_at" --include=*.php .  # SQL against them only in
+                                              # lib/displays.php. lib/schema.php and lib/server_report.php
+                                              # name them as *catalogue entries* — a column this database
+                                              # should have — which is not a read of the table
 grep -rn "block_styles" --include=*.php .     # only lib/brand_styles.php + schema.php's seed
 grep -rEn "WHERE +`?id`? *= *'?1'?" --include=*.php .  # must be empty — whitespace and quotes included
 grep -rn "1920\|1080" --include=*.php .        # admin size presets, the seed, tools/, and prose

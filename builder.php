@@ -240,8 +240,10 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #lock-idle-bar   { background: #7d6608; border-bottom: 1px solid #9e8109; }
 #lock-lapsed-bar { background: #4b3869; border-bottom: 1px solid #6b5291; }
 #lock-lost-bar   { background: #7b3f3f; border-bottom: 1px solid #9b5252; }
-/* Not the lock: the grant. Nothing on this page will work again until an admin
-   gives the display back, so it is the one bar that never turns off by itself. */
+/* Not the lock: the reach. Whatever this bar says, nothing on this page works again
+   until somebody does something about it — so it is the one bar that never turns off
+   by itself. Its sentence depends on which way the display stopped being this page's
+   to edit; see LOCK_TERMINAL. */
 #lock-access-bar { background: #7b3f3f; border-bottom: 1px solid #9b5252; }
 #lock-idle-bar .btn { padding: 4px 10px; }
 
@@ -607,7 +609,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
      already stopped holding the display by the time it reads this — and if it said
      nothing, the person would carry on working and find out at the publish. -->
 <div id="lock-access-bar">
-    <span><strong>Your access to this display has been removed.</strong>
+    <span id="lock-access-text"><strong>Your access to this display has been removed.</strong>
         An admin has taken it off your list, so nothing here can be published any more and the
         display has been released for somebody else. What you have done is still on this screen —
         copy anything you need before you leave the page. Ask an admin if this was not expected.</span>
@@ -2390,16 +2392,20 @@ function publishCanvas() {
                           + 'That screen updates within 30 seconds.');
                 loadAssets();
             } else if (res.reason === 'stale' || res.reason === 'locked'
-                       || res.reason === 'mismatch' || res.reason === 'forbidden') {
+                       || isTerminalLockReason(res.reason)) {
                 // Nothing was saved, and none of these refusals may be glimpsed and
                 // missed: the layout on screen is still the editor's, and what to do
                 // next differs — reload for a stale stamp, wait for somebody else's
-                // edit lock, reload for a screen name tag that moved to another
-                // display, ask an admin for a display that is no longer yours. The
-                // message says which. `forbidden` used to be a toast, which is the one
-                // of the four that never comes back on its own.
-                if (res.reason === 'locked')    { lockLost = true; renderLockBars(); }
-                if (res.reason === 'forbidden') { noteAccessLost(); }
+                // edit lock, reload for a screen name tag that moved, ask an admin for
+                // a display that is no longer yours, sign in again for an account that
+                // no longer may. The message says which; a toast would not be read.
+                //
+                // The terminal ones also raise the bar, so it is still on screen after
+                // the alert is dismissed. Reaching one here rather than from a beat
+                // means the publish arrived inside the same minute as the change —
+                // otherwise the bar is already up and this branch is the second telling.
+                if (res.reason === 'locked') { lockLost = true; renderLockBars(); }
+                if (isTerminalLockReason(res.reason)) { noteAccessLost(res.reason); }
                 alert(res.message);
             } else { showToast(res.message||'Publish failed.', true); }
         })
@@ -2428,11 +2434,62 @@ var LOCK_POLL_MS = 30000;   // read-only: how often we check whether it has free
 var lastInteraction = Date.now();
 var lastBeatAt      = Date.now();
 var lockLost        = false;   // somebody else holds it — never claim again
-// Not the same thing, and kept apart on purpose: the lock can come back on its own,
-// a revoked grant cannot. An admin unticking this display in the access matrix frees
-// the lock in the same write, so the server has already stopped believing this page
-// holds it — and every further beat would be refused for the rest of the day.
+// Not the same thing, and kept apart on purpose: a lock can come back on its own, and
+// losing the display cannot. There are five ways to get here and none of them mends
+// itself — see LOCK_TERMINAL. In four of them the server has already stopped believing
+// this page holds the sign; in the fifth, a renamed tag, the lock is deliberately still
+// this account's and a reload picks it straight back up.
 var accessLost      = false;
+
+/**
+ * The refusals that never succeed later, and what to tell somebody mid-edit.
+ *
+ * A failed request is normally nothing to act on: the next one covers it, which is
+ * exactly right for a dropped connection. These five are the opposite — the display
+ * has stopped being this page's to edit, and no amount of waiting changes that. Each
+ * one used to be swallowed, so the person kept working on a sign they had already
+ * lost and heard about it at the publish.
+ *
+ * A fixed list rather than "anything with a reason": a reason added to the server
+ * later must not silently become fatal to an editor mid-work. Anything not named here
+ * is still ignored.
+ *
+ * The wording is the editor's, not the Screen's. The server sends a sentence for a
+ * sign in a shop window — "This display is turned off" — and somebody who has been
+ * laying out prices for twenty minutes needs to know what happened to their work.
+ */
+var LOCK_TERMINAL = {
+    forbidden: '<strong>Your access to this display has been removed.</strong> '
+             + 'An admin has taken it off your list, so nothing here can be published any more and '
+             + 'the display has been released for somebody else. What you have done is still on this '
+             + 'screen — copy anything you need before you leave the page. Ask an admin if this was '
+             + 'not expected.',
+    inactive:  '<strong>This display has been turned off.</strong> '
+             + 'An admin has retired it, so it is no longer yours to edit and nothing here can be '
+             + 'published. What you have done is still on this screen — copy anything you need '
+             + 'before you leave the page. Nothing you had not published reached the screen.',
+    // One message for two causes, because "not found at this address" cannot tell them
+    // apart: a renamed screen name tag and a deleted display answer identically. So it
+    // says both and sends them to the one action that distinguishes them.
+    unknown:   '<strong>This display is no longer at this address.</strong> '
+             + 'Its screen name tag has been renamed, or the display has been deleted. Reload the '
+             + 'page to find out which — if it was renamed it is still yours, and still where you '
+             + 'left it. Copy anything you cannot afford to lose first. Nothing you had not '
+             + 'published reached a screen.',
+    mismatch:  '<strong>This page\'s address now belongs to a different display.</strong> '
+             + 'A screen name tag was renamed and given to another sign, so nothing here can be '
+             + 'saved — publishing would write over somebody else\'s layout. Copy anything you need, '
+             + 'then reload and open your display again.',
+    signed_out:'<strong>You have been signed out.</strong> '
+             + 'This account can no longer sign in — an admin may have suspended it. Nothing here '
+             + 'can be published. What you have done is still on this screen, so copy anything you '
+             + 'need before you leave the page, and ask an admin if this was not expected.'
+};
+
+/** Is this refusal one there is no point waiting out? */
+function isTerminalLockReason(reason) {
+    return !!reason && Object.prototype.hasOwnProperty.call(LOCK_TERMINAL, reason);
+}
 
 // The server's own idea of how idle this lock is, and when it said so. It knows
 // about every tab this account has open on this Display, which this tab does not:
@@ -2509,11 +2566,12 @@ function holdLock() {
 function applyLockAnswer(res) {
     if (!res) { return; }
     if (res.status !== 'success') {
-        // A failed beat is normally nothing to act on — the next one covers it. One
-        // refusal is not: `forbidden` means this account no longer holds this display,
-        // and no later beat will ever succeed. Swallowing it left somebody editing a
-        // sign they had already lost, with the first word of it coming at the publish.
-        if (res.reason === 'forbidden') { noteAccessLost(); }
+        // A failed beat is normally nothing to act on — the next one covers it. The
+        // terminal refusals are not: the display has stopped being this page's to
+        // edit and no later beat will ever succeed. Swallowing them left somebody
+        // editing a sign they had already lost, with the first word of it coming at
+        // the publish.
+        if (isTerminalLockReason(res.reason)) { noteAccessLost(res.reason); }
         return;
     }
 
@@ -2531,16 +2589,25 @@ function applyLockAnswer(res) {
 }
 
 /**
- * The grant for this display is gone. Say so, and stop asking for the lock.
+ * This display is no longer this page's to edit. Say which way, and stop asking.
  *
  * The canvas is left alone, exactly as ADR-0007 leaves it when the lock moves on:
  * pulling the editor apart under somebody would lose work that is still on screen and
  * still theirs to copy out. What stops is the claiming — every beat from here would be
  * refused, and a page that keeps politely asking is a page that never says anything.
+ *
+ * First answer wins. Once one of these has been shown, a later beat's refusal is a
+ * consequence of it rather than news, and rewriting the sentence underneath somebody
+ * reading it would only make them doubt the first one.
+ *
+ * @param {string} reason a key of LOCK_TERMINAL. Anything else leaves the bar's
+ *                        server-rendered wording alone rather than blanking it.
  */
-function noteAccessLost() {
+function noteAccessLost(reason) {
     if (accessLost) { return; }
     accessLost = true;
+    var text = document.getElementById('lock-access-text');
+    if (text && LOCK_TERMINAL[reason]) { text.innerHTML = LOCK_TERMINAL[reason]; }
     // On a read-only page the banner above says somebody else is editing and offers a
     // reload once it frees up. Both were true a moment ago and neither is now, so it
     // goes: an offer to reload into a refusal is worse than no offer.
@@ -2560,9 +2627,9 @@ function keepEditing() {
 function renderLockBars() {
     var idle = lockIdleSeconds();
     // Access first, and it hides the other three: "you have lost this display" and
-    // "it will be released in two minutes" are both true once a grant is revoked, and
-    // only one of them is worth reading. The lost bar in particular would name a
-    // holder there is not one of.
+    // "it will be released in two minutes" are both true once the display has stopped
+    // being this page's, and only one of them is worth reading. The lost bar in
+    // particular would name a holder there is not one of.
     showLockBar('lock-access-bar', accessLost);
     showLockBar('lock-lost-bar',   !accessLost && lockLost);
     showLockBar('lock-lapsed-bar', !accessLost && !lockLost && idle >= LOCK_LAPSE_SECONDS);
@@ -2584,10 +2651,11 @@ function pollLockState() {
         .then(function(res) {
             if (!res) { return; }
             if (res.status !== 'success') {
-                // Somebody watching a display can lose access to it as easily as
-                // somebody editing one, and the offer to reload would then be an
-                // offer to be refused. Same bar, same sentence.
-                if (res.reason === 'forbidden') { noteAccessLost(); }
+                // Somebody watching a display can lose it as easily as somebody
+                // editing one — retired, renamed, their own account suspended — and
+                // the offer to reload would then be an offer to be refused. Same bar,
+                // same sentences.
+                if (isTerminalLockReason(res.reason)) { noteAccessLost(res.reason); }
                 return;
             }
             // Shown when free and taken away again if somebody else starts, so the
@@ -2607,8 +2675,10 @@ function pollLockState() {
  * nothing at all, which is what the idle window is there for.
  */
 function releaseLockOnLeave() {
-    // accessLost included: the revoke already released it, and this beacon would be
-    // refused by the same seam that refused the beat.
+    // accessLost included, whichever way it happened: either the change released the
+    // lock already, or — a renamed tag — the lock is still this account's and the
+    // address this beacon would name no longer resolves. Both make the send pointless,
+    // and it would be refused by the same seam that refused the beat.
     if (READ_ONLY || lockLost || accessLost || !navigator.sendBeacon) { return; }
     var fd = new FormData();
     fd.append('csrf_token', CSRF_TOKEN);

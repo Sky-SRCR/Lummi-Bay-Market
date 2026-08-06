@@ -54,12 +54,19 @@ if ($action !== 'get_layout') {
     // still hold the role it held at login — see syncSessionAccount(). A page
     // redirects here; an endpoint says so in JSON, because the Builder polls this
     // every 60 seconds and would otherwise silently receive a login page.
+    //
+    // `reason` is here so the Builder can act on it. Without a name this refusal
+    // arrived looking exactly like a dropped connection, which the Builder is right
+    // to ignore and wrong to ignore here: no later request from this session will
+    // ever succeed. Somebody suspended mid-edit carried on working and found out at
+    // the publish. See builder.php's terminal lock answers.
     if (!syncSessionAccount($pdo)) {
         endSession();
         header('Content-Type: application/json');
         http_response_code(403);
         echo json_encode([
             'status'  => 'error',
+            'reason'  => 'signed_out',
             'message' => 'Your account is no longer active. Sign in again.',
         ]);
         exit;

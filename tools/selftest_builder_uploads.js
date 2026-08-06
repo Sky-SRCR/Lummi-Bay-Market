@@ -327,11 +327,11 @@ land(FakeXhr.last);
 check(true, 'a reply arriving after the block was deselected does not throw');
 checkSame('uploads/vid_x.mp4', videoBlock.dataset.manualPath, 'and lands on the block that asked for it');
 
-section('An admin whose access to the display is taken away mid-edit');
+section('An admin who loses the display mid-edit');
 
 // Not an upload, but the same premise this suite exists for — a page that *can*
 // edit — and the same class of defect: a reply the page received and did nothing
-// with. A revoked grant makes every later heartbeat fail, so a page that swallows
+// with. Losing the display makes every later heartbeat fail, so a page that swallows
 // the refusal carries on letting somebody work on a sign they have already lost.
 
 // Two bars would otherwise be true at once. Age this tab's last interaction past
@@ -363,19 +363,64 @@ global.navigator = { sendBeacon: function () { beaconed++; return true; } };
 releaseLockOnLeave();
 checkSame(0, beaconed, 'and no release beacon on leaving — the revoke already freed the lock');
 
+// ---- The other four ways it happens -----------------------------------------
+
+// A revoked grant was one of five, and the other four were swallowed by this very
+// branch. Each has its own sentence because what the person should do differs: ask an
+// admin, copy your work, reload the page, sign in again. A single "you lost the
+// display" would send somebody hunting an admin over a renamed tag.
+function beatRefusedWith(reason, message) {
+    accessLost = false;
+    document.getElementById('lock-access-bar').style.display = 'none';
+    document.getElementById('lock-access-text').innerHTML    = '';
+    applyLockAnswer({ status: 'error', reason: reason, message: message });
+}
+
+beatRefusedWith('inactive', 'This display is turned off');
+checkSame('flex', document.getElementById('lock-access-bar').style.display,
+          'a display retired under an editor puts the notice on screen');
+check(/turned off/i.test(document.getElementById('lock-access-text').innerHTML),
+      'and says it was turned off rather than taken away from them');
+
+beatRefusedWith('unknown', 'Display not found');
+checkSame('flex', document.getElementById('lock-access-bar').style.display,
+          'a renamed screen name tag does too');
+check(/reload/i.test(document.getElementById('lock-access-text').innerHTML),
+      'and asks for a reload, because a rename leaves the display theirs');
+
+beatRefusedWith('mismatch', 'That screen name tag no longer belongs to this display.');
+checkSame('flex', document.getElementById('lock-access-bar').style.display,
+          'so does a tag that now names a different display');
+
+beatRefusedWith('signed_out', 'Your account is no longer active. Sign in again.');
+checkSame('flex', document.getElementById('lock-access-bar').style.display,
+          'and so does the account itself being suspended');
+check(/signed out/i.test(document.getElementById('lock-access-text').innerHTML),
+      'which is the one of the five that is about them rather than the display');
+
+// The first answer wins. A second refusal arriving a minute later is a consequence of
+// the first, not news, and rewriting the sentence under somebody reading it would only
+// make them doubt it.
+applyLockAnswer({ status: 'error', reason: 'forbidden', message: 'Not yours.' });
+check(/signed out/i.test(document.getElementById('lock-access-text').innerHTML),
+      'and a later refusal does not rewrite the notice already on screen');
+
 // An ordinary failed beat is still nothing to act on: the next one covers it, and a
-// notice on every dropped connection would be a notice nobody reads.
-accessLost = false;
-document.getElementById('lock-access-bar').style.display = 'none';
-applyLockAnswer({ status: 'error', reason: 'unknown', message: 'Display not found' });
+// notice on every dropped connection would be a notice nobody reads. This is why the
+// terminal reasons are a fixed list rather than "anything with a reason" — a reason
+// added to the server later must not become fatal to an editor by accident.
+beatRefusedWith('stale', 'That layout is out of date.');
 checkSame('none', document.getElementById('lock-access-bar').style.display,
-          'while any other failed heartbeat is still left for the next one to cover');
+          'while a refusal that can be recovered from is left alone');
+beatRefusedWith('', 'Something went wrong.');
+checkSame('none', document.getElementById('lock-access-bar').style.display,
+          'and so is a failure with no reason at all, which is what a dropped beat looks like');
 
 // ---- Total ------------------------------------------------------------------
 
 // The expected total, for the same reason the other two suites carry one: without
 // it, deleting half this file still reports a clean run.
-const expected = 44;
+const expected = 53;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

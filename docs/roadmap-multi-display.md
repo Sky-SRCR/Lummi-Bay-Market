@@ -386,6 +386,18 @@ In order, on the one visit:
     grid, and making it a basic user again must leave it holding *nothing* rather
     than what it had before. If it had a Display open when it was demoted, that
     Display must be free.
+    **And the same for the other three doors** — one at a time, with the basic account
+    editing its Display each time and its grant restored in between:
+    *turn the Display off* (its tab must show a red bar saying the display was turned
+    off, and the admin's answer must say a lock was released — then turn it back on and
+    check an *admin* editing a Display they retire is not thrown out of their own
+    session);
+    *suspend the account* (its tab must say it has been signed out, and the Display card
+    must stop naming it as the holder immediately, not in fifteen minutes);
+    *rename the screen name tag* (its tab must ask it to **reload** rather than say it
+    lost the Display — and after reloading, that same account must still have the sign
+    and still be able to publish it, because a rename is not a change of access. Re-point
+    the Screen afterwards; the old address stops working).
 18. **Prove one editor at a time.** With the basic account editing its test Display
     in one browser, open that same Display as the admin in the other. It must come up
     **read-only**: a purple bar naming the other account and since when, no *+ block*

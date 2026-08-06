@@ -59,6 +59,14 @@ class Background
  * this host and a lapsed lock that needed sweeping would outlive the tab that left
  * it. The consequence is that "free" and "lapsed" are the same state everywhere.
  *
+ * *Whose* activity also has to still count. A lock recorded against an account that
+ * can no longer sign in is not a colleague mid-edit, it is a leftover — and reading
+ * it as a lock blocked a whole Display for fifteen minutes, under the name of
+ * somebody who was locked out. Freeing the lock at the moment access changes is the
+ * other half of this (see DisplayAdmin::setActive and AccountAdmin::edit) and it is
+ * the half that only covers the paths somebody thought of; this one covers the rest,
+ * including any row already stranded before the fix existed.
+ *
  * A value object: built from a `displays` row, never stored. Two accounts asking
  * at the same moment get the same answer.
  */
@@ -82,13 +90,22 @@ class LockState
     private $takenAt;
     private $activityAt;
     private $idleSeconds;
+    private $holderActive;
 
-    public function __construct($holderId, $holderName, $takenAt, $activityAt)
+    /**
+     * @param bool $holderActive whether the holder may still sign in. Defaults to
+     *                           true, because a caller that did not join `users`
+     *                           has not learned the holder is locked out — it has
+     *                           learned nothing, and the safe reading of nothing is
+     *                           to leave a colleague's lock alone.
+     */
+    public function __construct($holderId, $holderName, $takenAt, $activityAt, $holderActive = true)
     {
-        $this->holderId   = intval($holderId);
-        $this->holderName = (string)$holderName;
-        $this->takenAt    = $takenAt    ?: null;
-        $this->activityAt = $activityAt ?: null;
+        $this->holderId     = intval($holderId);
+        $this->holderName   = (string)$holderName;
+        $this->takenAt      = $takenAt    ?: null;
+        $this->activityAt   = $activityAt ?: null;
+        $this->holderActive = (bool)$holderActive;
         // Both sides of this subtraction are PHP's clock — see DisplayStore's lock
         // statements, which bind a PHP-formatted timestamp for exactly that reason.
         $this->idleSeconds = $this->activityAt === null
@@ -102,10 +119,16 @@ class LockState
      * A holder with no recorded activity counts as nobody: the row says someone
      * started and never reported working, which is the state a half-finished write
      * or a hand edit would leave, and the safe reading of it is "free".
+     *
+     * So does a holder who can no longer sign in. Their Builder cannot beat, so the
+     * lock would sit out the full idle window with their name on every colleague's
+     * read-only banner — and they could not release it even deliberately, because
+     * releasing goes through the seam that has just started refusing them.
      */
     public function isHeld()
     {
         if ($this->holderId <= 0) { return false; }
+        if (!$this->holderActive) { return false; }
         return $this->idleSeconds < self::IDLE_LAPSE_SECONDS;
     }
 
@@ -234,6 +257,21 @@ class Display
     public function lockActivityAt() { return $this->row['lock_activity_at'] ?: null; }
 
     /**
+     * Is the account holding this Display an admin?
+     *
+     * Asked by one caller, for one reason: retiring a Display takes it away from a
+     * `basic` account and leaves it with an admin (Actor::mayOpen — a Display out of
+     * service stays editable by admins), so it decides whose lock retiring frees.
+     * False when nobody holds it, and false when the joined role is missing, which
+     * errs towards freeing rather than towards stranding.
+     */
+    public function lockHolderIsAdmin()
+    {
+        if ($this->lockHolderId() <= 0) { return false; }
+        return isset($this->row['lock_holder_role']) && $this->row['lock_holder_role'] === 'admin';
+    }
+
+    /**
      * Who is editing this Display, and whether they still are (ADR-0007).
      *
      * Deliberately absent from toClientArray(): that array is what the public
@@ -250,7 +288,9 @@ class Display
             // name or a start time to print.
             isset($this->row['lock_holder_name']) ? $this->row['lock_holder_name'] : '',
             isset($this->row['lock_taken_at'])    ? $this->row['lock_taken_at']    : null,
-            $this->lockActivityAt()
+            $this->lockActivityAt(),
+            // Same guard, and the same reason: absent means unknown, not locked out.
+            isset($this->row['lock_holder_active']) ? intval($this->row['lock_holder_active']) === 1 : true
         );
     }
 
@@ -615,6 +655,14 @@ class DisplayStore
         // while SQLite reads the original row throughout — so a CASE that consults
         // lock_holder_id has to be written before that column is overwritten, or the
         // two engines disagree about which holder it is asking about.
+        //
+        // The last disjunct is the same rule LockState::isHeld applies on read: a
+        // lock recorded against an account that can no longer sign in is not a lock.
+        // It has to be *here* as well as there, or the two disagree and the disagreement
+        // is silent — a colleague would be shown an editable canvas because the read
+        // said free, then have every claim quietly do nothing, and find out at the
+        // publish. A correlated NOT EXISTS rather than a join, because a multi-table
+        // UPDATE is MySQL-only and the test fixture is SQLite.
         $this->pdo->prepare(
             "UPDATE displays
                 SET lock_taken_at    = CASE WHEN lock_holder_id = ? AND lock_activity_at > ?
@@ -625,7 +673,10 @@ class DisplayStore
                 AND (lock_holder_id IS NULL
                      OR lock_holder_id = ?
                      OR lock_activity_at IS NULL
-                     OR lock_activity_at <= ?)"
+                     OR lock_activity_at <= ?
+                     OR NOT EXISTS (SELECT 1 FROM users
+                                     WHERE users.id = displays.lock_holder_id
+                                       AND users.is_active = 1))"
         )->execute([
             $accountId, $cutoff, $activity,
             $activity,
@@ -783,7 +834,17 @@ class DisplayStore
 
     private function rows($where, array $params)
     {
-        $sql = "SELECT d.*, u.username AS last_published_by_name, lu.username AS lock_holder_name
+        // The lock holder's own row comes back with the lock: their name for a
+        // banner, and — since #22 — whether they may still sign in and whether they
+        // are an admin. Both are facts about the lock rather than about the person:
+        // one decides whether the lock counts at all (LockState::isHeld), the other
+        // whose lock retiring a Display frees (DisplayAdmin::setActive). Joined here
+        // so every read of a Display answers them, rather than each caller
+        // remembering to ask.
+        $sql = "SELECT d.*, u.username AS last_published_by_name,
+                       lu.username  AS lock_holder_name,
+                       lu.is_active AS lock_holder_active,
+                       lu.role      AS lock_holder_role
                 FROM displays d
                 LEFT JOIN users u  ON d.last_published_by = u.id
                 LEFT JOIN users lu ON d.lock_holder_id    = lu.id

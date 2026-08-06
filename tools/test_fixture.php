@@ -398,16 +398,23 @@ function makeTestDisplay(PDO $pdo, $tag, $title = 'Sign', $w = 1920, $h = 1080)
     return loadTestDisplay($pdo, $pdo->lastInsertId());
 }
 
+/**
+ * Load a Display exactly the way the app does.
+ *
+ * Through the store, deliberately, rather than with a SELECT of its own. This
+ * function used to carry its own copy of that query and it drifted: the store
+ * learned to join the lock holder's `is_active` and `role`, this did not, and so
+ * every test loading a Display through here was handed a row missing the columns
+ * two rules are decided from. Those rules then read their absent-means-unknown
+ * defaults and the tests agreed with themselves — which is the exact failure mode
+ * `tools/rehearse_phase1.php` was rewritten to stop doing (#14).
+ *
+ * A Display is not the kind of object a test should assemble by hand. There is one
+ * query that builds one, it lives in DisplayStore, and this is a shortcut to it.
+ */
 function loadTestDisplay(PDO $pdo, $id)
 {
-    $stmt = $pdo->prepare("SELECT d.*, u.username AS last_published_by_name,
-                                  lu.username AS lock_holder_name
-                             FROM displays d
-                             LEFT JOIN users u  ON d.last_published_by = u.id
-                             LEFT JOIN users lu ON d.lock_holder_id    = lu.id
-                            WHERE d.id = ?");
-    $stmt->execute([intval($id)]);
-    return new Display($stmt->fetch());
+    return (new TestDisplayStore($pdo))->forId(intval($id));
 }
 
 /**

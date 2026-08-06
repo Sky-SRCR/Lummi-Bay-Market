@@ -263,6 +263,13 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
        more can be published from that page, and the display is released for somebody else. What you had
        done stays on your screen until you leave the page, so anything you still need can be copied out
        first.</p>
+    <p><strong>There are five things that can end a builder session that way</strong>, and the red bar
+       always says which. Your access to the display was taken away; the display was turned off; its
+       screen name tag was renamed, so the page's address no longer finds it; that tag was given to a
+       different sign; or your own account was suspended. In every case the bar arrives within a minute,
+       nothing you had not published has reached a screen, and your work stays on your screen to be
+       copied out. Only one of the five needs an admin: a renamed tag just needs the page reloading, and
+       the display is still yours.</p>
 
     <h3>One person edits a display at a time</h3>
     <p>Opening a display in the builder claims it. While you have it, anyone else who opens the same
@@ -743,8 +750,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Add a display</strong> — you choose its size first (a preset, or type any width and height), then its title, its <strong>screen name tag</strong>, and an optional location. You can start it blank or as <em>a copy of an existing display's layout</em> — only displays of exactly the same size are offered as a source.</li>
         <li><strong>The size cannot be changed afterwards.</strong> Every block sits at a fixed position on that canvas, and there is no undo, so a smaller canvas would quietly hide blocks that still exist. A differently shaped screen means a new display built at that shape.</li>
         <li><strong>Each display's card</strong> shows its tag, size and shape, how many elements it holds, its location, when it was last published and by whom, which accounts it is assigned to, its full screen address ready to copy for the TV or signage widget, and whether someone has it open in the Builder right now.</li>
-        <li><strong>Edit</strong> — title, tag, location, and background. Changing the tag changes the display's address, so any screen pointed at the old one must be re-pointed.</li>
-        <li><strong>Turn off</strong> — the screen shows a "turned off" notice instead of the layout, and the layout is kept. Use this rather than deleting when a screen is out of service.</li>
+        <li><strong>Edit</strong> — title, tag, location, and background. Changing the tag changes the display's address, so any screen pointed at the old one must be re-pointed. If somebody has the display open in the Builder, their page asks them to reload within a minute; they keep the display and their work, because a rename changes where the sign answers and not who may edit it.</li>
+        <li><strong>Turn off</strong> — the screen shows a "turned off" notice instead of the layout, and the layout is kept. Use this rather than deleting when a screen is out of service. A display that is off <em>stays editable by admins</em> and stops being editable by anybody else, so if a basic account had it open their edit lock is released and their page says the display was turned off. The message you get says whether that happened, so you know whether you just ended somebody's session.</li>
         <li><strong>Delete</strong> — permanently removes the display <em>and its whole layout</em>, with no undo. You have to type its screen name tag exactly to confirm, and any screen pointed at it goes blank. Deleting the only display is allowed and leaves the Builder with nothing to open until you add one; turning a display off is almost always what you want instead.</li>
         <li><strong>Who can edit which display</strong> — the grant matrix, <em>Who can edit which display</em>, at the bottom of the tab. Tick a basic account against a display to let it edit that display. Admins are not listed: they already hold every display. An account with no ticks is told "No displays have been assigned to you yet" when it opens the Builder.</li>
         <li><strong>Saving the grid only changes what was on the screen you saved.</strong> An account or a display added by somebody else since you opened the page is left exactly as they set it, so two admins working at once cannot undo each other. If you take a display away from somebody who has it open in the Builder, their edit lock is released — the sign is free for the next person straight away, and their page says so within a minute.</li>
@@ -766,7 +773,10 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
             also releases any display that person had open, because from that moment they cannot reach
             it to release it themselves.</li>
         <li><strong>Deactivate / Activate</strong> — a deactivated user cannot sign in, and can be
-            switched back on whenever you like. This is the one to use for someone on leave.</li>
+            switched back on whenever you like. This is the one to use for someone on leave. Their
+            assignments are kept, so activating them again gives back exactly what they had. Any display
+            they had open is released as you save, and their page says they have been signed out — so a
+            colleague can pick that sign up straight away instead of waiting the lock out.</li>
         <li><strong>Close Account</strong> — for somebody who has left. They can never sign in again
             and lose access to every display, but their record is kept, so anything they published
             still says who published it. <strong>This cannot be undone</strong>, and their username
@@ -883,7 +893,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Display hasn't updated</strong> — wait up to 30 seconds; if still not updated, check that Publish succeeded (look for the green toast message), and check you published the display that screen is actually pointed at</li>
         <li><strong>Screen shows "No display specified" or "Display not found"</strong> — the screen is pointed at the wrong address. Copy the display's screen address from Admin Panel → Displays and re-point it</li>
         <li><strong>Screen shows "This display is turned off"</strong> — turn it back on in Admin Panel → Displays; nothing was lost</li>
-        <li><strong>The Builder won't let me change anything</strong> — read the bar at the top. A purple bar means somebody else has this display open, so you have it read-only; a red bar means they took over while you had it. Neither loses your work, but publishing will be refused</li>
+        <li><strong>The Builder won't let me change anything</strong> — read the bar at the top. A purple bar means somebody else has this display open, so you have it read-only; a red bar means the display has stopped being yours to edit and says which of the five reasons it was. Neither loses your work, but publishing will be refused</li>
+        <li><strong>A display says somebody is editing it and they are not here</strong> — this clears itself. A lock is dropped fifteen minutes after that person's last click, and immediately if their account has been suspended or closed. An admin can also take it over from the Builder without waiting</li>
         <li><strong>Publish was refused</strong> — either the display changed since you opened it (reload and re-apply your changes, or the message names who published) or somebody else holds it now. Nothing was saved either way, and what is on your screen is still there</li>
         <li><strong>Wrong display in the Builder</strong> — use <strong>Switch display ⇄</strong> in the nav bar</li>
         <li><strong>Block won't move</strong> — check if the 🔒 lock icon is showing; deselect and re-click the block, then untick Lock in the Inspector</li>

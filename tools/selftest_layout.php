@@ -2231,6 +2231,205 @@ checkSame(null, takeFlashMessage(), 'and a session field of the wrong shape is i
 $_SESSION = [];
 
 // ─────────────────────────────────────────────────────────────
+section('The three other ways a lock outlived the reach behind it');
+
+// #17 closed one door: a revoked grant. Three more led to the same room.
+//
+//   · Turning a Display off takes it away from a `basic` account and leaves it with an
+//     admin (Actor::mayOpen), so a clerk holding it loses the sign and cannot hand the
+//     lock back — releasing goes through the seam that has just started refusing them.
+//   · Suspending an account ends its session, so its Builder cannot beat and cannot
+//     release either.
+//   · Renaming the screen name tag breaks the address a Builder is holding. That one is
+//     deliberately *not* a lost lock: a rename changes where the sign answers, not who
+//     may edit it.
+//
+// Freeing the lock as each of those happens covers the doors somebody thought of.
+// LockState refusing to honour a lock whose holder cannot sign in covers the rest —
+// including rows already stranded before any of this existed, which is the only part
+// that can help the live database on the day it is deployed.
+
+$wPdo   = newTestDb();
+$wStore = new TestDisplayStore($wPdo);
+$wAdmin = newTestDisplayAdmin($wPdo);
+$wAcct  = newTestAccountAdmin($wPdo);
+
+$wDrive = makeTestDisplay($wPdo, 'drive-thru', 'Drive-Thru');
+$wLobby = makeTestDisplay($wPdo, 'lobby', 'Lobby');
+makeTestAccount($wPdo, 'kayla');                    // id 3, basic
+grantTestAccess($wPdo, $wDrive->id(), 2);           // the clerk from the fixture
+grantTestAccess($wPdo, $wLobby->id(), 2);
+grantTestAccess($wPdo, $wDrive->id(), 3);
+
+// ---- A lock whose holder can no longer sign in is not a lock --------------------
+
+$wStore->claimLock(loadTestDisplay($wPdo, $wDrive->id()), 2);
+checkSame(true, loadTestDisplay($wPdo, $wDrive->id())->lockState()->isHeld(),
+          'a clerk holding a display holds it');
+
+// Straight to the column, not through the module: this is the state a row is already
+// in on the live database, arrived at by a path that no longer exists.
+$wPdo->exec("UPDATE users SET is_active = 0 WHERE id = 2");
+$wStranded = loadTestDisplay($wPdo, $wDrive->id());
+checkSame(false, $wStranded->lockState()->isHeld(),
+          'and stops holding it the moment that account cannot sign in');
+checkSame(0, $wStranded->lockState()->holderId(),
+          'so nothing names them as the holder');
+checkSame('', $wStranded->editingSentence(),
+          'and no banner says they are editing a sign they are locked out of');
+checkSame(2, intval($wPdo->query("SELECT lock_holder_id FROM displays WHERE id = " . $wDrive->id())
+                        ->fetchColumn()),
+          'the row still records them, because this is a reading rule and not a sweep');
+
+// The read and the write have to agree. They did not have to before, and a
+// disagreement here is silent: a colleague shown an editable canvas whose every claim
+// quietly does nothing, finding out at the publish.
+$wAfter = $wStore->claimLock(loadTestDisplay($wPdo, $wDrive->id()), 3);
+checkSame(true, $wAfter->lockState()->heldBy(3),
+          'a colleague can really take a display stranded by a locked-out holder');
+
+$wPdo->exec("UPDATE users SET is_active = 1 WHERE id = 2");
+checkSame(true, loadTestDisplay($wPdo, $wDrive->id())->lockState()->heldBy(3),
+          'and reinstating the old holder does not hand it back to them');
+
+// The default matters as much as the rule: a row read without the users join has not
+// learned the holder is locked out, it has learned nothing. Both directions of that
+// are asserted, because a hand-written query somewhere else in the app is the one way
+// to arrive at a Display whose joined columns are missing — and the two defaults have
+// to lean opposite ways. Unknown "can they sign in" must leave a colleague's lock
+// standing; unknown "are they an admin" must not protect a lock from being freed.
+$wBare = new LockState(2, 'clerk', gmdate('Y-m-d H:i:s'), gmdate('Y-m-d H:i:s'));
+checkSame(true, $wBare->isHeld(),
+          'a lock read without asking about its holder is left alone, not freed');
+$wBareRow = new Display([
+    'id' => 1, 'tag' => 'x', 'title' => 'X', 'canvas_width' => 1920, 'canvas_height' => 1080,
+    'is_active' => 1, 'bg_type' => 'color', 'bg_val' => '#000', 'layout_revision' => 1,
+    'last_published_at' => null, 'last_published_by' => null,
+    'lock_holder_id' => 2, 'lock_activity_at' => gmdate('Y-m-d H:i:s'),
+]);
+checkSame(true, $wBareRow->lockState()->isHeld(),
+          'and a Display built from a row with no holder columns still honours its lock');
+checkSame(false, $wBareRow->lockHolderIsAdmin(),
+          'while an unknown role is not read as admin, so it cannot shield a lock from being freed');
+
+// ---- Turning a Display off frees the lock it takes away (#22) -------------------
+
+$wStore->releaseLockOn($wDrive->id(), 3);
+$wStore->claimLock(loadTestDisplay($wPdo, $wLobby->id()), 2);
+$res = $wAdmin->setActive(loadTestDisplay($wPdo, $wLobby->id()), false);
+checkSame(true, $res->isOk(), 'a display can be turned off');
+checkSame(false, loadTestDisplay($wPdo, $wLobby->id())->isActive(), 'and really is off');
+checkSame(false, loadTestDisplay($wPdo, $wLobby->id())->lockState()->isHeld(),
+          'the clerk who was editing it is released, because it is no longer theirs to edit');
+checkMentions($res->message(), 'edit lock has been released',
+              'and the admin is told a session was ended rather than left to guess');
+checkMentions($res->message(), 'editable by admins',
+              'with what "still editable" now means');
+
+// Only turning one *off* is a change of reach. Turning it on — or saving the state it
+// is already in — takes nothing away from anybody, so it must take no lock either.
+$res = $wAdmin->setActive(loadTestDisplay($wPdo, $wLobby->id()), true);
+checkSame(true, $res->isOk(), 'and can be turned back on');
+$wStore->claimLock(loadTestDisplay($wPdo, $wLobby->id()), 2);
+$wAdmin->setActive(loadTestDisplay($wPdo, $wLobby->id()), true);
+checkSame(true, loadTestDisplay($wPdo, $wLobby->id())->lockState()->heldBy(2),
+          'turning an already-on display on again leaves the clerk editing it alone');
+$wStore->releaseLockOn($wLobby->id(), 2);
+
+// An admin holding a retired Display keeps it: that is the whole point of a Display
+// staying editable while out of service. The rule is "free the holders who lost it",
+// not "free everyone", and those differ by exactly this case.
+$wStore->claimLock(loadTestDisplay($wPdo, $wLobby->id()), 1);   // account 1 is the admin
+$res = $wAdmin->setActive(loadTestDisplay($wPdo, $wLobby->id()), false);
+checkSame(true, loadTestDisplay($wPdo, $wLobby->id())->lockState()->heldBy(1),
+          'an admin editing a display they retire keeps it');
+check(strpos($res->message(), 'edit lock has been released') === false,
+      'and is not told a lock was released when none was');
+
+// Nobody editing at all is a third case, and it must not claim to have freed anything.
+$wStore->releaseLockOn($wLobby->id(), 1);
+$res = $wAdmin->setActive(loadTestDisplay($wPdo, $wLobby->id()), true);
+$res = $wAdmin->setActive(loadTestDisplay($wPdo, $wLobby->id()), false);
+check(strpos($res->message(), 'edit lock has been released') === false,
+      'turning off a display nobody was editing mentions no lock');
+$wAdmin->setActive(loadTestDisplay($wPdo, $wLobby->id()), true);
+checkSame(false, $wPdo->inTransaction(), 'and none of that leaves a transaction open');
+
+// ---- Suspending an account frees what it was holding (#22) ---------------------
+
+$wStore->claimLock(loadTestDisplay($wPdo, $wDrive->id()), 2);
+$wStore->claimLock(loadTestDisplay($wPdo, $wLobby->id()), 3);
+$res = $wAcct->edit(2, 'basic', false, 'clerk@example.test', 1);
+checkSame(true, $res->isOk(), 'an account can be suspended');
+checkSame(false, loadTestDisplay($wPdo, $wDrive->id())->lockState()->isHeld(),
+          'and the display it was holding is freed in the same write');
+checkSame(0, intval($wPdo->query("SELECT lock_holder_id FROM displays WHERE id = " . $wDrive->id())
+                        ->fetchColumn()),
+          'really freed, in the row, not merely read as free');
+checkSame(true, loadTestDisplay($wPdo, $wLobby->id())->lockState()->heldBy(3),
+          'while a colleague editing another sign keeps theirs — freeing is by holder');
+checkMentions($res->message(), 'cannot sign in', 'the answer says they are shut out');
+checkMentions($res->message(), 'has been released', 'and that a display was let go');
+checkSame([$wDrive->id(), $wLobby->id()],
+          (new GrantStore($wPdo))->displayIdsFor(2),
+          'suspending keeps their assignments, because it is not a closure');
+
+// Suspending an account that is holding nothing must not claim otherwise, and
+// suspending one that is already suspended must not either.
+$res = $wAcct->edit(2, 'basic', false, 'clerk@example.test', 1);
+check(strpos($res->message(), 'has been released') === false,
+      'suspending an account twice frees nothing the second time');
+checkMentions($res->message(), 'cannot sign in', 'and still says why they cannot get in');
+$res = $wAcct->edit(2, 'basic', true, 'clerk@example.test', 1);
+checkSame(true, $res->isOk(), 'and it can be let back in');
+check(strpos($res->message(), 'cannot sign in') === false,
+      'with nothing said about being shut out, because they are not');
+
+// ---- A renamed tag tells them, and keeps their lock (#22) ----------------------
+
+// The decision this encodes: a rename changes the address, not who may edit. Taking
+// the lock away would punish somebody for an admin's retyping — so their page says
+// the address moved, and reloading picks the same lock back up because it is still
+// theirs.
+$wStore->claimLock(loadTestDisplay($wPdo, $wDrive->id()), 2);
+$res = $wAdmin->updateDetails(loadTestDisplay($wPdo, $wDrive->id()), [
+    'tag' => 'drive-through', 'title' => 'Drive-Thru', 'location' => '',
+]);
+checkSame(true, $res->isOk(), 'a screen name tag can be renamed');
+checkSame('drive-through', loadTestDisplay($wPdo, $wDrive->id())->tag(), 'and really changes');
+checkSame(true, loadTestDisplay($wPdo, $wDrive->id())->lockState()->heldBy(2),
+          'the person editing it keeps the lock, because a rename is not a change of access');
+checkMentions($res->message(), 'reload',
+              'and the admin is told their page will ask them to reload');
+checkMentions($res->message(), 'still theirs',
+              'and that the display is still that person\'s to finish');
+
+// With nobody editing, there is nothing to say about a reload.
+$wStore->releaseLockOn($wDrive->id(), 2);
+$res = $wAdmin->updateDetails(loadTestDisplay($wPdo, $wDrive->id()), [
+    'tag' => 'drive-thru', 'title' => 'Drive-Thru', 'location' => '',
+]);
+check(strpos($res->message(), 'reload') === false,
+      'renaming a display nobody has open says nothing about anybody reloading');
+checkMentions($res->message(), 'address changed', 'but still says the address moved');
+
+// ---- What the Builder is told, asserted against the server's own reasons -------
+
+// The Builder acts on five reasons and ignores everything else. Four of them are
+// DisplayResolution kinds, so if one is ever renamed there this check fails rather
+// than the page quietly going silent again.
+$wJs = file_get_contents(__DIR__ . '/../builder.php');
+foreach ([DisplayResolution::FORBIDDEN, DisplayResolution::INACTIVE,
+          DisplayResolution::UNKNOWN,   DisplayResolution::MISMATCH] as $kind) {
+    check(preg_match('/^\s*' . preg_quote($kind, '/') . '\s*:/m', $wJs) === 1,
+          'the builder has a sentence for a refusal of kind "' . $kind . '"');
+}
+check(strpos($wJs, 'signed_out:') !== false,
+      'and one for a session that is no longer signed in');
+check(strpos(file_get_contents(__DIR__ . '/../api.php'), "'reason'  => 'signed_out'") !== false,
+      'which is the reason api.php sends when the account behind a request went inactive');
+
+// ─────────────────────────────────────────────────────────────
 section('What a visitor is told when something breaks');
 
 // ErrorPolicy::install() is deliberately NOT called here: it would replace this
@@ -2948,4 +3147,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(781);
+reportChecks(826);

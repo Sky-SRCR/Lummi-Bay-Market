@@ -485,17 +485,18 @@ class AccountAdmin
      * access they had in March came back, silently, decided by a table nobody could
      * see. Clearing them makes the matrix the whole truth about who was given what.
      *
-     * **Demoting to basic frees the edit lock.** The account keeps no grants — there
-     * were none to keep, by the rule above — so from the next request it may open
-     * nothing, which includes the Display it is holding open right now. It could not
-     * release that lock even deliberately: releasing goes through the same seam that
-     * now refuses it. The sign would sit locked for a full idle window under a name
-     * that can no longer reach it.
+     * **Demoting to basic, or suspending, frees the edit lock.** A demoted account
+     * keeps no grants — there were none to keep, by the rule above — so from the next
+     * request it may open nothing, which includes the Display it is holding open right
+     * now. A suspended one cannot sign in at all. Neither could release that lock even
+     * deliberately: releasing goes through the same seam that now refuses it. The sign
+     * would sit locked for a full idle window under a name that can no longer reach it.
      *
-     * What this does *not* do is unpick a deactivation. An account with `is_active`
-     * off can still be holding a lock, and that is a separate defect with a separate
-     * decision behind it; it is called out in BUILD-REFERENCE §4s rather than half-
-     * fixed here.
+     * The two are one condition on purpose — "does this account end up unable to reach
+     * what it is holding" — rather than two branches that have to be kept in step. A
+     * lock outliving its holder's access is also caught on read, by
+     * LockState::isHeld: this frees it at the moment it happens, that covers the paths
+     * nobody enumerated.
      *
      * @param int    $accountId       the account being edited
      * @param string $role            'admin' or 'basic'
@@ -550,7 +551,15 @@ class AccountAdmin
             if ($promoted) {
                 $clearedGrants = $this->grants->revokeAllForAccount($accountId);
             }
-            if ($demoted) {
+            // Demotion and suspension are the same fact from two directions: this
+            // account can no longer reach what it is holding. A demoted admin holds no
+            // grants and so holds no Displays; a suspended account cannot sign in at
+            // all. Either way its locks are leftovers, and it cannot release them
+            // itself — releasing goes through the seam that has just started refusing
+            // it. Asked as "does it end up inactive" rather than "was it just
+            // deactivated", because an account that was already inactive holds no
+            // locks and frees nothing.
+            if ($demoted || !$isActive) {
                 $freedLocks = $this->displays->releaseLocksHeldBy($accountId);
             }
 
@@ -573,11 +582,21 @@ class AccountAdmin
                   . ' — if you make them a basic user again you will need to give those back.';
         } elseif ($demoted) {
             $note = ' They hold no displays now: assign the ones they should have in "Who can edit '
-                  . 'which display" below.'
-                  . ($freedLocks > 0
-                      ? ' Any display they had open has been released, and their builder says so'
-                        . ' within a minute.'
-                      : '');
+                  . 'which display" below.';
+        }
+        if (!$isActive) {
+            $note .= ' They cannot sign in until "Active" is ticked again.';
+        }
+        // One sentence for both reasons, because it is one fact: what they were holding
+        // is free, and their own page is about to say so. Counted rather than assumed —
+        // "a display was released" and "nobody had one open" are different things for an
+        // admin to have just done, and only the row knows which.
+        if ($freedLocks > 0) {
+            $note .= ' ' . $freedLocks . ($freedLocks === 1
+                        ? ' display they had open has been released'
+                        : ' displays they had open have been released')
+                   . ', and their builder says so within a minute. Nothing they had not published'
+                   . ' reached a screen.';
         }
         return AccountResult::ok('User updated.' . $note);
     }
