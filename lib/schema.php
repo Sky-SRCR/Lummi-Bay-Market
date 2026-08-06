@@ -16,8 +16,9 @@
 // here.
 //
 // The public get_layout poll must NOT run this: every Screen hits it every 30
-// seconds forever. See DisplayStore, which converges once on a genuinely absent
-// schema and then never again.
+// seconds forever. There is one exception, and it has its own front door —
+// `repairSchemaAfterFailure()` below, which DisplayStore calls when a query has
+// already failed because a table is not there.
 //
 // ---- Why it asks before it alters -------------------------------------------
 // This used to run all twenty statements on every authenticated request. Twelve of
@@ -81,6 +82,47 @@
 // Structure rather than restating what each missing column costs. That list already
 // exists, in `ServerReport::convergence()`, and two lists of consequences would
 // eventually disagree about one.
+//
+// ---- The other door: a repair nobody asked for -------------------------------
+// `ensureSignageSchema()` is *deliberate*. It runs at the top of an authenticated
+// page, before a transaction is open and before anybody is mid-write, because that
+// is where the call is written.
+//
+// `repairSchemaAfterFailure()` is the opposite: a query somewhere already failed
+// with "no such table", and the caller wants to know whether trying again is worth
+// it. It exists because the first request after a deploy may well be a Screen's
+// poll, and a sign that stays dark until an admin happens to sign in is worse than
+// one convergence run on the public path. But it is reached from a place nobody
+// chose, at a moment nobody chose, so three things have to be true first — and each
+// is a defect that was live before this gate existed:
+//
+//   1. **No transaction may be open.** DDL commits the surrounding transaction in
+//      MySQL and says nothing about having done so. `LayoutStore::publish()` deletes
+//      a Display's whole layout and re-inserts it inside one transaction, and its
+//      last two calls — `recordPublish()` and `claimLock()` — read the `displays`
+//      row through the same LEFT JOIN on `users` that can raise this error. A repair
+//      fired from there would commit the publish, then rethrow, then report
+//      "Publish failed. Nothing was saved." to somebody whose work had in fact been
+//      saved. With no undo anywhere in this app, that is the worst outcome it has.
+//      Refusing to repair costs a dark sign for 30 seconds; not refusing costs a lie
+//      about a write.
+//   2. **Only one repair at a time, installation-wide.** Six Screens poll on the
+//      same 30-second tick and all six fail together. Unguarded, all six read the
+//      catalogue, all six see the same column missing, and five of them lose the
+//      `ALTER` — which fails with "duplicate column name" on a `need` the catalogue
+//      said was `true`, which is exactly the shape that emails an admin. The alert
+//      built above would have announced its own success as a failure, on deploy day,
+//      six times. Two concurrent `ALTER`s on `canvas_elements` are also the metadata
+//      lock pile-up that gating the plan set out to avoid.
+//   3. **Not again for five minutes.** A repair that *cannot* succeed — no CREATE
+//      privilege, a tighten the data refuses — is otherwise retried every 30 seconds
+//      by every Screen, forever, on the one query that must never be slow. The sign
+//      is already dark; trying twelve times an hour instead of seven thousand loses
+//      nothing.
+//
+// The lock is an `flock` rather than a stamp or a directory, so it is released by the
+// operating system when the process ends. A repair interrupted by a timeout must not
+// leave a lock behind that stops the next request fixing the database.
 
 // This depends on ErrorPolicy, and only for reporting. Safe because ErrorPolicy
 // depends on nothing itself — no database, no session, no config — so requiring it
@@ -90,6 +132,20 @@
 // login/reset pages, never from a data-access path.
 
 require_once __DIR__ . '/error_policy.php';
+
+// How long a repair triggered by a *failed query* waits before trying again. Not a
+// limit on ensureSignageSchema(): an admin opening a page is entitled to converge
+// every time. This is the Screens' path, where nobody chose to run anything.
+if (!defined('SCHEMA_REPAIR_RETRY_SECONDS')) {
+    define('SCHEMA_REPAIR_RETRY_SECONDS', 300);
+}
+
+// The file whose lock means "a repair is running right now". Its name is visible
+// here because it appears in the state directory beside the log, and an admin who
+// finds it should be able to grep for it.
+if (!defined('SCHEMA_REPAIR_LOCK')) {
+    define('SCHEMA_REPAIR_LOCK', 'schema-repair.lock');
+}
 
 // The name tag of the Display that the pre-multi-display layout becomes.
 // Referenced by the Phase 2 cutover ("…/viewer.php?display=drive-thru").
@@ -628,12 +684,118 @@ function signageSchemaPlan(SchemaFacts $facts)
  * Converge the signage schema. Idempotent, and runs its statements at most once
  * per request. Never throws: a statement that cannot apply (already applied, or
  * blocked by data) leaves the database as it was.
+ *
+ * Call this from an authenticated page, before opening a transaction. A caller that
+ * has *already failed* a query wants `repairSchemaAfterFailure()` instead — it asks
+ * the questions this one is entitled to assume the answers to.
+ *
+ * Two requests arriving together get one convergence between them, not two. The
+ * loser does nothing and renders against the database as it stands, which is what it
+ * would have done anyway while the winner's `ALTER`s were still running; what it no
+ * longer does is race the winner for the same column and report losing as a failure.
  */
 function ensureSignageSchema(PDO $pdo)
 {
     if (!SchemaLatch::take()) { return; }
 
-    reportSchemaFailures(runSchemaPlan($pdo, signageSchemaPlan(readSchemaFacts($pdo))));
+    withSchemaRepairLock(function () use ($pdo) {
+        reportSchemaFailures(runSchemaPlan($pdo, signageSchemaPlan(readSchemaFacts($pdo))));
+        return true;
+    });
+}
+
+/**
+ * Converge because something already broke — see the header, "The other door".
+ *
+ * Returns true only if convergence actually ran. `$why` carries the reason it did
+ * not, for the self-test and for anybody reading this later wondering which of the
+ * three refusals they are looking at.
+ */
+function repairSchemaAfterFailure(PDO $pdo, &$why = null)
+{
+    $why = '';
+
+    // First, because it is the one refusal that protects data rather than load. DDL
+    // commits the open transaction in MySQL, silently, and the caller is about to be
+    // told its write failed.
+    if ($pdo->inTransaction()) {
+        $why = 'a transaction is open';
+        return false;
+    }
+
+    // Convergence already ran on this request and would return immediately, so
+    // saying no here is honest — and it leaves the retry window unspent for the
+    // Screens, which are the callers that actually need it. Without this an
+    // authenticated page, which always converges first, would burn the window on
+    // every failure and there would be nothing left when a Screen asked.
+    if (!SchemaLatch::pending()) {
+        $why = 'convergence already ran on this request';
+        return false;
+    }
+
+    if (!ErrorPolicy::firstInWindow('schema-repair', SCHEMA_REPAIR_RETRY_SECONDS)) {
+        $why = 'the last repair was less than ' . SCHEMA_REPAIR_RETRY_SECONDS . ' seconds ago';
+        return false;
+    }
+
+    ensureSignageSchema($pdo);
+    return true;
+}
+
+/**
+ * Is this database error "that table is not there"?
+ *
+ * Pure, and takes the two strings rather than the exception, so both shapes can be
+ * put to it directly. MySQL answers SQLSTATE 42S02 — "base table or view not found"
+ * — which is the one that matters live. SQLite answers a generic HY000 and says
+ * so only in the message, which is the one the self-test can produce: before this
+ * was widened, the recovery path could not be executed by the fixture at all, and
+ * so never had been.
+ *
+ * Deliberately narrow. A missing *column* is 42S22 and says "Unknown column"; a
+ * missing *database* is 42000. Neither is repaired by convergence and neither may
+ * trigger it.
+ */
+function schemaErrorSaysTableMissing($sqlstate, $message)
+{
+    if ((string)$sqlstate === '42S02') { return true; }
+    return stripos((string)$message, 'no such table') !== false;
+}
+
+/**
+ * Hold the "one repair at a time" lock for the duration of $work.
+ *
+ * Returns whatever $work returned, or false if the lock is held elsewhere. When
+ * there is nowhere to write a lock file the work runs unguarded: an install with no
+ * writable directory has no log and no alerts either — Settings → This Server says
+ * so in as many words — and it needs the repair more than the coordination.
+ *
+ * There is no catch around $work, and that is the point of using `flock` rather than
+ * a stamp file or a directory: the lock belongs to the open file, so PHP releases it
+ * when $handle falls out of scope — including when it falls out of scope because an
+ * exception is unwinding, and including when the process is killed mid-`ALTER`. A
+ * repair that dies must never leave behind a lock that stops the next request fixing
+ * the database. The self-test asserts that property rather than trusting it.
+ */
+function withSchemaRepairLock(callable $work)
+{
+    $path = ErrorPolicy::stateFile(SCHEMA_REPAIR_LOCK);
+    if ($path === '') { return $work(); }
+
+    $handle = @fopen($path, 'c');
+    if (!$handle) { return $work(); }
+
+    // Non-blocking. A page load must not wait behind somebody else's ALTER on a
+    // table this request may not even touch.
+    if (!@flock($handle, LOCK_EX | LOCK_NB)) {
+        @fclose($handle);
+        return false;
+    }
+
+    $out = $work();
+    @flock($handle, LOCK_UN);
+    @fclose($handle);
+    return $out;
 }
 
 /**
@@ -655,6 +817,12 @@ class SchemaLatch
         if (self::$done) { return false; }
         self::$done = true;
         return true;
+    }
+
+    /** True while convergence has not yet run on this request. */
+    public static function pending()
+    {
+        return !self::$done;
     }
 
     /** For the self-test. Nothing in the app clears this. */

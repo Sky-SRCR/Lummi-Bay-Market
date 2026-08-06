@@ -96,8 +96,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !csrfOk()) {
 
 // Schema convergence runs only on authenticated requests: the public get_layout
 // endpoint is polled every 30s by every Screen, so running DDL there would spam
-// the database continuously. A genuinely absent schema is still recovered — see
-// DisplayStore::healSchema().
+// the database continuously. A genuinely absent schema is still recovered from the
+// public path, but through the guarded door — repairSchemaAfterFailure(), reached
+// from DisplayStore::healSchema() only once a query has actually failed.
+//
+// Here, and not lower down, because this is the last point at which no transaction
+// is open. DDL commits an open transaction in MySQL without saying so, and the
+// publish endpoint below deletes a whole layout inside one.
 if ($action !== 'get_layout') {
     ensureSignageSchema($pdo);
 }

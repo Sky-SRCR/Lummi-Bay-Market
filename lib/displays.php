@@ -784,16 +784,22 @@ class DisplayStore
      * hits it every 30 seconds forever (BUILD-REFERENCE.md §2.7). But the very
      * first request after a deploy may well be that poll, and a sign that stays
      * dark until an admin happens to sign in is a worse outcome than one
-     * convergence run. So convergence is triggered by the *failure* — "table
-     * doesn't exist", SQLSTATE 42S02 — and not by the request. Once the table
-     * exists the poll never reaches this path again.
+     * convergence run. So convergence is triggered by the *failure* — "that table
+     * is not there" — and not by the request. Once the table exists the poll never
+     * reaches this path again.
+     *
+     * Whether it is *safe* to converge from here is not this file's question to
+     * answer: `repairSchemaAfterFailure()` owns it, because the answer is about DDL
+     * and transactions and how often the whole installation has already tried. All
+     * this decides is whether the error was the kind a repair could fix. A `false`
+     * from either half means the caller rethrows, which is the right outcome — the
+     * table really is missing, and saying so beats pretending otherwise.
      */
     private function healSchema(PDOException $e)
     {
         if ($this->healAttempted) { return false; }
-        if ($e->getCode() !== '42S02') { return false; }   // not "undefined table"
+        if (!schemaErrorSaysTableMissing($e->getCode(), $e->getMessage())) { return false; }
         $this->healAttempted = true;
-        ensureSignageSchema($this->pdo);
-        return true;
+        return repairSchemaAfterFailure($this->pdo);
     }
 }

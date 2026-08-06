@@ -85,6 +85,11 @@ and hands every pre-existing element to the drive-thru Display. It checks the
 database catalogue before altering anything, so once the structure is in place those
 requests issue no `ALTER TABLE` at all.
 
+The public poll gets one bounded exception: if a table is genuinely missing, the
+Screen's own failed read converges the schema once, so a sign comes up after a
+deploy without waiting for somebody to sign in. That repair never runs inside a
+transaction, never runs twice at once, and will not retry for five minutes.
+
 ### 3. First-run admin
 
 Visit `setup.php` once to create the first admin account. It **self-disables**

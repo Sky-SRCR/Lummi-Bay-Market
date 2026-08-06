@@ -12,7 +12,8 @@
 //
 // Runs no DDL — this page is polled every 30s by every Screen forever
 // (BUILD-REFERENCE §2 invariant 7). DisplayStore self-heals only if the schema is
-// genuinely absent.
+// genuinely absent, and then at most once every five minutes across the whole
+// installation, however many Screens are asking (see repairSchemaAfterFailure()).
 
 // Declared before the database is opened, because a database that will not open is
 // the failure this matters most for. A Screen has nobody in front of it: whatever

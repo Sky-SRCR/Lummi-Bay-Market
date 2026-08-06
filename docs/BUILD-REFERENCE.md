@@ -53,8 +53,8 @@ Design rules, applied to every module added by this build:
 
 | Module | Interface, in one line | Hides |
 |--------|------------------------|-------|
-| `schema.php` | `ensureSignageSchema(PDO): void`, plus the three pieces it is made of: `readSchemaFacts(PDO) → SchemaFacts`, `signageSchemaPlan(SchemaFacts) → array`, `runSchemaPlan(PDO, array) → array` | Every idempotent `ALTER`/`CREATE`, the `displays` and `display_permissions` tables, `display_id` + backfill + index + FK, the drive-thru seed, the Brand Standards row seed, the "run at most once per request" latch — and **whether any of it needs to run at all**. The one place in the repo that reads `information_schema`; `ServerReport` asks this rather than writing its own catalogue query. `signageSchemaPlan()` is pure (facts in, ordered work out), which is the only reason this file has any automated coverage: its statements are MySQL-only and the fixture is SQLite. `runSchemaPlan()` returns the entries that failed, each with the database's own reason, and `reportSchemaFailures()` tells an admin — but only about a statement the catalogue said was missing, never about one included as a guess (invariant 20). `SchemaLatch` is the "once per request" latch, as something a test can clear. |
-| `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. |
+| `schema.php` | `ensureSignageSchema(PDO): void`, plus the three pieces it is made of: `readSchemaFacts(PDO) → SchemaFacts`, `signageSchemaPlan(SchemaFacts) → array`, `runSchemaPlan(PDO, array) → array` | Every idempotent `ALTER`/`CREATE`, the `displays` and `display_permissions` tables, `display_id` + backfill + index + FK, the drive-thru seed, the Brand Standards row seed, the "run at most once per request" latch — and **whether any of it needs to run at all**. The one place in the repo that reads `information_schema`; `ServerReport` asks this rather than writing its own catalogue query. `signageSchemaPlan()` is pure (facts in, ordered work out), which is the only reason this file has any automated coverage: its statements are MySQL-only and the fixture is SQLite. `runSchemaPlan()` returns the entries that failed, each with the database's own reason, and `reportSchemaFailures()` tells an admin — but only about a statement the catalogue said was missing, never about one included as a guess (invariant 20). `SchemaLatch` is the "once per request" latch, as something a test can clear. And the second door: `repairSchemaAfterFailure(PDO, &$why) → bool` is how a caller that has *already failed a query* converges, with the three refusals of invariant 21 in front of it; `schemaErrorSaysTableMissing($sqlstate, $message)` is the only thing outside this file that needs saying about a database error, and `withSchemaRepairLock()` makes convergence installation-wide single-file. |
+| `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. It decides only whether the error was the kind a repair could fix; whether repairing is *safe right now* belongs to `schema.php` (invariant 21), because that question is about DDL and transactions rather than about the `displays` table. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the whole access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. |
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, `assetUsage()` — which Displays depend on a library entry — and the sweep of the library rows a publish strands, scoped to the ids that Display's own previous layout held. |
@@ -64,7 +64,7 @@ Design rules, applied to every module added by this build:
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `redeem` / `discard` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. |
 | `accounts.php` | `AccountStore`, `AccountAdmin` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. Not a gatekeeper for all of `users`: creating, role changes and password resets are still written by `admin_panel.php`, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means. |
 | `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
-| `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. Depends on nothing: no database, no session, no config. |
+| `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. `firstInWindow()` and `stateFile()` are public for the same reason `report()` needs them: a repeated *attempt to fix* something needs the same restraint as a repeated report of it, and this module is where the state directory is decided. Depends on nothing: no database, no session, no config. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
@@ -159,7 +159,9 @@ through the app again:
    strip carousel/table/marquee JSON or media paths.
 7. **The public path runs no DDL, and opens no session.** `get_layout` is polled
    every 30s by every Screen forever. Schema convergence happens on authenticated
-   requests, plus one self-healing retry if the schema is genuinely absent (§3).
+   requests, plus one self-healing retry if the schema is genuinely absent — bounded
+   by invariant 21, which is what stops "one retry per store per request" meaning
+   two a minute per Screen for as long as the repair keeps failing.
    The session half is newer and was quietly false for a while: `api.php` includes
    `auth.php`, which opens a session at include time, so the poll was minting one
    session file per request on any Screen that discards cookies — which a framed
@@ -273,6 +275,23 @@ through the app again:
     tuning problem: the two seeds carry `true` on any host because their need comes
     from a row count rather than the catalogue, and a benign seed race is turned back
     into a success before it can be mistaken for one.
+21. **No DDL inside a transaction, and one repair at a time.** MySQL commits the
+    surrounding transaction when DDL runs and says nothing about having done so, and
+    this app has no undo. `ensureSignageSchema()` is therefore called only where the
+    call is written — the top of an authenticated entry point, before any transaction
+    exists. Convergence reached any other way goes through
+    `repairSchemaAfterFailure()`, which refuses while `inTransaction()`, refuses if
+    convergence already ran on this request, and refuses again for five minutes after
+    an attempt. The one caller is `DisplayStore::healSchema()`, on the public path,
+    where the trigger is a query that already failed with "no such table" — and
+    where the alternative is a sign that stays dark until an admin happens to sign
+    in. `ensureSignageSchema()` additionally holds an installation-wide `flock` for
+    the duration, so six Screens failing on the same 30-second tick produce one
+    convergence rather than six racing for the same `ALTER` — five of which would
+    lose it, fail with "duplicate column name" on a `need` the catalogue said was
+    `true`, and satisfy invariant 20's test for something worth emailing about.
+    Anything new that converges, or that calls a `DisplayStore` read from inside a
+    transaction, is covered by this or it is a way back to the failure mode.
 
 ---
 
@@ -684,6 +703,19 @@ Known and not fixed, so nobody assumes otherwise:
   are still MySQL-only and still only reachable by `tools/rehearse_phase1.php`
   against a copy of live data, which is the tool that now also asserts the plan is
   empty once that database has converged.
+- ~~**The public Viewer can repair the database, unbounded**~~ **Fixed** — see §4q.
+  It still can, deliberately, because the alternative is a sign that stays dark until
+  somebody signs in; what it can no longer do is retry every 30 seconds per Screen,
+  or race five other Screens for the same `ALTER`.
+- ~~**The self-repair path has never been executed by any test**~~ **Fixed** — see
+  §4q. Its trigger was a SQLSTATE only MySQL raises, so the SQLite fixture could not
+  produce the error the whole sequence starts from. The detector is now a pure
+  function that recognises both engines' shapes, and whether a repair ran is
+  observable through the retry window.
+- ~~**A schema fix can land in the middle of a publish**~~ **Fixed** — see §4q and
+  invariant 21. It was already unreachable, but only because a `static` in another
+  file happened to be set — a protection invisible from the call site and worth
+  nothing to the next transaction somebody opens.
 
 ### 4h. The tag addresses a Display; it does not identify one
 
@@ -1306,6 +1338,107 @@ Left standing:
   clicking, which bounds it. Worth revisiting if a broken temp directory ever turns
   out to produce a run of them.
 
+### 4q. The repair nobody asked for
+
+`ensureSignageSchema()` is *deliberate*: it is called at the top of an authenticated
+entry point, where nothing is open and nobody is mid-write, because that is where the
+call is written. `DisplayStore::healSchema()` is the other door — a query already
+failed with "no such table", and it converges from wherever that happened, including
+the public poll. That door exists for a good reason: the first request after a deploy
+may well be a Screen's poll, and a sign that stays dark until an admin happens to
+sign in is worse than one convergence run on the public path.
+
+It had no rules. Three were needed, and each is a live defect rather than tidiness.
+
+**A repair must not run inside a transaction.** MySQL commits the surrounding
+transaction when DDL runs, and says nothing about it. `LayoutStore::publish()` deletes
+a Display's whole layout and re-inserts it inside one transaction, and its last two
+calls — `recordPublish()` and `claimLock()` — read the `displays` row through the same
+`LEFT JOIN users` that raises this error. A repair fired from there would have
+committed the publish, rethrown, been caught, rolled back nothing, and answered
+*"Publish failed. Nothing was saved."* to somebody whose work had in fact been saved.
+They would re-apply it, find the stamp had moved (ADR-0006), be told someone else had
+published, and reload. With no undo anywhere in this app, that is the worst outcome it
+has. Refusing costs a dark sign for 30 more seconds.
+
+What made this one interesting to establish is that it was already unreachable, and
+for the wrong reason. On an authenticated path `SchemaLatch` has already been taken,
+so `ensureSignageSchema()` returns before running anything — the protection was a
+`static $done` in another file, invisible from the call site, and worth nothing to the
+next transaction somebody opens. `repairSchemaAfterFailure()` says no because a
+transaction is open, which is a reason that stays true.
+
+**One repair at a time, installation-wide.** Six Screens poll on the same 30-second
+tick and fail together. Unguarded, all six read the catalogue, all six see the same
+column missing, and five lose the `ALTER` — failing with "duplicate column name" on a
+`need` the catalogue said was `true`, which is precisely invariant 20's test for
+something worth emailing an admin about. The alert built in §4p would have announced
+its own success as a failure, six times, on deploy day. Two concurrent `ALTER`s on
+`canvas_elements` are also the metadata-lock pile-up that §4o set out to end. The lock
+is an `flock` rather than a stamp or a lock directory, because the operating system
+releases it when the process ends: a repair killed mid-`ALTER` must not leave behind a
+file that stops the next request fixing the database. It is non-blocking — a page load
+must not wait behind somebody else's `ALTER` — so the loser skips convergence and
+renders against the database as it stands, which is what it would have done anyway
+while the winner's statements were still running.
+
+**Not again for five minutes.** A repair that *cannot* succeed — no `CREATE`
+privilege, a tighten the data refuses — was otherwise retried every 30 seconds by
+every Screen, forever, on the one query that must never be slow. The sign is already
+dark; trying twelve times an hour rather than seven thousand loses nothing. The window
+is spent only by an attempt that actually ran, and an authenticated request declines
+before spending it, so the budget belongs to the callers that need it.
+
+**And the path had never been executed.** Not once, in any test — because the trigger
+was SQLSTATE `42S02`, which MySQL raises and SQLite does not. The fixture could not
+produce the error that starts the whole sequence. `schemaErrorSaysTableMissing()` is
+now a pure function of the two strings and recognises both shapes: MySQL's `42S02` and
+SQLite's generic `HY000` with *no such table* in the message. That is a small widening
+made for the test, and it is honest rather than hidden — a wrong answer costs one
+throttled convergence. It stays narrow deliberately: a missing *column* is `42S22`, a
+missing *database* is `42000`, and convergence repairs neither.
+
+Whether the repair ran is observable in the tests through the retry window: an attempt
+spends it, a refusal leaves it. That is what lets a check assert *"the store tried"*
+and *"inside a transaction the store did not try"* without reaching inside either
+module.
+
+**Thirty-nine checks**, and the two that matter most are the pair just described,
+because before them the recovery path was covered by nothing at all. Thirteen
+mutations, all killed (kill counts 4, 2, 4, 5, 4, 3, 1, 4, 1, 3, 1, 1, 4), plus §4o's
+and §4p's re-run against the rewritten file and still killed (12, 2, 29, 5).
+
+`tools/rehearse_phase1.php` carries the one claim SQLite cannot settle: it opens a
+transaction on real MySQL, inserts a row, runs an `ALTER` inside it, rolls back, and
+asserts the row *survived*. That is the hazard, demonstrated rather than asserted, on
+a throwaway table it drops again. If that check ever starts passing the other way,
+MySQL has changed and this whole section can be revisited.
+
+Left standing:
+
+- **A fourteenth mutation survived, and the code it broke is now gone.** Deleting the
+  explicit unlock from a `catch` around the repair failed nothing, because PHP
+  releases the `flock` when the handle falls out of scope as the exception unwinds.
+  The branch was unreachable by construction, so it was removed rather than kept and
+  excused — which is also the argument for `flock` over a stamp file, since the same
+  property is what stops a killed request leaving the database unfixable. The two
+  checks asserting it (a repair that throws still throws; the next one can still take
+  the lock) stayed.
+- **An install with nowhere writable has neither the lock nor the window.** Both are
+  files, and `stateFile()` answers `''` when there is no writable directory, in which
+  case the repair runs unguarded. That is the deliberate choice: such an install has
+  no log and no alerts either, and it needs the repair more than the coordination.
+  Settings → This Server already says *"Nowhere to write"* in as many words, which is
+  the place that problem gets fixed.
+- **The lock is per-installation, not per-database.** Two copies of this app sharing
+  one MySQL database but not one filesystem would not see each other's lock. Nothing
+  in HANDOFF.md describes such a deployment, and the ambition here is a bound, not
+  mutual exclusion.
+- **`repairSchemaAfterFailure()` has exactly one caller.** If a second module ever
+  needs to converge off a failure, it goes through this function; invariant 21 is the
+  rule, and `grep -rn "ensureSignageSchema" --include=*.php .` in §5 is what finds a
+  new call that skipped it.
+
 ---
 
 ## 5. Verification
@@ -1344,6 +1477,20 @@ grep -rn "ErrorPolicy::report" --include=*.php .  # api.php (an upload the serve
                                               # it cannot fire on a condition the app expected,
                                               # and give it a window if it can repeat on its
                                               # own — invariant 20
+grep -rn "ensureSignageSchema(\$pdo)" --include=*.php .  # four entry points — admin_panel.php,
+                                              # builder.php, crud.php, api.php — each within the
+                                              # first ~25 lines, before any transaction exists; plus
+                                              # tools/, one comment, and the call inside
+                                              # repairSchemaAfterFailure(). That *position* is the
+                                              # invariant, not the call: DDL commits an open
+                                              # transaction in MySQL silently. A call deeper into a
+                                              # file wants the guarded door instead — invariant 21
+grep -rn "repairSchemaAfterFailure" --include=*.php .  # lib/schema.php defines it and lib/displays.php
+                                              # is the one place that *calls* it; the rest are the
+                                              # self-test and comments in api.php/viewer.php pointing
+                                              # here. A second caller is fine, a second *door* is not:
+                                              # anything converging off a failure asks this, or it has
+                                              # none of the three refusals
 grep -rn "DELETE FROM users" --include=*.php . # nothing outside tools/ (invariant 14). Accounts
                                               # are closed, never deleted, so a freed id can
                                               # never be handed to somebody new

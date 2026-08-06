@@ -28,6 +28,12 @@ edited in place and every change reaches the sign by hand.
   the table every sign's layout lives in. Add the gate and a check that the plan
   asks for it. Its gate is also what decides whether a failure emails an admin, so
   a gate that cannot tell must answer `null`, never `false`.
+- **`ensureSignageSchema()` is called at the top of an entry point, never deeper.**
+  DDL commits an open transaction in MySQL and says nothing about it, so converging
+  from inside `LayoutStore::publish()` would commit half a publish and then report it
+  failed. Anything that needs to converge because a query *already failed* calls
+  `repairSchemaAfterFailure()` — the one guarded door, which refuses inside a
+  transaction, refuses twice on one request, and refuses again for five minutes.
 - **PHP 7.1-compatible syntax** — the live server's version is unverified.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.

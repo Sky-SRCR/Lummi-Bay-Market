@@ -17,7 +17,11 @@
 --     the newer canvas_elements columns, the widened ENUMs, `displays`,
 --     `display_permissions`, the assets pool marker, and the display_id backfill
 --     that hands every pre-existing element to the drive-thru Display. Never run
---     on the public get_layout poll. It reads information_schema first and sends
+--     on the public get_layout poll, with one bounded exception: a table that is
+--     genuinely absent is repaired from wherever the failure happened, through
+--     repairSchemaAfterFailure(), which will not do it inside a transaction, will
+--     not do it twice at once, and will not retry for five minutes (§4q). It
+--     reads information_schema first and sends
 --     only the statements that are actually missing, so a database matching this
 --     file is not altered at all — see docs/BUILD-REFERENCE.md §4o for why an
 --     ALTER that "does nothing" is not free. A statement it said was needed and

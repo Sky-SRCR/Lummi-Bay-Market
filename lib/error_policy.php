@@ -320,6 +320,22 @@ class ErrorPolicy
         return self::$dir;
     }
 
+    /**
+     * A path inside the state directory for something other than the log — a lock,
+     * a stamp — that has to be remembered across requests.
+     *
+     * Returns '' when there is nowhere writable, and every caller must read that as
+     * "carry on without coordinating", never as "do not do the work". The thing
+     * these files coordinate is a schema repair, and an install with no writable
+     * directory needs that repair more than it needs the coordination.
+     */
+    public static function stateFile($name)
+    {
+        $dir  = self::stateDir();
+        $name = preg_replace('/[^A-Za-z0-9._-]/', '', (string)$name);
+        return ($dir === '' || $name === '') ? '' : $dir . '/' . $name;
+    }
+
     public static function logFile()
     {
         if (self::$logFile !== '') { return self::$logFile; }
@@ -455,8 +471,13 @@ class ErrorPolicy
      * request through behind the first. A stamp that cannot be written means the
      * report is dropped, matching `AlertMailer`: not being able to remember having
      * said something is the one state in which saying it again is unbounded.
+     *
+     * Public because a repeated *attempt to fix* something needs the same restraint
+     * as a repeated report of it, and this is where the state directory is decided.
+     * `lib/schema.php` uses it to stop every Screen retrying a schema repair that
+     * cannot succeed on every 30-second poll.
      */
-    private static function firstInWindow($key, $seconds)
+    public static function firstInWindow($key, $seconds)
     {
         try {
             $dir = self::stateDir();

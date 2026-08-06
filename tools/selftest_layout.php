@@ -2164,6 +2164,213 @@ checkSame(true, runSchemaStep(newTestDb(), 'no_such_step', $err),
 checkSame('', $err, 'and leaves no reason');
 
 // ─────────────────────────────────────────────────────────────
+section('A repair nobody asked for is guarded three ways');
+
+// ensureSignageSchema() is called deliberately, at the top of a page, where nothing
+// is open. DisplayStore's recovery is the other door: a query already failed with
+// "no such table", and it converges from wherever that happened — including the
+// public poll, which is the whole reason it exists. Everything below is a rule that
+// door needs and did not have, and none of it had ever been executed: the trigger
+// was SQLSTATE 42S02, which MySQL raises and SQLite does not, so the fixture could
+// not reach the path at all.
+
+// ---- Is this the error a repair could fix? ------------------------------------
+checkSame(true, schemaErrorSaysTableMissing('42S02',
+    "Base table or view not found: 1146 Table 'lbm.displays' doesn't exist"),
+    'MySQL\'s missing-table SQLSTATE is recognised');
+checkSame(true, schemaErrorSaysTableMissing('HY000', 'no such table: displays'),
+    'and SQLite\'s, which says so only in the message');
+checkSame(true, schemaErrorSaysTableMissing('HY000', 'NO SUCH TABLE: displays'),
+    'whatever case it uses');
+checkSame(false, schemaErrorSaysTableMissing('42S22', "Unknown column 'display_id' in 'field list'"),
+    'a missing column is not a missing table');
+checkSame(false, schemaErrorSaysTableMissing('42000', "Unknown database 'lbm'"),
+    'nor is a missing database — convergence cannot make one');
+checkSame(false, schemaErrorSaysTableMissing('HY000', 'database is locked'),
+    'nor a lock, which retrying DDL would only make worse');
+
+// The one that matters: a real exception from the fixture, put to the real question.
+$probe = newTestDb();
+$caught = null;
+try { $probe->query("SELECT * FROM a_table_that_is_not_there"); }
+catch (PDOException $e) { $caught = $e; }
+check($caught !== null, 'the fixture can produce a missing-table failure');
+checkSame(true, schemaErrorSaysTableMissing($caught->getCode(), $caught->getMessage()),
+          'and the detector recognises the real thing, not just the strings above');
+
+// ---- 1. Never while a transaction is open -------------------------------------
+// DDL commits the surrounding transaction in MySQL and says nothing about it.
+// LayoutStore::publish() deletes a Display's whole layout and re-inserts it inside
+// one, and its last two calls read the `displays` row through the LEFT JOIN on
+// `users` that can raise exactly this error. A repair fired from there would commit
+// the publish, rethrow, and then report "Publish failed. Nothing was saved."
+//
+// Nowhere to write, so the retry window and the lock are both out of the way and
+// the only thing under test is the transaction.
+ErrorPolicy::useLogFile('');
+
+$txPdo = newTestDb();
+$txPdo->exec("DELETE FROM canvas_elements");
+$txPdo->exec("DELETE FROM displays");
+$txPdo->beginTransaction();
+SchemaLatch::forget();
+$why = 'untouched';
+checkSame(false, repairSchemaAfterFailure($txPdo, $why), 'a repair inside a transaction is refused');
+checkMentions($why, 'transaction', 'and says that is why');
+checkSame(0, legacyDisplayId($txPdo), 'and nothing in the plan ran');
+$txPdo->rollBack();
+
+// Outside one, the same call on the same database does the work.
+SchemaLatch::forget();
+$why = 'untouched';
+checkSame(true, repairSchemaAfterFailure($txPdo, $why), 'outside a transaction it goes ahead');
+checkSame('', $why, 'with no reason to give');
+check(legacyDisplayId($txPdo) > 0, 'and the drive-thru Display is back');
+
+// ---- 2. Not twice on one request ----------------------------------------------
+// An authenticated page always converges at the top, so a failure later in that
+// request has nothing left to gain — and saying so leaves the retry window unspent
+// for the Screens, which are the callers that actually need it.
+$why = 'untouched';
+checkSame(false, repairSchemaAfterFailure($txPdo, $why),
+          'a second repair on the same request is refused');
+checkMentions($why, 'already ran', 'and names the convergence that already happened');
+SchemaLatch::forget();
+
+// ---- 3. Not again for five minutes --------------------------------------------
+// A repair that cannot succeed is otherwise retried every 30 seconds by every
+// Screen, forever, on the one query that must never be slow.
+$repairDir = newTestStateDir();
+ErrorPolicy::useLogFile($repairDir . '/lbm-error.log');
+
+$throttled = newTestDb();
+$throttled->exec("DELETE FROM canvas_elements");
+$throttled->exec("DELETE FROM displays");
+SchemaLatch::forget();
+checkSame(true, repairSchemaAfterFailure($throttled), 'the first repair runs');
+check(legacyDisplayId($throttled) > 0, 'and fixes what it could');
+
+$throttled->exec("DELETE FROM canvas_elements");
+$throttled->exec("DELETE FROM displays");
+SchemaLatch::forget();
+$why = 'untouched';
+checkSame(false, repairSchemaAfterFailure($throttled, $why), 'the next one inside the window is not');
+checkMentions($why, 'seconds ago', 'and says how recently the last one was');
+checkSame(0, legacyDisplayId($throttled), 'and it really did not run');
+checkSame(300, SCHEMA_REPAIR_RETRY_SECONDS, 'the window is five minutes');
+
+// ---- One repair at a time, installation-wide ----------------------------------
+// Six Screens fail on the same 30-second tick. Unguarded, all six read the
+// catalogue, all six see the same column missing, and five lose the ALTER — which
+// fails with "duplicate column name" on a need the catalogue said was true, which is
+// the one shape that emails an admin. The alert would have announced its own success
+// as a failure, six times, on deploy day.
+ErrorPolicy::useLogFile('');
+checkSame('ran', withSchemaRepairLock(function () { return 'ran'; }),
+          'with nowhere to write a lock, the work still runs');
+
+$lockDir = newTestStateDir();
+ErrorPolicy::useLogFile($lockDir . '/lbm-error.log');
+$inner = 'not reached';
+checkSame(false, withSchemaRepairLock(function () use (&$inner) {
+    // A second holder, which is what a second request is. flock() is held per open
+    // file, so two handles in one process contend exactly as two processes do.
+    $inner = withSchemaRepairLock(function () { return 'ran twice'; });
+    return $inner;
+}), 'a second repair while one is running does nothing');
+checkSame(false, $inner, 'the inner one is the one that is turned away');
+check(file_exists($lockDir . '/' . SCHEMA_REPAIR_LOCK), 'and the lock is a file an admin can find');
+
+// The lock is released when the work throws, not only when it returns — because it
+// belongs to the open file rather than to a stamp somebody has to remember to
+// delete. A repair interrupted by a timeout must not leave the database unfixable.
+$threw = false;
+try { withSchemaRepairLock(function () { throw new RuntimeException('interrupted'); }); }
+catch (RuntimeException $e) { $threw = true; }
+checkSame(true, $threw, 'a repair that throws still throws');
+checkSame('after', withSchemaRepairLock(function () { return 'after'; }),
+          'and the next one can still take the lock');
+
+// Through the entry point: a held lock means convergence does not run at all.
+$heldPdo = newTestDb();
+$heldPdo->exec("DELETE FROM canvas_elements");
+$heldPdo->exec("DELETE FROM displays");
+$heldHandle = fopen($lockDir . '/' . SCHEMA_REPAIR_LOCK, 'c');
+flock($heldHandle, LOCK_EX | LOCK_NB);
+SchemaLatch::forget();
+ensureSignageSchema($heldPdo);
+checkSame(0, legacyDisplayId($heldPdo), 'the entry point skips convergence while another holds the lock');
+flock($heldHandle, LOCK_UN);
+fclose($heldHandle);
+SchemaLatch::forget();
+ensureSignageSchema($heldPdo);
+check(legacyDisplayId($heldPdo) > 0, 'and converges once the lock is free');
+
+// ---- The recovery itself, through DisplayStore --------------------------------
+// The path that had never been executed. `displays` is genuinely gone, a read fails,
+// and the store decides whether to try fixing it. Whether it *ran* is observable
+// through the retry window: an attempt spends it, a refusal leaves it.
+$healDir = newTestStateDir();
+ErrorPolicy::useLogFile($healDir . '/lbm-error.log');
+$healPdo = newTestDb();
+$healPdo->exec("DROP TABLE display_permissions");
+$healPdo->exec("DROP TABLE canvas_elements");
+$healPdo->exec("DROP TABLE displays");
+$healStore = new DisplayStore($healPdo);
+SchemaLatch::forget();
+$healThrew = false;
+try { $healStore->forTag('drive-thru'); } catch (PDOException $e) { $healThrew = true; }
+checkSame(true, $healThrew, 'a table this fixture cannot recreate still ends in the error');
+checkSame(false, ErrorPolicy::firstInWindow('schema-repair', SCHEMA_REPAIR_RETRY_SECONDS),
+          'but the store did attempt the repair — the window has been spent');
+
+// The same store again: once per request means the second failure does not re-enter
+// the repair, whatever the window says.
+$sameAgain = newTestStateDir();
+ErrorPolicy::useLogFile($sameAgain . '/lbm-error.log');
+SchemaLatch::forget();
+try { $healStore->forTag('lobby'); } catch (PDOException $e) { }
+checkSame(true, ErrorPolicy::firstInWindow('schema-repair', SCHEMA_REPAIR_RETRY_SECONDS),
+          'a second failure on the same store does not attempt it again');
+
+// And the whole point of #12, at the level it would actually happen: the same
+// missing table, the same store, inside a transaction. No repair is attempted, so no
+// DDL runs, so nothing commits a half-finished publish.
+$txHealDir = newTestStateDir();
+ErrorPolicy::useLogFile($txHealDir . '/lbm-error.log');
+$txHeal = newTestDb();
+$txHeal->exec("DROP TABLE display_permissions");
+$txHeal->exec("DROP TABLE canvas_elements");
+$txHeal->exec("DROP TABLE displays");
+$txHealStore = new DisplayStore($txHeal);
+$txHeal->beginTransaction();
+SchemaLatch::forget();
+$txHealThrew = false;
+try { $txHealStore->forTag('drive-thru'); } catch (PDOException $e) { $txHealThrew = true; }
+checkSame(true, $txHealThrew, 'inside a transaction the failure is reported, not repaired');
+checkSame(true, ErrorPolicy::firstInWindow('schema-repair', SCHEMA_REPAIR_RETRY_SECONDS),
+          'and no repair was attempted at all');
+checkSame(true, $txHeal->inTransaction(), 'the transaction is still the caller\'s to roll back');
+$txHeal->rollBack();
+
+// A read that works is not this path's business, and neither is a failure of any
+// other kind — the tables are all there, so nothing may reach the repair.
+$otherDir = newTestStateDir();
+ErrorPolicy::useLogFile($otherDir . '/lbm-error.log');
+$otherPdo   = newTestDb();
+$otherStore = new DisplayStore($otherPdo);
+makeTestDisplay($otherPdo, 'lobby', 'Lobby');
+SchemaLatch::forget();
+check($otherStore->forTag('lobby') !== null, 'a healthy read still returns its Display');
+checkSame(null, $otherStore->forTag('never-created'), 'and a Display that is not there is null, not an error');
+checkSame(true, ErrorPolicy::firstInWindow('schema-repair', SCHEMA_REPAIR_RETRY_SECONDS),
+          'neither of which goes near the repair path');
+
+// Put the policy back where the rest of the suite expects it.
+ErrorPolicy::useLogFile('');
+SchemaLatch::forget();
+
+// ─────────────────────────────────────────────────────────────
 section('Who counts as an admin worth alerting');
 
 $mailPdo = newTestDb();
@@ -2262,4 +2469,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(618);
+reportChecks(657);

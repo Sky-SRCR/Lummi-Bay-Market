@@ -4,8 +4,11 @@
 // ============================================================
 // The self-test proves the logic on SQLite. This proves the parts only MySQL can
 // answer: that the idempotent DDL applies to the real table as it stands on the
-// server, that the backfill leaves no unscoped row, and that publishing to one
-// Display leaves the others alone on the actual engine.
+// server, that the backfill leaves no unscoped row, that publishing to one Display
+// leaves the others alone on the actual engine — and that DDL really does commit an
+// open transaction, which is the premise the whole of invariant 21 rests on and
+// which SQLite's transactional DDL cannot demonstrate. It uses a throwaway table for
+// that one and drops it again.
 //
 // Named for Phase 1 because that is the migration with the risk in it; it has
 // grown to check every table this build adds, grants included. The name stays so
@@ -206,6 +209,39 @@ foreach ($leftDdl as $why) { echo "  still wanted: $why\n"; }
 // Two steps have to remain: no catalogue can answer "are there any rows".
 report($steps === ['seed_block_styles', 'seed_legacy_display'],
     'and only the two row counts remain (' . implode(', ', $steps) . ')');
+
+// ---- The premise invariant 21 rests on --------------------------------------
+
+heading('DDL really does commit an open transaction (MySQL only)');
+
+// The self-test cannot show this: SQLite has transactional DDL, so a CREATE inside
+// a transaction rolls back with everything else. MySQL commits, silently, which is
+// the entire reason repairSchemaAfterFailure() refuses while a transaction is open —
+// a schema repair fired from inside LayoutStore::publish() would commit half a
+// publish and then report that it had failed. If this check ever stops failing to
+// roll back, MySQL has changed and the invariant can be revisited; until then it is
+// the thing being defended against, demonstrated rather than assumed.
+$scratch = 'lbm_rehearsal_ddl_' . substr(bin2hex(random_bytes(3)), 0, 6);
+$pdo->exec("CREATE TABLE $scratch (id INT(11) NOT NULL AUTO_INCREMENT, PRIMARY KEY (id))
+            ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+$pdo->beginTransaction();
+$pdo->exec("INSERT INTO $scratch (id) VALUES (1)");
+$pdo->exec("ALTER TABLE $scratch ADD COLUMN note VARCHAR(8) NULL");   // the implicit commit
+try { $pdo->rollBack(); } catch (Throwable $e) { }
+$survived = intval($pdo->query("SELECT COUNT(*) FROM $scratch")->fetchColumn());
+report($survived === 1,
+    'a row a rolled-back transaction inserted survived the ALTER inside it '
+    . "($survived row(s) — 1 means the DDL committed it, which is the hazard)");
+$pdo->exec("DROP TABLE $scratch");
+
+// And the refusal itself, on the real engine.
+$pdo->beginTransaction();
+SchemaLatch::forget();
+$why = '';
+report(repairSchemaAfterFailure($pdo, $why) === false && strpos($why, 'transaction') !== false,
+    'a repair asked for inside a transaction is refused (' . $why . ')');
+$pdo->rollBack();
+SchemaLatch::forget();
 
 // ---- Scoping on the real engine --------------------------------------------
 

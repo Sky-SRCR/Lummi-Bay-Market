@@ -63,7 +63,7 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **618 checks**. Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **657 checks**. Run before pushing |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **16 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end, **37 checks** |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data |
@@ -115,7 +115,13 @@ check is `SELECT COUNT(*) FROM canvas_elements WHERE display_id IS NULL` — it 
 be 0.
 
 The public `get_layout` poll deliberately runs **no** DDL; every Screen hits it
-every 30 seconds forever.
+every 30 seconds forever. It has one exception, and it is bounded: if a table is
+*genuinely absent* — a first-ever request after a deploy, which may well be a
+Screen's poll rather than an admin signing in — the failed read triggers one
+convergence, so the sign comes up on its own rather than staying dark until
+somebody happens to log in. That repair refuses to run inside a transaction, runs
+one-at-a-time across the whole installation, and will not try again for five
+minutes however many Screens are asking. See BUILD-REFERENCE §4q.
 
 `canvas_settings` is retired but deliberately left on the server as a rollback
 artefact. Nothing reads it except the one-time seed that carries its background
@@ -193,6 +199,20 @@ anything, they hold every Display by role.
   `unsigned` on the live table while `displays.last_published_by` is signed — and
   the data is fine. One email per hour per set of failures, and only on a host whose
   catalogue can be read, so this cannot arrive because of a hosting quirk.
+- **A file called `schema-repair.lock` appears beside the error log.** Expected, and
+  it should be zero bytes. It is how two requests arriving at the same moment produce
+  one schema convergence instead of two racing for the same `ALTER` — which on deploy
+  day would have emailed the alert above about its own success. It is an `flock`, so
+  nothing is left holding it if a request dies; deleting it while the site is idle is
+  harmless, and there is no reason to.
+- **A sign can now fix the database on its own, once.** If a table is genuinely
+  missing on the first request after a deploy, the Screen's own poll converges the
+  schema rather than showing the notice until somebody signs in. It will not retry
+  for five minutes, however many Screens are pointed at the app, so a repair that
+  *cannot* succeed costs about twelve attempts an hour rather than seven thousand.
+  The one place it will never run is inside a publish: DDL commits an open
+  transaction in MySQL, and committing half a publish and then reporting it failed is
+  the worst thing this app could do to somebody's work.
 
 ## 6. The multi-display build (this branch)
 
@@ -229,7 +249,7 @@ staleness check, no version history), 0007 (one editor per Display).
   URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
   account, two browsers, and one unavoidable 15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 618 self-test checks against SQLite, 53 node checks over `builder.php`'s
+  `php -l`, 657 self-test checks against SQLite, 53 node checks over `builder.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare
