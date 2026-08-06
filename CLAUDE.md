@@ -17,8 +17,9 @@ edited in place and every change reaches the sign by hand.
 ## Conventions
 
 - **Data access lives in `lib/`.** Page scripts are thin adapters. Nothing
-  outside `lib/layout_store.php` may write SQL against `canvas_elements`, and
-  nothing outside `lib/displays.php` may write SQL against `displays`.
+  outside `lib/layout_store.php` may write SQL against `canvas_elements`, nothing
+  outside `lib/displays.php` against `displays`, and nothing outside
+  `lib/assets.php` against `assets`.
 - **Deep modules**: small interface, substantial implementation. A new query
   means a new method on the module, not a `$pdo` handed to a caller.
 - **PHP 7.1-compatible syntax** — the live server's version is unverified.
@@ -30,10 +31,17 @@ edited in place and every change reaches the sign by hand.
 ```
 php -l <every touched .php>
 php tools/selftest_layout.php
+node tools/selftest_builder_readonly.js    # if builder.php was touched
+node tools/selftest_builder_uploads.js     # if builder.php was touched
 ```
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3060 lines of it —
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it —
 which is why the standing gate is not enough on its own. Extract the `<script>`
 block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
 sign rather than a stack trace anybody will read.
+
+The two node suites go further and *run* that JavaScript, under opposite premises
+— a page that may not edit, and an admin uploading a file — because the defects
+they exist for are invisible to a parse: a lookup for a control the edit lock took
+away, and a `fetch` chain with no `.catch()`.

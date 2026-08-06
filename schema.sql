@@ -63,13 +63,19 @@ CREATE TABLE IF NOT EXISTS users (
 -- assets — reusable content library (text snippets + uploaded media).
 -- `content` holds either the text or an `uploads/…` relative path.
 -- ─────────────────────────────────────────────────────────────
+-- `auto_pooled` marks a row a publish created by copying a text block's content
+-- out of the canvas, rather than one a person typed or uploaded. Only pooled rows
+-- are ever swept when nothing points at them: an unused row somebody made on
+-- purpose is their next job, not junk. Editing a row clears the marker — naming
+-- it is how an admin adopts it. See lib/assets.php.
 CREATE TABLE IF NOT EXISTS assets (
-    id         INT(11)      NOT NULL AUTO_INCREMENT,
-    type       ENUM('text','image','video') NOT NULL,
-    content    TEXT         NOT NULL,
-    label      VARCHAR(255) DEFAULT NULL,
-    created_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    id          INT(11)      NOT NULL AUTO_INCREMENT,
+    type        ENUM('text','image','video') NOT NULL,
+    content     TEXT         NOT NULL,
+    label       VARCHAR(255) DEFAULT NULL,
+    auto_pooled TINYINT(1)   NOT NULL DEFAULT 0,
+    created_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

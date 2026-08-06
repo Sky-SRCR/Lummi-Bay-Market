@@ -61,7 +61,11 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/plain_text.php` | `toPlainText()` — signage content is plain text (ADR-0002) |
 | `lib/error_policy.php` | The error policy, set in code: errors off, logging on, the three handlers, and the notice a Screen / an endpoint / a person gets when something breaks |
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **462 checks**. Run before pushing |
+| `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
+| `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **520 checks**. Run before pushing |
+| `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **16 checks** |
+| `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end, **37 checks** |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data |
 | `config.php` | Site constants (`SITE_NAME`, `MAIL_FROM`); loads `branding_config.php` |
 | `db_connect.php` | PDO `$pdo`; loads creds from `../../private/db_credentials.php` |
@@ -142,6 +146,22 @@ anything, they hold every Display by role.
   per problem per hour. The recipient list is refreshed every time an admin opens
   the admin panel, so a fresh install alerts nobody until somebody has been there
   once.
+- **The upload limit is the host's, not the app's.** `UploadLimit` takes the
+  smallest of the app's 50 MB and PHP's `upload_max_filesize` / `post_max_size`.
+  **Admin Panel → Settings → This Server** prints the effective number and says when
+  the host is the one deciding — worth reading before promising anybody a video will
+  fit. If it is small, raising `php_value upload_max_filesize` / `post_max_size` in
+  `.htaccess` only works under mod_php; on this host that is unverified, which is why
+  no code depends on it.
+- **The Asset Library grows `Auto:` rows.** Publishing a text block copies its words
+  into `assets`, so editing and republishing leaves the earlier copies behind. A
+  publish clears up what its own Display stranded; anything else (a block removed in
+  the admin Work Area) collects until an admin presses **Tidy up** on the Asset
+  Library page, which appears with a count only when there is something to remove.
+  It never touches a row somebody typed, uploaded, or renamed.
+- `assets.auto_pooled` is added by schema convergence on the first signed-in
+  request. Until it lands, the tidy-up identifies a pooled row by its `Auto: ` label
+  prefix instead — workable, and reported in **Settings → Database Structure**.
 
 ## 6. The multi-display build (this branch)
 
@@ -178,8 +198,8 @@ staleness check, no version history), 0007 (one editor per Display).
   URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
   account, two browsers, and one unavoidable 15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 316 self-test checks against SQLite, and the invariant greps in
-  BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
+  `php -l`, 520 self-test checks against SQLite, 53 node checks over `builder.php`'s
+  own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare
   `viewer.php` URL shows the notice instead of the sign. Same visit, or closed hours.
@@ -200,8 +220,10 @@ kiosk scroll lock. `git log origin/main` has the detail.
   `.htaccess` still carries `mod_php7` blocks. No typed properties, constructor
   promotion, enums, `readonly`, `match`, or arrow functions. This container has a
   much newer PHP, for `php -l` only.
-- Before pushing: `php -l` every touched file, then `php tools/selftest_layout.php`.
-  A self-test failure is a release blocker, not a broken test.
+- Before pushing: `php -l` every touched file, then `php tools/selftest_layout.php`,
+  then both node suites (`tools/selftest_builder_readonly.js` and
+  `tools/selftest_builder_uploads.js`) if `builder.php` was touched. A self-test
+  failure is a release blocker, not a broken test.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer refusing a
   write to merging one — that is why publish has both a staleness check and a lock
   check, and why neither tries to merge.

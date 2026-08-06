@@ -103,3 +103,18 @@ _Avoid_: label, caption, rich text
 A reusable library entry — a text snippet or an uploaded/referenced image or
 video — that a canvas element can point to instead of carrying its own content.
 _Avoid_: media, resource, file
+
+**Auto-saved entry**:
+An Asset that publishing created, by copying a text block's words into the
+library and pointing the block at the copy. Labelled `Auto: …` and badged
+**auto** in the Asset Library. It belongs to the one block that caused it —
+publishing never gives two Displays the same entry. Renaming one makes it an
+ordinary Asset, which is how somebody adopts it.
+_Avoid_: pooled row, duplicate, orphan, cache entry
+
+**Tidy up**:
+Removing auto-saved entries that no block on any Display uses. Never touches an
+Asset a person made, renamed or uploaded, even when nothing uses it. Changes
+nothing on any sign — which is why it needs no publish and no confirmation
+beyond the count.
+_Avoid_: clean up, garbage collect, prune, purge

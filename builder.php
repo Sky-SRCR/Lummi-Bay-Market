@@ -5,6 +5,7 @@ require_once __DIR__ . '/lib/schema.php';
 require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/display_request.php';
+require_once __DIR__ . '/lib/upload_limits.php';
 requireCurrentAccount($pdo);
 $me      = currentUser();
 $isAdmin = isAdmin();
@@ -510,6 +511,21 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     box-shadow: 0 4px 12px rgba(0,0,0,.3);
 }
 #toast.err { background: #e74c3c; }
+
+/* ── Upload progress ──
+   Not a toast: a toast fades, and the whole defect being fixed here is that a
+   failed upload was indistinguishable from one still running. This stays on
+   screen for as long as the upload does, and is removed by the code that knows
+   the upload ended — one way or the other. */
+#upload-status {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: #2c3e50; color: #fff; padding: 10px 18px; border-radius: 4px;
+    font-size: 13px; display: none; z-index: 10000; min-width: 260px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.4);
+}
+#upload-status .up-label { font-weight: bold; margin-bottom: 6px; }
+#upload-status .up-track { background: #1a252f; border-radius: 3px; height: 6px; overflow: hidden; }
+#upload-status .up-fill  { background: #3498db; height: 100%; width: 0; transition: width .15s linear; }
 </style>
 </head>
 <body>
@@ -965,6 +981,11 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 
 <div id="toast"></div>
 
+<div id="upload-status">
+    <div class="up-label"></div>
+    <div class="up-track"><div class="up-fill"></div></div>
+</div>
+
 <script>
 // ============================================================
 // CONSTANTS (injected by PHP)
@@ -997,6 +1018,14 @@ var LOCK_HOLDER = <?= json_encode($lockHolder, JSON_HEX_TAG | JSON_HEX_APOS | JS
 // (LockState) rather than a second copy that could drift away from it.
 var LOCK_LAPSE_SECONDS = <?= LockState::IDLE_LAPSE_SECONDS ?>;
 var LOCK_WARN_SECONDS  = <?= LockState::WARN_AFTER_SECONDS ?>;
+
+// The largest file that can actually reach this server, from UploadLimit — which
+// is the smallest of the app's own 50 MB ceiling and PHP's two. The browser knows
+// how big a chosen file is before sending a byte, so a file that cannot arrive is
+// refused in the file picker rather than after two minutes of uploading it. The
+// server checks the same number again; this only saves the wait.
+var UPLOAD_MAX_BYTES = <?= UploadLimit::bytes() ?>;
+var UPLOAD_MAX_LABEL = <?= json_encode(UploadLimit::describe(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 
 // Editor zoom. The canvas is CSS-scaled, so interact.js deltas — which arrive in
 // screen pixels — are divided by ZOOM before becoming canvas coordinates. Miss one
@@ -1952,22 +1981,21 @@ function changeSectionBgFit(fit) {
 }
 
 function uploadSectionBg(input) {
-    if (!IS_ADMIN || !activeBlock || !input.files[0]) return;
-    var fd = new FormData();
-    fd.append('file', input.files[0]);
-    fd.append('csrf_token', CSRF_TOKEN);
-    fetch('api.php?action=upload_file', {method:'POST', body:fd})
-        .then(function(r){ return r.json(); })
-        .then(function(res) {
-            if (res.status==='success') {
-                var _fit = (document.getElementById('section-bg-fit') || {}).value || 'cover';
-                activeBlock.style.backgroundImage = "url('"+res.path+"')";
-                activeBlock.dataset.sectionBg = res.path;
-                activeBlock.dataset.bgFit = _fit;
-                applySectionBgFit(activeBlock, _fit);
-                document.getElementById('section-bg-preview').textContent = res.path;
-            } else { showToast(res.message||'Upload failed.', true); }
-        });
+    if (!IS_ADMIN || !activeBlock) return;
+    var target = activeBlock;
+    startUpload(input, 'upload_file', 'section background', function (path) {
+        // Read the fit *now*, not when the upload started: the inspector may have
+        // been touched during the upload, and the block may no longer be selected
+        // at all — which is why the block is captured above rather than read from
+        // activeBlock in here.
+        var fit = (document.getElementById('section-bg-fit') || {}).value || 'cover';
+        target.style.backgroundImage = "url('" + path + "')";
+        target.dataset.sectionBg = path;
+        target.dataset.bgFit = fit;
+        applySectionBgFit(target, fit);
+        var preview = document.getElementById('section-bg-preview');
+        if (preview) preview.textContent = path;
+    });
 }
 
 function clearSectionBg() {
@@ -1981,47 +2009,205 @@ function clearSectionBg() {
 }
 
 // ============================================================
-// IMAGE / VIDEO UPLOADS
+// UPLOADS — one path, and it always says what happened
 // ============================================================
-function uploadBlockImage(input) {
-    if (!input.files[0] || !activeBlock) return;
+// There were four of these, each with its own fetch chain, and three of them had
+// no `.catch()` at all. What that meant on the shop floor: an admin picks a 60 MB
+// clip on the store's Wi-Fi, the request dies, and *nothing else ever runs*. The
+// "Uploading video…" toast fades after three and a half seconds and that is the
+// last word on the subject. They publish, get a green "Published to Deli Board",
+// and the sign shows an empty rectangle where the video should be. The image and
+// section-background handlers were worse in one respect — no toast at all, so a
+// failed upload looked exactly like one still in progress.
+//
+// `r.json()` was a second silent failure on the same line: it rejects on any reply
+// that is not JSON, which is what a file over the server's post_max_size produced.
+//
+// So: one function, XMLHttpRequest rather than fetch (fetch cannot report upload
+// progress, and progress is half of what was missing), and every way this can end
+// has a branch that puts words on the screen:
+//
+//   · too big to send      — refused in the picker, before a byte leaves
+//   · network dies         — onerror
+//   · browser gives up     — ontimeout
+//   · server says no       — status ≥ 400, or a JSON error message
+//   · reply is not JSON    — the post_max_size case, and any PHP output above it
+//   · saved                — the caller's success branch
+//
+// Two details that are not decoration. The file input is cleared at the end of
+// every attempt: without that, choosing the *same* file again fires no change
+// event, so the obvious response to a failed upload — try it again — did nothing
+// whatsoever. And a second upload on the same input while one is in flight is
+// refused, because both would write to the same block and the slower one wins.
+
+/** The upload currently in flight per input, so a second pick cannot race it. */
+var uploadsInFlight = 0;
+
+function showUploadProgress(label, percent) {
+    // Guarded the same way every other lookup in this file is: the readout is
+    // markup, and an upload must still run — and still report — on a page where
+    // that markup is missing. Progress is the nicety; the message is not.
+    var box = document.getElementById('upload-status');
+    if (!box) return;
+    var text = box.querySelector('.up-label');
+    var fill = box.querySelector('.up-fill');
+    if (text) text.textContent = label;
+    if (fill) fill.style.width = (percent === null ? 100 : percent) + '%';
+    box.style.display = 'block';
+}
+
+function hideUploadProgress() {
+    var box = document.getElementById('upload-status');
+    if (box) box.style.display = 'none';
+}
+
+/**
+ * Send the file chosen in `input` to `action`, and call onSuccess(path) if and
+ * only if the server saved it. Every other outcome is reported to the user here.
+ *
+ * `what` is the noun for the messages ("video", "slide image").
+ */
+function startUpload(input, action, what, onSuccess) {
+    if (READ_ONLY) return;
+
+    var file = input.files && input.files[0];
+    if (!file) return;
+
+    // Refused before sending. The browser knows the size; the server would only
+    // find out after receiving all of it, and on a host whose post_max_size is
+    // smaller than the file the request arrives with its body thrown away and no
+    // way to tell that apart from a missing security token.
+    if (file.size > UPLOAD_MAX_BYTES) {
+        showToast('That ' + what + ' is too large (' + describeBytes(file.size) + '). '
+                + 'This server accepts up to ' + UPLOAD_MAX_LABEL + '.', true);
+        input.value = '';
+        return;
+    }
+    if (file.size === 0) {
+        showToast('That file is empty — nothing was uploaded.', true);
+        input.value = '';
+        return;
+    }
+
+    if (input._uploading) {
+        showToast('That ' + what + ' is still uploading. Wait for it to finish.', true);
+        return;
+    }
+    input._uploading = true;
+    uploadsInFlight++;
+
     var fd = new FormData();
-    fd.append('file', input.files[0]);
+    fd.append('file', file);
     fd.append('csrf_token', CSRF_TOKEN);
-    fetch('api.php?action=upload_file', {method:'POST', body:fd})
-        .then(function(r){ return r.json(); })
-        .then(function(res) {
-            if (res.status==='success') {
-                var _img = activeBlock.querySelector('img');
-                if (_img) _img.src = res.path;
-                activeBlock.dataset.manualPath = res.path;
-                activeBlock.dataset.assetId    = '';
-                document.getElementById('asset-link').value = '';
-            } else { showToast(res.message||'Upload failed.', true); }
-        });
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', 'api.php?action=' + action, true);
+    xhr.timeout = 600000;   // ten minutes: a 50 MB video on shop Wi-Fi is slow, not broken
+
+    var finished = false;
+    function done(message, isError) {
+        if (finished) return;      // ontimeout and onerror can both arrive
+        finished = true;
+        input._uploading = false;
+        uploadsInFlight--;
+        // Cleared whatever happened, so picking the same file again is an action
+        // the browser will actually report.
+        input.value = '';
+        if (uploadsInFlight <= 0) { uploadsInFlight = 0; hideUploadProgress(); }
+        if (message) showToast(message, !!isError);
+    }
+
+    if (xhr.upload) {
+        xhr.upload.onprogress = function (e) {
+            if (finished) return;
+            var pct = e.lengthComputable ? Math.round((e.loaded / e.total) * 100) : null;
+            showUploadProgress('Uploading ' + what + '… ' + (pct === null ? '' : pct + '%'), pct);
+        };
+    }
+    showUploadProgress('Uploading ' + what + '… 0%', 0);
+
+    xhr.onload = function () {
+        if (xhr.status === 0 || xhr.status >= 400) {
+            // A JSON body is still the most useful thing here — api.php answers a
+            // dropped request body with 413 and an explanation.
+            var said = readJsonMessage(xhr.responseText);
+            done(said || ('The server refused the ' + what + ' (error ' + xhr.status + '). Nothing was changed.'), true);
+            return;
+        }
+        var res = null;
+        try { res = JSON.parse(xhr.responseText); } catch (e) { res = null; }
+        if (!res) {
+            done('The server\'s reply to that ' + what + ' could not be read, so nothing was changed. '
+               + 'It may be larger than this server accepts (' + UPLOAD_MAX_LABEL + ').', true);
+            return;
+        }
+        if (res.status !== 'success' || !res.path) {
+            done(res.message || ('That ' + what + ' was not saved.'), true);
+            return;
+        }
+        done('', false);
+        onSuccess(res.path);
+    };
+
+    xhr.onerror = function () {
+        done('The ' + what + ' did not upload — the connection dropped. Nothing was changed; try again.', true);
+    };
+    xhr.ontimeout = function () {
+        done('The ' + what + ' was still uploading after ten minutes and was given up on. Nothing was changed.', true);
+    };
+    xhr.onabort = function () {
+        done('That ' + what + ' upload was cancelled. Nothing was changed.', true);
+    };
+
+    xhr.send(fd);
+}
+
+/** A JSON error message out of a response body, or '' if there isn't one. */
+function readJsonMessage(text) {
+    try {
+        var res = JSON.parse(text);
+        return (res && res.message) ? res.message : '';
+    } catch (e) {
+        return '';
+    }
+}
+
+/** Bytes as words, matching UploadLimit::describeBytes so both agree. */
+function describeBytes(bytes) {
+    if (bytes >= 1048576) return Math.floor(bytes / 1048576) + ' MB';
+    if (bytes >= 1024)    return Math.floor(bytes / 1024) + ' KB';
+    return bytes + ' bytes';
+}
+
+function uploadBlockImage(input) {
+    if (!activeBlock) return;
+    var target = activeBlock;
+    startUpload(input, 'upload_file', 'image', function (path) {
+        var img = target.querySelector('img');
+        if (img) img.src = path;
+        target.dataset.manualPath = path;
+        target.dataset.assetId    = '';
+        var link = document.getElementById('asset-link');
+        if (link) link.value = '';
+        showToast('Image uploaded. Publish to put it on the sign.');
+    });
 }
 
 function uploadBlockVideo(input) {
-    if (!IS_ADMIN || !input.files[0] || !activeBlock) return;
-    showToast('Uploading video…');
-    var fd = new FormData();
-    fd.append('file', input.files[0]);
-    fd.append('csrf_token', CSRF_TOKEN);
-    fetch('api.php?action=upload_video', {method:'POST', body:fd})
-        .then(function(r){ return r.json(); })
-        .then(function(res) {
-            if (res.status==='success') {
-                var vid = activeBlock.querySelector('video');
-                if (!vid) { showToast('Video element not found.', true); return; }
-                vid.innerHTML = '';
-                var src = document.createElement('source');
-                src.src = res.path; vid.appendChild(src); vid.load();
-                activeBlock.dataset.manualPath = res.path;
-                activeBlock.dataset.assetId    = '';
-                document.getElementById('asset-link').value = '';
-                showToast('Video uploaded.');
-            } else { showToast(res.message||'Upload failed.', true); }
-        });
+    if (!IS_ADMIN || !activeBlock) return;
+    var target = activeBlock;
+    startUpload(input, 'upload_video', 'video', function (path) {
+        var vid = target.querySelector('video');
+        if (!vid) { showToast('That block is no longer a video block. The file uploaded but was not used.', true); return; }
+        vid.innerHTML = '';
+        var src = document.createElement('source');
+        src.src = path; vid.appendChild(src); vid.load();
+        target.dataset.manualPath = path;
+        target.dataset.assetId    = '';
+        var link = document.getElementById('asset-link');
+        if (link) link.value = '';
+        showToast('Video uploaded. Publish to put it on the sign.');
+    });
 }
 
 // ============================================================
@@ -2164,6 +2350,16 @@ function publishCanvas() {
         fd.append('bg_type', document.getElementById('bg-type').value);
         fd.append('bg_val',  document.getElementById('bg-color').value);
         var bgFile = document.getElementById('bg-file').files[0];
+        // Checked before sending, and the publish is abandoned rather than
+        // attempted: a background file over the server's post_max_size takes the
+        // whole request body with it, so this would not be one rejected image, it
+        // would be the entire layout not saved.
+        if (bgFile && bgFile.size > UPLOAD_MAX_BYTES) {
+            showToast('That background image is too large (' + describeBytes(bgFile.size) + '). '
+                    + 'This server accepts up to ' + UPLOAD_MAX_LABEL + '. Nothing was published — '
+                    + 'choose a smaller image, or clear it and publish again.', true);
+            return;
+        }
         if (bgFile) fd.append('bg_file', bgFile);
     }
 
@@ -2784,21 +2980,16 @@ function uploadSlideImage(input) {
     // the carousel modal, which a read-only page no longer has; the guard is what
     // makes that a rule rather than a consequence of the markup.
     if (READ_ONLY) return;
-    if (!input.files[0]) return;
     var row = input.closest('.slide-row');
-    var fd  = new FormData();
-    fd.append('file', input.files[0]);
-    fd.append('csrf_token', CSRF_TOKEN);
-    fetch('api.php?action=upload_file', {method:'POST', body:fd})
-        .then(function(r){ return r.json(); })
-        .then(function(res) {
-            if (res.status === 'success') {
-                var pi = row.querySelector('.slide-img-path');
-                if (pi) pi.value = res.path;
-                var pv = row.querySelector('.slide-img-preview');
-                if (pv) pv.innerHTML = '<img src="'+escHtml(res.path)+'" style="max-width:100%;max-height:60px;object-fit:contain;">';
-            } else { showToast(res.message || 'Upload failed.', true); }
-        }).catch(function(){ showToast('Upload failed.', true); });
+    startUpload(input, 'upload_file', 'slide image', function (path) {
+        // The row can be removed while its image is uploading, so this is checked
+        // here rather than assumed from the click that started it.
+        if (!row || !row.parentNode) { showToast('That slide was removed. The file uploaded but was not used.', true); return; }
+        var pi = row.querySelector('.slide-img-path');
+        if (pi) pi.value = path;
+        var pv = row.querySelector('.slide-img-preview');
+        if (pv) pv.innerHTML = '<img src="'+escHtml(path)+'" style="max-width:100%;max-height:60px;object-fit:contain;">';
+    });
 }
 
 function saveCarouselSlides() {

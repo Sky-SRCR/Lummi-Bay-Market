@@ -57,7 +57,9 @@ Design rules, applied to every module added by this build:
 | `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the whole access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. |
-| `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, and `assetUsage()` — which Displays depend on a shared library entry. |
+| `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, `assetUsage()` — which Displays depend on a library entry — and the sweep of the library rows a publish strands, scoped to the ids that Display's own previous layout held. |
+| `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `update` / `delete` / `pool` / `pooledNotIn` / `discardPooled` | **Every** `assets` statement. The decision it holds: `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::snapshot()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
+| `upload_limits.php` | `UploadLimit::bytes` / `describe` / `describeBytes` / `bodyWasDropped` / `smallestOf` / `toBytes` | How big a file can actually reach this server — the smallest of the app's 50 MB ceiling and PHP's `upload_max_filesize` and `post_max_size`, not the app's opinion. And the silent case: exceeding `post_max_size` is not an error PHP reports, it abandons the body, so a 40 MB video was answered *"Security token mismatch. Please reload the page."* `smallestOf()` takes the ini values as an argument because both settings are PHP_INI_PERDIR and the cases worth testing are unreachable otherwise. Depends on nothing. |
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `redeem` / `discard` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. |
 | `accounts.php` | `AccountStore`, `AccountAdmin` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. Not a gatekeeper for all of `users`: creating, role changes and password resets are still written by `admin_panel.php`, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means. |
@@ -120,10 +122,13 @@ through the app again:
    them. `lib/server_report.php` is a third standing exception and a deliberately
    inert one: it names the table in a list of columns it expects to find, and asks
    `information_schema` whether they are there. It reads no rows, from any table.
-   There is also a back door the grep cannot see at all: `assets` is shared,
-   a pooled text block keeps no content of its own, and deleting a row there blanks
-   that line on every Display using it without the string `canvas_elements`
-   appearing anywhere. `LayoutStore::assetUsage()` exists so `crud.php` can refuse.
+   There is also a back door the grep cannot see at all: a pooled text block keeps
+   no content of its own, so deleting its `assets` row blanks that line without the
+   string `canvas_elements` appearing anywhere. `LayoutStore::assetUsage()` exists
+   so `crud.php` can refuse. Publishing no longer *creates* a row two Displays
+   share (invariant 17), which narrows the blast radius to one sign — but only for
+   rows created since; every shared row the old code left is still there, which is
+   why the refusal and its wording stay plural.
 2. **No `WHERE id = 1`, ever again.** A Display's background lives on the Display
    row. `canvas_settings` is retired to exactly one reader: `seedLegacyDisplay()`
    in `lib/schema.php` reads its lowest row once, to carry the old background
@@ -224,6 +229,25 @@ through the app again:
     Screen mode is the one that matters most and the one with no user to notice it
     is wrong: its notice re-checks every 30 seconds, so a sign that went dark on a
     database blip comes back without anybody driving to the store.
+17. **Publishing never makes two Displays share a library row.** `AssetLibrary::pool()`
+    always inserts. The de-duplication it replaced was an optimisation for a
+    database with one sign in it: once there are several, one edit in the Library
+    changed two signs and one delete blanked both, permanently, because the elements
+    keep no copy of their own text and there is no undo. The cost is rows nothing
+    points at, and that cost is paid by the marker — `assets.auto_pooled` — plus two
+    sweeps: a publish drops what its own previous layout stranded, and the Library's
+    tidy button reaches what no publish can. Neither may ever remove a row a person
+    made, so both go through `discardPooled()`, which carries the marker as a
+    database predicate. A caller that miscounts can leave the library untidy; it
+    cannot blank a sign.
+18. **A file's size limit comes from `UploadLimit`, never from a number in the file
+    doing the checking.** The app's 50 MB is usually not the binding ceiling, and
+    the one that usually is — `post_max_size` — is not an error PHP reports: it
+    throws the request body away and lets the script run, so the missing CSRF token
+    became the message and *"reload the page and try again"* became the advice for a
+    file that will never fit. Every refusal names the real number, `api.php` answers
+    the dropped-body case before its CSRF gate, and the Builder refuses in the file
+    picker so the wait is not spent first.
 
 ---
 
@@ -928,6 +952,128 @@ modes. And `#9` — schema failures logged rather than papered over — is not d
 
 ---
 
+### 4n. A failed upload said nothing, and the library shared rows between signs
+
+Decisions `#6` and `#7`. Two problems, and they meet in the same place: the file
+somebody chose in the Builder, and what the app did with the content of a block.
+
+**The upload that faded away.** Three of the four upload handlers had
+`.then().then()` and no `.catch()`. In the shop that reads: an admin picks a 60 MB
+clip on the store's Wi-Fi, `builder.php` shows *Uploading video…*, the request
+dies, and **nothing else ever runs**. The toast fades after three and a half
+seconds and that is the last word on the subject. They publish, get a green
+*Published to Deli Board*, and the sign shows an empty rectangle where the video
+should be. `uploadSectionBg` and `uploadBlockImage` were worse in one respect: no
+progress toast at all, so a failed upload and one still uploading looked identical.
+`r.json()` was a second silent failure on the same line — it rejects on any reply
+that is not JSON, which is exactly what a file over `post_max_size` produces.
+
+There is now **one** function, `startUpload()`, on `XMLHttpRequest` rather than
+`fetch` — because `fetch` cannot report upload progress, and progress was half of
+what was missing. Every ending has a branch that puts words on the screen: too big
+to send, connection dropped, browser gave up, HTTP status ≥ 400, a body that will
+not parse, a JSON refusal, a success with no path in it. Two details that are not
+decoration. The file input is **cleared at the end of every attempt**: without it,
+choosing the *same* file again fires no change event, so the obvious response to a
+failed upload — try it again — did nothing whatsoever. And each handler captures
+its block rather than reading `activeBlock` in the callback, so a reply arriving
+after the selection moved on lands on the block that asked for it or on nothing.
+
+**The limit was the app's opinion, not the server's.** `api.php` refused over
+50 MB and named that number. On shared hosting the binding ceiling is usually one
+of PHP's two, and the one that binds most often is not an error PHP reports:
+exceeding `post_max_size` makes it abandon the request body and carry on, so
+`$_POST` is empty, the CSRF token is missing, and a 40 MB video was answered
+**"Security token mismatch. Please reload the page and try again."** Reloading
+changes nothing. `UploadLimit` owns the arithmetic; `api.php` answers the
+dropped-body case *before* the CSRF gate; and the Builder is handed the number so
+the file is refused in the picker instead of after two minutes of uploading. The
+same number is what Settings → This Server now prints, and it says when the host
+rather than the app is the limit — because a video that will not fit is a fact
+worth knowing before somebody drives in to change a sign.
+
+**The library shared rows, and that was the dangerous half.** `assets` was the last
+table with no owning module: five statements in `crud.php`, one in `api.php`, one
+inside `LayoutStore`'s publish transaction. What those three files disagreed about
+was pooling. A published text block's words moved into `assets` and the element was
+left pointing at the row with `manual_content` set to NULL — **de-duplicated by
+exact content**. So the deli board and the lobby screen both saying "OPEN 7 DAYS"
+shared one row; an admin editing it changed both signs within thirty seconds with
+nobody publishing anything, and an admin deleting it blanked that line on both,
+permanently, because `asset_id` is ON DELETE SET NULL and neither element had a
+copy left. There is no undo.
+
+`AssetLibrary::pool()` now always inserts. The de-duplication was an optimisation
+for a database with one sign in it, where two elements sharing a row could only be
+two elements on the same canvas.
+
+**And the cost of that, paid rather than hidden.** Publishing is destructive, so the
+third time somebody fixes a typo the first two rows are pointed at by nothing.
+`assets.auto_pooled` marks a row a publish made, and only marked rows are ever
+swept — an image an admin uploaded and has not placed yet is next week's job, not
+junk, and renaming a pooled row clears the marker because naming it is how somebody
+adopts it. Two sweeps, because there are two ways to strand a row and only one
+happens where a publish can see it: a publish drops what *its own previous layout*
+held and nothing holds now, and the Library's tidy button reaches what no publish
+can (a block deleted from the admin Work Area releases its row with no publish
+anywhere near it).
+
+Three choices inside that worth stating. The publish sweep is **scoped to those
+ids** rather than a table-wide `DELETE … WHERE NOT IN (…)`, which would take locks
+across every Display's rows and could deadlock with a publish to a different sign.
+"No longer referenced" is asked of **every** Display, not the one publishing — a row
+shared by two signs from before this change is still live for the other one. And
+`referencedAssetIds()` returns **null** rather than an empty list when it cannot
+read: an empty list means "nothing is referenced", and a caller acting on that
+would sweep the entire pool.
+
+Counting references means reading `canvas_elements`, which is `LayoutStore`'s table.
+So neither module answers the whole question — `LayoutStore` says which ids are
+referenced, `AssetLibrary` says which of the rest are pooled, and `crud.php` puts
+the two together. `discardPooled()` carries the marker as a database predicate, so
+a caller that miscounts can leave the library untidy but cannot blank a sign.
+
+Ninety-seven checks across three suites, including a new one:
+`tools/selftest_builder_uploads.js`, which evals the same inline JavaScript as the
+read-only harness under the opposite premise — an admin on a Display nobody else
+holds — and drives a stubbed `XMLHttpRequest` through every ending one at a time. A
+missing `.catch()` is invisible to `php -l` and to `node --check`; the only way to
+see one is to run the handler with a request that fails. Its `land()` helper treats
+a throw inside `onload` as a failure in its own right, because in a browser that is
+an uncaught error nobody sees.
+
+Verified against eighteen mutations, all killed: pooling de-duplicating again
+fails 5, the sweep ignoring the marker fails 4, editing not adopting the row
+fails 4, publish never sweeping fails 4, the sweep ignoring other Displays fails 2,
+unreadable references reading as none fails 1, a failed pool write linking to id 0
+fails 5; no size ceiling in the picker fails 16, the network-error branch removed
+fails 10, a non-JSON reply treated as success fails 6, the picker not cleared after
+a failure fails 4, a second upload allowed to race the first fails 4, progress never
+reported fails 2, a success with no path applied fails 4; a zero ini limit becoming
+the answer fails 3, sizes rounding up fails 1, an empty POST looking dropped
+fails 1, and the ini shorthand suffix ignored fails 7.
+
+Left standing, and worth knowing:
+
+- **The `Auto: ` label prefix is still a marker**, used when `assets.auto_pooled`
+  did not land. It is the only thing that identified a pooled row before the column
+  existed and it is what the column is backfilled from, so the fallback is coherent
+  rather than arbitrary — but an admin who names a row `Auto: something` and never
+  places it on a sign can have it tidied away. The Library's label field says so.
+  Settings → Database Structure says whether the column is there.
+- **The tidy button is not transactional.** A block published between reading the
+  orphan list and deleting it would have its row refused by the database rather
+  than removed, leaving the library untidy. That is the right way for a sweep to
+  fail, and `discardPooled()` swallows it for exactly that reason.
+- **`post_max_size` detection is inferential.** "A POST that announced a content
+  length and arrived with no fields and no files" has exactly one cause *while no
+  endpoint reads the raw body*. Nothing in the repo reads `php://input`; an endpoint
+  added later that does would need this reconsidered, and the §5 grep is there for it.
+- **Uploads still have no cancel button.** A ten-minute timeout ends a stuck one;
+  nothing lets somebody stop one deliberately. `xhr.onabort` is wired for it.
+
+---
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -938,6 +1084,9 @@ php -l <every touched .php>              # syntax; also a GitHub Action
 php tools/selftest_layout.php            # the real modules, in-memory database
 node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
                                          # that has only what a read-only page emits
+node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an
+                                         # admin who can edit — driving a stubbed
+                                         # XMLHttpRequest through every way an upload ends
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
                                               # the get_canvas_elements endpoint NAME, and
                                               # server_report.php's expected-column list
@@ -973,18 +1122,38 @@ grep -rEn "(INTO|UPDATE|FROM|TABLE) +password_resets|reset_attempts" --include=*
                                               # reset_password.php means the token table grew a second
                                               # writer; `reset_attempts` anywhere means the guess budget
                                               # crept back into the session — invariant 13's whole point
+grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?assets`?" --include=*.php .
+                                              # only lib/assets.php, plus schema.php's ALTER and the
+                                              # fixture — with ONE standing exception: the LEFT JOIN in
+                                              # LayoutStore::snapshot(), read-only and on the path a
+                                              # Screen polls every 30 seconds. A second writer here is
+                                              # how row sharing came back — invariant 17
+grep -rn "auto_pooled\|Auto: " --include=*.php .  # lib/assets.php owns the marker; schema.php backfills
+                                              # it; crud.php renders a badge and warns in the label hint.
+                                              # Anything that *decides* whether a row may be deleted
+                                              # belongs in discardPooled(), not in a caller
+grep -rn "post_max_size\|upload_max_filesize\|MAX_BYTES" --include=*.php .
+                                              # lib/upload_limits.php and the one row in
+                                              # server_report.php that prints its answer. A number in
+                                              # any other file is an opinion about a limit it cannot
+                                              # see — invariant 18
+grep -rn "php://input" --include=*.php .      # must be empty: UploadLimit::bodyWasDropped() infers the
+                                              # post_max_size case from an empty $_POST, which only
+                                              # holds while nothing reads the raw body
 grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
                                               # DISPLAY_ID / waDisplayId() with it (invariant 12), which
                                               # omission silently opts out of. viewer.php is the one
                                               # exception: a Screen sends the tag alone (ADR-0003)
 ```
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3100 lines of it.
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it.
 Anything touching that file needs reading, not linting. `node --check` over the
-extracted `<script>` body proves it parses; `tools/selftest_builder_readonly.js`
-goes further and *runs* it, against a DOM stubbed to hold only the ids a read-only
-page emits — which is the only automated way to catch a lookup that reaches for a
-control the lock took away.
+extracted `<script>` body proves it parses; the two node suites go further and *run*
+it. `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only page
+emits, which is the only automated way to catch a lookup reaching for a control the
+lock took away. `selftest_builder_uploads.js` takes the opposite premise — an admin
+who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the only
+way to see a missing `.catch()`: the file parses perfectly without one.
 
 `schema.sql` has no automated check at all — nothing reads it, so a column missing
 from it fails silently on a future rebuild and nowhere else. Diff it against

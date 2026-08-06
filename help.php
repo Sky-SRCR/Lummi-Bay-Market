@@ -1,6 +1,7 @@
 <?php
 require_once 'auth.php';
 require_once 'db_connect.php';
+require_once __DIR__ . '/lib/upload_limits.php';
 requireCurrentAccount($pdo);
 $me      = currentUser();
 $isAdmin = isAdmin();
@@ -411,13 +412,13 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
     <h3>Image blocks</h3>
     <ul>
-        <li><strong>Upload Image</strong> — JPG, PNG, GIF, WEBP. Max 10 MB.</li>
+        <li><strong>Upload Image</strong> — JPG, PNG, GIF, WEBP. Max <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?>.</li>
         <li><strong>Image Fit</strong> — controls how the image fills the block (see Image Blocks section below)</li>
     </ul>
 
     <h3>Video blocks (admin only)</h3>
     <ul>
-        <li><strong>Upload Video</strong> — MP4, WebM, or OGV. Max 50 MB. Videos auto-play, loop, and are muted.</li>
+        <li><strong>Upload Video</strong> — MP4, WebM, or OGV. Max <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?>. Videos auto-play, loop, and are muted.</li>
     </ul>
 
     <h3>Carousel blocks (admin only)</h3>
@@ -548,7 +549,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <ol class="steps">
         <li><span>Click <strong>+ Image</strong> in the control bar.</span></li>
         <li><span>Click the block to select it — the Inspector panel opens on the right.</span></li>
-        <li><span>Under <strong>Upload Image</strong>, click the file picker and choose an image (JPG, PNG, GIF, WEBP — max 10 MB).</span></li>
+        <li><span>Under <strong>Upload Image</strong>, click the file picker and choose an image (JPG, PNG, GIF, WEBP — max <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?>).</span></li>
         <li><span>The image appears in the block immediately.</span></li>
         <li><span>Choose an <strong>Image Fit</strong> mode (see below).</span></li>
         <li><span>Publish when ready.</span></li>
@@ -595,10 +596,18 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <ol class="steps">
         <li><span>Click <strong>+ Video</strong> in the control bar.</span></li>
         <li><span>Select the block and click <strong>Upload Video</strong> in the Inspector.</span></li>
-        <li><span>Choose an MP4, WebM, or OGV file (max 50 MB).</span></li>
+        <li><span>Choose an MP4, WebM, or OGV file (max <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?>).</span></li>
         <li><span>The video begins playing in the builder preview.</span></li>
         <li><span>Resize the block to fit your layout. Publish when ready.</span></li>
     </ol>
+    <div class="note"><strong>If an upload fails, it says so.</strong> A bar at the bottom of the
+       screen shows the percentage while a file is going up, and stays there until it finishes.
+       If the connection drops, the file is too large, or the server refuses it, you get a
+       message saying which — and nothing on the block changes. Just pick the file again; there
+       is no need to reload the page. A file bigger than
+       <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?> is refused
+       immediately, before any of it is sent, so you are not left waiting for a file that could
+       never arrive.</div>
     <div class="tip"><strong>Tip:</strong> MP4 (H.264) has the broadest browser support. Keep videos short and loopable — 5–15 seconds works well for in-store displays.</div>
 </div>
 
@@ -664,6 +673,23 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     </ol>
 
     <div class="tip"><strong>Tip:</strong> Link your price blocks to price assets. When a price changes, update the asset once — then publish — and every block showing that price updates at the same time.</div>
+
+    <h3>&ldquo;Auto:&rdquo; entries, and the Tidy up button</h3>
+    <p>Publishing keeps a copy of every text block's words in this library, so you will see
+       entries labelled <strong>Auto: &hellip;</strong> that nobody added by hand. They carry an
+       <strong>auto</strong> badge. Each one belongs to the single block that created it, so
+       editing or deleting one can only ever affect one sign.</p>
+    <p>Because publishing replaces the layout, editing the same block and publishing again
+       leaves the earlier copy behind with nothing using it. Most of the time the app clears
+       those up as you publish. What it cannot see is a block you removed in the Admin Panel's
+       Work Area, so those collect — and when there are any, a <strong>Tidy up</strong> button
+       appears at the top of the list saying how many. Pressing it removes only auto entries no
+       sign is using, and changes nothing on any sign.</p>
+    <div class="note"><strong>Anything you add yourself is kept forever</strong>, even if no
+       sign uses it — an image uploaded ready for next week is not junk. The same goes for an
+       auto entry you rename: giving it a name of your own makes it yours, and Tidy up will
+       never remove it. The one thing to avoid is starting your own labels with
+       &ldquo;Auto:&rdquo;, which is how the app marks its own copies.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -738,7 +764,12 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     </ul>
 
     <h3>Assets tab</h3>
-    <p>Shows all entries in the Asset Library with the option to view, edit, or delete them. Deleting an asset that is linked to a canvas block sets those blocks to show no content until re-linked or manually filled.</p>
+    <p>Shows all entries in the Asset Library with the option to view, edit, or delete them.
+       Deleting an entry a block is using is <em>refused</em>, and the message says how many
+       blocks on how many displays would have been left blank — edit it instead, or remove those
+       blocks first. Editing one changes what the sign shows within 30 seconds, with no
+       publishing needed, and any Builder already open on that display will be asked to reload
+       rather than allowed to publish over it.</p>
 
     <h3>Settings tab — This Server, Database Structure, Errors and Alerts</h3>
     <p>Three read-only readouts at the bottom of the Settings tab. Nothing on them can be

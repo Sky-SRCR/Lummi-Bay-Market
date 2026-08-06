@@ -73,6 +73,23 @@ function ensureSignageSchema(PDO $pdo)
                      ('price_2','Arial',30,'#e74c3c','bold','normal',1.20),
                      ('description','Arial',16,'#bdc3c7','normal','normal',1.40)");
 
+    // ---- assets: which rows a publish made, rather than a person ------------
+    // Publishing copies a text block's content into the library and points the
+    // block at the copy, so ordinary editing leaves rows behind that nothing uses.
+    // Those are safe to sweep; a row an admin typed or uploaded is not, even when
+    // no sign uses it yet. This column is the difference, and without it the sweep
+    // falls back to the `Auto: ` label prefix every pooled row has always carried.
+    schemaTry($pdo, "ALTER TABLE assets ADD COLUMN auto_pooled TINYINT(1) NOT NULL DEFAULT 0");
+
+    // Backfill from that prefix, once — the column arrives as 0 for every existing
+    // row, which would exempt the whole accumulated pool from tidying. Scoped to
+    // rows still at 0 so it cannot undo a later edit, which clears the marker
+    // deliberately (AssetLibrary::update). A hand-made row an admin happened to
+    // name "Auto: …" is claimed by this, and the consequence is that an unused one
+    // can be tidied away; that is why the label field says what it says in crud.php.
+    schemaTry($pdo, "UPDATE assets SET auto_pooled = 1
+                      WHERE auto_pooled = 0 AND label LIKE 'Auto: %'");
+
     // ---- displays -----------------------------------------------------------
     // One row per configured sign. Absorbs canvas_settings (background) and
     // carries the canvas dimensions that were hardcoded as 1920×1080, the

@@ -1123,8 +1123,9 @@ $layouts = newTestLayoutStore($pdo);
 $a = makeTestDisplay($pdo, 'aa', 'Sign A');
 $b = makeTestDisplay($pdo, 'bb', 'Sign B');
 
-// Both signs publish the same words. The pool de-duplicates by exact content, so
-// they end up sharing one row — which is what made a single delete blank both.
+// Both signs publish the same words. This used to hand them one shared row,
+// because the pool de-duplicated by exact content — and a single delete then
+// blanked that line on both of them, permanently. Two rows now.
 $shared = ['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'Sockeye  18.99',
            'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60];
 $layouts->publish($a, new PublishRequest([$shared], Background::unchanged(), 1, true, $a->layoutStamp()));
@@ -1134,21 +1135,182 @@ $store->releaseLock($b, 1);
 
 $assetId = intval($pdo->query("SELECT id FROM assets ORDER BY id ASC LIMIT 1")->fetchColumn());
 check($assetId > 0, 'publishing a text block put its words in the shared library');
-checkSame(2, count($pdo->query("SELECT id FROM canvas_elements WHERE asset_id = " . $assetId)->fetchAll()),
-          'and both signs point at the one row');
+checkSame(2, intval($pdo->query("SELECT COUNT(*) FROM assets")->fetchColumn()),
+          'two signs publishing the same words get a row each, not one between them');
+checkSame(1, count($pdo->query("SELECT id FROM canvas_elements WHERE asset_id = " . $assetId)->fetchAll()),
+          'so one entry reaches exactly one block');
 
+// The delete that used to take out two signs at once now takes out one, and the
+// Library page is told which — this is the read that lets it refuse.
 $usage = $layouts->assetUsage($assetId);
-checkSame(2, $usage['elements'],        'the library can see how many blocks depend on an entry');
-checkSame(2, count($usage['displays']), 'and how many displays that is');
+checkSame(1, $usage['elements'],        'the library can see how many blocks depend on an entry');
+checkSame(1, count($usage['displays']), 'and which display that is');
 
 $idle = $layouts->assetUsage(999999);
 checkSame(0, $idle['elements'], 'an entry nothing uses reports no blocks');
 checkSame([], $idle['displays'], 'and no displays');
 
-// The reason it matters: the elements keep no copy of their own text.
+// The reason it matters: the element keeps no copy of its own text.
 $own = $pdo->query("SELECT manual_content FROM canvas_elements WHERE asset_id = " . $assetId)->fetchAll();
-checkSame([null, null], array_column($own, 'manual_content'),
+checkSame([null], array_column($own, 'manual_content'),
           'a pooled block holds no content of its own, so losing the entry loses the words');
+
+// A row shared by two signs still exists in a database that ran the old code, and
+// it is not this change's job to unpick one — it is its job never to delete one.
+$pdo->exec("UPDATE canvas_elements SET asset_id = " . $assetId);
+$legacy = $layouts->assetUsage($assetId);
+checkSame(2, $legacy['elements'],        'a row two signs already share is still reported as shared');
+checkSame(2, count($legacy['displays']), 'on both of them');
+
+// ─────────────────────────────────────────────────────────────
+section('Publishing clears up the copies it leaves behind');
+
+// The cost of not sharing rows: publishing copies a text block's words into the
+// library, so the third time somebody fixes a typo the first two copies are
+// pointed at by nothing. Rows nothing points at are what an admin scrolls past
+// looking for the promo banner.
+$pdo     = newTestDb();
+$store   = new TestDisplayStore($pdo);
+$layouts = newTestLayoutStore($pdo);
+$library = new AssetLibrary($pdo);
+$sign    = makeTestDisplay($pdo, 'sweep', 'Deli Board');
+
+$block = function ($words) {
+    return ['type' => 'text', 'block_subtype' => 'price', 'manual_content' => $words,
+            'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60];
+};
+
+$fresh = $store->forId($sign->id());
+$layouts->publish($sign, new PublishRequest([$block('Sockeye  18.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$fresh = $store->forId($sign->id());
+$layouts->publish($fresh, new PublishRequest([$block('Sockeye  19.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$fresh = $store->forId($sign->id());
+$layouts->publish($fresh, new PublishRequest([$block('Sockeye  21.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+
+checkSame(1, intval($pdo->query("SELECT COUNT(*) FROM assets")->fetchColumn()),
+          'three publishes of one block leave one library entry, not three');
+checkSame('Sockeye  21.99', $pdo->query("SELECT content FROM assets")->fetchColumn(),
+          'and it is the words that are on the sign now');
+checkSame(1, intval($pdo->query("SELECT COUNT(*) FROM canvas_elements WHERE asset_id IS NOT NULL")->fetchColumn()),
+          'the block still points at it — the sweep did not cut the line it was reading');
+
+// What the sweep must never touch: a row a person made. An unused one is not
+// junk, it is the image somebody uploaded ready for next week.
+$mine = $library->create('image', 'uploads/promo.jpg', 'Summer Promo Banner');
+check($mine > 0, 'an admin can still add an entry of their own');
+$fresh = $store->forId($sign->id());
+$layouts->publish($fresh, new PublishRequest([$block('Sockeye  22.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+check($library->forId($mine) !== null,
+      'and publishing does not sweep it away, though no sign uses it');
+
+// A row somebody has renamed is theirs, whatever created it.
+$autoId = intval($pdo->query("SELECT id FROM assets WHERE auto_pooled = 1")->fetchColumn());
+$library->update($autoId, 'Sockeye price', 'Sockeye  22.99');
+checkSame(0, intval($pdo->query("SELECT auto_pooled FROM assets WHERE id = " . $autoId)->fetchColumn()),
+          'naming an auto-saved entry makes it yours');
+$fresh = $store->forId($sign->id());
+$layouts->publish($fresh, new PublishRequest([$block('Sockeye  23.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+check($library->forId($autoId) !== null,
+      'so the next publish leaves it alone even once nothing points at it');
+
+// The half a publish cannot reach: a block deleted from the admin Work Area
+// releases its entry with no publish anywhere near it. That is the tidy button.
+$fresh = $store->forId($sign->id());
+$layouts->publish($fresh, new PublishRequest([$block('Halibut  26.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$live = intval($pdo->query("SELECT id FROM canvas_elements WHERE asset_id IS NOT NULL")->fetchColumn());
+$fresh = $store->forId($sign->id());
+$layouts->deleteElement($fresh, $live, 1);
+
+$orphans = $library->pooledNotIn($layouts->referencedAssetIds());
+checkSame(1, count($orphans), 'deleting a block in the Work Area strands its auto-saved entry');
+checkSame(1, $library->discardPooled($orphans), 'and the tidy-up removes it');
+check($library->forId($mine) !== null,   'without touching the entry an admin uploaded');
+check($library->forId($autoId) !== null, 'or the one an admin renamed');
+
+// Told to remove a row a person made, AssetLibrary refuses. The caller counts the
+// references and could get that wrong; this is the predicate that means a wrong
+// count can only ever leave the library untidy.
+checkSame(0, $library->discardPooled([$mine, $autoId]),
+          'a caller that asks for a hand-made entry is refused outright');
+checkSame(2, intval($pdo->query("SELECT COUNT(*) FROM assets")->fetchColumn()),
+          'so both are still there');
+
+// referencedAssetIds() must say "I could not tell" rather than "nothing", because
+// an empty list would sweep the entire pool.
+$broken = newTestDb();
+$broken->exec("DROP TABLE canvas_elements");
+checkSame(null, (newTestLayoutStore($broken))->referencedAssetIds(),
+          'a reference count that could not be read is null, never an empty list');
+
+// ─────────────────────────────────────────────────────────────
+section('The sweep looks at every sign, not just the one publishing');
+
+// A row two Displays share exists in any database that ran the de-duplicating
+// version. When one of them publishes something else, that row stops being this
+// Display's — and is still the other one's. `asset_id` is ON DELETE SET NULL, so
+// sweeping it here would blank a line over there with nothing to say so, which is
+// the exact failure that ended the sharing in the first place.
+$pdo     = newTestDb();
+$store   = new TestDisplayStore($pdo);
+$layouts = newTestLayoutStore($pdo);
+$library = new AssetLibrary($pdo);
+$one = makeTestDisplay($pdo, 'one', 'Deli Board');
+$two = makeTestDisplay($pdo, 'two', 'Lobby Screen');
+
+$words = ['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'OPEN 7 DAYS',
+          'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60];
+$layouts->publish($one, new PublishRequest([$words], Background::unchanged(), 1, true, $one->layoutStamp()));
+$store->releaseLock($one, 1);
+$layouts->publish($two, new PublishRequest([$words], Background::unchanged(), 1, true, $two->layoutStamp()));
+$store->releaseLock($two, 1);
+
+// Point both signs at one row, the way the old pooling did.
+$sharedId = intval($pdo->query("SELECT MIN(id) FROM assets")->fetchColumn());
+$pdo->exec("UPDATE canvas_elements SET asset_id = " . $sharedId);
+checkSame(2, $layouts->assetUsage($sharedId)['elements'], 'two signs now share one entry, as the old code left them');
+
+// The first sign publishes something else entirely. Its own layout no longer
+// points at the shared row; the other sign's still does.
+$fresh = $store->forId($one->id());
+$layouts->publish($fresh, new PublishRequest(
+    [['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'CLOSED SUNDAYS',
+      'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60]],
+    Background::unchanged(), 1, true, $fresh->layoutStamp()));
+
+check($library->forId($sharedId) !== null,
+      'publishing one sign does not sweep an entry the other sign still uses');
+checkSame(1, $layouts->assetUsage($sharedId)['elements'],
+          'and that sign still reads its words from it');
+
+// ─────────────────────────────────────────────────────────────
+section('A library that cannot be written to leaves the words on the block');
+
+// The pool row is where a published text block's words *move to*. If that write
+// fails and the block is pointed at the row anyway, the words are nowhere: the
+// element's own copy was cleared and the row does not exist. The line goes blank
+// on the sign, and there is no undo. So a failed pool leaves the content where it
+// already was — which renders.
+// The table has to stay in place — `canvas_elements.asset_id` references it, so
+// dropping it would fail the element insert as well and prove nothing about the
+// pool. A trigger refuses exactly the one write under test.
+$noLib   = newTestDb();
+$noLib->exec("CREATE TRIGGER no_pool_writes BEFORE INSERT ON assets
+              BEGIN SELECT RAISE(ABORT, 'library is read-only'); END");
+$noStore = new TestDisplayStore($noLib);
+$noLay   = newTestLayoutStore($noLib);
+$noSign  = makeTestDisplay($noLib, 'nolib', 'Deli Board');
+
+checkSame(0, (new AssetLibrary($noLib))->pool('text', 'Sockeye  18.99'),
+          'a pool write that cannot happen returns no id, rather than id 0 as a link');
+
+$result = $noLay->publish($noSign, new PublishRequest(
+    [['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'Sockeye  18.99',
+      'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60]],
+    Background::unchanged(), 1, true, $noSign->layoutStamp()));
+checkSame(true, $result->isOk(), 'the publish still succeeds');
+$kept = $noLib->query("SELECT manual_content, asset_id FROM canvas_elements")->fetch();
+checkSame('Sockeye  18.99', $kept['manual_content'], 'and the words stay on the block, where they render');
+checkSame(null, $kept['asset_id'],   'pointing at nothing at all rather than at a row that does not exist');
 
 // ─────────────────────────────────────────────────────────────
 section('A reset code gets five guesses in total, not five per browser');
@@ -1250,7 +1412,7 @@ $server = new ServerReport($sPdo);
 
 check($server->isConverged(), 'a fully converged database reports as converged');
 $columns = $server->convergence();
-checkSame(6, count($columns), 'and every runtime-added column is accounted for');
+checkSame(7, count($columns), 'and every runtime-added column is accounted for');
 foreach ($columns as $col) {
     check($col['ok'], 'present: ' . $col['table'] . '.' . $col['column']);
     checkSame('', $col['note'], 'with nothing to warn about for ' . $col['column']);
@@ -1575,4 +1737,84 @@ checkSame(1, count($mStore->adminEmails()), 'nor is a closed one, whatever is_ac
 $mailPdo->exec("UPDATE users SET email = '' WHERE username = 'sky'");
 checkSame([], $mStore->adminEmails(), 'and an admin with no address on file is left out');
 
-reportChecks(462);
+// ─────────────────────────────────────────────────────────────
+section('How big a file can actually get here');
+
+// api.php refused anything over 50 MB and named that number. On shared hosting it
+// is rarely the binding one, and the one that binds most often — post_max_size —
+// is not an error PHP reports: it abandons the request body and carries on, so the
+// script sees a POST with no fields at all. In api.php that meant a missing CSRF
+// token, and a 40 MB video was answered "Security token mismatch. Please reload
+// the page and try again." Reloading changes nothing.
+
+checkSame(8388608, UploadLimit::toBytes('8M'),   'an ini size in megabytes is understood');
+checkSame(524288,  UploadLimit::toBytes('512K'), 'and in kilobytes');
+checkSame(2147483648, UploadLimit::toBytes('2G'), 'and in gigabytes');
+checkSame(1048576, UploadLimit::toBytes('1048576'), 'and as a plain byte count');
+checkSame(8388608, UploadLimit::toBytes(' 8M '),  'with whitespace around it');
+checkSame(8388608, UploadLimit::toBytes('8MB'),   'and with the B some hosts write');
+checkSame(8388608, UploadLimit::toBytes('8m'),    'in either case');
+
+// 0 means "no limit stated here", and it must drop out of the comparison rather
+// than become the answer — a limit of zero bytes refuses every upload there is.
+checkSame(0, UploadLimit::toBytes('0'),        'zero is no stated limit');
+checkSame(0, UploadLimit::toBytes(''),         'so is nothing at all');
+checkSame(0, UploadLimit::toBytes('lots'),     'and so is something unparseable');
+checkSame(0, UploadLimit::toBytes('-1'),       'and a negative');
+
+// The effective limit is never unbounded and never zero: the app's own ceiling is
+// always one of the candidates.
+UploadLimit::forget();
+check(UploadLimit::bytes() > 0, 'the effective limit is a real number');
+check(UploadLimit::bytes() <= UploadLimit::APP_MAX_BYTES,
+      'and never more than the app allows, whatever the host says');
+
+// The comparison itself, over values handed in — those two ini settings cannot be
+// changed at runtime, so this is the only way to reach the cases that matter.
+checkSame(8388608, UploadLimit::smallestOf(['64M', '8M']),
+          'the smallest of the host\'s two ceilings is the one that binds');
+checkSame(UploadLimit::APP_MAX_BYTES, UploadLimit::smallestOf(['0', '0']),
+          'a host that states no limit leaves the app\'s own ceiling standing');
+checkSame(UploadLimit::APP_MAX_BYTES, UploadLimit::smallestOf(['nonsense', '']),
+          'and so does one whose settings cannot be read — never a limit of zero bytes');
+checkSame(UploadLimit::APP_MAX_BYTES, UploadLimit::smallestOf([]),
+          'with nothing to compare at all, the app ceiling is the answer');
+checkSame(2097152, UploadLimit::smallestOf(['2M', '0']),
+          'one stated limit and one absent still binds on the stated one');
+check(UploadLimit::smallestOf(['500M', '500M']) === UploadLimit::APP_MAX_BYTES,
+      'a generous host does not raise the app above its own 50 MB');
+
+checkSame('8 MB',    UploadLimit::describeBytes(8388608),  'a size reads as megabytes');
+// 20.9 MB. Rounded down on purpose: a limit printed as "21 MB" that refuses a
+// 20.9 MB file sends somebody to trim their file to a number that fails again.
+checkSame('20 MB',   UploadLimit::describeBytes(21915238), 'rounded down, so the number quoted is always achievable');
+checkSame('512 KB',  UploadLimit::describeBytes(524288),   'a smaller one as kilobytes');
+checkSame('900 bytes', UploadLimit::describeBytes(900),    'and a tiny one in bytes');
+
+// The silent case, detected from the only symptom it has.
+checkSame(true, UploadLimit::bodyWasDropped(
+    ['REQUEST_METHOD' => 'POST', 'CONTENT_LENGTH' => '41943040'], [], []),
+    'a POST that announced a body and arrived with none was dropped for its size');
+checkSame(false, UploadLimit::bodyWasDropped(
+    ['REQUEST_METHOD' => 'POST', 'CONTENT_LENGTH' => '0'], [], []),
+    'a genuinely empty POST is not confused with it');
+checkSame(false, UploadLimit::bodyWasDropped(
+    ['REQUEST_METHOD' => 'POST', 'CONTENT_LENGTH' => '120'], ['csrf_token' => 'x'], []),
+    'nor is one whose fields arrived');
+checkSame(false, UploadLimit::bodyWasDropped(
+    ['REQUEST_METHOD' => 'POST', 'CONTENT_LENGTH' => '9000000'], [], ['file' => []]),
+    'nor one whose file arrived');
+checkSame(false, UploadLimit::bodyWasDropped(
+    ['REQUEST_METHOD' => 'GET', 'CONTENT_LENGTH' => '41943040'], [], []),
+    'and a GET is never this');
+checkSame(false, UploadLimit::bodyWasDropped([], [], []),
+    'a request with no method at all is not either');
+
+checkMentions(UploadLimit::droppedBodyMessage(), 'too large',
+              'and what the user is told names the problem');
+checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
+              'and says nothing was changed');
+check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
+      'and never mentions a security token, which was the old answer');
+
+reportChecks(520);

@@ -3,9 +3,10 @@
 // JSON API
 // ============================================================
 // A thin adapter: it reads the request, hands the work to a module in lib/, and
-// encodes the answer. Every statement against `canvas_elements`, `displays` and
-// `display_permissions` lives in lib/layout_store.php, lib/displays.php and
-// lib/grants.php respectively — nothing in this file writes SQL against them.
+// encodes the answer. Every statement against `canvas_elements`, `displays`,
+// `display_permissions` and `assets` lives in lib/layout_store.php,
+// lib/displays.php, lib/grants.php and lib/assets.php respectively — nothing in
+// this file writes SQL against them.
 //
 // Nor does any endpoint here check whether the account may have the Display it
 // named: DisplayRequest answers that once, for all of them (ADR-0005). An
@@ -40,6 +41,8 @@ require_once __DIR__ . '/lib/layout_store.php';
 require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/brand_styles.php';
 require_once __DIR__ . '/lib/display_request.php';
+require_once __DIR__ . '/lib/assets.php';
+require_once __DIR__ . '/lib/upload_limits.php';
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
 
@@ -65,6 +68,22 @@ if ($action !== 'get_layout') {
 
 header('Content-Type: application/json');
 $isAdmin = isAdmin();
+
+// A POST whose body PHP dropped for exceeding post_max_size arrives with no
+// fields at all — including no CSRF token — so this has to be answered before the
+// gate below, or a too-large file is reported as a security problem and the user
+// is sent to reload a page that was never at fault. No endpoint here reads the
+// raw body, so "a POST with a content length and nothing in it" has exactly one
+// cause. See lib/upload_limits.php.
+if (UploadLimit::bodyWasDropped($_SERVER, $_POST, $_FILES)) {
+    http_response_code(413);
+    echo json_encode([
+        'status'  => 'error',
+        'reason'  => 'too_large',
+        'message' => UploadLimit::droppedBodyMessage(),
+    ]);
+    exit;
+}
 
 // CSRF protection: every state-changing (POST) request must carry a valid token.
 // GET endpoints are read-only, and get_layout is intentionally public so the
@@ -100,14 +119,45 @@ define('IMG_EXT',  ['jpg','jpeg','png','gif','webp']);
 define('IMG_MIME', ['image/jpeg','image/png','image/gif','image/webp']);
 define('VID_EXT',  ['mp4','webm','ogv','ogg']);
 define('VID_MIME', ['video/mp4','video/webm','video/ogg']);
-define('MAX_BYTES', 50 * 1024 * 1024); // 50 MB
+/**
+ * PHP's upload error code as something the person holding the file can act on.
+ *
+ * "Upload error (code 6)" was the whole message for a host with no writable temp
+ * directory — a server fault the user can do nothing about, indistinguishable
+ * from the one they can (the file being too big). Each code says which it is, and
+ * the ones that are ours to fix go to the error log as well.
+ */
+function uploadErrorMessage(int $code): string {
+    switch ($code) {
+        case UPLOAD_ERR_INI_SIZE:
+        case UPLOAD_ERR_FORM_SIZE:
+            return 'That file is too large to upload — this server accepts up to '
+                 . UploadLimit::describe() . '.';
+        case UPLOAD_ERR_PARTIAL:
+            return 'The upload was cut off before it finished. Nothing was changed — please try again.';
+        case UPLOAD_ERR_NO_FILE:
+            return 'No file was received.';
+        case UPLOAD_ERR_NO_TMP_DIR:
+        case UPLOAD_ERR_CANT_WRITE:
+        case UPLOAD_ERR_EXTENSION:
+            ErrorPolicy::report('upload-server-fault',
+                'PHP could not accept an upload: error code ' . $code, 'Uploads are failing');
+            return 'This server could not accept the file. It has been written to the error log — '
+                 . 'nothing you did caused this.';
+    }
+    return 'The upload failed (code ' . $code . '). Nothing was changed.';
+}
 
 function validateFile(array $file, array $allowExt, array $allowMime): array {
     if ($file['error'] !== UPLOAD_ERR_OK) {
-        return ['ok' => false, 'msg' => 'Upload error (code ' . $file['error'] . ')'];
+        return ['ok' => false, 'msg' => uploadErrorMessage($file['error'])];
     }
-    if ($file['size'] > MAX_BYTES) {
-        return ['ok' => false, 'msg' => 'File exceeds 50 MB limit.'];
+    // Not a flat 50 MB any more: the binding limit is whichever of the app's
+    // ceiling and PHP's two is smallest, and the message has to name the real one
+    // or the person trims their file to a number that will be refused again.
+    if ($file['size'] > UploadLimit::bytes()) {
+        return ['ok' => false, 'msg' => 'That file is ' . UploadLimit::describeBytes($file['size'])
+                                      . '. This server accepts up to ' . UploadLimit::describe() . '.'];
     }
     $ext  = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     if (!in_array($ext, $allowExt, true)) {
@@ -253,8 +303,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_editor_layout') {
 // GET: get_assets
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_assets') {
-    $stmt = $pdo->query("SELECT * FROM assets ORDER BY id DESC");
-    echo json_encode($stmt->fetchAll());
+    echo json_encode((new AssetLibrary($pdo))->all());
     exit;
 }
 

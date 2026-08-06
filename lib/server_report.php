@@ -27,6 +27,8 @@
 // Nothing here decides anything. It reports, the admin panel renders, and no code
 // path branches on the answers.
 
+require_once __DIR__ . '/upload_limits.php';
+
 class ServerReport
 {
     /**
@@ -88,9 +90,19 @@ class ServerReport
             (!empty($cookie['httponly']) && !empty($cookie['secure'])) ? ''
                 : 'One of the protections on the sign-in cookie did not apply.'];
 
+        // The effective number, not the three ini values it comes from: the
+        // arithmetic belongs to lib/upload_limits.php, which is also what the
+        // Builder enforces in the file picker and what every refusal message
+        // quotes. Printing the raw settings here as well invited reading the
+        // largest of them as the answer, when the smallest is.
+        $effective = UploadLimit::bytes();
         $out['Largest file that can be uploaded'] = [
-            ini_get('upload_max_filesize') . ' (whole request: ' . ini_get('post_max_size') . ')',
-            ''];
+            UploadLimit::describe(),
+            $effective < UploadLimit::APP_MAX_BYTES
+                ? 'This server, not the app, is the limit (upload_max_filesize '
+                  . ini_get('upload_max_filesize') . ', post_max_size '
+                  . ini_get('post_max_size') . '). A video for a sign may not fit.'
+                : ''];
 
         return $out;
     }
@@ -109,6 +121,7 @@ class ServerReport
             ['users',           'last_failed_at',  'Login lockout cannot age failures out.'],
             ['users',           'locked_until',    'Login lockout cannot hold anyone out.'],
             ['password_resets', 'attempts',        'A reset code gets unlimited guesses.'],
+            ['assets',          'auto_pooled',     'The Library tidy-up falls back to the "Auto: " label prefix.'],
             ['displays',        'lock_taken_at',   'A read-only Builder cannot say since when.'],
             ['canvas_elements', 'display_id',      'Nothing is scoped to a Display. Do not publish.'],
         ];

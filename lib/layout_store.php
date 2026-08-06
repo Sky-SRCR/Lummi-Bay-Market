@@ -18,6 +18,8 @@
 //   elementCount(Display)                 → int, for a confirm that says what is at stake
 //   copyLayout(Display, Display)          → int copied: duplicating a Display
 //   deleteAllElements(Display)            → int deleted: destroying a Display
+//   assetUsage(assetId)                   → which Displays draw on one library row
+//   referencedAssetIds()                  → every library row anything points at
 //
 // Callers pass a Display and get results back. They never see the transaction,
 // the temp-id map, the staleness comparison, the asset auto-save, the plain-text
@@ -25,7 +27,15 @@
 //
 // The `displays` table is not this module's to write: the stamp, the background
 // and the publish record are reached through DisplayStore, which owns every
-// statement against it. This store owns `canvas_elements`, and only that.
+// statement against it. `assets` belongs to AssetLibrary the same way — this
+// store asks it to pool a block's content and to drop the rows a publish
+// strands, and writes no statement against that table itself. The one exception
+// is snapshot()'s LEFT JOIN, which is read-only and on the path a Screen polls
+// every thirty seconds; see lib/assets.php. This store owns `canvas_elements`.
+//
+// The last two methods above exist because the sweep is a question neither module
+// can answer alone: which rows are referenced is this table's business, which of
+// the rest were made by a publish rather than by a person is AssetLibrary's.
 //
 // Invariants enforced here, not by callers:
 //   · No statement touches canvas_elements without a display_id predicate.
@@ -40,6 +50,7 @@
 require_once __DIR__ . '/plain_text.php';
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/brand_styles.php';
+require_once __DIR__ . '/assets.php';
 
 /** One publish attempt: the layout, the background intent, who is publishing, and the stamp they hold. */
 class PublishRequest
@@ -149,6 +160,9 @@ class LayoutStore
     private $pdo;
     private $displays;
 
+    /** Built on first use by assets(); see the note there. */
+    private $assets = null;
+
     public function __construct(PDO $pdo, DisplayStore $displays)
     {
         $this->pdo      = $pdo;
@@ -159,6 +173,23 @@ class LayoutStore
     private function brandStyles()
     {
         return new BrandStyles($this->pdo);
+    }
+
+    /**
+     * The Asset Library, which owns `assets`. Built on demand, and not a
+     * constructor argument: every caller of this store would otherwise have to
+     * know about a table it never mentions, and the two writes involved (pooling a
+     * block's content, dropping the rows a publish orphans) are both internal.
+     *
+     * Kept, unlike BrandStyles: it caches whether the marker column exists, and
+     * pooling is called once per text block, so a fresh instance each time would
+     * re-probe the table for every line on the sign — inside the publish
+     * transaction.
+     */
+    private function assets()
+    {
+        if ($this->assets === null) { $this->assets = new AssetLibrary($this->pdo); }
+        return $this->assets;
     }
 
     // ---- Read ---------------------------------------------------------------
@@ -402,13 +433,17 @@ class LayoutStore
      * elements in total.
      *
      * The Asset Library is shared, and publishing moves a text block's content into
-     * it — de-duplicated by exact content, so two signs showing the same words end
-     * up sharing one row, with `manual_content` set to NULL on both. Deleting that
-     * row therefore blanks a line on every sign that used it (`asset_id` is
-     * ON DELETE SET NULL, and the element has no copy of its own left), and editing
-     * it rewrites all of them at once with no publish. Neither the Library page nor
-     * its confirm could say so, because counting the elements involved means asking
-     * `canvas_elements`, and that is this module's table.
+     * it, with `manual_content` set to NULL on the element. Deleting that row
+     * therefore blanks the line that used it (`asset_id` is ON DELETE SET NULL, and
+     * the element has no copy of its own left), and editing it rewrites the line
+     * with no publish. Neither the Library page nor its confirm could say so,
+     * because counting the elements involved means asking `canvas_elements`, and
+     * that is this module's table.
+     *
+     * Still plural, and it has to stay plural: publishing no longer creates a
+     * shared row (see lib/assets.php), but every row it created before that change
+     * is still out there, and a database that has run this app for a year has
+     * several that two signs both draw on.
      *
      * Returns ['elements' => int, 'displays' => [display_id, …]].
      */
@@ -485,12 +520,29 @@ class LayoutStore
                 return PublishResult::stale($this->stalenessMessage($fresh ?: $display));
             }
 
+            // Read before the layout is deleted: these are the library rows this
+            // Display points at right now, and a publish that replaces the layout
+            // is what strands them.
+            $wasReferenced = $this->assetIdsOn($display);
+
             if ($request->isAdmin()) {
                 $this->displays->applyBackground($display, $request->background());
                 $this->replaceWholeLayout($display, $request->elements());
             } else {
                 $this->replaceContentOnly($display, $request->elements());
             }
+
+            // Publishing a text block copies its text into the library and points
+            // the block at the copy, so the third time somebody fixes a typo the
+            // first two rows are pointed at by nothing. Drop those, and only those:
+            // scoped to the ids this Display's own previous layout held, so a
+            // publish to another sign shares no locks with this one, and filtered
+            // through AssetLibrary, which refuses to delete a row a person made.
+            $stranded = array_values(array_diff(
+                $wasReferenced,
+                $this->referencedAmong($wasReferenced)
+            ));
+            if ($stranded) { $this->assets()->discardPooled($stranded); }
 
             $newStamp = $this->displays->recordPublish($display, $request->actorId());
 
@@ -644,8 +696,14 @@ class LayoutStore
             }
 
             if (!$assetId && $manual !== '' && $manual !== null && !empty($el['save_to_db_pool'])) {
-                $assetId = $this->linkToAssetPool($type, $manual);
-                $manual  = null;
+                $pooled = $this->assets()->pool($type, $manual);
+                if ($pooled > 0) {
+                    $assetId = $pooled;
+                    $manual  = null;
+                }
+                // A pool row that could not be written leaves the content on the
+                // element, where it renders. The old code moved it either way and
+                // linked to id 0.
             }
 
             // `$manual ?: null` — the old form — turned a text block reading
@@ -679,45 +737,73 @@ class LayoutStore
     }
 
     /**
-     * Put new standalone content into the shared asset library and return its ID,
-     * reusing an identical entry rather than accumulating duplicates. The library
-     * is shared across Displays by design.
+     * The asset ids this Display's layout currently points at.
+     *
+     * Read before a publish deletes the layout, so the rows that publish is about
+     * to orphan can be found again afterwards. Distinct ids, not one per element:
+     * two blocks can share a row from before pooling stopped sharing them.
      */
-    private function linkToAssetPool($type, $content)
+    private function assetIdsOn(Display $display)
     {
-        $dup = $this->pdo->prepare("SELECT id FROM assets WHERE type = ? AND content = ? LIMIT 1");
-        $dup->execute([$type, $content]);
-        $existing = $dup->fetch();
-        if ($existing) { return intval($existing['id']); }
+        $stmt = $this->pdo->prepare(
+            "SELECT DISTINCT asset_id FROM canvas_elements
+              WHERE display_id = ? AND asset_id IS NOT NULL"
+        );
+        $stmt->execute([$display->id()]);
 
-        $this->pdo->prepare("INSERT INTO assets (type, content, label) VALUES (?,?,?)")
-                  ->execute([$type, $content, 'Auto: ' . self::firstCharacters(strip_tags($content), 20)]);
-        return intval($this->pdo->lastInsertId());
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) { $out[] = intval($row['asset_id']); }
+        return $out;
     }
 
     /**
-     * The first $max characters — never a fraction of one.
+     * Which of these asset ids anything at all still points at — any Display, not
+     * just the one being published.
      *
-     * `substr` counts bytes, so any multi-byte character straddling the cut was
-     * halved, and the result is not valid UTF-8. Bound into a utf8mb4 column on a
-     * MySQL in strict mode that is error 1366, which rolls the whole publish back
-     * — permanently, because the label is rebuilt identically on every retry, and
-     * with no message pointing at the text block responsible. An em dash or a
-     * curly quote landing on byte 18 was enough; both are ordinary in signage.
-     *
-     * mbstring is not assumed present on the live host, hence the fallback: drop
-     * trailing bytes until what remains is valid UTF-8.
+     * "Anything at all" is the only safe question. A row shared by two signs from
+     * before pooling stopped sharing them is still live for the other sign after
+     * this one stops using it, and `asset_id` is ON DELETE SET NULL: deleting it
+     * would blank that line over there with nothing to say so.
      */
-    private static function firstCharacters($text, $max)
+    private function referencedAmong(array $assetIds)
     {
-        if (function_exists('mb_substr')) {
-            return mb_substr((string)$text, 0, $max, 'UTF-8');
+        $ids = [];
+        foreach ($assetIds as $id) {
+            $id = intval($id);
+            if ($id > 0) { $ids[] = $id; }
         }
-        $out = substr((string)$text, 0, $max);
-        while ($out !== '' && !preg_match('//u', $out)) {
-            $out = substr($out, 0, -1);
-        }
+        if (!$ids) { return []; }
+
+        $stmt = $this->pdo->prepare(
+            "SELECT DISTINCT asset_id FROM canvas_elements
+              WHERE asset_id IN (" . implode(',', array_fill(0, count($ids), '?')) . ")"
+        );
+        $stmt->execute($ids);
+
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) { $out[] = intval($row['asset_id']); }
         return $out;
+    }
+
+    /**
+     * Every asset id any Display points at. For the Library page's tidy-up, which
+     * has to ask both modules: this one knows the references, AssetLibrary knows
+     * which of the remainder were created by a publish rather than by a person.
+     */
+    public function referencedAssetIds()
+    {
+        try {
+            $stmt = $this->pdo->query(
+                "SELECT DISTINCT asset_id FROM canvas_elements WHERE asset_id IS NOT NULL"
+            );
+            $out = [];
+            foreach ($stmt->fetchAll() as $row) { $out[] = intval($row['asset_id']); }
+            return $out;
+        } catch (Throwable $e) {
+            // An empty list would read as "nothing is referenced", and the caller
+            // would sweep the entire pool. Say so instead.
+            return null;
+        }
     }
 
     private function ownsElement(Display $display, $elementId)

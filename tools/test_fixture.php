@@ -23,6 +23,8 @@ require_once __DIR__ . '/../lib/password_resets.php';
 require_once __DIR__ . '/../lib/server_report.php';
 require_once __DIR__ . '/../lib/accounts.php';
 require_once __DIR__ . '/../lib/error_policy.php';   // pulls in lib/alerts.php
+require_once __DIR__ . '/../lib/assets.php';
+require_once __DIR__ . '/../lib/upload_limits.php';
 
 /**
  * DisplayStore with its one non-portable statement swapped out.
@@ -170,7 +172,8 @@ function newTestDb()
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
         content TEXT NOT NULL,
-        label TEXT
+        label TEXT,
+        auto_pooled INTEGER NOT NULL DEFAULT 0
     )");
 
     $pdo->exec("CREATE TABLE block_styles (
@@ -396,6 +399,18 @@ function checkSame($expected, $actual, $label)
 {
     $same = ($expected === $actual);
     check($same, $label . ($same ? '' : ' — expected ' . var_export($expected, true) . ', got ' . var_export($actual, true)));
+}
+
+/**
+ * The message must mention this, whatever else it says.
+ *
+ * For the wording of a refusal, where the exact sentence is allowed to change but
+ * the fact it names has to survive being reworded.
+ */
+function checkMentions($haystack, $needle, $label)
+{
+    $found = strpos((string)$haystack, (string)$needle) !== false;
+    check($found, $label . ($found ? '' : ' — "' . $haystack . '" does not mention "' . $needle . '"'));
 }
 
 function section($title)
