@@ -74,6 +74,7 @@ php tools/selftest_layout.php
 node tools/selftest_builder_readonly.js    # if builder.php was touched
 node tools/selftest_builder_uploads.js     # if builder.php was touched
 node tools/selftest_builder_colors.js      # if builder.php was touched
+node tools/selftest_viewer.js              # if viewer.php was touched
 ```
 
 `php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it —
@@ -82,9 +83,21 @@ block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
 sign rather than a stack trace anybody will read.
 
-The three node suites go further and *run* that JavaScript, each under a premise the
-others cannot hold — a page that may not edit, an admin uploading a file, and an
-admin opening a Display whose stored data is already wrong — because the defects
-they exist for are invisible to a parse: a lookup for a control the edit lock took
-away, a `fetch` chain with no `.catch()`, and a colour the CSSOM discarded in
-silence and the publish payload then sent as black.
+The four node suites go further and *run* that JavaScript, each under a premise the
+others cannot hold — a page that may not edit, an admin uploading a file, an admin
+opening a Display whose stored data is already wrong, and a Screen whose server has
+stopped answering — because the defects they exist for are invisible to a parse: a
+lookup for a control the edit lock took away, a `fetch` chain with no `.catch()`, a
+colour the CSSOM discarded in silence and the publish payload then sent as black,
+and a `.catch()` that correctly ignores a dropped packet and therefore also ignored
+a failure that was never going to stop.
+
+- **`json_encode` is never called outside `lib/http_reply.php`.** It returns `false`,
+  not a throw, and `echo false` prints the empty string — so a reply holding one byte
+  of invalid UTF-8 left as a zero-length 200 and the sign kept its layout for good.
+  Printed into a page's own `<script>` the same `false` emits `var X = ;`, which is a
+  parse error that takes the whole block down. `HttpReply::json()` and
+  `HttpReply::jsValue()` are the two doors; `tools/check_invariants.php` enforces it.
+- **A reply's status code comes from its `reason`, never from beside it.**
+  `HttpReply` maps the app's own vocabulary of failure onto HTTP once. A code chosen
+  at a call site is a second opinion, and it disagrees silently.

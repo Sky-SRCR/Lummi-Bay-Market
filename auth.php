@@ -1,5 +1,20 @@
 <?php
 // Session authentication helpers — include at the top of every protected page.
+//
+// Nothing behind a sign-in may be held by a cache (#28). Set here because this file
+// is what every such page includes, and because the case it covers is the ordinary
+// one for a shop: a back-office computer several people share, where the back button
+// after a sign-out used to redraw the admin panel — account names, email addresses,
+// who holds which sign — from the browser's own store, with no request made and
+// nothing the server could have refused. api.php includes this too, and the same
+// answer is right there for a different reason: a poll whose whole purpose is to be
+// current must never be answered from anything but the database.
+//
+// Before session_start(), so it is set on the request that establishes the session
+// as well as on every one after it.
+require_once __DIR__ . '/lib/http_reply.php';
+HttpReply::noStore();
+
 // AUTH_NO_SESSION lets the one public entry point — api.php's get_layout, polled
 // every 30 seconds by every Screen — include this file for its helpers without
 // opening a session it never reads. A framed Screen returns no cookie, so each

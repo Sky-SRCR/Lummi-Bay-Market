@@ -69,6 +69,7 @@ Design rules, applied to every module added by this build:
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `color.php` | `Color::read` / `isColor` / `describe` | What a colour is — `#rrggbb`, and nothing else. One rule, because it used to be written out four times and the four copies disagreed about what to do when a value failed it: `DisplayAdmin` substituted `#1a1a2e`, `BrandStyles` `#ffffff`, the Branding form whatever was already saved, and the Builder's `rgbToHex()` `#000000`. All four then reported success, so "saved" meant four different things and none of them meant "what you typed" (#21, #41). **It never picks a colour.** `read()` answers the colour or `''` and the caller decides what an empty answer means for it — a form refuses and names the field, the publish path refuses and names the block, a caller with a genuine default applies it visibly at the call site. Blank is deliberately *not* a colour: "nothing supplied" and "supplied and unreadable" are different answers and collapsing them is the defect. Not a normaliser either — no trimming, no `#fff` expansion, no `rgb()` — the accepted set is exactly what the three old regexes shared, so nothing that used to be storable stopped being storable. Pure, and depends on nothing. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
+| `http_reply.php` | `HttpReply::json(payload[, code])` / `noStore` / `jsValue`, and the pure `reply` / `codeFor` / `codeForPayload` / `codeForResolution` / `cacheHeaders` behind them | The envelope every answer leaves in: the status line, the caching rules, and the bytes of the body. **The encode**, because `json_encode` returns `false` and `echo false` prints nothing — one bad byte sent a zero-length 200 and a sign kept its layout for good (#26). Malformed UTF-8 is repaired and reported; anything else becomes a real 500 with a body that is known to encode, so no JSON request is ever answered with something that is not JSON. **The code**, derived from the payload's own `reason` rather than chosen beside it, because twenty-odd call sites cannot be kept in step by hand and a code that disagrees with a reason disagrees silently (#28). **The caching**, `no-store` everywhere, from one place — needed most by the 404s this module introduced, which are heuristically cacheable where the unlabelled 200 they replaced was not. `jsValue()` is the same encode for a value printed into a page's own `<script>`, where a `false` emits `var X = ;` and takes the whole block down. Pure functions under thin senders, the way `ErrorPolicy::noticeFor()` is, so all of it is testable where `header()` does nothing. Depends only on `ErrorPolicy`, for the sentence. |
 
 `lib/` is denied to the browser by `lib/.htaccess`. Nothing in `lib/` prints,
 redirects, reads `$_POST`/`$_GET`, or touches `$_SESSION` — adapters pass what
@@ -1883,6 +1884,10 @@ node tools/selftest_builder_uploads.js   # the same JS under the opposite premis
 node tools/selftest_builder_colors.js    # the same JS again, against a Display whose
                                          # stored data is already wrong, through a `style`
                                          # that discards and normalises as a browser does
+node tools/selftest_viewer.js            # viewer.php's poll loop, against a fetch this
+                                         # test controls: the sign must not blank for one
+                                         # dropped packet, and must not stay up for an
+                                         # hour of them (§4z)
 ```
 
 And, with a MySQL to point at — the same suite, with nothing stubbed:
@@ -1925,6 +1930,14 @@ grep -rn "schemaTry(\$pdo" --include=*.php .   # only lib/schema.php, and only f
                                               # named steps. A statement added anywhere else
                                               # bypasses signageSchemaPlan() and is therefore
                                               # ungated and untested — invariant 19
+grep -rn "json_encode(" --include=*.php .      # lib/http_reply.php, which owns it; the one in
+                                              # lib/error_policy.php, which is the last-resort
+                                              # notice and so cannot route through it (and has
+                                              # checked for false since it was written); and the
+                                              # self-test. Anywhere else is a reply that can
+                                              # leave as zero bytes behind a 200, or a
+                                              # `var X = ;` that takes a whole script block
+                                              # down — §4z
 grep -rn "ErrorPolicy::report" --include=*.php .  # api.php (an upload the server refused),
                                               # lib/schema.php (a schema statement it refused),
                                               # and one check in the self-test. A new caller is
@@ -2574,6 +2587,132 @@ restoring either cast fails eight or nine checks rather than the two it breaks.
   Viewer path and the delete confirm.
 - Folding a non-string to `''` instead of stopping fails exactly 1: *a write is
   refused rather than routed to the sole Display the entry rule would have picked*.
+
+### 4z. The envelope every answer leaves in (#26, #28)
+
+Two items, one module, because they are two symptoms of the same absence: nothing
+owned what an HTTP reply looks like. `lib/http_reply.php` now does — the status
+line, the caching rules, and the bytes of the body.
+
+**#26 — a reply that failed to encode.** The chain is short and every link is
+silent:
+
+`json_encode` returns **`false`** on failure — not an empty array, not a throw —
+and `echo false` prints the empty string. So a payload holding one byte that is not
+valid UTF-8 left as **200 OK, `Content-Type: application/json`, zero bytes**. On the
+Screen `r.json()` rejects, and the Viewer's `.catch` does exactly the right thing
+for a dropped packet: keeps the layout up, tries again in 30 seconds. But the cause
+was a byte in the database, so the next poll hit it too, and the one after that. A
+sign showing last week's prices, indefinitely, with nothing in any log.
+
+Two decisions worth writing down.
+
+**Malformed UTF-8 is repaired, not refused** — which needs saying, because
+CLAUDE.md's rule is *prefer refusing a write to merging one*, and this reads like
+the opposite until you look at what refusing costs:
+
+- This is a **read**. The stored bytes are untouched.
+- The write door is **already shut**: a publish arrives as a JSON string and
+  `json_decode` refuses malformed UTF-8 outright, so nothing invalid can enter
+  through the app at all. What is there came from a restore or a hand edit.
+- Refusing the read would take a whole sign dark over one character **and make the
+  fault unfixable through the app** — the Builder is the only tool for editing that
+  text and it would refuse to load the layout containing it. The only remaining fix
+  would be SQL against the live database, at a shop with no DBA.
+- U+FFFD loses nothing that was not already lost: the byte could not be rendered,
+  searched or exported. What it buys is that the damage becomes *visible*, in the
+  Builder, in the text, in front of the person who can fix it.
+
+And the admin is told — throttled to one report per sign per hour, because the
+alternative is 2,880 identical lines a day per Screen in a log that rotates at 2 MB.
+Anything json_encode cannot be talked into — INF, NAN, recursion, past the depth
+limit — is not repairable and becomes a real 500 carrying a body built from a
+payload this module controls. **The invariant is that no JSON request is ever
+answered with something that is not JSON**, and the self-test asserts it as a
+property over every input that has ever broken an encode here rather than as three
+examples.
+
+**The same defect in a different hat, and worse.** `var TAG = <` `?= json_encode($tag)
+?` `>;` emits `var TAG = ;` when the encode fails — a **parse error that takes down
+the whole script block**, not one value. Nine call sites had this: viewer.php (a
+blank television), builder.php ×6 and admin_panel.php ×3 (a page of controls that do
+nothing). All nine go through `HttpReply::jsValue()` now, which also fixes a second
+thing found on the way: the eight in builder.php and admin_panel.php passed
+`JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_AMP` by hand at every call and
+**viewer.php passed none** — safe only because a screen name tag is `[a-z0-9-]`,
+which is an argument that lives in another file. `jsValue()` carries the four flags
+for every caller.
+
+**And the sign has to notice.** That is the second half of #26's wording and it is
+a judgement, not a rule, so `tools/selftest_viewer.js` exists to pin where the line
+falls. `.catch` counts consecutive failures; ten of them — five minutes — replaces
+the layout with the notice. Not one, because blanking a working price board for a
+Wi-Fi roam would be a worse fault than the one being fixed; not never, because a
+stale *price* is a promise the store then has to keep, where a blank sign is not.
+The watchdog counts too: a request that never settles is the one shape of this
+failure no `.catch` can see, and before this it left the counter at zero however
+long the sign had been stranded.
+
+**#28 — real error codes, and no caching.** Missing, unknown and switched-off signs
+all answered 200, so anything that never reads the body — a proxy, an uptime check,
+`curl` after typing a tag onto a new television — was told all three had worked. The
+code is now **derived from the payload's own `reason`**, not chosen beside it: there
+are twenty-odd reply sites and a code that disagrees with a reason disagrees
+silently. `no_tag` → 400, `unknown` → 404, `inactive` → **503** with `Retry-After: 30`
+— "not here" and "here, switched off" being precisely the two the item says were
+conflated. `forbidden` → 403; `mismatch`, `stale`, `locked`, `busy` → 409; `invalid`
+→ 422; `failed` → 500. A reason nobody listed still gets a 400 rather than a 200.
+
+**The two halves of #28 are load-bearing on each other**, which is the part that
+would be easy to miss: a **404 is heuristically cacheable by default** (RFC 9110
+§15.5.5) where an unlabelled 200 with no validator mostly is not. Fixing the status
+codes *without* fixing the caching would have made a mistyped screen name tag
+**stickier** than it was before the item was touched. `no-store` goes on every reply
+from `HttpReply::json()`, on viewer.php before its first byte, and — via `auth.php`,
+which every protected page includes — on the pages behind the sign-in, where the
+ordinary case for a shop is a shared back-office computer whose back button after a
+sign-out redrew the admin panel, account names and all, from the browser's own store
+with no request the server could have refused.
+
+**Nothing broke in the Builder, and that was checked rather than hoped.** `fetch`
+does not reject on 4xx/5xx and builder.php reads `res.status` from the parsed body,
+never `r.ok`; the one place that does read a code is the XHR upload path, which
+already handled `>= 400` by showing the server's own message. `LOCK_TERMINAL` is a
+fixed list, so the two `reason` values added here (`invalid` on an unreadable
+publish, `failed` on a Brand Standards save with no rows) cannot become fatal to an
+editor mid-work.
+
+**Coverage.** 74 new checks in the PHP suite on both engines, plus the whole of
+`tools/selftest_viewer.js` (32) — the first suite that runs viewer.php's own
+JavaScript rather than only parsing it. It holds the interaction between the two
+items as well: a 503 from a sign an admin switched off must **not** count as the
+server being unreachable, or the deliberate notice would count down to a different
+one. A new consistency rule, *one module encodes JSON*, keeps the whole class shut
+rather than these nine instances of it.
+
+**The deliberate breakages the tests catch.** Verified by injection, thirteen of
+them; the ones worth naming:
+
+- `reply()` trusting `json_encode` again — the original defect — fails 14, led by
+  *a reply holding invalid UTF-8 is repaired, not dropped*.
+- Removing only the substitution fails 10: the sign goes to a 500 rather than to
+  the prices it could have shown.
+- Repairing but not reporting fails 2, and reporting without the throttle fails 1.
+- `inactive` answering 404 like `unknown` fails 3, one of them by name: *which is
+  the distinction #28 is about: those two are not the same answer*.
+- Dropping `no-store` fails 1; `codeForPayload` returning 200 for errors fails 2.
+- In the Viewer: `.catch` swallowing again fails 8; the watchdog only freeing the
+  flag fails 2; a poll that answers not clearing the count fails 6; and blanking on
+  the **first** failure fails 5, led by *and the sign keeps showing what it last
+  knew* — the guard against over-correcting this item.
+- An endpoint going back to `echo json_encode` is caught by the consistency check,
+  by file and line, not by a test.
+
+**Not covered here, and deliberately.** The Viewer still re-renders from scratch
+after any failed poll (`_layoutHash = ''`), which restarts videos and carousels — so
+a flaky link makes a visibly stuttering sign. It is pre-existing, it is not #26, and
+fixing it means deciding whether a re-render that produces identical markup should
+count as a change at all. Recorded rather than folded in.
 
 ---
 

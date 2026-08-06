@@ -127,6 +127,18 @@ $rules = [
                   . 'Standards reset every sign to black Arial 16',
     ],
     [
+        'name'   => 'one module encodes JSON',
+        'regex'  => '/json_encode\s*\(/',
+        'in'     => '',
+        'expect' => ['lib/error_policy.php', 'lib/http_reply.php', 'tools/selftest_layout.php'],
+        // error_policy.php keeps one: the last-resort notice, which is the reply sent
+        // when everything else has already failed and so cannot route through
+        // HttpReply. It has checked for false since it was written.
+        'why'    => 'json_encode returns false and `echo false` prints nothing, so a payload '
+                  . 'holding one bad byte left as a zero-length 200 and a sign kept its old '
+                  . 'layout for good (#26)',
+    ],
+    [
         'name'   => 'one module decides what a visitor sees when something breaks',
         'regex'  => '/display_errors|error_reporting\(|set_exception_handler|register_shutdown_function/',
         'in'     => 'lib',

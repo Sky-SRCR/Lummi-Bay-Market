@@ -4102,6 +4102,201 @@ checkSame(testIsMysql(), $wStore->limitPublishLockWait(),
           'shortening the wait is something only the engine with row locks can do');
 
 // ─────────────────────────────────────────────────────────────
+section('A reply always parses, and says what it is (#26, #28)');
+
+/** A structure past json_encode's nesting limit — the failure with no bad byte in it. */
+function deeplyNested($depth)
+{
+    $v = 'bottom';
+    for ($i = 0; $i < $depth; $i++) { $v = [$v]; }
+    return $v;
+}
+
+// ---- #26: the body -----------------------------------------------------------
+// `echo json_encode($payload)` printed the empty string whenever json_encode
+// returned false, behind a 200 and a Content-Type promising JSON. The Viewer's
+// r.json() rejected, its .catch kept the old layout, and the cause — a byte in the
+// database — was there on the next poll and the one after that.
+//
+// So the property under test is not "encoding usually works". It is that no input
+// produces a reply that cannot be parsed.
+
+$plain = HttpReply::reply(['status' => 'success', 'elements' => ['a', 'b']]);
+checkSame(200, $plain['code'],    'an ordinary payload is a 200');
+checkSame('',  $plain['trouble'], 'with nothing to report');
+checkSame(['status' => 'success', 'elements' => ['a', 'b']], json_decode($plain['body'], true),
+          'and arrives as what was handed over');
+
+// A lone continuation byte: valid in latin1, meaningless in UTF-8, and enough to
+// make json_encode refuse an entire layout. It reaches the database through a
+// restore or a hand edit — not through this app, because json_decode refuses it on
+// the way in, which is what makes repairing it on the way out safe.
+$bad = HttpReply::reply([
+    'status'   => 'success',
+    'display'  => ['tag' => 'drive-thru'],
+    'elements' => [['manual_content' => "Sockeye \xB1 18.99"]],
+]);
+checkSame(false, json_encode(['x' => "Sockeye \xB1 18.99"]),
+          'json_encode really does refuse one bad byte outright');
+checkSame('substituted', $bad['trouble'], 'a reply holding invalid UTF-8 is repaired, not dropped');
+checkSame(200, $bad['code'],              'and is still the answer the endpoint meant to give');
+$decoded = json_decode($bad['body'], true);
+check(is_array($decoded),                             'the repaired body parses');
+checkSame('drive-thru', $decoded['display']['tag'],   'and everything that was fine is untouched');
+check(strpos($decoded['elements'][0]['manual_content'], '18.99') !== false,
+      'including the rest of the block the bad byte was in');
+check($bad['detail'] !== '', 'and there is something to tell an admin');
+
+// The unrepairable half. INF is not a JSON number and no flag makes it one, so the
+// reply becomes a real 500 carrying a body built from a payload this app controls.
+$inf = HttpReply::reply(['status' => 'success', 'value' => INF]);
+checkSame('unencodable', $inf['trouble'], 'a value JSON has no form for cannot be substituted away');
+checkSame(500, $inf['code'],              'so the reply becomes a real server error');
+$infBody = json_decode($inf['body'], true);
+check(is_array($infBody),                     'and is still JSON the caller can read');
+checkSame('error',       $infBody['status'],  'that says it failed');
+checkSame('unencodable', $infBody['reason'],  'and why');
+check(is_string($infBody['message']) && $infBody['message'] !== '',
+      'with a sentence somebody could act on');
+
+// An explicit code is honoured — and overruled by a body that will not encode,
+// because a 413 with nothing in it is no more readable than a 200 with nothing in it.
+checkSame(413, HttpReply::reply(['status' => 'error'], 413)['code'], 'a given code is used');
+checkSame(500, HttpReply::reply(['status' => 'error', 'v' => NAN], 413)['code'],
+          'unless the body could not be built, which is a 500 whatever was asked for');
+
+// The invariant itself, over everything that has ever broken an encode here.
+foreach ([
+    'an empty payload'          => [],
+    'a bare list'               => ['a', 'b', 'c'],
+    'invalid UTF-8 in a key'    => ["k\xB1" => 'v'],
+    'invalid UTF-8 in a value'  => ['k' => "v\xC3\x28"],
+    'a truncated multi-byte'    => ['k' => "price \xE2\x82"],
+    'infinity'                  => ['k' => INF],
+    'negative infinity'         => ['k' => -INF],
+    'not a number'              => ['k' => NAN],
+    'both at once'              => ['k' => "\xB1", 'n' => NAN],
+    'nested past the limit'     => ['k' => deeplyNested(600)],
+] as $what => $payload) {
+    $r = HttpReply::reply($payload);
+    check($r['body'] !== '' && json_decode($r['body']) !== null,
+          $what . ' still leaves as JSON that parses');
+}
+
+// ---- #26: and the admin hears about it ---------------------------------------
+// "No notice" is half the item. A sign that repairs itself quietly is a sign whose
+// content is wrong and nobody knows.
+$replyLog = newTestStateDir() . '/lbm-error.log';
+ErrorPolicy::useLogFile($replyLog);
+ob_start();
+HttpReply::json(['status' => 'success', 'display' => ['tag' => 'drive-thru'],
+                 'elements' => [['manual_content' => "\xB1"]]]);
+$sent = ob_get_clean();
+check($sent !== '' && json_decode($sent) !== null, 'json() puts a parseable body on the wire');
+$written = (string)@file_get_contents($replyLog);
+check(strpos($written, 'not valid UTF-8') !== false, 'and writes down that it had to repair one');
+check(strpos($written, 'drive-thru') !== false,      'naming the sign an admin has to go and open');
+
+// Throttled, or a Screen polling every 30 seconds writes 2,880 of these a day into a
+// log that rotates at 2 MB.
+@file_put_contents($replyLog, '');
+ob_start();
+HttpReply::json(['status' => 'success', 'display' => ['tag' => 'drive-thru'],
+                 'elements' => [['manual_content' => "\xB1"]]]);
+ob_end_clean();
+checkSame('', (string)@file_get_contents($replyLog),
+          'the second identical repair inside the hour says nothing');
+ErrorPolicy::useLogFile('');
+
+// The same defect wearing a different hat. viewer.php prints the screen name tag
+// into its script through a short-echo tag; when the encode fails that emits
+// `var TAG = ;`, a parse error that takes the Viewer's whole script down and leaves
+// a blank television. (Written in prose rather than quoted, because a closing PHP
+// tag inside a comment ends the file.)
+checkSame('"drive-thru"', HttpReply::jsValue('drive-thru'), 'an ordinary tag is a JS string');
+check(HttpReply::jsValue("\xB1") !== '',       'and a tag that will not encode is still something');
+check(json_decode(HttpReply::jsValue("\xB1")) !== null,
+      'that a JavaScript parser can read, rather than a gap in the statement');
+
+// ---- #28: the status line ------------------------------------------------------
+// Missing, unknown and switched-off signs all answered 200. Anything that does not
+// read the body — a proxy, an uptime check, curl after typing a tag onto a new
+// television — was told all three had worked.
+checkSame(400, HttpReply::codeFor('no_tag'),    'naming no sign is a bad request');
+checkSame(404, HttpReply::codeFor('unknown'),   'naming one that is not here is a 404');
+checkSame(503, HttpReply::codeFor('inactive'),  'and one deliberately switched off is out of service');
+check(HttpReply::codeFor('unknown') !== HttpReply::codeFor('inactive'),
+      'which is the distinction #28 is about: those two are not the same answer');
+checkSame(403, HttpReply::codeFor('forbidden'), 'a sign that is not this account\'s is forbidden');
+checkSame(409, HttpReply::codeFor('mismatch'),  'a tag and an id that disagree is a conflict');
+checkSame(409, HttpReply::codeFor('stale'),     'so is somebody having published first');
+checkSame(422, HttpReply::codeFor('invalid'),   'a layout read and refused is unprocessable');
+checkSame(500, HttpReply::codeFor('failed'),    'and our own failure is ours');
+checkSame(400, HttpReply::codeFor('something-new'), 'a name nobody listed still is not a success');
+
+// Derived from the payload, never chosen beside it, because a code and a reason that
+// disagree would disagree silently.
+checkSame(200, HttpReply::codeForPayload(['status' => 'success']), 'success is 200');
+checkSame(200, HttpReply::codeForPayload(['a', 'b']),
+          'and a bare list, which has no status to read, is one too');
+checkSame(404, HttpReply::codeForPayload(['status' => 'error', 'reason' => 'unknown']),
+          'a refusal takes the code its own reason implies');
+checkSame(400, HttpReply::codeForPayload(['status' => 'error', 'message' => 'no reason given']),
+          'and a refusal that did not say why is still not a 200');
+
+// Every word the app actually uses has to be in the map. A reason added to a module
+// and not listed would leave as a 400 — better than a 200, and still wrong.
+foreach ([DisplayResolution::NO_TAG, DisplayResolution::UNKNOWN, DisplayResolution::INACTIVE,
+          DisplayResolution::FORBIDDEN, DisplayResolution::MISMATCH,
+          'stale', 'locked', 'invalid', 'busy', 'failed',     // PublishResult
+          'not_found',                                        // ElementResult
+          'signed_out', 'too_large',                          // api.php's own
+         ] as $reason) {
+    checkSame(true, HttpReply::codeFor($reason, 0) !== 0,
+              'the map has an answer for "' . $reason . '"');
+}
+
+// The two entry points that answer in HTML rather than JSON ask the same question of
+// the same map, through the resolution they already hold.
+$codePdo   = newTestDb();
+$codeStore = newTestDisplayStore($codePdo);
+makeTestDisplay($codePdo, 'code-on', 'On');
+$offDisplay = makeTestDisplay($codePdo, 'code-off', 'Off');
+$codeStore->setActive($offDisplay, false);
+
+checkSame(200, HttpReply::codeForResolution(
+              DisplayRequest::forViewing($codeStore, ['display' => 'code-on'])),
+          'a sign that renders is a 200');
+checkSame(404, HttpReply::codeForResolution(
+              DisplayRequest::forViewing($codeStore, ['display' => 'no-such-sign'])),
+          'a tag nothing answers to is a 404');
+checkSame(503, HttpReply::codeForResolution(
+              DisplayRequest::forViewing($codeStore, ['display' => 'code-off'])),
+          'and one an admin turned off says so, so it can be told from the typo');
+checkSame(400, HttpReply::codeForResolution(DisplayRequest::forViewing($codeStore, [])),
+          'a URL that named nothing is a bad request');
+checkSame(400, HttpReply::codeForResolution(
+              DisplayRequest::forViewing($codeStore, ['display' => ['code-on']])),
+          'and so is one whose parameter is not a tag at all (#27)');
+
+// ---- #28: the caching rules ----------------------------------------------------
+// Nothing anywhere set one. That mattered least while every answer was a 200 and
+// matters immediately now that some are 404s, which are heuristically cacheable by
+// default where an unlabelled 200 with no validator is not — so fixing the codes
+// without fixing this would have made a mistyped tag stickier than it was.
+$cacheLines = HttpReply::cacheHeaders();
+check(count($cacheLines) === 3, 'the caching rules are three header lines');
+$cacheText = implode(' | ', $cacheLines);
+check(stripos($cacheText, 'no-store') !== false, 'and the modern one is among them');
+check(stripos($cacheText, 'Pragma: no-cache') !== false,
+      'with the HTTP/1.0 spelling beside it, for the proxy that has not heard of the first');
+check(stripos($cacheText, 'Expires: 0') !== false, 'and an expiry already in the past');
+foreach ($cacheLines as $line) {
+    check(strpos($line, ': ') !== false && strpos($line, "\n") === false,
+          '"' . $line . '" is one well-formed header');
+}
+
+// ─────────────────────────────────────────────────────────────
 // Everything above this line runs on both engines. What follows can only be asked
 // of a real MySQL database, and is skipped entirely on the SQLite default — which
 // is why reportChecks() below is given two numbers.
@@ -4246,4 +4441,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Two numbers because the MySQL run adds a section the SQLite one cannot ask for.
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
-reportChecks(testIsMysql() ? 1132 : 1109);
+reportChecks(testIsMysql() ? 1206 : 1183);

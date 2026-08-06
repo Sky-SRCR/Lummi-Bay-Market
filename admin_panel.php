@@ -918,7 +918,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     <?php if ($d->isActive()): ?>
                         <input type="hidden" name="d_turn_off" value="1">
                         <button type="submit" name="action_toggle_display" class="btn btn-gray"
-                                onclick="return confirmTurnOff(<?= htmlspecialchars(json_encode($d->title()), ENT_QUOTES) ?>)">
+                                onclick="return confirmTurnOff(<?= htmlspecialchars(HttpReply::jsValue($d->title()), ENT_QUOTES) ?>)">
                             Turn off</button>
                     <?php else: ?>
                         <button type="submit" name="action_toggle_display" class="btn btn-green">Turn on</button>
@@ -1557,12 +1557,12 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 
 <script>
     var _tabs = ['users','displays','brand','branding','settings','workarea'];
-    var CSRF_TOKEN = <?= json_encode(csrfToken()) ?>;
+    var CSRF_TOKEN = <?= HttpReply::jsValue(csrfToken()) ?>;
 
     // Every Display, for filtering the "duplicate from" list to the ones of the
     // exact size being created (ADR-0004). The server checks it again — this only
     // stops the wrong choice being offered.
-    var DISPLAYS = <?= json_encode($dupCandidates, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+    var DISPLAYS = <?= HttpReply::jsValue($dupCandidates) ?>;
 
     function showTab(name) {
         _tabs.forEach(function(t) {
@@ -1846,7 +1846,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
     }
 
     // Auto-load if Work Area is the landing tab
-    if (<?= json_encode($tab) ?> === 'workarea') loadCanvasElements();
+    if (<?= HttpReply::jsValue($tab) ?> === 'workarea') loadCanvasElements();
 
     function brandPreview() {
         var nav  = document.getElementById('brand-preview-nav');

@@ -63,9 +63,9 @@ written down rather than remembered:
 | 23 | Choosing "Image" for a background when no image is stored leaves a colour where a filename goes — the sign goes near-black. | Refuse the change. | **Done** — closed with #24: it is the same `keep-image` arm. Not in the batch asked for; see §4v. | §4v |
 | 24 | The background address was validated in the admin panel but not in the API, so a publish could point every screen at any host. | Validate it in the module. | **Done** | §4v |
 | 25 | The public feed served blocks an admin had deliberately hidden, content and all. | Leave them out. | **Done** | §4v |
-| 26 | A reply that failed to encode sent back a zero-length success, and the sign kept its old layout forever with no notice. | Send a real error, and let the sign notice. | Open | — |
+| 26 | A reply that failed to encode sent back a zero-length success, and the sign kept its old layout forever with no notice. | Send a real error, and let the sign notice. | **Done** — with one refinement stated rather than assumed: malformed UTF-8 is *repaired and reported* rather than refused, because refusing takes a whole sign dark over one character **and** makes the fault unfixable through the app (the Builder would refuse to load the text that needs editing). Everything json_encode cannot be talked into is still a real 500. The sign notices after ten failed polls — not one, or a Wi-Fi roam blanks a working price board. | §4z |
 | 27 | `?display[]=x` became the tag "array" and printed a warning above the document. | Treat it as no sign named. | **Done** — and the printing half had already stopped at §4m, so what was left was the wrong answer: `array` is a valid tag, so a Screen was told "Display not found" when nothing had been named, and a Display genuinely tagged `array` was rendered. | §4y |
-| 28 | Missing, unknown and switched-off signs all answered "200 OK", and nothing anywhere set caching rules. | Real error codes, and stop caching. | Open | — |
+| 28 | Missing, unknown and switched-off signs all answered "200 OK", and nothing anywhere set caching rules. | Real error codes, and stop caching. | **Done** — 400 / 404 / **503**, derived from the payload's own `reason` so a code and a reason cannot disagree, and `no-store` everywhere including the pages behind the sign-in. The two halves turned out to be load-bearing on each other: a 404 is heuristically cacheable where the unlabelled 200 it replaced was not, so the codes without the caching would have made a mistyped tag stickier than before. | §4z |
 | 29 | Publish accepted any block type, so a basic account could insert top-level content. | Accept only known types and refuse the rest. | **Done** | §4v |
 | 30 | Wrong-shaped and absurd values were coerced and written rather than refused. | Refuse the publish. | **Done** | §4v |
 | 31 | Two blocks sharing a temporary id silently reparented one of them into the wrong section. | Refuse the publish. | **Done** | §4v |
@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**36 done, 1 part done (#49), 14 open.**
+**38 done, 1 part done (#49), 12 open.**
 
 #48 and #51 were taken together because they are the same subject — what the tests
 run against, and whether anybody runs them. Both are Done; the version question
@@ -130,6 +130,25 @@ produced the tag `array`, which is valid, so a Screen was told "Display not foun
 when nothing had been named — and a Display genuinely tagged `array` was rendered by
 `?display[]=x`. #51 was the first item like this. Both were answered rather than
 worked around, and in both cases the answer changed what the work was.
+
+**#26 and #28 were taken together because they are one absence.** Nothing in the app
+owned what an HTTP reply looks like — not the status line, not the caching rules, not
+the bytes of the body — so a payload that would not encode left as a zero-length 200
+and a sign that did not exist left as a 200 too. `lib/http_reply.php` owns all three
+now, and taking them apart would have been the wrong economy: the caching half of #28
+is what stops the status-code half from making things *worse*, because a 404 is
+cacheable by default where the unlabelled 200 it replaces is not.
+
+Two things came out of the pair that were not in either item. The same unchecked
+encode was in **nine** places printing values into a page's own `<script>`, where a
+failure is a parse error that takes the whole block down — a blank television, or a
+Builder whose controls do nothing — and eight of the nine were passing XSS-escaping
+flags by hand that the ninth, viewer.php, was not passing at all. And #26's "let the
+sign notice" needed a suite that *runs* viewer.php's JavaScript rather than parsing
+it, which is `tools/selftest_viewer.js` and is now part of the standing gate. It
+exists to hold a judgement rather than a rule: how many failed polls a sign may show
+prices through. One is too few and never is too many, and neither end of that is
+obvious enough to leave to memory.
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

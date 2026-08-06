@@ -1014,18 +1014,18 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 // CONSTANTS (injected by PHP)
 // ============================================================
 var IS_ADMIN  = <?= $isAdmin ? 'true' : 'false' ?>;
-var SITE_NAME = <?= json_encode(SITE_NAME, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
-var CSRF_TOKEN = <?= json_encode(csrfToken(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var SITE_NAME = <?= HttpReply::jsValue(SITE_NAME) ?>;
+var CSRF_TOKEN = <?= HttpReply::jsValue(csrfToken()) ?>;
 
 // The Display being edited. Its canvas size was fixed at creation (ADR-0004), so
 // these are constants for the life of the page — every bound, clamp and default
 // below is derived from them rather than from a hardcoded 1920×1080.
-var DISPLAY_TAG   = <?= json_encode($display->tag(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var DISPLAY_TAG   = <?= HttpReply::jsValue($display->tag()) ?>;
 // The record this page was actually opened on. The tag above addresses it, but an
 // admin may rename a tag and hand the old one to another sign, so every call below
 // sends both and the server refuses any that disagree (DisplayRequest::ID_PARAM).
 var DISPLAY_ID    = <?= intval($display->id()) ?>;
-var DISPLAY_TITLE = <?= json_encode($display->title(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var DISPLAY_TITLE = <?= HttpReply::jsValue($display->title()) ?>;
 var CANVAS_W      = <?= $canvasW ?>;
 var CANVAS_H      = <?= $canvasH ?>;
 
@@ -1035,7 +1035,7 @@ var CANVAS_H      = <?= $canvasH ?>;
 // guards below are the belt to that braces — for the keyboard, and for anything
 // reachable without a button.
 var READ_ONLY   = <?= $readOnly ? 'true' : 'false' ?>;
-var LOCK_HOLDER = <?= json_encode($lockHolder, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var LOCK_HOLDER = <?= HttpReply::jsValue($lockHolder) ?>;
 
 // The idle window and its warning, from the one place they are defined
 // (LockState) rather than a second copy that could drift away from it.
@@ -1048,7 +1048,7 @@ var LOCK_WARN_SECONDS  = <?= LockState::WARN_AFTER_SECONDS ?>;
 // refused in the file picker rather than after two minutes of uploading it. The
 // server checks the same number again; this only saves the wait.
 var UPLOAD_MAX_BYTES = <?= UploadLimit::bytes() ?>;
-var UPLOAD_MAX_LABEL = <?= json_encode(UploadLimit::describe(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var UPLOAD_MAX_LABEL = <?= HttpReply::jsValue(UploadLimit::describe()) ?>;
 
 // Editor zoom. The canvas is CSS-scaled, so interact.js deltas — which arrive in
 // screen pixels — are divided by ZOOM before becoming canvas coordinates. Miss one

@@ -26,6 +26,14 @@ ErrorPolicy::install(ErrorPolicy::SCREEN);
 require_once __DIR__ . '/db_connect.php';
 require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/display_request.php';
+require_once __DIR__ . '/lib/http_reply.php';
+
+// Nothing this page serves may be held (#28). Two of the three notices below exist
+// in order to stop being true — a sign gets turned back on, a tag gets corrected —
+// and the meta refresh that re-checks them every 30 seconds is worth nothing if the
+// browser or a proxy answers the refresh out of its own store. Before any output,
+// because a header set after the first byte is a warning, not a header.
+HttpReply::noStore();
 
 $resolution = DisplayRequest::forViewing(new DisplayStore($pdo), $_GET);
 $display    = $resolution->display();
@@ -43,6 +51,14 @@ $display    = $resolution->display();
 // capable kiosk browser.
 if (!$resolution->isFound()) {
     $notice = $resolution->message();
+    // 400, 404 or 503 rather than the 200 all three used to leave as (#28). The
+    // Screen renders the body either way — this is for everything that will never
+    // read it: a proxy deciding whether it may keep the answer, an uptime check, an
+    // admin running `curl` after typing a tag onto a new television.
+    http_response_code(HttpReply::codeForResolution($resolution));
+    if (!headers_sent() && $resolution->kind() === DisplayResolution::INACTIVE) {
+        header('Retry-After: ' . HttpReply::RETRY_AFTER);
+    }
     ?><!DOCTYPE html>
 <html lang="en">
 <head>
@@ -245,7 +261,11 @@ $canvasH = $display->canvasHeight();
     var CANVAS_W = <?= $canvasW ?>;
     var CANVAS_H = <?= $canvasH ?>;
     // The screen name tag this Screen was pointed at. Every poll names it.
-    var DISPLAY_TAG = <?= json_encode($display->tag()) ?>;
+    //
+    // Through HttpReply, not json_encode: a bare json_encode returning false here
+    // emits `var DISPLAY_TAG = ;`, which is a parse error that takes the whole
+    // script down and leaves a blank television with nothing in any log (#26).
+    var DISPLAY_TAG = <?= HttpReply::jsValue($display->tag()) ?>;
 
     // Scale the canvas to fill the actual Screen. Letterboxed on a shape
     // mismatch — min() preserves proportions rather than distorting prices.
@@ -268,6 +288,22 @@ $canvasH = $display->canvasHeight();
     var _loading    = false;
     var _carouselTimers = [];
     var _marqueeStops   = [];   // array of cancel functions, one per marquee
+
+    // How many polls in a row may fail before the sign stops showing what it last
+    // knew (#26).
+    //
+    // Not one, deliberately. A single failed poll is a dropped packet, a Wi-Fi
+    // roam, a PHP-FPM restart, somebody re-uploading a file over FTP — and blanking
+    // a working price board for any of those would be a worse fault than the one
+    // this fixes. Ten of them is five minutes, which no transient in this shop
+    // reaches and which bounds how wrong a sign can be: a customer is never looking
+    // at prices more than five minutes after the app stopped being able to confirm
+    // them.
+    //
+    // Going dark is the right end state for a *price* sign specifically. Showing
+    // stale prices is a promise the store then has to keep; showing nothing is not.
+    var STALE_AFTER_FAILURES = 10;
+    var _failedPolls = 0;
 
     function stopAnimations() {
         _carouselTimers.forEach(function(t) { clearInterval(t); });
@@ -297,16 +333,57 @@ $canvasH = $display->canvasHeight();
     function loadLayout() {
         if (_loading) return;
         _loading = true;
-        // A request that never settles must not freeze the sign for good. _loading
-        // is only cleared in .then/.catch, and fetch has no timeout of its own, so
-        // one wedged request (captive portal, stalled worker, a query blocked on a
-        // lock) would silently end all further polling.
-        var _watchdog = setTimeout(function() { _loading = false; }, 20000);
+
+        // Whichever of the three below gets there first is the only one that counts.
+        // Without it a wedged request that the watchdog freed and that then rejected
+        // was both counted twice and able to clear `_loading` out from under the
+        // poll that had already replaced it.
+        var settled = false;
+
+        // A request that never settles must not freeze the sign for good. fetch has
+        // no timeout of its own, so one wedged request (captive portal, stalled
+        // worker, a query blocked on a lock) would silently end all further polling.
+        //
+        // It counts as a failed poll, and that is the point: a request that never
+        // answers is the exact shape of "the sign kept its old layout forever with
+        // no notice", and a watchdog that only freed the flag was invisible to any
+        // counter that lived in .catch.
+        var _watchdog = setTimeout(function() { pollFailed(); }, 20000);
+
+        /** A poll that got a reply, whatever the reply said. */
+        function pollSucceeded() {
+            if (settled) { return; }
+            settled = true;
+            clearTimeout(_watchdog);
+            _loading     = false;
+            _failedPolls = 0;
+        }
+
+        /**
+         * A poll that did not. The layout stays up — until enough of them have
+         * failed in a row that it can no longer be claimed to be current.
+         */
+        function pollFailed() {
+            if (settled) { return; }
+            settled = true;
+            clearTimeout(_watchdog);
+            _loading    = false;   // allow retry on next interval
+            _layoutHash = '';      // and re-render from scratch when it comes back
+            _failedPolls++;
+            if (_failedPolls >= STALE_AFTER_FAILURES) {
+                // The same sentence the server sends for its own failures, so a sign
+                // says one thing whichever end stopped working.
+                showNotice('This sign is temporarily unavailable.');
+            }
+        }
+
         fetch('api.php?action=get_layout&display=' + encodeURIComponent(DISPLAY_TAG))
+            // A non-2xx reply is not a rejected fetch, and this endpoint answers 400,
+            // 404 and 503 now (#28) — the body is the same JSON in every case, and
+            // reaching the server at all is what `pollSucceeded` means here.
             .then(function(r) { return r.json(); })
             .then(function(data) {
-                clearTimeout(_watchdog);
-                _loading = false;
+                pollSucceeded();
 
                 if (!data || data.status !== 'success') {
                     showNotice(data && data.message);
@@ -482,11 +559,14 @@ $canvasH = $display->canvasHeight();
                 // stayed blank until somebody walked over and reloaded the browser.
                 _layoutHash = hash;
             })
-            .catch(function() {
-                clearTimeout(_watchdog);
-                _loading = false;   // allow retry on next interval
-                _layoutHash = '';   // and re-render from scratch when it comes back
-            });
+            // Reached by a dropped connection, by a reply that is not JSON, and —
+            // until #26 — by a 200 with a zero-length body, which is what an
+            // unchecked encode sent whenever one stored character was not valid
+            // UTF-8. That cause was permanent, so the sign sat on its last layout
+            // and retried into the same failure every 30 seconds, for months,
+            // silently. The server no longer produces it; this end no longer
+            // swallows it either way.
+            .catch(function() { pollFailed(); });
     }
 
     // ── Carousel ────────────────────────────────────────────────

@@ -107,12 +107,13 @@ jobs:
             --host=127.0.0.1 --port=3306 --db=lbm_rehearsal \
             --user=root --pass=root --confirm-copy
 
-  # builder.php is ~3400 lines of inline JavaScript that `php -l` cannot see. These
-  # three suites run it, each under a premise the others cannot hold: a DOM holding
+  # builder.php is ~3400 lines of inline JavaScript that `php -l` cannot see, and
+  # viewer.php is the page that runs unattended on a television. These four suites
+  # run that JavaScript, each under a premise the others cannot hold: a DOM holding
   # only what a read-only page emits, a stubbed XMLHttpRequest driven through every
-  # way an upload ends, and an admin opening a Display whose stored data is already
-  # wrong. Their own job because they are the same JavaScript whichever PHP is
-  # installed.
+  # way an upload ends, an admin opening a Display whose stored data is already
+  # wrong, and a Screen whose server has stopped answering. Their own job because
+  # they are the same JavaScript whichever PHP is installed.
   builder-js:
     runs-on: ubuntu-latest
     steps:
@@ -132,3 +133,10 @@ jobs:
       # publish payload turned that silence into black. Only visible by running it.
       - name: Builder self-test — colours
         run: node tools/selftest_builder_colors.js
+
+      # #26: the defect was not a throw. A `.catch` doing the right thing for a
+      # dropped packet did the wrong thing for a failure that was never going to
+      # stop, and a sign kept last week's prices. Only visible by running the poll
+      # loop against a fetch the test controls.
+      - name: Viewer self-test — the poll, and when a sign stops claiming
+        run: node tools/selftest_viewer.js
