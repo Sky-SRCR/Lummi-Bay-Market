@@ -7,8 +7,16 @@ if (isLoggedIn()) { header('Location: builder.php'); exit; }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') { verifyCsrf(); }
 
+// The one schema statement this page issues, at the top, where nothing has opened a
+// transaction — invariant 21. The lockout columns are deliberately NOT added here
+// any more: login.php adds them on any sign-in attempt, and the reset's clear copes
+// with their absence, so this page no longer pays three ALTERs for a column it only
+// reads on the way out.
 $tokens = new ResetTokenStore($pdo);
 $tokens->ensureSchema();
+
+// Holds the transaction the last step needs; writes no SQL itself.
+$completion = new PasswordResetCompletion($pdo, $tokens, new AccountStore($pdo));
 
 $step    = intval($_SESSION['reset_step'] ?? 1);
 $message = '';
@@ -88,8 +96,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_reset'])) {
     $confirm  = $_POST['confirm']       ?? '';
     // May be 0 for an unknown/inactive account that reached this screen. We do
     // NOT bounce back to step 1 (that would reveal the account doesn't exist);
-    // redeem() finds no token for id 0 and refuses in the same words it uses for
-    // a real account with a wrong code.
+    // there is no token for id 0, so the completion refuses in the same words it
+    // uses for a real account with a wrong code.
     $userId   = intval($_SESSION['reset_user_id'] ?? 0);
 
     // Nothing about the guess budget is read or written here any more. It lives
@@ -108,26 +116,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['do_reset'])) {
         $message = 'Passwords do not match.';
         $msgType = 'error';
         $step = 2;
-    } elseif (!$tokens->redeem($userId, $passcode)) {
-        // Wrong code, expired code, no such account, or the five guesses are
-        // gone — one answer for all four, deliberately (RESET_CODE_REFUSED).
-        $message = RESET_CODE_REFUSED;
-        $msgType = 'error';
-        $step = 2;
     } else {
-        // The code was right and is now spent: it cannot be replayed, and a
-        // second browser holding the same code gets the refusal above.
-        $pdo->prepare("UPDATE users SET password_hash = ? WHERE id = ?")
-            ->execute([password_hash($newPass, PASSWORD_DEFAULT), $userId]);
+        // One call, and it either changed the password or changed nothing at all
+        // (lib/password_resets.php). The page's only job is which of the three
+        // answers to print.
+        $outcome = $completion->complete($userId, $passcode, $newPass);
 
-        // A completed reset is a recovery path — release any login lockout.
-        ensureLockoutColumns($pdo);
-        clearLockout($pdo, $userId);
-
-        unset($_SESSION['reset_user_id'], $_SESSION['reset_step']);
-        session_regenerate_id(true);
-        header('Location: login.php?reset=1');
-        exit;
+        if ($outcome->isRefused()) {
+            // Wrong code, expired code, no such account, or the five guesses are
+            // gone — one answer for all four, deliberately (RESET_CODE_REFUSED).
+            $message = RESET_CODE_REFUSED;
+            $msgType = 'error';
+            $step = 2;
+        } elseif (!$outcome->isOk()) {
+            // The code was right; the database would not take the change. Saying
+            // "that code is incorrect" here would send somebody round the loop
+            // again with a code that was never the problem — and the guess it just
+            // spent is real, so the loop is four tries long.
+            $message = 'Your code was accepted, but the password could not be changed just now. '
+                     . 'Nothing was altered — please try again in a moment, or ask an admin.';
+            $msgType = 'error';
+            $step = 2;
+        } else {
+            unset($_SESSION['reset_user_id'], $_SESSION['reset_step']);
+            session_regenerate_id(true);
+            header('Location: login.php?reset=1');
+            exit;
+        }
     }
 }
 

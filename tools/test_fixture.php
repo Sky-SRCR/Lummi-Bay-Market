@@ -117,9 +117,13 @@ function newTestDb()
     // schema — and the server report's whole job is to notice a column that never
     // applied. A fixture that is missing one by accident would make that report
     // look broken while it was working correctly.
+    // password_hash is here because a password reset writes it, and a fixture
+    // without it cannot tell a reset that changed the password from one that only
+    // said it had.
     $pdo->exec("CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL,
+        password_hash TEXT NOT NULL DEFAULT '',
         role TEXT NOT NULL DEFAULT 'basic',
         is_active INTEGER NOT NULL DEFAULT 1,
         failed_attempts INTEGER NOT NULL DEFAULT 0,

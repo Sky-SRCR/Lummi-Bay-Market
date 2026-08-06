@@ -61,8 +61,8 @@ Design rules, applied to every module added by this build:
 | `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `update` / `delete` / `pool` / `pooledNotIn` / `discardPooled` | **Every** `assets` statement. The decision it holds: `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::snapshot()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
 | `upload_limits.php` | `UploadLimit::bytes` / `describe` / `describeBytes` / `bodyWasDropped` / `smallestOf` / `toBytes` | How big a file can actually reach this server — the smallest of the app's 50 MB ceiling and PHP's `upload_max_filesize` and `post_max_size`, not the app's opinion. And the silent case: exceeding `post_max_size` is not an error PHP reports, it abandons the body, so a 40 MB video was answered *"Security token mismatch. Please reload the page."* `smallestOf()` takes the ini values as an argument because both settings are PHP_INI_PERDIR and the cases worth testing are unreachable otherwise. Depends on nothing. |
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
-| `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `redeem` / `discard` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. |
-| `accounts.php` | `AccountStore`, `AccountAdmin` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. Not a gatekeeper for all of `users`: creating, role changes and password resets are still written by `admin_panel.php`, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means. |
+| `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `verify` / `consume` / `redeem` / `discard`, and `PasswordResetCompletion(PDO, ResetTokenStore, AccountStore)` → `ResetOutcome` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. It is now the composition of two halves that have to fall on opposite sides of a transaction boundary: `verify()` spends the guess and must never be rolled back, `consume()` spends the code and must be. `PasswordResetCompletion` is the use case (invariant 22) — code consumed, password changed, lockout released, or nothing at all — and `ResetOutcome` has three answers rather than two, because "refused" and "the database would not take it" have to look different to the visitor and identical to a stranger probing for usernames. |
+| `accounts.php` | `AccountStore`, `AccountAdmin` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. Not a gatekeeper for all of `users`: creating accounts and role changes are still written by `admin_panel.php`, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means — plus the two `users` writes a password reset makes, `setPassword()` and `clearLoginLockout()`, which are here because the reset must make them inside one transaction and a page cannot hold a transaction over SQL it writes itself. Those two are the only methods in the class that let an exception out, deliberately: everything else answers a question, and a question is better answered "no" than not at all, but these are halves of a change that must not half-happen. `clearLoginLockout()` answers true when the three ADR-0001 columns are absent, for the same reason `isClosed()` answers false: a database without them has never locked anybody out. |
 | `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
 | `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. `firstInWindow()` and `stateFile()` are public for the same reason `report()` needs them: a repeated *attempt to fix* something needs the same restraint as a repeated report of it, and this module is where the state directory is decided. Depends on nothing: no database, no session, no config. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
@@ -204,7 +204,10 @@ through the app again:
     last one. Anything added that rations attempts at anything — a code, a token,
     a one-time link — counts them somewhere the person guessing cannot reach, and
     says the same sentence for every refusal, or the count itself becomes the
-    oracle it was rationing against.
+    oracle it was rationing against. **A spent guess is never rolled back**: it is
+    the price of having asked, not part of the change being attempted, so
+    `ResetTokenStore::verify()` runs before the transaction that finishes the reset
+    and never inside it. A budget that a failed write refunds is not a budget.
 14. **An account number is never reused.** Accounts are *closed*, never deleted
     (CONTEXT.md). `DELETE FROM users` freed the id, and MySQL hands a freed id to
     the next account created — so a grant that outlived its cascade, a held edit
@@ -292,6 +295,19 @@ through the app again:
     `true`, and satisfy invariant 20's test for something worth emailing about.
     Anything new that converges, or that calls a `DisplayStore` read from inside a
     transaction, is covered by this or it is a way back to the failure mode.
+22. **A change that spans two tables is one transaction, held by a use-case module,
+    and what the person is told is what actually happened.** There are three of these
+    now — `DisplayAdmin` (a Display with its layout and its grants), `AccountAdmin`
+    (closing an account: grants, lock, `closed_at`) and `PasswordResetCompletion`
+    (the code consumed, the password changed, the lockout released) — and they are
+    all the same shape on purpose: the module holds `beginTransaction`, writes no SQL
+    of its own, rolls back quietly on any failure, and returns a result object the
+    page turns into a sentence. A page that issues the writes itself cannot do this,
+    which is why none of them do any more. The failure mode is not a half-written
+    database so much as a **lie**: three writes in a row on a page mean the second
+    one can fail after the first has landed, and the message printed then is decided
+    by which line threw rather than by what is now true. With no undo anywhere,
+    somebody acting on that message is the whole problem.
 
 ---
 
@@ -716,6 +732,14 @@ Known and not fixed, so nobody assumes otherwise:
   invariant 21. It was already unreachable, but only because a `static` in another
   file happened to be set — a protection invisible from the call site and worth
   nothing to the next transaction somebody opens.
+- ~~**`reset_password.php` makes two irreversible writes with no transaction**~~
+  **Fixed** — see §4r and invariant 22. Three, in fact, and the third ran `ALTER
+  TABLE` and then assumed the columns, so on a database where that ALTER had never
+  applied it threw *after* the password had already changed.
+- ~~**`tools/rehearse_phase1.php` proves a tautology and never exercises the widened
+  ENUM**~~ **Fixed** — see §4r. Four of its checks were weaker than they read; the
+  worst printed the reassuring answer in precisely the situation that needed the
+  alarming one.
 
 ### 4h. The tag addresses a Display; it does not identify one
 
@@ -1439,6 +1463,139 @@ Left standing:
   rule, and `grep -rn "ensureSignageSchema" --include=*.php .` in §5 is what finds a
   new call that skipped it.
 
+### 4r. A reset that half-happened, and a rehearsal that agreed with itself
+
+Two items from the reviewed list, and they turned out to be the same mistake twice:
+a sequence of steps that reports on itself, where the report is decided by something
+other than what actually happened.
+
+**The reset.** The last step was three writes in a row on the page — consume the
+code, set the password hash, clear the login lockout — with nothing tying them
+together. Each failure mode ends in the visitor being told the opposite of the truth:
+
+- The password write fails after the code is consumed. The person is told the reset
+  failed, requests another code, and never learns the first one was spent doing
+  nothing. The five-guess budget went with it.
+- The lockout clear fails after the password has changed. Worse, and it did not need
+  a fault to happen: the page ran `ensureLockoutColumns()` — three runtime `ALTER`s —
+  and then issued an `UPDATE` naming those three columns. On a database where the
+  ALTER cannot apply (no privilege, a full disk) that `UPDATE` throws *every time*,
+  after the password has already been changed. The person is told the reset failed
+  while holding a password that works, and the one instruction they will act on is
+  the wrong one. `login.php` had the same latent bug at the end of a successful
+  sign-in, with the comment above it already claiming this helper swallowed its own
+  failures; it does now, because the statement moved into `AccountStore`.
+
+`PasswordResetCompletion` holds the transaction (invariant 22). The interesting part
+is where the boundary falls, because two rules pull against each other:
+
+- **The guess must survive a rollback.** Spending one of five tries is the price of
+  having asked, not part of the change. Inside the transaction, a failed write would
+  refund it — five at a time, forever, which is the `$_SESSION` limiter invariant 13
+  was written to kill, reintroduced by a rollback. So `verify()` is called before
+  `beginTransaction()`, and its docblock says why in the imperative.
+- **The consume must not.** Marking the code used and changing the password are one
+  act. So `consume()` is inside, and it is what makes two browsers holding the same
+  correct code safe: exactly one gets `true`, and the loser has not changed a
+  password on the way to finding out.
+
+`ResetOutcome` has three answers, not two. *Refused* stays the one sentence four
+different refusals share — wrong code, expired, no such account, budget gone — or the
+page starts answering "does this username exist?" out loud. *Failed* is new and says
+so plainly ("Your code was accepted, but the password could not be changed"), because
+it only ever happens after a **correct** code, so it leaks nothing, and telling
+somebody their code was wrong when it was not sends them round a loop that is now
+four tries long.
+
+Two things this cost, both deliberate: the reset page no longer runs the three
+lockout `ALTER`s at all (`login.php` adds them on any sign-in attempt, and the clear
+copes with their absence), and `AccountStore` grew the only two methods in it that
+let an exception out — a caller holding a transaction needs the failure, not a
+shrug.
+
+`setPassword()` asks whether the row exists *before* writing rather than reading
+`rowCount()` afterwards, and that is the second time this build has been bitten by
+that number: MySQL counts rows it *changed*, so storing a hash identical to the
+stored one comes back as zero and reads exactly like "no such account". The first
+draft inferred it and fell back to a `SELECT`; a mutation that replaced the fallback
+with `return false` survived, because on SQLite `changes()` counts matched rows and
+the branch is unreachable there. Asking first has no unreachable branch and the same
+answer on both engines.
+
+It also refuses outright inside a transaction it did not open — the guess would be
+rolled back with that transaction, and the rollback in here would end one belonging to
+somebody else. Nothing calls it that way today; the point is that the next thing
+cannot.
+
+**Forty-nine checks.** Fourteen mutations, all killed (kill counts 2, 7, 6, 1, 5, 3, 1,
+29, 3, 11, 1, 14, 5, 1), plus §4i's four re-run against the split-apart store and still
+killed (10, 4, 2, 1). Two are worth naming: making `verify()` consume as well fails 29
+checks, and not rolling back a refused password write fails six — among them *"the code
+was not consumed, so the person can simply try again"*, which is the property the whole
+section exists for.
+
+Two checks had to be written defensively, and the reason generalises. The mutations they
+catch do not make a check *fail*, they make the suite **die**: one raises an exception
+where the fixed code returns a boolean, and the other leaves a committed transaction
+where a `rollBack()` was waiting. A run that ends on line 1535 prints no total at all,
+so every check after it is silently uncovered — and the count anchor cannot notice,
+because it never runs either. Asserting against a throw means catching the throw;
+cleaning up after a guard means asking whether the guard held.
+
+**The rehearsal.** `tools/rehearse_phase1.php` is the one tool that runs against a
+copy of live data before a deploy, so a check in it that cannot fail is worse than no
+check — its output is read as a green light. Four were:
+
+- *"convergence can be re-run without error"* was **true of a database that rejects
+  every statement**. `ensureSignageSchema()` latches per request, so the second call
+  returned at the latch having issued nothing: run one swallows its failures, run two
+  attempts none. It drops the latch first now, and asserts the latch was really taken
+  again, which is how we know the statements ran.
+- *"no unscoped elements remain (found 0)"* printed **ok when `display_id` was
+  absent entirely** — the count was initialised to zero and only asked the database
+  when the column existed. The one situation that needs the alarm got the
+  reassurance. Cannot-tell is a failure here.
+- It published a `section` and a `price`, **both of which existed before Phase 1
+  widened the two ENUMs**. So a database where `MODIFY block_subtype` never applied
+  passed clean, and the first real publish using Title 2 or Price 2 either failed
+  outright (strict mode) or silently stored an empty subtype — which shows up as
+  wrong typography on the sign and nowhere else. It now publishes one block for
+  **every value both ENUMs list**, read out of the constants themselves so widening
+  an ENUM widens the rehearsal without anybody remembering to, and reads them back:
+  MySQL with strict mode off stores `''` for a value the column does not list and
+  says nothing.
+- A foreign key was checked for **existing**, not for cascading. A constraint that
+  restricts passed that check — and then the cleanup at the bottom threw, uncaught,
+  and left two throwaway Displays and their layouts in the copy the tool had been
+  pointed at. `DELETE_RULE` is read from `information_schema` now, for the elements
+  and both halves of a grant, and the cleanup deletes in dependency order inside a
+  `try` so a failure names the rows to remove by hand instead of exiting on them.
+
+Two things it never looked at, added because they cost a query each: `block_styles`
+(the seed is a *step*, whose failure is reported and survivable, and a missing row
+makes the Brand Standards form a silent no-op that reverts on reload) and the five
+columns pages add rather than convergence — the three ADR-0001 lockout columns,
+`closed_at`, `password_resets.attempts`. Those five are **printed, not checked**: a
+copy of live data can legitimately be without them, each arrives on the first request
+that needs it, and a red run for that would train somebody to ignore a red run.
+
+Left standing:
+
+- **None of the rehearsal's own checks can be mutation-tested here**, because none of
+  them can be *run* here — the tool needs MySQL, which is the entire reason it exists.
+  Its new layout builder was verified the only way available: run through the real
+  `LayoutStore::publish()` against the SQLite fixture, which confirmed thirteen rows
+  in and thirteen out with every type and subtype intact. That proves the layout is
+  well-formed and the round-trip logic reads what it wrote; it cannot prove anything
+  about an ENUM, which is what the MySQL run is for.
+- **`setPassword()`'s "already that hash" case is only reachable on MySQL.** The
+  check for it passes through the ordinary path on SQLite. What it asserts is true on
+  both; it just is not the interesting branch on one of them.
+- **`admin_panel.php` still writes `password_hash` itself** when an admin sets
+  somebody's password. That is one write, not three, so nothing can half-happen —
+  but if it ever grows a second write it goes through `AccountStore`, and
+  `grep -rn "password_hash" --include=*.php .` in §5 is what finds it.
+
 ---
 
 ## 5. Verification
@@ -1494,6 +1651,17 @@ grep -rn "repairSchemaAfterFailure" --include=*.php .  # lib/schema.php defines 
 grep -rn "DELETE FROM users" --include=*.php . # nothing outside tools/ (invariant 14). Accounts
                                               # are closed, never deleted, so a freed id can
                                               # never be handed to somebody new
+grep -rn "SET password_hash" --include=*.php . # exactly two: lib/accounts.php (setPassword, which the
+                                              # reset goes through) and admin_panel.php:160, where an
+                                              # admin sets somebody's password in one write with
+                                              # nothing to be atomic with. A third means a page is
+                                              # changing a password beside another write again — the
+                                              # defect invariant 22 exists for
+grep -rn "ensureLockoutColumns\|clearLockout" --include=*.php .  # auth.php defines both; login.php calls
+                                              # them. reset_password.php must NOT appear: it stopped
+                                              # running the three ALTERs when the clear learned to cope
+                                              # without the columns (§4r), and a hit there is that DDL
+                                              # back on a public page, mid-reset
 grep -rn "closed_at" --include=*.php .        # lib/accounts.php, schema.sql's DDL, the fixture,
                                               # and ONE render in admin_panel.php that prints the
                                               # date. A hit that *decides* something is a second

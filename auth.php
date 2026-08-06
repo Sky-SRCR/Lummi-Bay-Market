@@ -177,10 +177,16 @@ function ensureLockoutColumns(PDO $pdo): void {
 
 // Wipe all lockout state for one account. Called on a successful login
 // and on a completed password reset (the two recovery paths).
+//
+// The statement lives in lib/accounts.php, which checks the three columns exist
+// first. This used to assume them, so on a database where ensureLockoutColumns()
+// could not apply — no ALTER privilege, a full disk — it threw "unknown column" at
+// the end of a *successful* sign-in, and nobody could get in on any account. The
+// comment in login.php has always said this helper swallows its own failures; now
+// it does.
 function clearLockout(PDO $pdo, int $userId): void {
-    $pdo->prepare(
-        "UPDATE users SET failed_attempts = 0, last_failed_at = NULL, locked_until = NULL WHERE id = ?"
-    )->execute([$userId]);
+    $store = new AccountStore($pdo);
+    $store->clearLoginLockout($userId);
 }
 
 // ── Closed accounts ─────────────────────────────────────────

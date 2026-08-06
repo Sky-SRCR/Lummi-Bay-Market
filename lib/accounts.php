@@ -52,11 +52,14 @@ class AccountResult
 /**
  * Every statement about whether an account is closed.
  *
- * Not a gatekeeper for all of `users` — creating accounts, changing a role and
- * resetting a password are still written by `admin_panel.php`, and sign-in is
- * still `login.php`'s. What lives here is the closure concept and the reads that
- * depend on it, so that the five files which have an opinion about a user row
- * cannot disagree about what a closed one means.
+ * Not a gatekeeper for all of `users` — creating accounts and changing a role are
+ * still written by `admin_panel.php`, and sign-in is still `login.php`'s. What
+ * lives here is the closure concept and the reads that depend on it, so that the
+ * five files which have an opinion about a user row cannot disagree about what a
+ * closed one means — plus the two writes a password reset has to make on the row
+ * (`setPassword`, `clearLoginLockout`), which are here because the reset has to
+ * make them inside one transaction and a page cannot hold a transaction over SQL
+ * it writes itself.
  */
 class AccountStore
 {
@@ -64,6 +67,9 @@ class AccountStore
 
     /** Cached per request: every reader below asks, and the answer cannot change. */
     private $hasColumn = null;
+
+    /** Likewise for the login-lockout columns, which are added at runtime too. */
+    private $hasLockoutColumns = null;
 
     public function __construct(PDO $pdo)
     {
@@ -206,6 +212,56 @@ class AccountStore
         }
     }
 
+    /**
+     * Store a new password hash for one account. True if the row is now holding it.
+     *
+     * **This one lets its exception out**, alone among the writes here, because its
+     * caller holds a transaction that has to roll back rather than carry on — see
+     * PasswordResetCompletion in lib/password_resets.php. Everything else in this
+     * class answers a question, and a question is better answered "no" than not at
+     * all; this one is half of a change that must not half-happen.
+     *
+     * The hash is the caller's to make. Nothing here ever sees a plain password.
+     */
+    public function setPassword($accountId, $passwordHash)
+    {
+        $accountId = intval($accountId);
+
+        // Asked before writing rather than inferred afterwards from `rowCount()`,
+        // because that number does not mean the same thing on both engines: MySQL
+        // reports rows it *changed*, so a hash identical to the stored one comes
+        // back as zero and reads exactly like "no such account". Reporting a reset
+        // as failed when it succeeded is the defect this method is part of closing,
+        // and a number that cannot tell those apart is no basis for the answer. The
+        // caller holds a transaction, so nothing can remove the row in between.
+        if (!$this->rowExists($accountId)) { return false; }
+
+        $this->pdo->prepare("UPDATE users SET password_hash = ? WHERE id = ?")
+                  ->execute([(string)$passwordHash, $accountId]);
+        return true;
+    }
+
+    /**
+     * Wipe the login lockout for one account: a completed reset and a successful
+     * sign-in are the two recovery paths (ADR-0001).
+     *
+     * **True when the three columns do not exist**, for the same reason isClosed()
+     * answers false: a database without them has never locked anybody out, so there
+     * is nothing to clear and nothing has gone wrong. The version this replaces
+     * assumed the columns and threw "unknown column" if the runtime ALTER had never
+     * applied — at the end of a successful sign-in, and in the middle of a password
+     * reset, which are the two worst moments in the app to raise an exception.
+     */
+    public function clearLoginLockout($accountId)
+    {
+        if (!$this->lockoutColumnsExist()) { return true; }
+        $this->pdo->prepare(
+            "UPDATE users SET failed_attempts = 0, last_failed_at = NULL, locked_until = NULL
+              WHERE id = ?"
+        )->execute([intval($accountId)]);
+        return true;
+    }
+
     /** The account holding this username or email, closed or not, or null. */
     public function findByNameOrEmail($username, $email)
     {
@@ -247,6 +303,27 @@ class AccountStore
             $this->hasColumn = false;
         }
         return $this->hasColumn;
+    }
+
+    /** Same question, same technique, about the three columns ADR-0001 added. */
+    private function lockoutColumnsExist()
+    {
+        if ($this->hasLockoutColumns !== null) { return $this->hasLockoutColumns; }
+        try {
+            $this->pdo->query("SELECT failed_attempts, last_failed_at, locked_until FROM users LIMIT 0");
+            $this->hasLockoutColumns = true;
+        } catch (Throwable $e) {
+            $this->hasLockoutColumns = false;
+        }
+        return $this->hasLockoutColumns;
+    }
+
+    /** Does this account number exist at all? Only setPassword() needs to know. */
+    private function rowExists($accountId)
+    {
+        $stmt = $this->pdo->prepare("SELECT 1 FROM users WHERE id = ? LIMIT 1");
+        $stmt->execute([intval($accountId)]);
+        return $stmt->fetchColumn() !== false;
     }
 }
 

@@ -1401,6 +1401,210 @@ checkSame(false, (new ResetTokenStore($rPdo))->redeem(1, '0001230'), 'nor is one
 checkSame(true,  (new ResetTokenStore($rPdo))->redeem(1, '000123'), 'the exact six characters are');
 
 // ─────────────────────────────────────────────────────────────
+section('A reset either changes the password or changes nothing');
+
+// The defect: the last step of a reset was three writes in a row with nothing
+// tying them together — consume the code, set the password, clear the lockout.
+// A failure after the first left the code spent and the password as it was, and
+// told the person their reset had failed; the third assumed columns a runtime
+// ALTER may never have added, so on such a database it threw *after* the password
+// had already changed. Both end the same way: somebody is told the opposite of
+// what happened, on the one flow where they cannot check.
+//
+// Two properties pull opposite ways and both are asserted below. The guess must
+// survive a rollback — otherwise a failed write hands the guesser their five tries
+// back — and the consume must not, because it is half of the change itself.
+
+/** A store whose password write refuses, standing in for a database that will not take it. */
+class RefusingAccountStore extends AccountStore
+{
+    public function setPassword($accountId, $passwordHash) { return false; }
+}
+/** And one that fails the way a real database does: by throwing. */
+class ThrowingAccountStore extends AccountStore
+{
+    public function setPassword($accountId, $passwordHash)
+    {
+        throw new RuntimeException('the users table is not available');
+    }
+}
+
+function storedHash(PDO $pdo, $accountId)
+{
+    $stmt = $pdo->prepare("SELECT password_hash FROM users WHERE id = ?");
+    $stmt->execute([intval($accountId)]);
+    return (string)$stmt->fetchColumn();
+}
+function newCompletion(PDO $pdo, AccountStore $accounts = null)
+{
+    return new PasswordResetCompletion($pdo, new ResetTokenStore($pdo),
+        $accounts ? $accounts : new AccountStore($pdo));
+}
+
+// ---- The two halves of a guess, now that they are separable ----
+$rPdo  = newTestDb();
+$store = new ResetTokenStore($rPdo);
+$code  = $store->issue(1);
+
+$tokenId = $store->verify(1, $code);
+check($tokenId > 0, 'verifying the right code names the token it matched');
+checkSame(false, $store->isSpent($tokenId), 'and leaves it unspent — verifying is not consuming');
+checkSame(1, $store->attemptsSpent(1),      'while still charging the guess');
+checkSame($tokenId, $store->verify(1, $code), 'so the same code verifies again');
+checkSame(2, $store->attemptsSpent(1),        'at the cost of a second guess');
+checkSame(true,  $store->consume($tokenId), 'consuming it succeeds once');
+checkSame(false, $store->consume($tokenId), 'and never twice, whoever asks');
+checkSame(0, $store->verify(1, $code),      'after which the code verifies no more');
+
+// ---- The happy path, end to end ----
+$rPdo = newTestDb();
+$rPdo->exec("UPDATE users SET failed_attempts = 5, last_failed_at = '2026-01-01 00:00:00',
+                              locked_until = '2099-01-01 00:00:00' WHERE id = 1");
+$was  = storedHash($rPdo, 1);
+$code = (new ResetTokenStore($rPdo))->issue(1);
+
+$outcome = newCompletion($rPdo)->complete(1, $code, 'a-brand-new-password');
+checkSame(true, $outcome->isOk(), 'a right code and a new password complete the reset');
+checkSame('ok', $outcome->kind(), 'which is what the outcome says it is');
+check(storedHash($rPdo, 1) !== $was, 'the stored hash changed');
+check(password_verify('a-brand-new-password', storedHash($rPdo, 1)),
+      'and the new password verifies against it');
+check(strpos(storedHash($rPdo, 1), 'a-brand-new-password') === false,
+      'the password itself was never stored, only a hash of it');
+
+$lock = $rPdo->query("SELECT failed_attempts, last_failed_at, locked_until FROM users WHERE id = 1")->fetch();
+checkSame(0,    intval($lock['failed_attempts']), 'the login lockout counter is cleared');
+checkSame(null, $lock['locked_until'],            'and the lock itself is lifted');
+checkSame(null, $lock['last_failed_at'],          'and the failure it remembered is forgotten');
+
+$again = newCompletion($rPdo)->complete(1, $code, 'a-third-password');
+checkSame(true, $again->isRefused(), 'the same code cannot be redeemed a second time');
+check(password_verify('a-brand-new-password', storedHash($rPdo, 1)),
+      'and the password it already set is still the one on the account');
+
+// ---- A password write that refuses: nothing changed, and the guess still spent ----
+$rPdo = newTestDb();
+$was  = storedHash($rPdo, 1);
+$code = (new ResetTokenStore($rPdo))->issue(1);
+$tokenId = intval($rPdo->query("SELECT id FROM password_resets WHERE user_id = 1")->fetchColumn());
+
+$outcome = newCompletion($rPdo, new RefusingAccountStore($rPdo))->complete(1, $code, 'never-lands');
+checkSame(false,    $outcome->isOk(),      'a refused password write does not report success');
+checkSame(false,    $outcome->isRefused(), 'and does not claim the code was wrong, because it was not');
+checkSame('failed', $outcome->kind(),      'it is a failure, which is a third answer');
+checkSame($was, storedHash($rPdo, 1), 'the password is exactly as it was');
+checkSame(false, (new ResetTokenStore($rPdo))->isSpent($tokenId),
+          'the code was not consumed, so the person can simply try again');
+checkSame(1, (new ResetTokenStore($rPdo))->attemptsSpent(1),
+          'but the guess it cost is spent for good — a rollback must not refund the budget');
+checkSame(false, $rPdo->inTransaction(), 'and no transaction is left open behind it');
+
+$retry = newCompletion($rPdo)->complete(1, $code, 'lands-this-time');
+checkSame(true, $retry->isOk(), 'the same code still works once the database will take the write');
+check(password_verify('lands-this-time', storedHash($rPdo, 1)), 'and the password is the new one');
+// Read straight off the row: attemptsSpent() only looks at codes still live, and
+// this one has just been consumed by the reset that succeeded.
+$spent = $rPdo->prepare("SELECT attempts FROM password_resets WHERE id = ?");
+$spent->execute([$tokenId]);
+checkSame(2, intval($spent->fetchColumn()),
+          'having charged one guess per attempt, including the one that failed');
+
+// ---- And one that throws, which is how a real database refuses ----
+$rPdo = newTestDb();
+$was  = storedHash($rPdo, 1);
+$code = (new ResetTokenStore($rPdo))->issue(1);
+$tokenId = intval($rPdo->query("SELECT id FROM password_resets WHERE user_id = 1")->fetchColumn());
+
+$outcome = newCompletion($rPdo, new ThrowingAccountStore($rPdo))->complete(1, $code, 'never-lands');
+checkSame('failed', $outcome->kind(), 'a write that throws is a failure, not an exception on the page');
+checkSame($was, storedHash($rPdo, 1), 'with the password untouched');
+checkSame(false, (new ResetTokenStore($rPdo))->isSpent($tokenId), 'and the code still unspent');
+checkSame(false, $rPdo->inTransaction(), 'and the transaction rolled back, not left hanging');
+
+// ---- Inside somebody else's transaction, it does nothing at all ----
+// The guess would be rolled back with that transaction, and the rollback here would
+// end one this method did not start. No caller does this today; the point is that the
+// next one cannot.
+$rPdo = newTestDb();
+$code = (new ResetTokenStore($rPdo))->issue(1);
+$tokenId = intval($rPdo->query("SELECT id FROM password_resets WHERE user_id = 1")->fetchColumn());
+$rPdo->beginTransaction();
+checkSame('failed', newCompletion($rPdo)->complete(1, $code, 'not-in-here')->kind(),
+          'a reset asked for inside an open transaction is refused');
+checkSame(true, $rPdo->inTransaction(), 'and the transaction is still the caller\'s to finish');
+// Conditional on purpose: if the guard above ever stops working, this method will
+// have committed the transaction, and an unconditional rollBack() would then end the
+// run with an exception instead of failing the check that just caught it.
+if ($rPdo->inTransaction()) { $rPdo->rollBack(); }
+checkSame(0, (new ResetTokenStore($rPdo))->attemptsSpent(1), 'no guess was charged for the refusal');
+checkSame(false, (new ResetTokenStore($rPdo))->isSpent($tokenId), 'and the code is untouched');
+
+// ---- The refusals the page must not tell apart ----
+$rPdo = newTestDb();
+checkSame(true, newCompletion($rPdo)->complete(0, '000000', 'x-x-x-x-x')->isRefused(),
+          'no account at all is a refusal, in the same words as a wrong code');
+$code = (new ResetTokenStore($rPdo))->issue(1);
+checkSame(true, newCompletion($rPdo)->complete(1, '000000', 'x-x-x-x-x')->isRefused(),
+          'a wrong code is a refusal');
+expireTestResetToken($rPdo, 1);
+checkSame(true, newCompletion($rPdo)->complete(1, $code, 'x-x-x-x-x')->isRefused(),
+          'so is a correct code that has expired');
+
+$rPdo = newTestDb();
+$code = (new ResetTokenStore($rPdo))->issue(1);
+for ($i = 1; $i <= 5; $i++) { newCompletion($rPdo)->complete(1, '000000', 'x-x-x-x-x'); }
+checkSame(true, newCompletion($rPdo)->complete(1, $code, 'x-x-x-x-x')->isRefused(),
+          'and so is the right code once five guesses have gone');
+checkSame('', storedHash($rPdo, 1), 'none of which changed a password');
+
+// A valid code cannot be used to blank a password, even though no page offers it.
+$rPdo = newTestDb();
+$code = (new ResetTokenStore($rPdo))->issue(1);
+$tokenId = intval($rPdo->query("SELECT id FROM password_resets WHERE user_id = 1")->fetchColumn());
+checkSame('failed', newCompletion($rPdo)->complete(1, $code, '')->kind(),
+          'an empty password is refused outright');
+checkSame('', storedHash($rPdo, 1), 'and nothing was written');
+checkSame(false, (new ResetTokenStore($rPdo))->isSpent($tokenId), 'the code is not spent by it either');
+
+// ---- A database that predates the login lockout ----
+// The columns are added at runtime by login.php, and the ALTER can fail for
+// reasons nobody sees: no privilege, a full disk. A reset on such a database has
+// nothing to unlock, and must say so by working rather than by throwing.
+$bare = new PDO('sqlite::memory:', null, null, [
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+]);
+$bare->exec("CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL,
+                                 password_hash TEXT NOT NULL DEFAULT '')");
+$bare->exec("CREATE TABLE password_resets (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL,
+                                           passcode TEXT NOT NULL, expires_at TEXT NOT NULL,
+                                           used INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0)");
+$bare->exec("INSERT INTO users (username) VALUES ('sky')");
+
+// Caught deliberately: the failure this asserts against is an *exception*, and an
+// uncaught one here would end the run rather than fail a check — taking the rest of
+// the file's checks with it and printing no total at all.
+$cleared = true;
+try {
+    $cleared = (new AccountStore($bare))->clearLoginLockout(1);
+} catch (Throwable $e) {
+    $cleared = false;
+}
+checkSame(true, $cleared, 'clearing a lockout that has nowhere to be recorded is not a failure');
+$code = (new ResetTokenStore($bare))->issue(1);
+checkSame(true, newCompletion($bare)->complete(1, $code, 'works-here-too')->isOk(),
+          'and a reset on that database completes');
+check(password_verify('works-here-too', storedHash($bare, 1)), 'with the password really changed');
+
+// setPassword answers about the row, not about how many rows the engine says it
+// changed — MySQL counts changed rows, so a hash identical to the stored one reads
+// like a missing account there and like a success here.
+checkSame(false, (new AccountStore($bare))->setPassword(9999, 'no-such-account'),
+          'setting a password on an account that does not exist is false');
+checkSame(true, (new AccountStore($bare))->setPassword(1, storedHash($bare, 1)),
+          'and storing a hash the row already holds is not treated as a failure');
+
+// ─────────────────────────────────────────────────────────────
 section('The server report tells the truth about a database behind the repo');
 
 // The whole value of this report is that it goes red when a runtime-added column
@@ -2469,4 +2673,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(657);
+reportChecks(706);

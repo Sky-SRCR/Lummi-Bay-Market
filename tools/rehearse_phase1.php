@@ -10,6 +10,25 @@
 // which SQLite's transactional DDL cannot demonstrate. It uses a throwaway table for
 // that one and drops it again.
 //
+// Four of its checks used to be weaker than they read, and all four are now the
+// thing they claimed to be:
+//
+//   - "convergence can be re-run without error" was true of a database that
+//     rejected every statement, because the second run stopped at the per-request
+//     latch having done nothing. The latch is dropped first now.
+//   - "no unscoped elements remain (found 0)" printed ok when the column it counts
+//     was missing entirely — the one case that needs the alarm.
+//   - it published a `section` and a `price`, both of which existed before Phase 1
+//     widened the ENUMs, so a database where the widening never applied passed
+//     clean. It now publishes every value both ENUMs list and reads them back.
+//   - a foreign key was checked for existing, not for cascading; a constraint that
+//     restricts passed, and then the cleanup at the bottom threw and left two
+//     throwaway Displays in the database. The rule is checked, and the cleanup no
+//     longer depends on it.
+//
+// It also reports `block_styles`, whose seed can fail without stopping anything, and
+// the five columns that pages rather than convergence add.
+//
 // Named for Phase 1 because that is the migration with the risk in it; it has
 // grown to check every table this build adds, grants included. The name stays so
 // the deployment checklist keeps pointing at the same file.
@@ -36,6 +55,7 @@ require_once __DIR__ . '/../lib/schema.php';
 require_once __DIR__ . '/../lib/displays.php';
 require_once __DIR__ . '/../lib/layout_store.php';
 require_once __DIR__ . '/../lib/grants.php';
+require_once __DIR__ . '/../lib/brand_styles.php';
 
 // ---- Arguments --------------------------------------------------------------
 
@@ -106,13 +126,20 @@ foreach ($pdo->query("SHOW COLUMNS FROM canvas_elements")->fetchAll() as $c) {
 report(isset($cols['display_id']), 'canvas_elements.display_id exists');
 report(isset($cols['display_id']) && $cols['display_id']['Null'] === 'NO', 'display_id is NOT NULL');
 
-$unscoped = 0;
+// A row with no Display would be invisible to every scoped query while still
+// occupying the canvas — the one migration outcome worth failing loudly on.
+//
+// "Cannot tell" is a failure here, not a pass. The version this replaces initialised
+// the count to 0 and only asked the database when the column existed, so a run
+// against a database where `display_id` never applied printed "ok no unscoped
+// elements remain (found 0)" — the reassuring answer, from the one situation that
+// most needs the alarming one.
 if (isset($cols['display_id'])) {
-    // A row with no Display would be invisible to every scoped query while still
-    // occupying the canvas — the one migration outcome worth failing loudly on.
     $unscoped = intval($pdo->query("SELECT COUNT(*) FROM canvas_elements WHERE display_id IS NULL")->fetchColumn());
+    report($unscoped === 0, "no unscoped elements remain (found $unscoped)");
+} else {
+    report(false, 'no unscoped elements remain — cannot be told, display_id is not there to ask about');
 }
-report($unscoped === 0, "no unscoped elements remain (found $unscoped)");
 
 $indexed = false;
 foreach ($pdo->query("SHOW INDEX FROM canvas_elements")->fetchAll() as $ix) {
@@ -127,6 +154,35 @@ $fk = $pdo->prepare(
 );
 $fk->execute([$opts['db']]);
 report(intval($fk->fetchColumn()) > 0, 'display_id is foreign-keyed to displays');
+
+/**
+ * What the database will do to the rows on the other side when a parent goes.
+ *
+ * Existence is not the property anything relies on: the app deletes a Display and
+ * expects its elements and its grants to go with it. A constraint that exists but
+ * restricts instead of cascading passes an existence check, and then the deletion an
+ * admin asked for fails halfway — or, in this script, the cleanup at the bottom
+ * throws and leaves two throwaway Displays sitting in the database it was pointed at.
+ */
+function deleteRule(PDO $pdo, $db, $table, $column)
+{
+    $stmt = $pdo->prepare(
+        "SELECT rc.DELETE_RULE
+           FROM information_schema.REFERENTIAL_CONSTRAINTS rc
+           JOIN information_schema.KEY_COLUMN_USAGE k
+             ON k.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+            AND k.CONSTRAINT_NAME   = rc.CONSTRAINT_NAME
+          WHERE rc.CONSTRAINT_SCHEMA = ? AND k.TABLE_NAME = ? AND k.COLUMN_NAME = ?
+          LIMIT 1"
+    );
+    $stmt->execute([$db, $table, $column]);
+    $rule = $stmt->fetchColumn();
+    return $rule === false ? 'none' : (string)$rule;
+}
+
+$elementRule = deleteRule($pdo, $opts['db'], 'canvas_elements', 'display_id');
+report($elementRule === 'CASCADE',
+    "deleting a Display takes its elements with it (ON DELETE $elementRule)");
 
 // display_permissions is the Phase 4 table. Its two foreign keys are what stop a
 // grant outliving the Display or the account it names — and they are added by
@@ -150,7 +206,31 @@ if ($hasGrants) {
     foreach ($gfk->fetchAll() as $row) { $refs[] = $row['REFERENCED_TABLE_NAME']; }
     report(in_array('displays', $refs, true), 'a grant is foreign-keyed to its Display');
     report(in_array('users', $refs, true),    'and to its account');
+
+    $grantRule   = deleteRule($pdo, $opts['db'], 'display_permissions', 'display_id');
+    $accountRule = deleteRule($pdo, $opts['db'], 'display_permissions', 'user_id');
+    report($grantRule === 'CASCADE',   "a deleted Display takes its grants with it (ON DELETE $grantRule)");
+    report($accountRule === 'CASCADE', "and so does a deleted account (ON DELETE $accountRule)");
 }
+
+// ---- block_styles: the rows Brand Standards edits ---------------------------
+// Seeding them is a *step*, and a step's failure is reported but not fatal, so this
+// is the only place that says whether the rows are really there on this database. A
+// missing row makes the Brand Standards form a silent no-op: it saves with
+// UPDATE … WHERE block_type = ?, so the field reverts on reload and nothing says why.
+$styled = [];
+try {
+    foreach ($pdo->query("SELECT block_type FROM block_styles")->fetchAll() as $row) {
+        $styled[] = $row['block_type'];
+    }
+} catch (Exception $e) {
+    // No table. The report below names every type as missing, which is the truth.
+}
+$missingStyles = array_values(array_diff(BrandStyles::types(), $styled));
+report(count($missingStyles) === 0,
+    'every branded block type has a typography row ('
+    . (count($missingStyles) ? 'missing: ' . implode(', ', $missingStyles) : 'all '
+      . count(BrandStyles::types()) . ' present') . ')');
 
 // The edit-lock columns. lock_taken_at arrives after `displays` already exists on
 // any database that converged for an earlier phase, so it is added by its own
@@ -180,16 +260,25 @@ if ($legacy) {
 }
 
 // Idempotence: the whole point of the pattern.
+//
+// The latch has to be dropped first, and that is the entire content of this check.
+// Without it the second call returned at `if (!SchemaLatch::take())` having run
+// nothing, so "convergence can be re-run without error" was true of a PDO that
+// rejected every statement it was ever given: run one swallows its failures, run two
+// attempts none. A check that cannot fail is worse than no check, because the report
+// it prints is read as coverage.
 $ranTwice = true;
+$reallyRan = false;
 try {
-    // ensureSignageSchema() latches per request, so call the statements again by
-    // running it in a fresh process would be truer — this at least proves the
-    // second call is a no-op rather than an error.
+    SchemaLatch::forget();
     ensureSignageSchema($pdo);
+    // take() has flipped it, which is how we know the call went past the latch and
+    // really issued its statements against this database a second time.
+    $reallyRan = !SchemaLatch::pending();
 } catch (Exception $e) {
     $ranTwice = false;
 }
-report($ranTwice, 'convergence can be re-run without error');
+report($ranTwice && $reallyRan, 'convergence really runs a second time, and without error');
 
 // The stronger claim, and the one only a real MySQL database can settle: after
 // converging, the catalogue says there is nothing left to do. This is what proves
@@ -261,13 +350,59 @@ $layouts = new LayoutStore($pdo, $store);
 $a = $store->forTag($tagA);
 $b = $store->forTag($tagB);
 
+/**
+ * Every value the two widened ENUMs list, read out of the definition itself.
+ *
+ * Derived rather than typed out, so that widening an ENUM in lib/schema.php widens
+ * what this rehearsal publishes on the next run without anybody remembering to.
+ */
+function enumValues($definition)
+{
+    preg_match_all("/'([^']*)'/", $definition, $m);
+    return $m[1];
+}
+
+/**
+ * A layout that uses every element type and every block subtype the schema claims
+ * to allow.
+ *
+ * The version this replaces published a `section` and one `price` — both of which
+ * existed in the ENUM *before* Phase 1 widened it. So a database where
+ * `MODIFY block_subtype` had never applied passed the rehearsal clean, and the
+ * first real publish using Title 2 or Price 2 either failed outright (strict mode)
+ * or silently stored an empty subtype, which renders with the wrong typography on
+ * the sign and nowhere else. The rehearsal exists to catch exactly that, one run
+ * before it reaches a screen.
+ */
 function rehearsalLayout($text)
 {
-    return [
+    $layout = [
         ['type' => 'section', 'temp_id' => 's1', 'x_pos' => 0, 'y_pos' => 0, 'width' => 400, 'height' => 300],
-        ['type' => 'text', 'block_subtype' => 'price', 'parent_temp_id' => 's1',
-         'manual_content' => $text, 'width' => 160, 'height' => 60],
     ];
+
+    // One text block per subtype. The first carries the caller's words so the
+    // scoping checks below still have something recognisable to look at.
+    foreach (enumValues(SCHEMA_BLOCK_SUBTYPE_ENUM) as $i => $subtype) {
+        $layout[] = ['type' => 'text', 'block_subtype' => $subtype, 'parent_temp_id' => 's1',
+                     'manual_content' => $i === 0 ? $text : ('subtype ' . $subtype),
+                     'width' => 160, 'height' => 60];
+    }
+
+    // And one block per element type. `section` is the container above; `text` is
+    // covered seven times over already.
+    foreach (enumValues(SCHEMA_ELEMENT_TYPE_ENUM) as $type) {
+        if ($type === 'section' || $type === 'text') { continue; }
+        $layout[] = ['type' => $type, 'parent_temp_id' => 's1',
+                     'manual_content' => '[]', 'width' => 200, 'height' => 100];
+    }
+
+    return $layout;
+}
+
+/** How many rows one rehearsal publish should leave behind. */
+function rehearsalElementCount()
+{
+    return count(rehearsalLayout('x'));
 }
 function rehearsalPublish(LayoutStore $layouts, Display $d, $text, $stamp)
 {
@@ -284,20 +419,41 @@ $countFor = function ($displayId) use ($pdo) {
 
 $legacyCountBefore = $legacy ? $countFor($legacy->id()) : 0;
 
+$expect = rehearsalElementCount();
+
 report(rehearsalPublish($layouts, $a, 'A one', $a->layoutStamp())->isOk(), 'publish to A succeeds');
 report(rehearsalPublish($layouts, $b, 'B one', $b->layoutStamp())->isOk(), 'publish to B succeeds');
-report($countFor($a->id()) === 2, 'A has its two elements');
-report($countFor($b->id()) === 2, 'B has its two elements');
+report($countFor($a->id()) === $expect, "A has its $expect elements");
+report($countFor($b->id()) === $expect, "B has its $expect elements");
+
+// What came back out is the check the ENUM widening needs: MySQL with strict mode
+// off stores an empty string for a value the column does not list, and says nothing.
+$read = $pdo->prepare("SELECT type, block_subtype FROM canvas_elements WHERE display_id = ?");
+$read->execute([$a->id()]);
+$gotTypes = $gotSubtypes = [];
+foreach ($read->fetchAll() as $row) {
+    $gotTypes[]    = $row['type'];
+    $gotSubtypes[] = $row['block_subtype'];
+}
+$lostSubtypes = array_values(array_diff(enumValues(SCHEMA_BLOCK_SUBTYPE_ENUM), $gotSubtypes));
+$lostTypes    = array_values(array_diff(enumValues(SCHEMA_ELEMENT_TYPE_ENUM), $gotTypes));
+report(count($lostSubtypes) === 0,
+    'every block subtype came back exactly as published ('
+    . (count($lostSubtypes) ? 'lost: ' . implode(', ', $lostSubtypes) : 'all ' . count($gotSubtypes)) . ')');
+report(count($lostTypes) === 0,
+    'and so did every element type ('
+    . (count($lostTypes) ? 'lost: ' . implode(', ', $lostTypes) : 'all of them') . ')');
 
 $a = $store->forTag($tagA);
 report(rehearsalPublish($layouts, $a, 'A two', $a->layoutStamp())->isOk(), 'republishing A succeeds');
-report($countFor($b->id()) === 2, 'B is untouched by A being republished');
+report($countFor($a->id()) === $expect, 'and leaves A with one layout, not two');
+report($countFor($b->id()) === $expect, 'B is untouched by A being republished');
 report(!$legacy || $countFor($legacy->id()) === $legacyCountBefore,
     'the drive-thru layout is untouched throughout');
 
 $stale = rehearsalPublish($layouts, $a, 'A three', '0');
 report($stale->kind() === 'stale', 'a stale publish to A is refused');
-report($countFor($a->id()) === 2, 'and wrote nothing');
+report($countFor($a->id()) === $expect, 'and wrote nothing');
 
 // A grant on a throwaway Display, so the cleanup below can show whether a deleted
 // Display really takes its grants with it on this engine. Uses any existing
@@ -339,22 +495,45 @@ if ($accounts) {
 
 heading('Cleanup');
 
-$del = $pdo->prepare("DELETE FROM displays WHERE tag = ?");
-$del->execute([$tagA]);
-$del->execute([$tagB]);
+// Everything this run made, removed in dependency order and without relying on a
+// constraint to do it. The version this replaces deleted the Displays and let the
+// cascade take the rest — so on a database whose foreign key restricts instead of
+// cascading (which the check above now reports), the DELETE threw, nothing caught
+// it, and the script exited leaving two throwaway Displays and their layouts behind
+// in the copy it had been pointed at. The DELETE_RULE check is where that property
+// is asserted; cleaning up is not the place to also be testing it.
+$cleanupError = '';
+try {
+    $ids = [$a->id(), $b->id()];
+    foreach ($ids as $id) {
+        if ($hasGrants) {
+            $pdo->prepare("DELETE FROM display_permissions WHERE display_id = ?")->execute([$id]);
+        }
+        $pdo->prepare("DELETE FROM canvas_elements WHERE display_id = ?")->execute([$id]);
+        $pdo->prepare("DELETE FROM displays WHERE id = ?")->execute([$id]);
+    }
+} catch (Throwable $e) {
+    $cleanupError = $e->getMessage();
+}
+report($cleanupError === '', 'the throwaway Displays could be cleaned up'
+    . ($cleanupError === '' ? '' : " ($cleanupError — REMOVE THEM BY HAND)"));
 report($store->forTag($tagA) === null && $store->forTag($tagB) === null, 'throwaway Displays removed');
 
+// Not a cascade check any more (the cleanup above is explicit) — a check on the
+// database it was pointed at, which is a copy of live and may have carried orphans
+// in with it. A row here is invisible to every scoped query and cannot be edited.
 $orphans = intval($pdo->query(
     "SELECT COUNT(*) FROM canvas_elements ce
       LEFT JOIN displays d ON ce.display_id = d.id
      WHERE d.id IS NULL"
 )->fetchColumn());
-report($orphans === 0, 'their elements cascaded away, leaving no orphans');
+report($orphans === 0, "no element belongs to a Display that is not there (found $orphans)");
 
 if ($grantedA) {
-    // The app deletes grants explicitly before deleting the Display, so a failure
-    // here means the constraint is absent rather than the app being wrong — but it
-    // is worth knowing, because it is the same constraint the elements rely on.
+    // The same question as the orphan check above, and now for the same reason: both
+    // the app and the cleanup delete grants explicitly, so a row here came in with the
+    // copy rather than out of this run. It grants somebody access to a Display that
+    // does not exist, which nothing in the admin panel can show or revoke.
     $orphanGrants = intval($pdo->query(
         "SELECT COUNT(*) FROM display_permissions dp
           LEFT JOIN displays d ON dp.display_id = d.id
@@ -364,6 +543,32 @@ if ($grantedA) {
 }
 report(!$legacy || $countFor($legacy->id()) === $legacyCountBefore,
     'the drive-thru layout is exactly as it was before this run');
+
+// ---- The columns convergence does not own -----------------------------------
+// Five columns are added by pages rather than by signageSchemaPlan(), each on the
+// first request that needs it, so a copy of live data can legitimately be without
+// them and nothing here is broken if it is. They are printed rather than checked
+// for that reason — but printed, because "which of these landed" was previously a
+// question nobody could answer without a database console.
+
+heading('Columns added by pages, not by convergence (for information)');
+
+function noteColumn(PDO $pdo, $table, $column, $who)
+{
+    $there = false;
+    try {
+        $pdo->query("SELECT $column FROM $table LIMIT 0");
+        $there = true;
+    } catch (Exception $e) {}
+    echo '  ' . ($there ? 'present' : 'ABSENT ') . "  $table.$column — added by $who\n";
+}
+
+noteColumn($pdo, 'users', 'failed_attempts', 'login.php on any sign-in attempt');
+noteColumn($pdo, 'users', 'last_failed_at',  'login.php on any sign-in attempt');
+noteColumn($pdo, 'users', 'locked_until',    'login.php on any sign-in attempt');
+noteColumn($pdo, 'users', 'closed_at',       'the admin panel when it is opened');
+noteColumn($pdo, 'password_resets', 'attempts', 'reset_password.php when it is opened');
+echo "  Absent is survivable: every reader copes, and the column arrives on first use.\n";
 
 echo "\n" . (count($failures) ? count($failures) . " FAILED\n" : "Rehearsal clean.\n");
 exit(count($failures) ? 1 : 0);

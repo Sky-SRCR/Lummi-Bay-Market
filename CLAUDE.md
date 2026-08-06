@@ -34,6 +34,12 @@ edited in place and every change reaches the sign by hand.
   failed. Anything that needs to converge because a query *already failed* calls
   `repairSchemaAfterFailure()` — the one guarded door, which refuses inside a
   transaction, refuses twice on one request, and refuses again for five minutes.
+- **A change spanning two tables is one transaction, held by a use-case module.**
+  `DisplayAdmin`, `AccountAdmin` and `PasswordResetCompletion` are the three, and they
+  are the same shape on purpose: the module owns `beginTransaction`, writes no SQL
+  itself, rolls back quietly, and returns a result the page turns into a sentence. A
+  page doing the writes itself cannot roll back what already landed, so the message it
+  prints is chosen by which line threw rather than by what is now true.
 - **PHP 7.1-compatible syntax** — the live server's version is unverified.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.
