@@ -10,6 +10,15 @@
       Deny from all
   </FilesMatch>
 
+  # The replacement branding_config.php exists here for the length of one
+  # rename() while the Admin Panel swaps it in (lib/branding.php). It is named
+  # without ".php" on purpose — AddHandler matches that extension anywhere in a
+  # filename — which means it would otherwise be served as plain text.
+  <FilesMatch "^\.branding_config\..*\.tmp$">
+      Order allow,deny
+      Deny from all
+  </FilesMatch>
+
   # Protect the schema file
   <FilesMatch "\.sql$">
       Order allow,deny

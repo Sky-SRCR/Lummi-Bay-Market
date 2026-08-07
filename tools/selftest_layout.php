@@ -3324,4 +3324,170 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(885);
+// ─────────────────────────────────────────────────────────────
+section('The branding file is swapped in, never written in place');
+
+// Decision #36. `branding_config.php` is generated PHP that every page in the app
+// requires, so the interesting property is not "the save worked" — it is that the
+// live path only ever holds a complete, loadable file, whatever happens to the
+// write. Everything below runs in a throwaway directory: a self-test that rewrote
+// the deployment's own branding would be changing the thing it is measuring.
+$brandDir = newTestStateDir();
+$brandCfg = new BrandingConfig($brandDir);
+
+// Work from inside that directory for the length of this section. Not tidiness:
+// this is the one module whose subject is a *path*, so the mutation that makes
+// `path()` answer with a bare filename sends every save below into the deployment's
+// own branding_config.php — which is how a mutation run rewrote the repo's copy
+// once. A relative answer now lands in the throwaway directory with everything else.
+$brandCwd = getcwd();
+chdir($brandDir);
+
+checkSame($brandDir . '/branding_config.php', $brandCfg->path(),
+          'the module owns the filename, so no page has to spell it');
+checkSame(8, count(BrandingConfig::DEFAULTS), 'eight settings live in the file');
+checkSame(array_keys(BrandingConfig::DEFAULTS), array_keys($brandCfg->current()),
+          'and current() answers about all eight');
+// The constants are defined in this process by config.php, which is the state a
+// real save happens in: what is in force, not what the defaults say.
+checkSame(SITE_NAME, $brandCfg->current()['SITE_NAME'],
+          'current() reports the value actually in force, not the fallback');
+
+$res = $brandCfg->save(['SITE_NAME' => 'Lummi Bay Market']);
+checkSame(BrandingWrite::OK, $res->kind(), 'a save of one setting succeeds');
+check(is_file($brandCfg->path()), 'and the file is there afterwards');
+
+$written = file_get_contents($brandCfg->path());
+check(BrandingConfig::parses($written), 'what the swap put in place is loadable PHP');
+checkMentions($written, "define('SITE_NAME'", 'and defines the name that was saved');
+checkMentions($written, var_export('Lummi Bay Market', true), 'with the value asked for');
+// The other seven were not in the save and must be exactly what they were. This is
+// the defect the old eight-argument call had: the Site & Email form passed the five
+// branding values back in from page variables, so it rewrote them every time.
+// Pinned, because in this process all eight constants sit at their defaults and a
+// save that kept them and a save that reset them write the same bytes.
+$pinned = BrandingConfig::DEFAULTS;
+$pinned['BRAND_ACCENT'] = '#abcdef';
+$pinned['SITE_NAME']    = 'Before';
+$pinnedCfg = new PinnedBrandingConfig($brandDir, $pinned);
+checkSame(BrandingWrite::OK, $pinnedCfg->save(['SITE_NAME' => 'After'])->kind(),
+          'a save over settings that are not the defaults succeeds');
+$merged = file_get_contents($pinnedCfg->path());
+checkMentions($merged, var_export('After', true), 'the setting asked for is changed');
+checkMentions($merged, var_export('#abcdef', true),
+              'and a save of one setting leaves the seven it never mentioned alone');
+checkSame(BrandingConfig::render(array_merge($pinned, ['SITE_NAME' => 'After'])), $merged,
+          'the file is exactly what is in force with the change applied on top');
+
+// The check above only means anything if a truncated file would have failed it.
+// This is what an interrupted in-place write leaves behind, and it is why the old
+// code could take every page of the app down with one save.
+$cutHere   = strrpos($written, 'define(');
+$truncated = substr($written, 0, $cutHere + 20);
+check(!BrandingConfig::parses($truncated),
+      'and a file cut short mid-statement is not — which is the whole defect');
+
+// Anti-injection. A site name is free text an admin types; it reaches a file the
+// app executes. var_export is the entire defence, so count the calls: an escape
+// that let a value close its own string would show up as a ninth.
+$evil = "'); echo 'pwned'; define('X', '";
+checkSame(BrandingWrite::OK, $brandCfg->save(['SITE_NAME' => $evil])->kind(),
+          'a site name full of quotes and semicolons still saves');
+$written = file_get_contents($brandCfg->path());
+check(BrandingConfig::parses($written), 'and the file it wrote still parses');
+$defineCalls = 0;
+foreach (token_get_all($written) as $token) {
+    if (is_array($token) && $token[0] === T_STRING && $token[1] === 'define') { $defineCalls++; }
+}
+checkSame(8, $defineCalls, 'with exactly eight define() calls — nothing was injected');
+checkMentions($written, var_export($evil, true), 'the value is stored as one escaped literal');
+
+// A backslash is the other half of it: var_export doubles it, and a naive escape
+// that handled quotes but not backslashes would end the literal one character early.
+checkSame(BrandingWrite::OK, $brandCfg->save(['SITE_NAME' => 'Bob\'s \\ Market'])->kind(),
+          'a backslash saves too');
+check(BrandingConfig::parses(file_get_contents($brandCfg->path())),
+      'and does not end the string early');
+
+// A name nothing reads would be written into a file every page loads and would
+// never have any effect, and the admin would be told it saved.
+$before = file_get_contents($brandCfg->path());
+$res    = $brandCfg->save(['NOT_A_SETTING' => 'x']);
+checkSame(BrandingWrite::REFUSED, $res->kind(), 'a setting the file does not hold is refused');
+checkMentions($res->message(), 'NOT_A_SETTING', 'and the refusal names it');
+checkMentions($res->message(), 'Nothing was changed', 'and says nothing was changed');
+checkSame($before, file_get_contents($brandCfg->path()), 'which is true — the file is byte-identical');
+
+// ── The reason this module exists ────────────────────────────
+// A write that comes up short. The old code truncated the live file first, so this
+// left every page of the app requiring half a define() — a parse error, on the sign
+// as well as in the office. Nothing here may touch the live path.
+$shortCfg = new ShortWriteBrandingConfig($brandDir);
+$before   = file_get_contents($brandCfg->path());
+$res      = $shortCfg->save(['SITE_NAME' => 'Half A Name']);
+checkSame(BrandingWrite::FAILED, $res->kind(), 'a short write fails the save');
+checkMentions($res->message(), 'Nothing was changed', 'and says nothing was changed');
+checkMentions($res->message(), 'still using the settings it had', 'and that the site is still standing');
+checkMentions($res->message(), 'disk may be full', 'and names the cause an admin can act on');
+checkSame($before, file_get_contents($brandCfg->path()),
+          'and the live file is byte-for-byte what it was');
+check(BrandingConfig::parses(file_get_contents($brandCfg->path())),
+      'so every page that requires it still loads');
+check(strpos(file_get_contents($brandCfg->path()), 'Half A Name') === false,
+      'and none of the abandoned save is in it');
+checkSame([], glob($brandDir . '/.[!.]*'),
+          'the half-written temporary file was cleaned up, not left in the webroot');
+
+// Where that temporary file was, which is only visible from inside the write.
+checkSame($brandDir, dirname($shortCfg->lastTemp),
+          'the replacement is built beside the file it replaces — rename() is only atomic within one filesystem');
+check(strpos(basename($shortCfg->lastTemp), '.php') === false,
+      'and is never named *.php: AddHandler matches that extension anywhere in a filename');
+check(strpos(basename($shortCfg->lastTemp), '.branding_config.') === 0,
+      'it is named for what it is about to become');
+checkMentions(file_get_contents(__DIR__ . '/../.htaccess'), '^\.branding_config\.',
+              'and the webroot denies that name for the moment it exists');
+
+// The swap must not be a way for this file to quietly change who can read it.
+chmod($brandCfg->path(), 0640);
+clearstatcache(true, $brandCfg->path());
+checkSame(BrandingWrite::OK, $brandCfg->save(['SITE_NAME' => 'Permissions Test'])->kind(),
+          'a save over a file with its own permissions succeeds');
+clearstatcache(true, $brandCfg->path());
+checkSame(0640, fileperms($brandCfg->path()) & 0777,
+          'and the replacement inherits them rather than the umask');
+
+// A folder that cannot be written is the other end of the same promise: fail, say
+// so, create nothing — and say something different, because "the disk is full" and
+// "this folder is not yours to write" are not the same errand.
+$res = (new BrandingConfig($brandDir . '/nowhere'))->save(['SITE_NAME' => 'x']);
+checkSame(BrandingWrite::FAILED, $res->kind(), 'a folder that cannot be written fails the save');
+checkMentions($res->message(), 'Nothing was changed', 'and says nothing was changed');
+checkMentions($res->message(), 'permissions', 'and sends the admin somewhere different from a full disk');
+check(strpos($res->message(), 'disk may be full') === false, 'not to both places at once');
+check(!is_dir($brandDir . '/nowhere'), 'and nothing was created on the way');
+
+// render() is pure, so the bytes are checkable without a disk at all — including
+// the one property two saves of the same values must have.
+$sample = BrandingConfig::render(BrandingConfig::DEFAULTS);
+checkSame($sample, BrandingConfig::render(BrandingConfig::DEFAULTS),
+          'the same values render to the same bytes every time');
+check(strpos($sample, '<?php') === 0, 'the generated file opens as PHP');
+check(substr($sample, -1) === "\n", 'and ends with a newline');
+check(strpos($sample, '?>') === false, 'with no closing tag to leak whitespace before a header');
+check(BrandingConfig::parses($sample), 'and the defaults render to something loadable');
+checkSame(BrandingConfig::render(BrandingConfig::DEFAULTS),
+          BrandingConfig::render(['SITE_NAME' => BrandingConfig::DEFAULTS['SITE_NAME']]),
+          'a value render() is not given falls back to the same default the app uses');
+
+// And the panel writes none of it itself any more. The whole point of the module is
+// that there is one writer; a file_put_contents back in the page is that undone.
+$panelSource = file_get_contents(__DIR__ . '/../admin_panel.php');
+check(strpos($panelSource, 'file_put_contents') === false,
+      'the Admin Panel writes no file of its own');
+check(strpos($panelSource, "define('BRAND_") === false,
+      'and generates none of the file it used to build by hand');
+
+chdir($brandCwd);
+
+reportChecks(936);

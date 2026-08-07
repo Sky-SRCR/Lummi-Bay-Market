@@ -62,15 +62,16 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/error_policy.php` | The error policy, set in code: errors off, logging on, the three handlers, and the notice a Screen / an endpoint / a person gets when something breaks. `report()` is for a problem the app survived, and throttles the log as well as the email when the problem repeats on its own |
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
+| `lib/branding.php` | `BrandingConfig` / `BrandingWrite` — the **only** writer of `branding_config.php`, which every page of the app requires. Renders it, parses it, writes a temporary copy, reads that back byte for byte, and swaps it in with one `rename()`, so a reader gets the whole old file or the whole new one and a failed save leaves the site on exactly what it had |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **826 checks**. Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **936 checks**. Run before pushing |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **27 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit), **53 checks** |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data. It also publishes every element type and block subtype the schema allows and reads them back, checks that a deleted Display really cascades, and prints which of the five page-added columns landed |
 | `config.php` | Site constants (`SITE_NAME`, `MAIL_FROM`); loads `branding_config.php` |
 | `db_connect.php` | PDO `$pdo`; loads creds from `../../private/db_credentials.php` |
 | `auth.php` | `session_start`; `requireLogin/requireAdmin/isAdmin/currentUser`; `csrfToken()/verifyCsrf()`; the login-lockout columns |
-| `branding_config.php` | Generated brand theme (`BRAND_*` constants) |
+| `branding_config.php` | Generated brand theme (`BRAND_*` constants) plus `SITE_NAME` and the two mail-from fields. Written only by `lib/branding.php`, and never in place |
 | `login.php` / `logout.php` | Auth; account-keyed DB login lockout (5 tries / 15-min window) |
 | `.htaccess` | Server config: index/sensitive-file blocks, security headers, PHP hardening, HTTPS redirect. Frames `viewer.php` for external widgets (see §8) |
 | `lib/.htaccess`, `tools/.htaccess` | Make both folders unreachable from a browser. **Deploy them with the folders** |

@@ -26,6 +26,7 @@ require_once __DIR__ . '/../lib/error_policy.php';   // pulls in lib/alerts.php
 require_once __DIR__ . '/../lib/assets.php';
 require_once __DIR__ . '/../lib/upload_limits.php';
 require_once __DIR__ . '/../lib/schema.php';
+require_once __DIR__ . '/../lib/branding.php';
 
 /**
  * DisplayStore with its one non-portable statement swapped out.
@@ -491,6 +492,54 @@ class TestAlertMailer extends AlertMailer
 }
 
 /**
+ * A BrandingConfig whose write to the temporary file comes up short — a full disk,
+ * a quota, the request killed mid-write. It is the failure the whole swap-in-place
+ * design exists for, and nothing else can reach it: `file_put_contents` cannot be
+ * made to run out of room on demand, so the seam is `putTemp()` and this is why it
+ * is `protected` rather than inlined.
+ *
+ * What the test asserts around it is not that the save fails. It is that the file
+ * every page of the app requires is exactly as complete afterwards as it was
+ * before.
+ */
+class ShortWriteBrandingConfig extends BrandingConfig
+{
+    /** Where the replacement was being built — the only way to see it from outside. */
+    public $lastTemp = '';
+
+    protected function putTemp($temp, $php)
+    {
+        $this->lastTemp = $temp;
+        return parent::putTemp($temp, substr($php, 0, intdiv(strlen($php), 2)));
+    }
+}
+
+/**
+ * A BrandingConfig whose eight settings are whatever the test says they are.
+ *
+ * `current()` reads the constants this process loaded, and in a self-test run those
+ * are all eight defaults — so "the save kept what was in force" and "the save wrote
+ * the defaults" are the same bytes, and a test cannot tell a merge from a reset.
+ * Pinning them apart is the only way to see the difference that decision #36's
+ * eight-positional-argument call got wrong.
+ */
+class PinnedBrandingConfig extends BrandingConfig
+{
+    private $pinned;
+
+    public function __construct($dir, array $pinned)
+    {
+        parent::__construct($dir);
+        $this->pinned = $pinned;
+    }
+
+    public function current()
+    {
+        return $this->pinned;
+    }
+}
+
+/**
  * A throwaway directory for the log and the alert stamps, removed when the run
  * ends. Not the app's own `logs/` — a self-test that writes into the deployment
  * it is testing has changed the thing it is measuring.
@@ -507,7 +556,11 @@ $GLOBALS['_testStateDirs'] = [];
 
 register_shutdown_function(function () {
     foreach ($GLOBALS['_testStateDirs'] as $dir) {
-        foreach ((array)@glob($dir . '/*') as $file) {
+        // Two globs: `*` does not match a leading dot, and the branding swap's
+        // temporary file is deliberately hidden. A missed dotfile leaves the rmdir
+        // failing and a directory behind in /tmp on every run.
+        $files = array_merge((array)@glob($dir . '/*'), (array)@glob($dir . '/.[!.]*'));
+        foreach ($files as $file) {
             if (@is_dir($file)) { @rmdir($file); } else { @unlink($file); }
         }
         @rmdir($dir);

@@ -747,6 +747,11 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Nav Text</strong> — colour of the store name / logo text in the nav</li>
     </ul>
     <p>Click <strong>Save Branding</strong> after making changes. The new colours take effect on the next page load.</p>
+    <p>These settings live in a file rather than in the database. If a save cannot be
+       completed — a full disk, a folder the server cannot write — it is refused
+       outright and the site keeps the settings it had; the message on screen says
+       which of the two it was. A save either happens completely or not at all, so
+       there is no state where the theme is half changed.</p>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->

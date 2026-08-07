@@ -67,6 +67,7 @@ Design rules, applied to every module added by this build:
 | `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. `firstInWindow()` and `stateFile()` are public for the same reason `report()` needs them: a repeated *attempt to fix* something needs the same restraint as a repeated report of it, and this module is where the state directory is decided. Depends on nothing: no database, no session, no config. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
+| `branding.php` | `BrandingConfig` — `path` / `load` / `current` / `save` → `BrandingWrite`, plus the pure `render` and `parses` | The generated `branding_config.php`: the eight settings it holds, their defaults, and **how a file the whole app requires is replaced while the app is running** (§4w). Nothing writes the live path but one `rename()`, and it is not reached until the replacement has been rendered, parsed, written to a temporary file beside it and read back byte for byte — so a reader gets the whole old file or the whole new one, and every failure leaves the site on exactly what it had and says so. `save()` takes only the settings a form actually edited and applies them over `current()`, which is what the old eight-positional-argument call could not do: each of the two forms passed the other's values back in from page variables. Depends on nothing — no database, no session, no config, because the page that manages this file is also the page that has to work when it is missing. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 
 `lib/` is denied to the browser by `lib/.htaccess`. Nothing in `lib/` prints,
@@ -340,6 +341,17 @@ through the app again:
     one can fail after the first has landed, and the message printed then is decided
     by which line threw rather than by what is now true. With no undo anywhere,
     somebody acting on that message is the whole problem.
+23. **A generated file the app requires is replaced by `rename()`, never written in
+    place.** There is one of these — `branding_config.php`, which `config.php`,
+    `login.php`, `builder.php` and `help.php` all require — and `file_put_contents`
+    on it opens the live path with `O_TRUNC`: for the length of the write, every page
+    of the app, sign-in included, requires a file that is empty and then partial. A
+    write that does not finish leaves it that way. So the replacement is built beside
+    it, checked, and moved over it in one atomic step, and nothing else touches the
+    live path; a failure is a save that refused, not a site that is down. The rule is
+    about the *shape* rather than the file: anything generated into a path something
+    else loads — a cache, a compiled template, a second config — belongs behind
+    `BrandingConfig`'s pattern or it is this defect again with a different filename.
 
 ---
 
@@ -1990,6 +2002,103 @@ screen, which is the right outcome for a client that is not this Builder.
 `BrandStyles::cleanColor()` keeps its own rule as well: a different table, a
 different fallback, and the same coercion question, which is #21's to answer.
 
+### 4w. The file every page requires, rewritten under them
+
+Decision #36, and the only defect in this list whose blast radius is the whole
+application at once. `branding_config.php` is generated PHP — eight `define()` calls
+for the logo path, four nav colours, the site name and the two mail-from fields — and
+four separate files require it: `config.php` for everything signed in, and
+`login.php`, `builder.php` and `help.php` each on their own account. It is the one
+file here whose *contents* the running app edits and whose *syntax* the running app
+depends on.
+
+The Admin Panel wrote it with `file_put_contents($path, $php)`. That opens the live
+path with `O_TRUNC`, so for the length of the write the file is empty, then partial,
+then complete:
+
+- **A reader arriving mid-write** requires a file that stops in the middle of
+  `define('BRAND_ACCENT`. A parse error is a fatal, and a fatal on a required file is
+  a blank page — not on the Admin Panel, on *every* page including `login.php`, for
+  everybody, for as long as the write takes. The window is small. It is also the
+  window during which the person who pressed Save is reloading the page.
+- **A write that does not finish** leaves it there permanently: a full disk, a quota,
+  the host reaping the process. `file_put_contents` returns the byte count it managed
+  and the old code compared that against `false`, so a half-written file was reported
+  as **"Branding saved."** while the site stayed dark. The error message it had for
+  the other case — *"Could not write branding_config.php. Check file permissions."* —
+  could only ever be printed by a request that had already truncated the file it was
+  talking about.
+
+**The fix is the decision as written, with the checks that make it mean something.**
+`BrandingConfig` renders the source, parses it, writes it to `.branding_config.<rand>.tmp`
+in the same directory, reads *that file back* and compares every byte, matches the
+live file's permissions, and moves it over with one `rename()` — atomic within a
+filesystem on POSIX. A reader gets the whole old file or the whole new one. Nothing
+else touches the live path, which is why every refusal here can say, and does say,
+that the site is still running on exactly what it had.
+
+Four details that are not decoration:
+
+- **The read-back replaces a byte count, rather than joining it.** The count a
+  syscall returns is a claim about the bytes; the bytes are what a reader will get.
+  There is deliberately no `strlen()` comparison beside it — a second check that can
+  only agree is a second opinion waiting to disagree, and the same reasoning removed
+  the `is_writable()` guard in front of the write: it answers about the moment
+  before, it is wrong for root and for ACLs, and the attempt itself gives the true
+  answer with nothing at stake.
+- **The parse is the module's promise, not input validation.** Nothing a caller can
+  pass reaches it — `var_export` emits a single-quoted literal, and the self-test
+  counts the `define` calls to prove a site name full of quotes and semicolons cannot
+  add a ninth. Deleting the guard on its own therefore kills no check. What it does
+  is stop a *future* edit to `render()` from taking the site down: the mutation that
+  breaks `render()` **and** removes the guard is the one that makes the live file
+  stop parsing, and it was run. With the guard, a broken renderer is a refused save.
+- **The temporary file is never named `*.php`.** Apache's
+  `AddHandler application/x-httpd-php .php` matches that extension *anywhere* in a
+  filename, so `branding_config.php.1234.tmp` is executed by a common configuration.
+  The leading dot keeps it out of a listing and the root `.htaccess` denies the name
+  outright — that deny rule is checked by the self-test, because the name is now
+  spelled in two files.
+- **`opcache_invalidate()` after the swap**, because `rename` changes the inode and
+  `opcache.validate_timestamps=0` is an ordinary production setting. Without it the
+  admin is told the branding saved and nothing on the site changes. This is the one
+  thing here with no automated check: opcache is off for CLI, so the mutation that
+  removes the call kills nothing. It is here on the argument, not on a test.
+
+**A second defect fell out of the same rewrite.** `writeBrandingConfig()` took all
+eight settings positionally, so each of the two forms passed the other's three or
+five values back in from page variables — the Branding form re-wrote Site & Email,
+and Site & Email re-wrote the colours, every time. It worked only because those
+variables happened to be correct. `save()` now takes just the settings a form edited
+and applies them over `current()`, and nothing else can be written at all: a name
+that is not one of the eight is refused rather than stored in a file every page loads
+and nothing reads.
+
+Proving that merge needed a test double. In a self-test run all eight constants sit
+at their defaults, so "kept what was in force" and "reset to the defaults" produce
+identical bytes; `PinnedBrandingConfig` pins them apart. `ShortWriteBrandingConfig`
+is the other one, and the more important: `file_put_contents` cannot be made to run
+out of disk on demand, so `putTemp()` is a `protected` seam and the double hands back
+half a file. What the test asserts around it is not that the save failed — it is that
+the file every page of the app requires is exactly as complete afterwards as it was
+before.
+
+The section also `chdir`s into its throwaway directory and back, which is not
+tidiness. This is the one module whose subject is a *path*, so the mutation that
+makes `path()` answer with a bare filename points every save in the section at the
+deployment's own `branding_config.php` — it rewrote the repo's copy once before the
+`chdir` was there. A relative answer now lands in the throwaway directory with
+everything else, and the check that `path()` is absolute still fails.
+
+**Fifty-one checks, fourteen mutations, thirteen killed** (8, 5, 1, 2, 1, 2, 4, 3, 1,
+4, 1, 2, 2 — and 0 for the opcache call, above). Two hardening opportunities
+were deliberately left: the four `preg_match('/^#[0-9a-fA-F]{6}$/')` copies in
+`admin_panel.php`'s branding form could ask `Background::isValidColor()`, which is
+§4v's argument one table over and is #21's to settle; and `AlertMailer::remember()`
+still rewrites its recipients cache in place. That one stays because the failure is
+not the same shape — `recipients()` reads it line by line and drops anything without
+an `@`, so a torn write costs one email rather than every page in the app.
+
 ---
 
 ## 5. Verification
@@ -2157,6 +2266,20 @@ grep -rn "post_max_size\|upload_max_filesize\|MAX_BYTES" --include=*.php .
 grep -rn "php://input" --include=*.php .      # must be empty: UploadLimit::bodyWasDropped() infers the
                                               # post_max_size case from an empty $_POST, which only
                                               # holds while nothing reads the raw body
+grep -rn "branding_config" --include=*.php .  # lib/branding.php owns the name; config.php, login.php,
+                                              # builder.php and help.php each *require* it, which is a
+                                              # read; plus tools/. admin_panel.php must not appear at
+                                              # all — it goes through BrandingConfig and does not know
+                                              # the filename. A second writer of this path is invariant
+                                              # 23 undone, and the file it would half-write is the one
+                                              # every page of the app loads
+grep -rn "file_put_contents" --include=*.php .  # lib/error_policy.php (the log, appended under LOCK_EX,
+                                              # and the state-dir guards), lib/alerts.php (the recipient
+                                              # cache and the rate-limit stamps), lib/branding.php's
+                                              # putTemp — and tools/. Never a page. A generated file
+                                              # something else loads is written to a temporary path and
+                                              # renamed over, never opened with O_TRUNC where a reader
+                                              # can find it half-done (invariant 23, §4w)
 grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
                                               # DISPLAY_ID / waDisplayId() with it (invariant 12), which
                                               # omission silently opts out of. viewer.php is the one
