@@ -20,7 +20,7 @@ if (!defined('BRAND_TEXT'))       define('BRAND_TEXT',       '#ffffff');
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Help &amp; User Guide — <?= htmlspecialchars(SITE_NAME) ?></title>
+<title>Help &amp; User Guide — <?= Markup::text(SITE_NAME) ?></title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -29,17 +29,17 @@ body { background: #1e2b38; color: #d0d8e0; min-height: 100vh; }
 
 /* ── Nav ── */
 #top-nav {
-    background: <?= htmlspecialchars(BRAND_NAV_BG) ?>;
+    background: <?= Markup::text(BRAND_NAV_BG) ?>;
     padding: 0 20px; display: flex; align-items: center; gap: 14px;
-    height: 46px; border-bottom: 1px solid <?= htmlspecialchars(BRAND_NAV_BORDER) ?>;
+    height: 46px; border-bottom: 1px solid <?= Markup::text(BRAND_NAV_BORDER) ?>;
     position: sticky; top: 0; z-index: 100;
 }
 #top-nav .brand { font-weight: bold; font-size: 14px;
-                  color: <?= htmlspecialchars(BRAND_TEXT) ?>; margin-right: auto; }
+                  color: <?= Markup::text(BRAND_TEXT) ?>; margin-right: auto; }
 #top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px;
              padding: 5px 9px; border-radius: 3px; }
 #top-nav a:hover { background: #2c3e50; color: #fff; }
-#top-nav a.active { background: <?= htmlspecialchars(BRAND_ACCENT) ?>; color: #fff; }
+#top-nav a.active { background: <?= Markup::text(BRAND_ACCENT) ?>; color: #fff; }
 .role-tag { background: <?= $isAdmin ? '#e74c3c' : '#3498db' ?>; color: #fff;
             font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
             text-transform: uppercase; margin-left: 4px; }
@@ -75,7 +75,7 @@ h1.page-title { font-size: 26px; color: #fff; margin-bottom: 6px; }
     font-size: 18px; color: #fff; border-bottom: 2px solid #2c3e50;
     padding-bottom: 10px; margin-bottom: 20px;
 }
-.help-section h3 { font-size: 14px; color: <?= htmlspecialchars(BRAND_ACCENT) ?>;
+.help-section h3 { font-size: 14px; color: <?= Markup::text(BRAND_ACCENT) ?>;
                    margin: 24px 0 8px; text-transform: uppercase; letter-spacing: .8px; }
 .help-section p { font-size: 14px; line-height: 1.7; color: #c0cad4; margin-bottom: 10px; }
 .help-section ul, .help-section ol { padding-left: 20px; margin-bottom: 10px; }
@@ -103,7 +103,7 @@ kbd {
 .steps li { counter-increment: step; display: flex; gap: 12px; margin-bottom: 10px; }
 .steps li::before {
     content: counter(step); min-width: 24px; height: 24px; border-radius: 50%;
-    background: <?= htmlspecialchars(BRAND_ACCENT) ?>; color: #fff; font-size: 12px;
+    background: <?= Markup::text(BRAND_ACCENT) ?>; color: #fff; font-size: 12px;
     font-weight: bold; display: flex; align-items: center; justify-content: center;
     flex-shrink: 0; margin-top: 2px;
 }
@@ -138,10 +138,10 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 <!-- ── Nav ── -->
 <div id="top-nav">
     <?php if (BRAND_LOGO): ?>
-        <img src="<?= htmlspecialchars(BRAND_LOGO) ?>" alt="Logo"
+        <img src="<?= Markup::text(BRAND_LOGO) ?>" alt="Logo"
              style="max-height:32px; max-width:120px; object-fit:contain;">
     <?php else: ?>
-        <span class="brand"><?= htmlspecialchars(SITE_NAME) ?></span>
+        <span class="brand"><?= Markup::text(SITE_NAME) ?></span>
     <?php endif; ?>
     <a href="builder.php">Builder</a>
     <a href="crud.php">Assets</a>
@@ -154,7 +154,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
              page is not about one of them. The Builder links to the display it is
              editing, and Admin Panel → Displays lists every address. */ ?>
     <span style="font-size:12px; color:#bdc3c7;">
-        <?= htmlspecialchars($me['username']) ?>
+        <?= Markup::text($me['username']) ?>
         <span class="role-tag"><?= $isAdmin ? 'ADMIN' : 'USER' ?></span>
     </span>
     <a href="logout.php">Sign Out</a>
@@ -422,13 +422,13 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
     <h3>Image blocks</h3>
     <ul>
-        <li><strong>Upload Image</strong> — JPG, PNG, GIF, WEBP. Max <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?>.</li>
+        <li><strong>Upload Image</strong> — JPG, PNG, GIF, WEBP. Max <?= Markup::text(UploadLimit::describe()) ?>.</li>
         <li><strong>Image Fit</strong> — controls how the image fills the block (see Image Blocks section below)</li>
     </ul>
 
     <h3>Video blocks (admin only)</h3>
     <ul>
-        <li><strong>Upload Video</strong> — MP4, WebM, or OGV. Max <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?>. Videos auto-play, loop, and are muted.</li>
+        <li><strong>Upload Video</strong> — MP4, WebM, or OGV. Max <?= Markup::text(UploadLimit::describe()) ?>. Videos auto-play, loop, and are muted.</li>
     </ul>
 
     <h3>Carousel blocks (admin only)</h3>
@@ -559,7 +559,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <ol class="steps">
         <li><span>Click <strong>+ Image</strong> in the control bar.</span></li>
         <li><span>Click the block to select it — the Inspector panel opens on the right.</span></li>
-        <li><span>Under <strong>Upload Image</strong>, click the file picker and choose an image (JPG, PNG, GIF, WEBP — max <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?>).</span></li>
+        <li><span>Under <strong>Upload Image</strong>, click the file picker and choose an image (JPG, PNG, GIF, WEBP — max <?= Markup::text(UploadLimit::describe()) ?>).</span></li>
         <li><span>The image appears in the block immediately.</span></li>
         <li><span>Choose an <strong>Image Fit</strong> mode (see below).</span></li>
         <li><span>Publish when ready.</span></li>
@@ -606,7 +606,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <ol class="steps">
         <li><span>Click <strong>+ Video</strong> in the control bar.</span></li>
         <li><span>Select the block and click <strong>Upload Video</strong> in the Inspector.</span></li>
-        <li><span>Choose an MP4, WebM, or OGV file (max <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?>).</span></li>
+        <li><span>Choose an MP4, WebM, or OGV file (max <?= Markup::text(UploadLimit::describe()) ?>).</span></li>
         <li><span>The video begins playing in the builder preview.</span></li>
         <li><span>Resize the block to fit your layout. Publish when ready.</span></li>
     </ol>
@@ -615,7 +615,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
        If the connection drops, the file is too large, or the server refuses it, you get a
        message saying which — and nothing on the block changes. Just pick the file again; there
        is no need to reload the page. A file bigger than
-       <?= htmlspecialchars(UploadLimit::describe(), ENT_QUOTES, 'UTF-8') ?> is refused
+       <?= Markup::text(UploadLimit::describe()) ?> is refused
        immediately, before any of it is sent, so you are not left waiting for a file that could
        never arrive.</div>
     <div class="tip"><strong>Tip:</strong> MP4 (H.264) has the broadest browser support. Keep videos short and loopable — 5–15 seconds works well for in-store displays.</div>
@@ -906,8 +906,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 </div>
 
 <p style="font-size:12px; color:#4a5f72; margin-top:40px; padding-top:20px; border-top:1px solid #2c3e50;">
-    <?= htmlspecialchars(SITE_NAME) ?> Display System &mdash; Help Guide &mdash;
-    Signed in as <strong style="color:#7f8c8d;"><?= htmlspecialchars($me['username']) ?></strong>
+    <?= Markup::text(SITE_NAME) ?> Display System &mdash; Help Guide &mdash;
+    Signed in as <strong style="color:#7f8c8d;"><?= Markup::text($me['username']) ?></strong>
     &mdash; <a href="logout.php" style="color:#4a5f72;">Sign Out</a>
 </p>
 
@@ -927,7 +927,7 @@ function onScroll() {
     });
     links.forEach(function(a) {
         var target = a.getAttribute('href').slice(1);
-        a.style.borderLeftColor = (target === active) ? '<?= htmlspecialchars(BRAND_ACCENT) ?>' : 'transparent';
+        a.style.borderLeftColor = (target === active) ? '<?= Markup::text(BRAND_ACCENT) ?>' : 'transparent';
         a.style.color = (target === active) ? '#fff' : '';
         a.style.background = (target === active) ? '#22303f' : '';
     });

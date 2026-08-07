@@ -2945,6 +2945,107 @@ placeholder fails 1; a video that never plays fails 3.
 draw nothing: two sentences, two colours, and two elements whose appearance was the
 browser's to choose.
 
+### 4ab. Escaping was a default, and the default is not one behaviour (#15)
+
+159 calls to `htmlspecialchars()`, and not one of them said what it wanted. That is
+not a style complaint: **the function's default flag set changed in PHP 8.1.** Before
+it, `ENT_COMPAT | ENT_HTML401` — `"` escaped, `'` left alone. From it,
+`ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML401` — both escaped. So
+
+```php
+<input value='<?= htmlspecialchars($x) ?>'>     <!-- single-quoted attribute -->
+```
+
+was safe or an injection depending on which PHP the host was running, and nothing in
+the source recorded which was meant. This app is on 8.2, so the strict behaviour is
+what it gets today — and the 7.1-era fallbacks in `auth.php` and `.htaccess` are kept
+deliberately for a host that moves (§5), which makes "the default is fine now" exactly
+the assumption not to leave lying around.
+
+The quieter half is worse and has nothing to do with attacks. Without
+`ENT_SUBSTITUTE`, one byte of invalid UTF-8 makes `htmlspecialchars()` return **the
+empty string** — not the value, not an error, nothing. That is #26's shape on a page
+instead of in a reply: a stored character nobody typed on purpose, and a price that
+silently stops being displayed. With it the bad byte becomes U+FFFD and the rest of
+the value survives.
+
+`lib/markup.php` names both flags once. `Markup::text()` is the only door, and
+`tools/check_invariants.php` holds `htmlspecialchars(` to that file — with one
+carve-out, `lib/error_policy.php`, for the same reason it keeps a `json_encode`: it
+draws the last-resort notice, the path that must not depend on anything, and its call
+passes the flags in full.
+
+**Non-strings answer `''`,** for the reason `Color::read()` does: `(string)` on an
+array is the warning *"Array to string conversion"* and the literal text `Array`,
+printed onto the page. `null` matters more in practice — it arrives from every
+nullable column, a Display with no location, and passing it to `htmlspecialchars()`
+is a deprecation notice on 8.1 and later, logged on every single page load, saying
+nothing anybody can act on.
+
+**The flags were never the half that mattered most.** #15's other clause — "a username
+containing HTML reached a confirm box unescaped" — is a different bug wearing the same
+clothes, and it was still there with the strict default:
+
+```php
+onsubmit="return confirm('Close the account for <?= htmlspecialchars($name) ?>?…')"
+```
+
+That looks escaped. It is not. **The HTML parser decodes the attribute before the
+JavaScript parser sees it**, so the `&#039;` that `ENT_QUOTES` just produced is a plain
+`'` again by the time it is a string literal, and the string ends there. A username of
+`o'brien` breaks the page; one chosen with more intent runs whatever it likes, in an
+admin's session, on the Accounts screen. The escaping was not missing — it was correct
+for the wrong one of two nested contexts.
+
+`Markup::jsInAttr()` is the fix and the name for it: `HttpReply::jsValue()` produces a
+JSON literal with `'`, `"`, `<`, `>` and `&` all as `\uXXXX`, so nothing inside it can
+end anything, and `text()` then escapes the quotes that delimit it. It is passed as
+the **whole** argument, never spliced into a string — the sentence moved into a
+JavaScript function, `confirmCloseAccount()`, beside the `confirmTurnOff()` that had
+already solved this once by hand and was the only call in the codebase passing flags.
+
+The invariant that guards it catches the construction rather than the instance:
+an event attribute holding a quote and then a `Markup::` call is a value escaped for
+HTML and used as JavaScript, and no file may match. It fires on the natural way this
+comes back, because whoever reintroduces it will reach for `Markup::text()` — that is
+now what the rest of the file uses.
+
+**What is still spliced into a JavaScript string in an attribute, and why it is not
+the same thing:** `togglePanel('del-display-<?= $did ?>')` and two like it, plus
+`confirm('Remove <?= intval($tidyCount) ?> …')` in `crud.php`. Every one is an
+integer, and an integer has no representation that can end a string. The six
+`updatePreview('<?= $t ?>')` calls were strings — from a hardcoded list, not from the
+database, but strings — and they went through `jsInAttr()` anyway, so that the only
+values left spliced are numbers.
+
+**One trap found while writing the module, worth recording because it lints clean.**
+A `?` followed by `>` inside a `//` comment **ends PHP mode** — one-line comments run
+to the end of the line *or the end of the PHP block, whichever comes first*. The
+header of `lib/markup.php` quoted `<?= htmlspecialchars($x) ?>` as an example of the
+thing being fixed, and PHP dutifully left PHP mode there and printed the rest of the
+header onto the page. `php -l` says nothing: the file is valid. It was caught by the
+self-test loading the file at all, which is the only gate that could have. The
+examples in that file now write the tags as `{{ … }}`, and say why.
+
+**Coverage.** 19 checks in `tools/selftest_layout.php`, on both engines: each flag
+asserted by what it does rather than by being present, the bad-byte case, the
+non-string cases with no warning raised, and the nested-context defect demonstrated
+end to end — `Markup::text()`'s output decoded the way a browser decodes an attribute
+yields a live quote, and `jsInAttr()`'s does not.
+
+**Verified by injection, five times.** Dropping `ENT_SUBSTITUTE` fails 2, both saying
+the price no longer reaches the page; going back to the pre-8.1 default fails 3;
+casting non-strings instead of refusing them fails 2, one of which is the warning
+itself; putting the confirm box back fails the invariant **and** 2 checks; and a
+single raw `htmlspecialchars(` anywhere in a page fails the invariant by name.
+
+**What #15 does not close.** It says "escape every stored value strictly, app-wide",
+and this makes every escaped value strict — it does not prove every value is escaped.
+The sweep found the unescaped interpolations that remain are integers, class
+constants, and app-set strings (`$msgType`, a Display's `dimensionsLabel()`), and
+those are listed above rather than left to be rediscovered. A page added later can
+still forget, and nothing here catches that; what it catches is forgetting *how*.
+
 ---
 
 ## 6. Delivery

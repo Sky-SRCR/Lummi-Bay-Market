@@ -154,6 +154,29 @@ $rules = [
                   . '(invariant 18)',
     ],
     [
+        'name'   => 'no value is escaped for HTML and then used as JavaScript',
+        'regex'  => '/on[a-z]+\s*=\s*"[^"]*\'[^"]*Markup::/i',
+        'in'     => '',
+        'expect' => [],
+        'why'    => 'the HTML parser decodes an attribute before the JavaScript parser reads '
+                  . 'it, so the &#039; ENT_QUOTES just produced is a plain quote again and the '
+                  . 'string ends there — Markup::jsInAttr() is the whole argument, never part '
+                  . 'of one (#15)',
+    ],
+    [
+        'name'   => 'one module escapes for HTML',
+        'regex'  => '/htmlspecialchars\s*\(/',
+        'in'     => '',
+        // error_policy.php keeps its own, for the same reason it keeps a json_encode:
+        // it draws the last-resort notice, the one shown when everything else has
+        // already failed, and a dependency there is a dependency in the one path that
+        // must not have any. Its call passes the flags in full.
+        'expect' => ['lib/error_policy.php', 'lib/markup.php'],
+        'why'    => 'the default flag set changed in PHP 8.1, so an unflagged call escapes '
+                  . 'single quotes on one host and not on another, and blanks the whole value '
+                  . 'on one byte of bad UTF-8 (#15)',
+    ],
+    [
         'name'   => 'one path to the credentials that live outside the webroot',
         'regex'  => '/private\/db_credentials\.php/',
         'in'     => '',

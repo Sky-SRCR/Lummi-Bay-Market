@@ -64,7 +64,7 @@ if (!$resolution->isFound()) {
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="refresh" content="30">
-<title><?= htmlspecialchars($display ? $display->title() : 'Display') ?></title>
+<title><?= Markup::text($display ? $display->title() : 'Display') ?></title>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -86,7 +86,7 @@ if (!$resolution->isFound()) {
 </style>
 </head>
 <body>
-<p class="notice"><?= htmlspecialchars($notice) ?></p>
+<p class="notice"><?= Markup::text($notice) ?></p>
 </body>
 </html><?php
     exit;
@@ -98,7 +98,7 @@ $canvasH = $display->canvasHeight();
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title><?= htmlspecialchars($display->title()) ?></title>
+<title><?= Markup::text($display->title()) ?></title>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     /* Kiosk / embedded display: never scroll in either direction. Lock the

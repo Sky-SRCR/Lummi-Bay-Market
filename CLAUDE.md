@@ -100,6 +100,15 @@ reads prices off.
   Printed into a page's own `<script>` the same `false` emits `var X = ;`, which is a
   parse error that takes the whole block down. `HttpReply::json()` and
   `HttpReply::jsValue()` are the two doors; `tools/check_invariants.php` enforces it.
+- **`htmlspecialchars` is never called outside `lib/markup.php`.** Its default flag set
+  changed in PHP 8.1, so an unflagged call escapes single quotes on one host and not on
+  another, and blanks the whole value on one byte of bad UTF-8. `Markup::text()` names
+  both flags once. The other half of the same rule is contextual and is the one that bit:
+  a value escaped for HTML and then dropped into a JavaScript string inside an event
+  attribute is **not** escaped, because the HTML parser decodes the attribute before the
+  JavaScript parser reads it. `Markup::jsInAttr()` is that case, passed as the whole
+  argument and never spliced into one; the sentence belongs in a JS function.
+  `tools/check_invariants.php` enforces both.
 - **A reply's status code comes from its `reason`, never from beside it.**
   `HttpReply` maps the app's own vocabulary of failure onto HTTP once. A code chosen
   at a call site is a second opinion, and it disagrees silently.

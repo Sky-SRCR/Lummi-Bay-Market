@@ -4297,6 +4297,74 @@ foreach ($cacheLines as $line) {
 }
 
 // ─────────────────────────────────────────────────────────────
+section('Putting a stored value on a page, once and the same way (#15)');
+
+// 159 calls to htmlspecialchars() with no flags between them, and the default flag
+// set is not one behaviour: before PHP 8.1 it left `'` alone, from 8.1 it escapes it.
+// So the same source was safe or an injection depending on the host, and nothing said
+// which was meant. The flags are named once now, and this asserts the two that matter
+// rather than the fact that some flags were passed.
+
+checkSame('&lt;script&gt;', Markup::text('<script>'), 'a tag is escaped, not stripped');
+checkSame('&quot;', Markup::text('"'),  'a double quote cannot end an attribute');
+checkSame('&#039;', Markup::text("'"),  'and neither can a single one — the half the old default left');
+checkSame('&amp;lt;', Markup::text('&lt;'), 'an ampersand is escaped once, so nothing is double-decoded');
+checkSame('&#039;', Markup::text("'"),  'as a numeric entity, which every parser knows');
+
+// The quieter half of the default, and the one that costs a price rather than
+// leaking one: without ENT_SUBSTITUTE, htmlspecialchars() answers '' for a value
+// holding one byte of invalid UTF-8. Not the value, not an error — nothing. That is
+// #26's shape, on a page instead of in a reply.
+$badByte = "Sockeye 18.99 \xB0";
+check(Markup::text($badByte) !== '', 'one bad byte does not blank the whole value');
+checkMentions(Markup::text($badByte), 'Sockeye 18.99', 'the price still reaches the page');
+
+// Non-strings answer '' rather than being cast, for the reason Color::read() does.
+$warned = false;
+set_error_handler(function () use (&$warned) { $warned = true; return true; });
+$arrayAnswer = Markup::text(['x']);
+$nullAnswer  = Markup::text(null);
+restore_error_handler();
+checkSame('', $arrayAnswer, 'a list has nothing to escape and prints nothing');
+checkSame('', $nullAnswer,  'and neither does a column that was null');
+checkSame(false, $warned,   'without an "Array to string conversion" warning above the page, '
+                          . 'or a deprecation notice logged on every load');
+checkSame('42', Markup::text(42), 'a number is text and passes through');
+
+// ---- The confirm box #15 names ---------------------------------------------------
+// The flags were never the half that mattered here. `htmlspecialchars()` inside an
+// event attribute looks escaped and is not: the HTML parser decodes the attribute
+// before the JavaScript parser sees it, so the &#039; that ENT_QUOTES just produced
+// is a plain quote again by the time it is a string literal, and the string ends.
+$hostile = "o'brien');alert(1);//";
+$asHtml  = Markup::text($hostile);
+checkMentions($asHtml, '&#039;', 'HTML escaping turns the quote into an entity');
+check(strpos(html_entity_decode($asHtml, ENT_QUOTES, 'UTF-8'), "');") !== false,
+      'which the HTML parser hands back as a quote — the whole defect, in one line');
+
+$asJs = Markup::jsInAttr($hostile);
+checkSame(false, strpos($asJs, "'") !== false, 'the JavaScript form contains no quote at all');
+checkSame(false, strpos($asJs, '<') !== false, 'nor an angle bracket that could end the attribute');
+check(strpos(html_entity_decode($asJs, ENT_QUOTES, 'UTF-8'), "');") === false,
+      'and decoding the attribute the way a browser does still yields no quote');
+checkSame('"o\u0027brien\u0027);alert(1);\/\/"',
+          html_entity_decode($asJs, ENT_QUOTES, 'UTF-8'),
+          'what the JavaScript parser finally sees is one string literal, the quotes inside it '
+        . 'spelled as escapes it will never mistake for the end of anything');
+
+// The page must pass the value as the whole argument. Spliced into a longer string it
+// would be a JSON literal in the middle of one, which is why the sentence lives in
+// the function and admin_panel.php passes only the name.
+$panel = file_get_contents(__DIR__ . '/../admin_panel.php');
+checkMentions($panel, 'confirmCloseAccount(<?= Markup::jsInAttr($u[\'username\']) ?>)',
+              'the close-account confirm passes the username as a value, not as text');
+// And nowhere on that page is a value escaped for HTML and then dropped into a
+// JavaScript string literal, which is the construction rather than the instance.
+// `tools/check_invariants.php` holds every page to it; this is the one it came from.
+checkSame(0, preg_match('/on[a-z]+="[^"]*\'[^"]*Markup::/i', $panel),
+          'and no event attribute on that page splices an escaped value into a JS string');
+
+// ─────────────────────────────────────────────────────────────
 section('Finding the colours nobody can read, before a publish finds them (#41)');
 
 // #41 closed the way an unreadable colour was written and re-written. What it could
@@ -4546,4 +4614,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Two numbers because the MySQL run adds a section the SQLite one cannot ask for.
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
-reportChecks(testIsMysql() ? 1227 : 1204);
+reportChecks(testIsMysql() ? 1246 : 1223);

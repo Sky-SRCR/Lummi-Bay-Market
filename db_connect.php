@@ -26,6 +26,13 @@
 require_once __DIR__ . '/lib/error_policy.php';
 ErrorPolicy::installDefault();
 
+// And for the same reason, one line further: every page that renders a stored value
+// has to escape it the same way, and `lib/markup.php` is where that rule lives (#15).
+// Requiring it here rather than eight times is not tidiness — a page that forgot the
+// include would be a fatal error on a live sign, discovered by whoever was looking at
+// it. This file is the one include they all already have.
+require_once __DIR__ . '/lib/markup.php';
+
 $credentialsFile = dirname(__DIR__, 2) . '/private/db_credentials.php';
 
 

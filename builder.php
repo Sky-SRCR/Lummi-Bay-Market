@@ -85,7 +85,7 @@ a.pick:hover { background:#3d566e; }
 </head>
 <body>
 <div class="wrap">
-  <?php if ($notice !== ''): ?><div class="notice"><?= htmlspecialchars($notice) ?></div><?php endif; ?>
+  <?php if ($notice !== ''): ?><div class="notice"><?= Markup::text($notice) ?></div><?php endif; ?>
 
   <?php if ($choices): ?>
     <h1>Which display do you want to edit?</h1>
@@ -96,12 +96,12 @@ a.pick:hover { background:#3d566e; }
     <?php foreach ($choices as $d): ?>
       <a class="pick" href="builder.php?display=<?= urlencode($d->tag()) ?>">
         <span class="row">
-          <span class="title"><?= htmlspecialchars($d->title()) ?></span>
-          <span class="tag"><?= htmlspecialchars($d->tag()) ?></span>
+          <span class="title"><?= Markup::text($d->title()) ?></span>
+          <span class="tag"><?= Markup::text($d->tag()) ?></span>
           <?php if (!$d->isActive()): ?><span class="off">TURNED OFF</span><?php endif; ?>
         </span>
         <span class="facts"><?= $d->dimensionsLabel() ?> <?= $d->orientation() ?><?php
-          if ($d->location() !== '') { echo ' · ' . htmlspecialchars($d->location()); } ?></span>
+          if ($d->location() !== '') { echo ' · ' . Markup::text($d->location()); } ?></span>
       </a>
     <?php endforeach; ?>
   <?php elseif (!$allDisplays): ?>
@@ -180,7 +180,7 @@ if (!defined('BRAND_TEXT'))       define('BRAND_TEXT',       '#ffffff');
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Builder — <?= htmlspecialchars(SITE_NAME) ?></title>
+<title>Builder — <?= Markup::text(SITE_NAME) ?></title>
 <script src="https://cdn.jsdelivr.net/npm/interactjs@1.10.27/dist/interact.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0;
@@ -190,10 +190,10 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 
 /* ── Nav ── */
 #top-nav {
-    background: <?= htmlspecialchars(BRAND_NAV_BG) ?>; padding: 0 16px; display: flex; align-items: center;
-    gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid <?= htmlspecialchars(BRAND_NAV_BORDER) ?>;
+    background: <?= Markup::text(BRAND_NAV_BG) ?>; padding: 0 16px; display: flex; align-items: center;
+    gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid <?= Markup::text(BRAND_NAV_BORDER) ?>;
 }
-#top-nav .brand { font-weight: bold; font-size: 14px; color: <?= htmlspecialchars(BRAND_TEXT) ?>; }
+#top-nav .brand { font-weight: bold; font-size: 14px; color: <?= Markup::text(BRAND_TEXT) ?>; }
 #top-nav .user-badge { margin-left: 20px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #bdc3c7; white-space: nowrap; flex-shrink: 0; }
 #top-nav .nav-spacer { flex: 1; }
 #top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px; padding: 5px 9px; border-radius: 3px; }
@@ -201,7 +201,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 .role-tag { background: <?= $isAdmin ? '#e74c3c' : '#3498db' ?>; color: #fff;
             font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
             text-transform: uppercase; }
-.btn.publish-btn { background: <?= htmlspecialchars(BRAND_ACCENT) ?>; }
+.btn.publish-btn { background: <?= Markup::text(BRAND_ACCENT) ?>; }
 
 /* Which sign am I editing? Never left to be inferred from the canvas shape. */
 #top-nav .display-badge { margin-left: 18px; display: flex; align-items: center; gap: 7px;
@@ -538,17 +538,17 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 <!-- ── Top Nav ── -->
 <div id="top-nav">
     <?php if (BRAND_LOGO): ?>
-        <img src="<?= htmlspecialchars(BRAND_LOGO) ?>" alt="<?= htmlspecialchars(SITE_NAME) ?>"
+        <img src="<?= Markup::text(BRAND_LOGO) ?>" alt="<?= Markup::text(SITE_NAME) ?>"
              style="max-height:32px; max-width:130px; object-fit:contain; flex-shrink:0;">
     <?php endif; ?>
-    <span class="brand"><?= htmlspecialchars(SITE_NAME) ?></span>
+    <span class="brand"><?= Markup::text(SITE_NAME) ?></span>
     <span class="user-badge">
-        <?= htmlspecialchars($me['username']) ?>
+        <?= Markup::text($me['username']) ?>
         <span class="role-tag"><?= $isAdmin ? 'ADMIN' : 'USER' ?></span>
     </span>
     <span class="display-badge" title="The display you are editing. Publishing sends only this one to its screen.">
-        <span class="d-title"><?= htmlspecialchars($display->title()) ?></span>
-        <span class="d-tag"><?= htmlspecialchars($display->tag()) ?></span>
+        <span class="d-title"><?= Markup::text($display->title()) ?></span>
+        <span class="d-tag"><?= Markup::text($display->tag()) ?></span>
         <span class="d-dims"><?= $display->dimensionsLabel() ?></span>
         <?php if (!$display->isActive()): ?><span class="d-off">off</span><?php endif; ?>
     </span>
@@ -569,8 +569,8 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 <?php if ($readOnly): ?>
 <div id="lock-banner">
     <span>
-        <span class="who"><?= htmlspecialchars($lockHolder) ?></span> is editing this display<?php
-            if ($lock->takenAtLabel() !== ''): ?> (since <?= htmlspecialchars($lock->takenAtLabel()) ?>)<?php
+        <span class="who"><?= Markup::text($lockHolder) ?></span> is editing this display<?php
+            if ($lock->takenAtLabel() !== ''): ?> (since <?= Markup::text($lock->takenAtLabel()) ?>)<?php
             endif; ?>. You are looking at it read-only — one person edits a display at a time, so
         nothing here can be moved, changed or published. It frees up on its own
         <?= intval(LockState::IDLE_LAPSE_SECONDS / 60) ?> minutes after they stop working.
@@ -579,7 +579,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     </span>
     <?php if ($isAdmin): ?>
         <button class="btn danger" onclick="takeOverEditing()"
-                title="Take the edit lock from <?= htmlspecialchars($lockHolder) ?>">Take over editing</button>
+                title="Take the edit lock from <?= Markup::text($lockHolder) ?>">Take over editing</button>
     <?php endif; ?>
 </div>
 <?php else: ?>
@@ -633,7 +633,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <button class="btn orange" onclick="createBlock('text','price')">+ Price</button>
     <button class="btn orange" onclick="createBlock('text','description')">+ Description</button>
     <?php else: ?>
-    <span style="font-size:12px; color:#bdc3c7;">Read-only — <?= htmlspecialchars($lockHolder) ?> has this display open.</span>
+    <span style="font-size:12px; color:#bdc3c7;">Read-only — <?= Markup::text($lockHolder) ?> has this display open.</span>
     <?php endif; ?>
 
     <?php if ($isAdmin && !$readOnly): ?>

@@ -157,7 +157,7 @@ if (isset($_GET['restart'])) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Reset Password — <?= htmlspecialchars(SITE_NAME) ?></title>
+    <title>Reset Password — <?= Markup::text(SITE_NAME) ?></title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #1a252f; display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: sans-serif; }
@@ -182,10 +182,10 @@ if (isset($_GET['restart'])) {
         <h1>Forgot Password</h1>
         <p class="sub">Enter your username or email address and we'll send you a reset code.</p>
         <?php if ($message): ?>
-            <div class="msg <?= $msgType ?>"><?= htmlspecialchars($message) ?></div>
+            <div class="msg <?= $msgType ?>"><?= Markup::text($message) ?></div>
         <?php endif; ?>
         <form method="POST">
-            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
             <label>Username or Email Address</label>
             <input type="text" name="identifier" autofocus required>
             <button type="submit" name="find_user" class="btn">Send Reset Code</button>
@@ -195,10 +195,10 @@ if (isset($_GET['restart'])) {
         <h1>Enter Your Reset Code</h1>
         <p class="sub">Check your email for a 6-digit code. It expires in 30 minutes.</p>
         <?php if ($message): ?>
-            <div class="msg <?= $msgType ?>"><?= htmlspecialchars($message) ?></div>
+            <div class="msg <?= $msgType ?>"><?= Markup::text($message) ?></div>
         <?php endif; ?>
         <form method="POST">
-            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
             <label>6-Digit Code</label>
             <input type="text" name="passcode" class="passcode-input" maxlength="6"
                    inputmode="numeric" pattern="[0-9]{6}" autocomplete="one-time-code" autofocus required>

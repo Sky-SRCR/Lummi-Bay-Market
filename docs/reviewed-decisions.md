@@ -52,7 +52,7 @@ written down rather than remembered:
 | — | An alert per failure would exhaust the host's mail allowance exactly when a database is down, so the one alert that matters never arrives. | One email per problem per hour, to admins only. | **Done** | §4m |
 | 13 | The last step of a password reset made two irreversible writes with no transaction between them. | All-or-nothing. | **Done** | §4r |
 | 14 | The Phase 1 rehearsal script proved a tautology — it agreed with itself. | Make it prove what it claims. | **Done** | §4r |
-| 15 | A username containing HTML reached a confirm box unescaped, and 133 escaping calls carried no flags. | Escape every stored value strictly, app-wide. | Open | — |
+| 15 | A username containing HTML reached a confirm box unescaped, and 133 escaping calls carried no flags. | Escape every stored value strictly, app-wide. | **Done** — 159 of them by the time they were counted, and the flags were the smaller half. `htmlspecialchars()`'s default changed in PHP 8.1, so the same source escaped single quotes on one host and not on another, and blanked a whole value on one byte of bad UTF-8; `lib/markup.php` names both flags once and `check_invariants.php` holds the function to that file. The confirm box was a different bug in the same clothes: it *was* escaped, for HTML, inside a JavaScript string — which the HTML parser decodes first, handing the quote back. `Markup::jsInAttr()` is the fix, and an invariant catches the construction rather than the instance. | §4ab |
 | 16 | The permissions grid read a column that wasn't on the page as "take that access away", and F5 replayed the whole save. | Save only what the form covered, then redirect. | **Done** | §4s |
 | 17 | Taking access away left the edit lock stranded on the person who lost it, and told them nothing. | Release it, and tell them. | **Done** | §4s |
 | 18 | Promoting somebody to admin left individual assignments nothing could see and nothing could remove. | Clear them on promotion. | **Done** | §4s |
@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**39 done, 1 part done (#49), 11 open.**
+**40 done, 1 part done (#49), 10 open.**
 
 #48 and #51 were taken together because they are the same subject — what the tests
 run against, and whether anybody runs them. Both are Done; the version question
@@ -175,6 +175,16 @@ loop into `renderImage()` and `renderVideo()`, and the Builder gained a `'Video'
 placeholder, because that block had nothing to show on either surface. 129 → 169.
 
 **#45 is closed.** Five block types, six drawings, all of them nothing now.
+
+**#15 was two items sharing a sentence.** The flags half is a rule with 159 copies and
+no opinion — `htmlspecialchars()`'s default changed in PHP 8.1, so the same source
+behaved differently on different hosts, and one byte of bad UTF-8 blanked a whole
+value. That is `lib/markup.php`, held to one file by the invariants. The other half —
+the confirm box the item names — was still a live hole under the *strict* default,
+because the value was escaped for HTML and then used as JavaScript, and the HTML
+parser undoes the escaping before the JavaScript parser reads it. Two different
+mistakes, one line of source. What #15 does **not** close is stated in §4ab: every
+escaped value is now strict, which is not the same as every value being escaped.
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

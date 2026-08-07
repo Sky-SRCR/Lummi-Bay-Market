@@ -42,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>First-Time Setup — <?= htmlspecialchars(SITE_NAME) ?></title>
+    <title>First-Time Setup — <?= Markup::text(SITE_NAME) ?></title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: #1a252f; display: flex; align-items: center; justify-content: center; min-height: 100vh; font-family: sans-serif; }
@@ -64,15 +64,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <h1>First-Time Setup</h1>
     <p class="sub">Create your administrator account to get started.</p>
 
-    <?php if ($error):   ?><div class="msg error"><?= htmlspecialchars($error) ?></div><?php endif; ?>
-    <?php if ($success): ?><div class="msg success"><?= htmlspecialchars($success) ?> <a href="login.php">Go to Sign In →</a></div><?php endif; ?>
+    <?php if ($error):   ?><div class="msg error"><?= Markup::text($error) ?></div><?php endif; ?>
+    <?php if ($success): ?><div class="msg success"><?= Markup::text($success) ?> <a href="login.php">Go to Sign In →</a></div><?php endif; ?>
 
     <?php if (!$success): ?>
     <form method="POST">
         <label>Username</label>
-        <input type="text" name="username" value="<?= htmlspecialchars($_POST['username'] ?? '') ?>" required autofocus>
+        <input type="text" name="username" value="<?= Markup::text($_POST['username'] ?? '') ?>" required autofocus>
         <label>Email Address</label>
-        <input type="email" name="email" value="<?= htmlspecialchars($_POST['email'] ?? '') ?>" required>
+        <input type="email" name="email" value="<?= Markup::text($_POST['email'] ?? '') ?>" required>
         <label>Password (min 8 characters)</label>
         <input type="password" name="password" required>
         <label>Confirm Password</label>
