@@ -69,9 +69,16 @@ edited in place and every change reaches the sign by hand.
 ```
 php -l <every touched .php>
 php tools/selftest_layout.php
+php tools/check_doc_numbering.php          # if a doc gained a section or invariant
 node tools/selftest_builder_readonly.js    # if builder.php was touched
 node tools/selftest_builder_uploads.js     # if builder.php was touched
 ```
+
+`check_doc_numbering.php` also prints the next free section letter. That is the
+question every branch cut from the same base has to answer before it writes a
+write-up, and four of them once answered it with the same letter — ask the tool
+rather than counting, and note that it will not let a document cite a section
+that does not exist yet, which is what a guess looks like from the outside.
 
 `php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it —
 which is why the standing gate is not enough on its own. Extract the `<script>`

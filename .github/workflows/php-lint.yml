@@ -35,3 +35,10 @@ jobs:
 
       - name: Layout self-test
         run: php tools/selftest_layout.php
+
+      # The numbering the documents run on. Cheap, and it catches a merge failure
+      # nothing else here can see: two branches cut from the same base each take
+      # the next free section letter, and git can merge two `### 4u.` headings
+      # with no conflict marker, because they are not the same lines.
+      - name: Document numbering
+        run: php tools/check_doc_numbering.php
