@@ -154,6 +154,19 @@ $rules = [
                   . '(invariant 18)',
     ],
     [
+        'name'   => 'one path to the credentials that live outside the webroot',
+        'regex'  => '/private\/db_credentials\.php/',
+        'in'     => '',
+        // tools/audit_colors.php deliberately does not include db_connect.php: that
+        // file installs the error policy and arms the alert mailer, so a mistyped
+        // --host would email the store's admins because somebody ran an audit. The
+        // cost of not including it is that it knows where the credentials are, and
+        // the cost of knowing that twice is this rule.
+        'expect' => ['db_connect.php', 'tools/audit_colors.php'],
+        'why'    => 'a second opinion about where the credentials live is one that goes stale '
+                  . 'silently — the file is outside the repo and nothing else can catch it',
+    ],
+    [
         'name'   => 'the lock columns are read and written in one place',
         'regex'  => '/(SET|WHERE|SELECT|,)\s*`?lock_(holder_id|activity_at|taken_at)`?\s*(=|,|\s|$)/i',
         'in'     => 'lib',

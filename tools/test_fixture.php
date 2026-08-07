@@ -49,6 +49,7 @@ require_once __DIR__ . '/../lib/assets.php';
 require_once __DIR__ . '/../lib/upload_limits.php';
 require_once __DIR__ . '/../lib/http_reply.php';
 require_once __DIR__ . '/../lib/schema.php';
+require_once __DIR__ . '/../lib/color_audit.php';
 
 // ---- Which engine is under the suite ----------------------------------------
 

@@ -4297,6 +4297,111 @@ foreach ($cacheLines as $line) {
 }
 
 // ─────────────────────────────────────────────────────────────
+section('Finding the colours nobody can read, before a publish finds them (#41)');
+
+// #41 closed the way an unreadable colour was written and re-written. What it could
+// not close is the rows that were already there: a `font_color` holding `puce` makes
+// its Display refuse every publish, with the block named, and the only way to learn
+// that was for somebody to press Publish and be told no — mid-change, in front of the
+// sign they came to fix. ColorAudit asks the same question of the whole database,
+// changes nothing, and reports.
+//
+// Every bad value below is written with a direct UPDATE, because that is the only way
+// one can exist: every door the app has refuses it now. Which is also the point — the
+// audit is for the rows that came in before the doors did, or beside them.
+
+$aPdo   = newTestDb();
+$aStore = new DisplayStore($aPdo);
+$aLay   = newTestLayoutStore($aPdo);
+$aAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo));
+
+$aDrive = makeTestDisplay($aPdo, 'drive-thru', 'Drive-Thru Menu');
+$aPatio = makeTestDisplay($aPdo, 'patio', 'Patio Board');
+publishAs($aLay, $aDrive, layoutWith('Sockeye 18.99'), '0');
+publishAs($aLay, $aPatio, layoutWith('Crab 14.00', 's2'), '0');
+
+checkSame([], $aAudit->findings(), 'a database whose colours all read reports nothing at all');
+
+// One block, by hand, exactly as a row edited outside the app would look.
+$aBad = null;
+foreach (elementsOf($aPdo, $aDrive->id()) as $row) {
+    if ($row['type'] === 'text') { $aBad = $row['id']; }
+}
+$aPdo->prepare("UPDATE canvas_elements SET font_color = 'puce' WHERE id = ?")->execute([$aBad]);
+
+$found = $aAudit->findings();
+checkSame(1, count($found), 'one hand-edited colour is one finding');
+checkSame(ColorAudit::BLOCKS_PUBLISH, $found[0]['kind'], 'and it is the kind that stops a publish');
+checkSame('drive-thru', $found[0]['scope'], 'named by the tag somebody would open');
+checkSame('puce', $found[0]['value'],       'quoting what is actually stored');
+checkMentions($found[0]['what'], 'price',   'and pointing at the block by what it is');
+checkMentions($found[0]['what'], '5,5',     'and by where it sits on the canvas');
+
+// The claim the finding makes, made good. If the door did not refuse this layout the
+// audit would be raising an alarm about nothing, and the two would have drifted apart
+// without either one being wrong on its own.
+$aRefusal = LayoutRules::check([
+    ['type' => 'text', 'block_subtype' => 'price', 'font_color' => 'puce',
+     'x_pos' => 5, 'y_pos' => 5, 'width' => 160, 'height' => 60],
+]);
+checkSame(false, $aRefusal->isOk(), 'and the publish door really does refuse that same value');
+
+// A section has no text of its own, so the door does not check its colour and neither
+// does this. Reporting it would send somebody to a block with nothing to fix.
+$aSection = null;
+foreach (elementsOf($aPdo, $aPatio->id()) as $row) {
+    if ($row['type'] === 'section') { $aSection = $row['id']; }
+}
+$aPdo->prepare("UPDATE canvas_elements SET font_color = 'nonsense' WHERE id = ?")->execute([$aSection]);
+checkSame(1, count($aAudit->findings()), 'a section carrying an unreadable colour is not a finding');
+
+// Blank is legal. It means "no colour of its own", which is what every branded block
+// carries — the absent-versus-unreadable line #21 turns on, and a predicate that
+// missed it would report the whole store.
+$aPdo->prepare("UPDATE canvas_elements SET font_color = '' WHERE id = ?")->execute([$aBad]);
+checkSame([], $aAudit->findings(), 'and a blank colour is not a fault, it is a branded block');
+$aPdo->prepare("UPDATE canvas_elements SET font_color = 'puce' WHERE id = ?")->execute([$aBad]);
+
+// A hidden block is not on the sign and is still in the payload, so it refuses the
+// publish from somewhere nobody is looking. The finding says so.
+$aPdo->prepare("UPDATE canvas_elements SET hidden = 1 WHERE id = ?")->execute([$aBad]);
+checkMentions($aAudit->findings()[0]['what'], 'hidden',
+              'a hidden block that blocks the publish is reported as hidden');
+$aPdo->prepare("UPDATE canvas_elements SET hidden = 0 WHERE id = ?")->execute([$aBad]);
+
+// ---- The two that never refuse anything ----------------------------------------
+// Both render. That is what makes them worse to find and worth separating: nothing
+// stops, nobody is told, and the sign is simply the wrong colour.
+
+$aPdo->prepare("UPDATE displays SET bg_val = 'darkblue' WHERE id = ?")->execute([$aPatio->id()]);
+$found = $aAudit->findings();
+checkSame(2, count($found), 'a background nobody can read is the second finding');
+checkSame(ColorAudit::WRONG_ON_SIGN, $found[1]['kind'], 'of the kind that renders wrongly rather than refusing');
+checkSame('patio', $found[1]['scope'], 'against the sign it is on');
+checkMentions($found[1]['consequence'], '#1a1a2e', 'saying which colour the Screen shows instead');
+
+// A Display on an image background still carries whatever bg_val held before the
+// switch. Nothing reads it, so reporting it would send somebody to fix a sign that is
+// not wrong.
+$aPdo->prepare("UPDATE displays SET bg_type = 'image', bg_val = 'uploads/patio.jpg' WHERE id = ?")
+     ->execute([$aPatio->id()]);
+checkSame(1, count($aAudit->findings()), 'a Display showing an image is not asked about its colour');
+
+// Brand Standards are shared, so one row is every sign at once — and this is the only
+// one of the three with no refusal anywhere in front of it. BrandStyles cleans on the
+// way in, not on the way out, so a row edited by hand goes to every Screen as it is.
+$aPdo->prepare("UPDATE block_styles SET font_color = 'gold' WHERE block_type = 'price'")->execute();
+$found = $aAudit->findings();
+checkSame(2, count($found), 'a Brand Standards colour nobody can read is a finding too');
+checkSame('', $found[1]['scope'], 'belonging to no one sign, because it belongs to all of them');
+checkMentions($found[1]['what'], 'price', 'named by the block style it governs');
+checkMentions($found[1]['consequence'], 'every sign', 'and saying that is what it means');
+
+// Ordering is the report's whole shape: a list that opens with a cosmetic finding
+// reads like a tidy-up rather than like a sign that cannot be published.
+checkSame(ColorAudit::BLOCKS_PUBLISH, $found[0]['kind'], 'the blocking finding is listed first');
+
+// ─────────────────────────────────────────────────────────────
 // Everything above this line runs on both engines. What follows can only be asked
 // of a real MySQL database, and is skipped entirely on the SQLite default — which
 // is why reportChecks() below is given two numbers.
@@ -4441,4 +4546,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Two numbers because the MySQL run adds a section the SQLite one cannot ask for.
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
-reportChecks(testIsMysql() ? 1206 : 1183);
+reportChecks(testIsMysql() ? 1227 : 1204);

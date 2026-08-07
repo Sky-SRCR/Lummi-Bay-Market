@@ -307,6 +307,51 @@ class LayoutStore
         return $stmt->fetchAll();
     }
 
+    /**
+     * The blocks on this Display whose stored `font_color` is not a colour.
+     *
+     * The same question `LayoutRules` asks at the publish door (§4w), asked of what
+     * is already stored rather than of what is arriving. It exists because #41 left
+     * a live consequence nobody could see: a row holding `puce` — hand-edited, or
+     * written before the rule existed — makes this Display refuse every publish
+     * until somebody picks a colour for that block, and the only way to discover
+     * that was for somebody to press Publish and be told no. Usually while standing
+     * in front of the sign they were trying to change.
+     *
+     * Scoped by Display like every other statement here, and read through the
+     * module that owns the table rather than by a tool with its own SQL.
+     *
+     * `type = 'section'` is excluded because the door excludes it: a section has no
+     * text of its own, so its `font_color` is not read and not checked. Blank is
+     * excluded because blank is legal — it means "no colour of its own", which is
+     * what every branded block carries, and treating it as a fault would report the
+     * whole store (#21's absent-versus-unreadable line).
+     *
+     * The length half of the door's check cannot fire on a stored value: the column
+     * is VARCHAR(50) and the limit is 50, so anything that fits is short enough.
+     *
+     * @return array rows, in the order the Builder lays them out
+     */
+    public function unreadableFontColors(Display $display)
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT id, type, block_subtype, section_id, hidden, x_pos, y_pos, font_color
+               FROM canvas_elements
+              WHERE display_id = ?
+                AND type <> 'section'
+                AND font_color IS NOT NULL
+                AND font_color <> ''
+              ORDER BY sort_order ASC, id ASC"
+        );
+        $stmt->execute([$display->id()]);
+
+        $bad = [];
+        foreach ($stmt->fetchAll() as $row) {
+            if (!Color::isColor($row['font_color'])) { $bad[] = $row; }
+        }
+        return $bad;
+    }
+
     /** How many elements this Display carries — what a delete confirm needs to state. */
     public function elementCount(Display $display)
     {

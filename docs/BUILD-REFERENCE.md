@@ -2088,8 +2088,19 @@ On a server with a **copy** of live data — never the live database:
 php tools/rehearse_phase1.php            # converge schema, prove scoping, publish twice
 ```
 
-CI runs this too, but against a database built from `schema.sql` rather than a copy
-of live data, and the difference is the whole remaining point of doing it by hand.
+And on the **live** database, where this one is safe and its neighbour is not:
+
+```
+php tools/audit_colors.php               # every stored colour, read-only
+```
+
+Every statement it runs is a `SELECT`. It exists because #41 left a consequence
+only live data can hold — see §4w — and it is the one tool here with no
+`--confirm-copy`, which is exactly why its header says so at length.
+
+CI runs the rehearsal too, but against a database built from `schema.sql` rather
+than a copy of live data, and the difference is the whole remaining point of doing
+it by hand.
 A schema.sql database is already converged, so the run proves the round trip —
 both widened ENUMs, the cascade rules, publish-and-republish scoping, DDL
 committing an open transaction — and cannot prove the one thing the tool was
@@ -2411,6 +2422,58 @@ deadlock, it is an instruction: *Block 2 has a text colour that is not a colour
 ("puce").* An admin picks a colour, the marker clears, the publish goes through. The
 alternatives are both worse. Silently normalising is the defect. Refusing to *load*
 the Display would take a sign away from the person who needs to fix it.
+
+#### The rows that were already there
+
+Everything above is about values arriving. None of it says anything about the ones
+already stored, and refusing at the door made those *worse* to hold: a `font_color`
+holding `puce` now makes its Display refuse **every** publish until somebody picks a
+colour for the named block. That is the right refusal, and it means the way to
+discover it was for somebody to press Publish and be told no — mid-change, standing
+in front of the sign they came to fix. Nothing in the app could answer "is there any
+such row?" and nothing outside it could either.
+
+`tools/audit_colors.php` asks. It is **read-only** — every statement a `SELECT` —
+and so it is the one tool in `tools/` that is safe to point at the live database.
+That needed saying loudly in its header, because `rehearse_phase1.php` sits beside
+it demanding `--confirm-copy`, and a reader who has learned that habit will assume
+the flag is missing rather than absent by design. Reporting is the whole job:
+writing a colour of our own over an unreadable one is precisely the defect #21 and
+#41 exist to stop, and there is no undo. A person picks the colour.
+
+It also does not include `db_connect.php`, which every page does — that file arms
+the alert mailer, so a mistyped `--host` would email the store's admins because
+somebody ran an audit. The price is that it knows where the credentials file lives,
+which is now the second place; `check_invariants.php` holds the two to one value.
+
+**One predicate, three consequences**, and separating them is most of the tool's
+value, because they send a person to three different screens:
+
+| Where | What it does now | Who refuses it |
+|---|---|---|
+| `canvas_elements.font_color` | that Display cannot publish at all | the publish door, by name |
+| `displays.bg_val` | the Screen quietly shows `#1a1a2e` instead | nothing — it renders |
+| `block_styles.font_color` | **every** branded block of that type, on **every** sign, renders in whatever the browser inherits | nothing at all |
+
+The third is the worst and was the surprise: `BrandStyles` cleans on the way *in*,
+not on the way out, so a row edited by hand is handed to every Screen as it stands.
+Black text on a dark canvas, everywhere, with no refusal anywhere in front of it.
+
+Three things the audit deliberately does **not** report, each of which would send
+somebody to fix something that is not wrong: a `font_color` on a **section**, which
+has no text of its own and which the publish door does not check either; a **blank**
+colour, which means "no colour of its own" and is what every branded block carries —
+#21's absent-versus-unreadable line, and a predicate that missed it would report the
+whole store; and the `bg_val` of a Display currently showing an **image**, which
+holds whatever it held before the switch and which nothing reads.
+
+The module is `lib/color_audit.php`: a use-case module in the §2 sense — it owns the
+sweep, writes no SQL of its own, and returns findings a caller turns into sentences.
+The one statement it needs is `LayoutStore::unreadableFontColors()`, on the module
+that owns the table, scoped by Display like every other statement there. 21 checks in
+`tools/selftest_layout.php`, on both engines, including that the publish door really
+does refuse the same value the audit reports — because an audit and a door that drift
+apart are each defensible alone and useless together.
 
 **Two things deliberately not done:**
 

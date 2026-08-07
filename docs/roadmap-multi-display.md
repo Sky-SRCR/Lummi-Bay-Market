@@ -318,6 +318,14 @@ In order, on the one visit:
    schema convergence: it creates `displays`, seeds the drive-thru Display from
    `canvas_settings`, and backfills `display_id`. (If the sign's poll gets there
    first it self-heals, but signing in makes it deliberate.)
+4a. **Audit the stored colours** — read-only, and pointed at the live database
+    itself: `php tools/audit_colors.php`. It comes after convergence rather than
+    before it because it reads `displays`, which step 4 is what creates. It reports
+    every stored colour the app cannot read, and the reason it belongs on this visit
+    is step 6: a `font_color` nobody can read makes its Display refuse every publish
+    from here on, by name (§4w). Better to learn that now than while standing at the
+    sign. It changes nothing — the fixes are a person picking colours in the Builder
+    and in Settings. "Every stored colour reads. Nothing to do." is the clear answer.
 5. **Check the sign at its new URL.** `viewer.php?display=drive-thru` shows the
    drive-thru layout unchanged, pixel for pixel. A bare `viewer.php` now shows "No
    display specified" — that is Phase 2 working as designed (ADR-0003), not a fault.
