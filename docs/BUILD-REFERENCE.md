@@ -65,9 +65,10 @@ Design rules, applied to every module added by this build:
 | `accounts.php` | `AccountStore`, `AccountAdmin` — `close()` / `edit()` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. And `edit()`, the other three-table change: the role, the active flag and the email in one write, then the grants a **promotion** makes meaningless (an admin holds every Display by role, so the rows would sit there displayed nowhere and removable by nothing) and the locks a **demotion** puts out of reach (no grants left, so the account cannot even release what it is holding). Not a gatekeeper for all of `users`: creating an account and setting somebody's password from the panel are still written there, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means — plus the three `users` writes that have to happen inside somebody else's transaction, `setPassword()`, `clearLoginLockout()` and `updateProfile()`, because a page cannot hold a transaction over SQL it writes itself. Those three are the only methods in the class that let an exception out, deliberately: everything else answers a question, and a question is better answered "no" than not at all, but these are halves of a change that must not half-happen. `clearLoginLockout()` answers true when the three ADR-0001 columns are absent, for the same reason `isClosed()` answers false: a database without them has never locked anybody out. |
 | `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
 | `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. `firstInWindow()` and `stateFile()` are public for the same reason `report()` needs them: a repeated *attempt to fix* something needs the same restraint as a repeated report of it, and this module is where the state directory is decided. Depends on nothing: no database, no session, no config. |
+| `http_cache.php` | `HttpCache::headers()` / `neverStore()` | What may be kept of a reply this app gives: nothing. The three headers it takes to say that to caches of every vintage — `no-store` is the only one that forbids *keeping* the bytes; the other two are for HTTP/1.0 caches, which is what a signage widget or a shop router turns out to be — and the one condition under which it must not try, output having already begun. `headers()` is the rule as data so it can be read without a web server, the same reason `ErrorPolicy::noticeFor()` is pure. There is one caller, `db_connect.php`, because there is no page in this app worth caching and a second opinion about that is how one path gets missed. Deliberately does not reach `uploads/`: those are served by Apache, their filenames carry a `uniqid()` so the bytes behind a path never change, and no-storing a 40 MB video would re-fetch it on the store's connection every time a sign reloaded. Depends on nothing. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
-| `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
+| `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, **the status line that goes with it** (`httpStatus()`, and `statusForKind()` for the one case nothing can construct), and the editing entry rule. The one place grants are enforced. The wording and the code live together because a Viewer and the poll inside it answering one fact with two different codes is a disagreement nobody would notice was wrong. |
 
 `lib/` is denied to the browser by `lib/.htaccess`. Nothing in `lib/` prints,
 redirects, reads `$_POST`/`$_GET`, or touches `$_SESSION` — adapters pass what
@@ -340,6 +341,23 @@ through the app again:
     one can fail after the first has landed, and the message printed then is decided
     by which line threw rather than by what is now true. With no undo anywhere,
     somebody acting on that message is the whole problem.
+23. **A reply that is not a working sign does not say `200`, and no reply may be
+    stored.** The two halves are one rule because a 200 is exactly what a cache is
+    allowed to keep, and the reply most likely to be kept — `get_layout`, fetched
+    every 30 seconds forever — is the one whose failure payload is a *notice*, a
+    statement about right now. Stored, it survives the thing it was reporting: the tag
+    is corrected or the sign is turned back on and the Screen stays dark, while the
+    Builder reports every publish as a success. So the code for a resolution comes
+    from `DisplayResolution::httpStatus()` — never from the page emitting it, or the
+    Viewer and its own poll will eventually disagree about one fact — and an
+    unrecognised kind answers 500, never 200. And `HttpCache::neverStore()` is called
+    once, from `db_connect.php`, for everything: there is no page in this app worth
+    caching, and a second opinion about that is how one path gets missed. Two things
+    are deliberately outside it and both are named in §4u: `uploads/`, which Apache
+    serves and whose filenames never change content, and the Builder's picker page,
+    which is a working page reached by an ordinary `no_tag`. Anything new that answers
+    a machine — a second poll, a health endpoint, a webhook — says what it is in the
+    status line, or it is a dark sign that reads as a working one.
 
 ---
 
@@ -1839,6 +1857,116 @@ Left standing, and named rather than skipped:
   than by name. A future state that shuts an account out *without* clearing `is_active`
   would strand locks again, and the fix would belong in `LockState`.
 
+### 4u. Every answer was 200 OK, and nothing said what could be kept
+
+A sign showing "Display not found" answered `200 OK`. So did one showing "No display
+specified", and so did one that had been deliberately turned off — and so did the
+poll behind each of them. Meanwhile nothing in the repo set a caching rule on any
+path, so what happened to any of those replies was decided by the browser, the
+kiosk's WebView, and whatever proxy sits between the store and the host.
+
+**Why those are one item and not two.** A `200` is precisely the thing a cache is
+permitted to keep. The app was simultaneously telling every cache in the chain that a
+dark sign was a working one, and declining to say for how long that was true. The two
+halves compound: the reply most likely to be stored is `get_layout`, fetched every 30
+seconds forever, and the payload most damaging to store is a *notice*, because a
+notice is a statement about right now. An admin corrects a screen name tag, or turns
+the sign back on, and a stored notice keeps the Screen dark afterwards — with the
+Builder reporting every publish as a success. That is the same shape as the latched
+layout hash in §4g: a negative answer remembered for longer than the negative lasted.
+
+Neither half is the whole fix, and the reason is specific. A cache given no explicit
+instruction may choose a freshness lifetime of its own for a `200` **or a `404`**, but
+not for a `503`. So honest codes on their own would have fixed the switched-off sign
+and left the mistyped-tag one exactly as it was, and `no-store` on its own would have
+left every monitor unable to tell a dark sign from a working one. They were decided as
+one item because they are one defect seen from two ends.
+
+**The status line is chosen by the resolution, not by the page.** `DisplayResolution`
+already owns the *wording* per case, because a Screen has to say the same sentence
+whoever asked (ADR-0003); it now owns the *code* per case for the identical reason. A
+Viewer and the poll inside it answering one fact with two different codes is a
+disagreement nobody would ever notice was wrong. Six kinds, and each code is a
+decision rather than a default:
+
+| Kind | Code | Why that one |
+|------|------|--------------|
+| `found` | 200 | |
+| `no_tag` | 400 | The URL is missing the one parameter that names a sign. Nothing is wrong at this end (not 5xx) and there is nothing to go looking for (not 404). |
+| `unknown` | 404 | |
+| `forbidden` | 403 | Not 404. §4d decided that a refusal names the sign rather than hiding it, and a code that pretends the Display does not exist would contradict the sentence beside it. |
+| `mismatch` | 409 | A conflict, and specifically the kind reloading resolves — which is what the message already tells the person. |
+| `inactive` | 503 | A real sign, deliberately out of service, expected back. 404 was the alternative and it throws away the one distinction somebody standing in front of a blank sign needs: "turned off" is not "no such display". |
+
+Anything the mapping does not recognise answers **500, never 200**. That branch is
+unreachable through the constructor, so the mapping is also exposed over a bare kind
+(`statusForKind`) — a rule with no way to test it is a comment, and this is the exact
+shape the defect would return in: a seventh resolution added later with no code of
+its own, quietly answering `200 OK` on a sign that is showing nothing.
+
+**Two emitters, and one page that deliberately keeps its 200.** `viewer.php` sets the
+code on its notice branch; `api.php` sets it on the public poll's failure and inside
+`failResolution()`, which covers every Display-scoped endpoint at once. The Builder's
+own not-found page is *not* one of them: a `no_tag` there is the ordinary way an admin
+arrives, and the page it draws is a working picker. A status code is for the caller
+with nobody in front of it.
+
+**Nothing needed to change on any client.** `fetch` does not reject on a non-2xx, and
+every caller here reads the body (`.then(r => r.json())`) rather than the code — and
+`api.php` was already answering 403 for a dead session and 413 for a dropped upload
+before any of this, so the shape was proven. The notice *body* is byte-for-byte what
+it was, on the same 30-second meta refresh, because a browser renders the document it
+was given whatever the status line says.
+
+**The caching rule is one call, in the one file every entry point includes.**
+`db_connect.php` already installs the error policy for the whole app on the same
+argument, and there is no page in this app worth caching — every one is a sign, an
+endpoint or a form. So `HttpCache::neverStore()` goes there, *before* the connection
+is attempted: the reply from a database that is down is also a statement about now,
+and a stored copy of it outlives the outage. A page added later inherits the rule
+instead of having to remember it.
+
+Three headers for one rule. `no-store` is the load-bearing word — `no-cache` only
+means "revalidate before reuse", which a cache can honour while still holding the
+bytes. `Pragma: no-cache` and `Expires: 0` are for HTTP/1.0 caches, which is exactly
+what a signage widget or a small-business router turns out to be running. They cost
+30 bytes and remove a class of failure that can only be diagnosed by standing in
+front of the sign.
+
+**Twenty-seven checks, and thirteen deliberate mutations, all thirteen killed** (kill
+counts 12, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1, 2, 2). Four worth naming:
+
+- Restoring the old behaviour — every kind answers 200 — kills twelve.
+- Collapsing `inactive` into 404 kills one, and it is the mutation that looks most
+  like tidying: two "there is nothing here" cases sharing a code.
+- Adding a seventh resolution kind with no code kills one, through a reflection count
+  rather than through the kind itself. That check is the gate, in the sense invariant
+  19 uses the word: adding a kind means adding a code and a check for it.
+- Dropping the `headers_sent()` guard from `HttpCache::neverStore()` kills one, and it
+  is the reason the guard exists rather than a warning: a `header()` call after output
+  raises a diagnostic, and PHP's own output on a page is what invariant 16 is about.
+  The suite has been printing since its first section, which makes the refusal the
+  observable branch and the emission the one the §5 grep covers.
+
+Left standing, and named rather than skipped:
+
+- **`uploads/` stays cacheable, on purpose.** Images and videos are served by Apache
+  and never reach PHP, so this rule does not touch them — which is the wanted answer:
+  every filename there carries a `uniqid()`, so the bytes behind a path never change,
+  and no-storing a 40 MB video would re-fetch it on the store's connection every time
+  a sign reloaded.
+- **The other refusals in `api.php` still answer 200.** "Admins only", "Unknown
+  action", a publish that would not decode. They are read by a script that reports the
+  message to the person who caused them, and none of them is polled by anything. If a
+  second endpoint ever gets a watcher, the code belongs with whatever decides the
+  refusal, the way the resolution's does.
+- **No `Retry-After` on the 503.** The Screen's cadence is already 30 seconds and it
+  is set by the Viewer, not negotiated; a second statement of the same interval is one
+  more thing to keep in step.
+- **Nothing is asserted about the headers actually leaving the server.** The CLI
+  cannot observe a sent header. The rule is data and the data is checked; the single
+  call site is a grep.
+
 ---
 
 ## 5. Verification
@@ -1987,6 +2115,23 @@ grep -rn "post_max_size\|upload_max_filesize\|MAX_BYTES" --include=*.php .
 grep -rn "php://input" --include=*.php .      # must be empty: UploadLimit::bodyWasDropped() infers the
                                               # post_max_size case from an empty $_POST, which only
                                               # holds while nothing reads the raw body
+grep -rn "HttpCache::" --include=*.php .      # lib/http_cache.php defines it and db_connect.php makes the
+                                              # ONE call, before it tries to connect. Every entry point
+                                              # includes that file, so a second call is a page that thinks
+                                              # it is special and a missing one is impossible — which is the
+                                              # arrangement. A `Cache-Control` written by hand anywhere else
+                                              # is a second opinion about what may be stored — invariant 23
+grep -rn "http_response_code" --include=*.php .  # lib/error_policy.php (the 500 a failed request ends on),
+                                              # api.php (403 signed_out, 413 too_large, and the resolution's
+                                              # own code twice), viewer.php's notice branch, auth.php's CSRF
+                                              # refusal, and tools/'s browser guard. Every one that concerns
+                                              # a *Display* takes its number from
+                                              # DisplayResolution::httpStatus() — a literal beside a
+                                              # resolution is the second copy of that mapping
+grep -rn "httpStatus\|statusForKind" --include=*.php .  # lib/display_request.php decides; viewer.php and
+                                              # api.php (twice) emit; the self-test checks every kind. A
+                                              # resolution kind added without a code answers 500 and fails
+                                              # the reflection count — add the code and the check together
 grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
                                               # DISPLAY_ID / waDisplayId() with it (invariant 12), which
                                               # omission silently opts out of. viewer.php is the one

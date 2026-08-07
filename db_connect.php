@@ -26,6 +26,15 @@
 require_once __DIR__ . '/lib/error_policy.php';
 ErrorPolicy::installDefault();
 
+// And the same argument for the caching rule: every reply this app gives is a sign,
+// an endpoint or a form, so not one of them may be stored — and saying so once here
+// means a page added later cannot forget to. Before the connection is attempted, not
+// after, because the reply from a database that is down is a notice about *now*: a
+// stored copy of it keeps a sign dark long after the database came back. See
+// lib/http_cache.php.
+require_once __DIR__ . '/lib/http_cache.php';
+HttpCache::neverStore();
+
 $credentialsFile = dirname(__DIR__, 2) . '/private/db_credentials.php';
 
 

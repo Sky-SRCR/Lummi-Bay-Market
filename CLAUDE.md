@@ -60,6 +60,17 @@ edited in place and every change reaches the sign by hand.
   holds a sign disagree silently. Then make sure the Builder *says so*: `applyLockAnswer()`
   ignores a failed heartbeat on purpose, and `LOCK_TERMINAL` is the fixed list of refusals
   that never come back — each with its own sentence, because what to do next differs.
+- **A reply that is not a working sign does not say `200`, and nothing may be stored.**
+  One rule, because a 200 is exactly what a cache is allowed to keep — and the reply
+  most likely to be kept is `get_layout`, polled every 30s forever, whose failure
+  payload is a *notice*: a statement about right now that outlives the thing it
+  reported. The tag gets corrected, the sign stays dark, and every publish still
+  reports success. So the code for a resolution comes from
+  `DisplayResolution::httpStatus()` and never from the page emitting it (a Viewer and
+  its own poll disagreeing about one fact is silent), an unrecognised kind answers
+  `500` rather than `200`, and `HttpCache::neverStore()` is called once for the whole
+  app from `db_connect.php`. `uploads/` is outside it on purpose — Apache serves it and
+  those filenames never change content.
 - **PHP 7.1-compatible syntax** — the live server's version is unverified.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.

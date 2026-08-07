@@ -152,6 +152,99 @@ $r = DisplayRequest::forEditing($soloStore, ['display_id' => $solo->id() + 1], $
 checkSame(DisplayResolution::MISMATCH, $r->kind(), 'but not with one naming a Display it is not');
 
 // ─────────────────────────────────────────────────────────────
+section('What the status line says, and what may be stored');
+
+// Decision #28. Every answer below was `200 OK` with a notice in the body, which
+// reads as a working sign to everything except a person looking at one: an uptime
+// check on a Viewer URL passed on a dark sign, and a cache was free to treat the
+// notice as a success and keep serving it after the sign came back.
+$stPdo   = newTestDb();
+$stStore = new DisplayStore($stPdo);
+$stSign  = makeTestDisplay($stPdo, 'drive-thru', 'Drive-Thru');
+$stOff   = makeTestDisplay($stPdo, 'lobby', 'Lobby', 1080, 1920);
+$stOther = makeTestDisplay($stPdo, 'deli', 'Deli Counter');
+$stPdo->exec('UPDATE displays SET is_active = 0 WHERE id = ' . $stOff->id());
+
+checkSame(200, DisplayRequest::forViewing($stStore, ['display' => 'drive-thru'])->httpStatus(),
+          'a sign that renders answers 200');
+checkSame(400, DisplayRequest::forViewing($stStore, [])->httpStatus(),
+          'a URL that names no display is a bad request, not a working sign');
+checkSame(404, DisplayRequest::forViewing($stStore, ['display' => 'nope'])->httpStatus(),
+          'an address that names nothing is 404');
+checkSame(503, DisplayRequest::forViewing($stStore, ['display' => 'lobby'])->httpStatus(),
+          'a display turned off is 503 — a real sign, out of service, expected back');
+checkSame(409, DisplayRequest::forViewing(
+              $stStore, ['display' => 'drive-thru', 'display_id' => $stOff->id()])->httpStatus(),
+          'a tag and an id that name different displays are a conflict');
+
+// FORBIDDEN is reachable only from the editing path. The clerk holds one Display, so
+// the refusal for the other one can only be about the grant.
+grantTestAccess($stPdo, $stSign->id(), 2);
+$stClerk = newTestActor($stPdo, 2, 'basic');
+$r = DisplayRequest::forEditing($stStore, ['display' => 'deli'], $stClerk);
+checkSame(DisplayResolution::FORBIDDEN, $r->kind(), 'a display nobody assigned is forbidden');
+checkSame(403, $r->httpStatus(), 'and forbidden is 403');
+checkSame(200, DisplayRequest::forEditing($stStore, ['display' => 'drive-thru'], $stClerk)->httpStatus(),
+          'while the one that is theirs still answers 200');
+
+// The Viewer and the poll read this from the same place on purpose: two copies of
+// the mapping would eventually answer one fact with two codes, which is a
+// disagreement nobody would ever notice was wrong.
+$every = [
+    DisplayResolution::FOUND     => DisplayResolution::found($stSign),
+    DisplayResolution::NO_TAG    => DisplayResolution::noTag(),
+    DisplayResolution::UNKNOWN   => DisplayResolution::unknown(),
+    DisplayResolution::INACTIVE  => DisplayResolution::inactive($stOff),
+    DisplayResolution::FORBIDDEN => DisplayResolution::forbidden($stOther),
+    DisplayResolution::MISMATCH  => DisplayResolution::mismatch($stSign),
+];
+// A seventh kind added without a code of its own has to fail something, or the
+// "everything is 200" default comes back one case at a time.
+checkSame(count((new ReflectionClass('DisplayResolution'))->getConstants()), count($every),
+          'every resolution kind there is has a status code checked here');
+foreach ($every as $kind => $resolution) {
+    if ($kind === DisplayResolution::FOUND) { continue; }
+    check($resolution->httpStatus() >= 400,
+          'a ' . $kind . ' resolution never answers a success code');
+    check($resolution->message() !== '', 'and still carries the notice to show (ADR-0003)');
+}
+
+// And the kind nothing can construct: a resolution added later whose code somebody
+// forgot. It answers 500 rather than 200, because "I do not recognise this answer"
+// is not a working sign — this is the branch the whole defect would come back
+// through, so it is reachable over a bare kind on purpose.
+checkSame(500, DisplayResolution::statusForKind('something-added-later'),
+          'a kind the mapping has never heard of is never a success');
+checkSame(500, DisplayResolution::statusForKind(''),
+          'and neither is no kind at all');
+
+// Caching: the rule is data so it can be read without a web server, the same reason
+// ErrorPolicy::noticeFor() is pure.
+$cache = HttpCache::headers();
+$cc    = isset($cache['Cache-Control']) ? $cache['Cache-Control'] : '';
+checkMentions($cc, 'no-store', 'the caching rule forbids storing, not merely revalidating');
+checkMentions($cc, 'max-age=0', 'and states a zero lifetime');
+check(preg_match('/max-age=[1-9]/', $cc) === 0,
+      'and never a lifetime a cache could hold a layout for');
+// The two headers that are only there for caches implementing an older spec — a
+// signage widget or a small-business router, which is exactly where an unexpected
+// cache turns up. Dropping them is invisible until somebody is standing at the sign.
+check(isset($cache['Pragma']) && $cache['Pragma'] === 'no-cache',
+      'an HTTP/1.0 cache is told as well');
+check(isset($cache['Expires']) && $cache['Expires'] === '0',
+      'in both of the ways it understands');
+
+// Whether the headers actually reach a browser is not observable from the CLI — the
+// §5 grep is what keeps the one call site honest. What *is* observable here, because
+// this suite has been printing since its first section, is the refusal: setting a
+// header after output raises "Cannot modify header information", and a warning
+// printed by the thing that exists to keep PHP's output off the page is the defect
+// invariant 16 is about. Dropping the headers_sent() guard fails this twice — once
+// on the return value, once on the diagnostic.
+check(HttpCache::neverStore() === false,
+      'a reply that has already printed is left alone rather than warned over');
+
+// ─────────────────────────────────────────────────────────────
 section('Publishing is scoped to one Display');
 
 $layouts = newTestLayoutStore($pdo);
@@ -3147,4 +3240,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(826);
+reportChecks(853);

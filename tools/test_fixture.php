@@ -23,6 +23,7 @@ require_once __DIR__ . '/../lib/password_resets.php';
 require_once __DIR__ . '/../lib/server_report.php';
 require_once __DIR__ . '/../lib/accounts.php';
 require_once __DIR__ . '/../lib/error_policy.php';   // pulls in lib/alerts.php
+require_once __DIR__ . '/../lib/http_cache.php';
 require_once __DIR__ . '/../lib/assets.php';
 require_once __DIR__ . '/../lib/upload_limits.php';
 require_once __DIR__ . '/../lib/schema.php';

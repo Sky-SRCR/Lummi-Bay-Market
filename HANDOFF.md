@@ -57,13 +57,14 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/layout_store.php` | `LayoutStore` — the **only** place that touches `canvas_elements`: publish transaction, staleness + lock checks, layout copy, scoped hide/delete |
 | `lib/grants.php` | `GrantStore`, `Actor` — the **only** SQL against `display_permissions`; `Actor` answers "may this account open this Display" |
 | `lib/display_admin.php` | `DisplayAdmin` — create/edit/delete a Display across all three tables; writes no SQL itself |
-| `lib/display_request.php` | Which Display a request means, and whether the actor may have it. Both the Builder and every API write resolve through here |
+| `lib/display_request.php` | Which Display a request means, whether the actor may have it, and the notice **and status code** that go with each refusal. Both the Builder and every API write resolve through here |
 | `lib/plain_text.php` | `toPlainText()` — signage content is plain text (ADR-0002) |
 | `lib/error_policy.php` | The error policy, set in code: errors off, logging on, the three handlers, and the notice a Screen / an endpoint / a person gets when something breaks. `report()` is for a problem the app survived, and throttles the log as well as the email when the problem repeats on its own |
+| `lib/http_cache.php` | `HttpCache` — the caching rule for every reply this app gives: none of them may be stored. One call, from `db_connect.php`, so a page added later cannot forget it. `uploads/` is served by Apache and deliberately untouched |
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **826 checks**. Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **853 checks**. Run before pushing |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **27 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit), **53 checks** |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data. It also publishes every element type and block subtype the schema allows and reads them back, checks that a deleted Display really cascades, and prints which of the five page-added columns landed |
@@ -142,6 +143,21 @@ anything, they hold every Display by role.
   `…/viewer.php?display=drive-thru`. A bare `viewer.php` shows a "no display
   specified" notice — by design, not a fault. This is why the deploy includes a
   one-time URL change on the TV and in the SmartSign2Go widget.
+- **A Viewer URL can be monitored now, because it answers an honest status code.**
+  Every one of these used to be `200 OK` with the notice in the body, so an uptime
+  check passed on a dark sign. A sign that renders is `200`; a URL naming no Display
+  is `400`; an address that names nothing is `404`; a Display **turned off** is `503`;
+  a Display not assigned to the account asking is `403`; a page whose screen name tag
+  has moved under it is `409`. `api.php?action=get_layout` answers the same codes for
+  the same reasons. Point a check at each sign's Viewer URL and expect 200 — a `503`
+  means somebody retired that Display, a `404` means the tag no longer exists.
+- **Nothing this app serves is cached**, on any path — `Cache-Control: no-store` plus
+  the two HTTP/1.0 headers, set in PHP from `db_connect.php` so they travel with the
+  deploy rather than depending on `mod_headers`. `uploads/` is the deliberate
+  exception: Apache serves it, those filenames never change content, and a sign should
+  not re-fetch a 40 MB video every time it reloads. If a sign ever shows stale prices
+  again, the cache to suspect is upstream of the app — the widget or the network — not
+  a missing header.
 - To read a Display without logging in:
   `GET https://srcresort.com/lbm/api.php?action=get_layout&display=drive-thru`
   returns its layout JSON. WebFetch can read live pages but can't run JS or log in.
@@ -294,7 +310,7 @@ staleness check, no version history), 0007 (one editor per Display).
   URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
   account, two browsers, and one unavoidable 15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 826 self-test checks against SQLite, 80 node checks over `builder.php`'s
+  `php -l`, 853 self-test checks against SQLite, 80 node checks over `builder.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare

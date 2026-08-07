@@ -259,8 +259,18 @@ function lockPayload(?Display $display, Actor $actor): array {
     ];
 }
 
-/** Emit the standard "which Display?" failure for an endpoint that needs one. */
+/**
+ * Emit the standard "which Display?" failure for an endpoint that needs one.
+ *
+ * The status line comes from the resolution, so every endpoint that resolves a
+ * Display refuses with the same code for the same reason — a Display that is not
+ * this account's is 403 whether it was asked for by the Builder, the Work Area or a
+ * publish. Every client here reads the body (`.then(r => r.json())`), and this file
+ * already answered 403 for a dead session and 413 for a dropped upload before any of
+ * this, so no caller needed changing.
+ */
 function failResolution(DisplayResolution $resolution): void {
+    http_response_code($resolution->httpStatus());
     echo json_encode([
         'status'  => 'error',
         'reason'  => $resolution->kind(),
@@ -278,6 +288,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_layout') {
         // Nothing to render. The notice is the payload: the Viewer shows this
         // wording on the Screen, so a Display turned off (or deleted) while a
         // Screen is running replaces the layout with the notice within one poll.
+        //
+        // And it is not a 200. This is the reply a Screen fetches every 30 seconds
+        // forever, so it is the one most likely to be stored by something in the
+        // middle — and a stored "this display is turned off" is a sign that stays
+        // dark after the Display is turned back on.
+        //
+        // The code and the `no-store` from lib/http_cache.php are both needed, and
+        // the reason is worth knowing: a cache with no explicit instruction may pick
+        // a freshness lifetime of its own for a 200 or a 404, but not for a 503. So
+        // the code alone would have covered the switched-off case and left the
+        // unknown-tag one exactly as it was. Neither half of decision #28 is the
+        // whole fix.
+        //
+        // The Viewer decides on `status` in the body either way — a non-2xx does not
+        // make `fetch` reject, which is why no client needed changing.
+        http_response_code($resolution->httpStatus());
         echo json_encode([
             'status'       => $resolution->kind(),
             'message'      => $resolution->message(),

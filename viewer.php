@@ -43,6 +43,19 @@ $display    = $resolution->display();
 // capable kiosk browser.
 if (!$resolution->isFound()) {
     $notice = $resolution->message();
+    // And it says so in the status line as well as on the sign. This page answered
+    // 200 for a missing, unknown or switched-off Display, which reads as a working
+    // sign to everything that is not a person: an uptime check on the Viewer URL —
+    // the only way anybody learns a Screen went dark out of hours — passed on a
+    // dark sign, and a cache was free to store the notice as a success and keep
+    // serving it after the sign came back. The code is chosen by the resolution
+    // (DisplayResolution::httpStatus), so this page and the poll below it cannot
+    // answer the same fact differently.
+    //
+    // The body is unchanged, and deliberately: a browser renders the document it
+    // was given whatever the code says, so the notice a customer reads is the same
+    // notice, on the same 30-second re-check. Nothing here depends on the code.
+    http_response_code($resolution->httpStatus());
     ?><!DOCTYPE html>
 <html lang="en">
 <head>

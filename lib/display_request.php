@@ -112,6 +112,63 @@ class DisplayResolution
     public function message() { return $this->message; }
 
     /**
+     * The status line for this answer.
+     *
+     * Every one of these used to be `200 OK` with a notice in the body, which is a
+     * reply that reads as a working sign to everything except a person looking at
+     * it. Three things read it and no person is one of them: a cache, which may
+     * store a success and must not store any of these; an uptime check, which is
+     * the only way anybody finds out a Screen went dark outside opening hours; and
+     * the Screen's own poll, whose `fetch` does not care either way — which is why
+     * this could be added without touching a client.
+     *
+     * The mapping is here rather than at the two places that emit it for the same
+     * reason the wording is (ADR-0003): a Viewer and its poll answering the same
+     * fact with different codes is a distinction nobody would ever notice was
+     * wrong. The kinds keep the distinction the wording draws — a mistyped address
+     * (404) is not a retirement (503) — because collapsing them is precisely what
+     * "everything is 200" did.
+     *
+     * A kind added later with no code here answers 500, never 200: an answer this
+     * method does not recognise is not a success.
+     */
+    public function httpStatus()
+    {
+        return self::statusForKind($this->kind);
+    }
+
+    /**
+     * The mapping itself, over a bare kind, because the case that matters most is
+     * unreachable through the constructor: a kind this method has never heard of.
+     * That is the shape the defect would come back in — a seventh resolution added
+     * without a code, answering `200 OK` on a sign that is not showing anything —
+     * and a rule with no way to test it is a comment. Same reason
+     * `UploadLimit::smallestOf()` takes the ini values as an argument.
+     */
+    public static function statusForKind($kind)
+    {
+        switch ($kind) {
+            case self::FOUND:     return 200;
+            // The URL is missing the one parameter that names a sign. Nothing is
+            // wrong at this end, so it is not a 5xx, and there is nothing to look
+            // for, so it is not a 404.
+            case self::NO_TAG:    return 400;
+            case self::UNKNOWN:   return 404;
+            case self::FORBIDDEN: return 403;
+            // The tag and the id disagree — the page was built for a Display the
+            // address has since stopped meaning. A conflict, and specifically the
+            // kind reloading resolves, which is what the message already says.
+            case self::MISMATCH:  return 409;
+            // A real sign, deliberately out of service, and expected back: that is
+            // what 503 means. 404 was the alternative and it would have thrown away
+            // the difference between "turned off" and "no such display" — the one
+            // distinction somebody standing in front of a blank sign needs.
+            case self::INACTIVE:  return 503;
+        }
+        return 500;
+    }
+
+    /**
      * The Display, or null. Present for INACTIVE and FORBIDDEN too — the admin
      * panel still shows a retired Display, and a refusal can name the sign.
      */
