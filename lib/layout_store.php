@@ -200,11 +200,12 @@ class LayoutStore
      *
      * Every one of these was `intval($el[…] ?? default)` and nothing else, which is
      * three silent rewrites in one call: `intval('abc')` is 0, so a block whose
-     * x_pos arrived as a word moved to the left edge; `intval` truncates, so 12.9
-     * became 12; and a number past the column's INT range is clamped by MySQL to
-     * 2147483647 outside strict mode. All three publish "successfully" and the
-     * person is looking at the layout they drew, not the one that was stored — and
-     * there is no undo to reach for once the sign has redrawn.
+     * x_pos arrived as a word moved to the left edge; `intval` truncates rather than
+     * rounds, so 12.9 became 12; and a number past the column's INT range is clamped
+     * by MySQL to 2147483647 outside strict mode. All three publish "successfully"
+     * and the person is looking at the layout they drew, not the one that was stored
+     * — and there is no undo to reach for once the sign has redrawn. So all three are
+     * refused: not a number, out of range, and not a whole number.
      *
      * A floor of 0 on width and height rather than 1 is deliberate. A zero-width row
      * is absurd, but this defect could already have written one (`intval('')`), and
@@ -791,6 +792,15 @@ class LayoutStore
             $number = $value + 0;
             if ($number < $range[0] || $number > $range[1]) {
                 return 'a block whose ' . $field . ' is far outside what a sign can show ('
+                     . self::describeValue((string)$value) . ')';
+            }
+
+            // Every one of these columns is an INT, and `intval()` truncates rather
+            // than rounds — so 12.9 was stored as 12 and reported as published. The
+            // range check comes first on purpose: floor() is exact on a float this
+            // side of it, and a value big enough to lose precision is already gone.
+            if (floor($number) != $number) {
+                return 'a block whose ' . $field . ' is not a whole number ('
                      . self::describeValue((string)$value) . ')';
             }
         }

@@ -462,6 +462,11 @@ checkMentions($res->message(), 'far outside', 'and told apart from a value of th
 $res = publishAs($layouts, $driveT, layoutWithField('height', -40), $goodStamp);
 checkSame('rejected', $res->kind(), 'a negative height is refused');
 
+// intval() truncates rather than rounds, so this used to store 12 and say nothing.
+$res = publishAs($layouts, $driveT, layoutWithField('x_pos', 12.9), $goodStamp);
+checkSame('rejected', $res->kind(), 'a fractional position is refused, not truncated to 12');
+checkMentions($res->message(), 'whole number', 'and told apart from the other two number refusals');
+
 $res = publishAs($layouts, $driveT, layoutWithField('font_size', 0), $goodStamp);
 checkSame('rejected', $res->kind(), 'so is a font size of zero, which is text nobody can read');
 
@@ -484,6 +489,11 @@ checkSame('rejected', $res->kind(), 'one pixel past it does not');
 $driveT = loadTestDisplay($pdo, $driveT->id());
 $res = publishAs($layouts, $driveT, layoutWithField('width', 0), $driveT->layoutStamp());
 check($res->isOk(), 'a zero width publishes, because a row this bug already wrote may hold one');
+
+// JSON gives a float for 850.0, and a float that is a whole number is a whole number.
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$res = publishAs($layouts, $driveT, layoutWithField('x_pos', 850.0), $driveT->layoutStamp());
+check($res->isOk(), 'a whole number that arrives as a float publishes');
 
 $driveT = loadTestDisplay($pdo, $driveT->id());
 $res = publishAs($layouts, $driveT, layoutWithField('locked', 'yes'), $driveT->layoutStamp());
@@ -3440,4 +3450,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(888);
+reportChecks(891);

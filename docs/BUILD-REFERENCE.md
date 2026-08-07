@@ -1930,7 +1930,7 @@ went to its `VARCHAR` untouched. Neither can fail, and that is the defect. Betwe
 
 - **`intval('abc')` is `0`.** A block whose `x_pos` arrived as a word moved to the left
   edge of the canvas. `intval('')` is 0 too, which is a block with no width.
-- **`intval()` truncates.** `12.9` stored as `12`.
+- **`intval()` truncates rather than rounds.** `12.9` stored as `12`.
 - **A number past `INT` range is clamped** to `2147483647`.
 - **A string past its column width is cut to fit.** `section_bg` is `VARCHAR(255)`, so a
   longer path stored the first 255 characters of a path — a background that resolves to
@@ -1946,10 +1946,13 @@ nobody knows is wrong.
 `unstorableValueIn()` runs in the same pre-transaction pass as the type check, and asks
 three questions:
 
-- **Numbers** — `is_numeric()`, then a range from `NUMBER_RANGE`. `is_numeric` is the
-  whole point: it is false for `'abc'`, `'12px'`, `''` and `true` — every value `intval`
-  answered with a plausible number for — and true for `850` and `'850'`, which is what
-  the Builder sends.
+- **Numbers** — `is_numeric()`, then a range from `NUMBER_RANGE`, then a whole number.
+  `is_numeric` is the whole point: it is false for `'abc'`, `'12px'`, `''` and `true` —
+  every value `intval` answered with a plausible number for — and true for `850` and
+  `'850'`, which is what the Builder sends. The three run in that order because
+  `floor()` is only exact on a float this side of the range check, and because each
+  refusal says a different thing. `850.0` is a whole number: JSON has one number type,
+  so an integer can arrive as a float and being refused for that would be absurd.
 - **Flags** — `locked` and `hidden` must be `0`, `1`, `'0'`, `'1'`, `true` or `false`.
 - **Text** — a string, no longer than the width `schema.sql` declares for that column.
 
@@ -1988,9 +1991,35 @@ and asserts the two agree, exactly as §4u does for the ENUMs. It also asserts e
 range-checked field is an `INT` column — and first asserts the parse found more than 20
 columns, so a regex that stops matching cannot leave both checks passing vacuously.
 
-**Forty checks**, in `selftest_layout.php`. Six of them publish rather than refuse: a
-payload shaped exactly the way `builder.php` serialises one, stored and read back field
-by field. An allowlist that refuses real work is a worse defect than the one it fixes.
+**Forty-three checks**, in `selftest_layout.php`. Seven of them publish rather than
+refuse: a payload shaped exactly the way `builder.php` serialises one, stored and read
+back field by field. An allowlist that refuses real work is a worse defect than the one
+it fixes.
+
+Left standing, and named rather than skipped:
+
+- **A style value that is not a style.** `text_align: 'banana'` and
+  `font_weight: '900; content:evil'` are stored as sent. They are inert: `viewer.php`
+  and `builder.php` both assign these as DOM style *properties*
+  (`block.style.fontWeight = el.font_weight`), and a browser ignores a property value it
+  cannot parse — nothing interpolates them into CSS or HTML text. They are not refused
+  because the sets are genuinely open (a numeric weight, `bolder`, a quoted family list),
+  so an allowlist would refuse real work, and refusing a value already in the database
+  would wedge the sign that round-trips it. Colour validity is #41; strict escaping
+  app-wide is #15.
+- **A wrong-shaped `temp_id` is still `failed`, not `rejected`.** An array where a
+  temp-id belongs throws on `$tempMap[$el['temp_id']]`. The `catch (Throwable)` net makes
+  that safe — nothing is written, nothing is lost — but the sentence says "Publish
+  failed" for a payload that was never storable. #31 is the decision that owns `temp_id`.
+- **A `parent_temp_id` or `db_id` that resolves to nothing** still lands the block at
+  root level rather than refusing. That is the documented behaviour a single-Display
+  publish always had, and it is the residual §4u names.
+- **Lengths are counted in bytes.** `strlen()`, where MySQL counts characters, so a
+  multibyte value between the two limits is refused although the column would hold it.
+  Conservative in the direction that refuses, and these six fields are hex colours, CSS
+  keywords and upload paths — ASCII in practice.
+- **Pooled content goes on to `assets`**, whose own column widths this pass does not
+  check. That table belongs to `AssetLibrary` (§4n), and nothing here may reach past it.
 
 ---
 
