@@ -3,11 +3,12 @@
 // BRANDING CONFIG — the one file this app rewrites while it is running
 // ============================================================
 // `branding_config.php` is generated PHP: eight `define()` calls holding the logo
-// path, four nav colours, the site name and the two mail-from fields. Every page
-// requires it — `config.php` does it for the signed-in pages, and `login.php`,
-// `builder.php` and `help.php` each do it again for themselves — which makes it the
-// only file here whose *contents* are edited by the running application and whose
-// *syntax* the whole application depends on.
+// path, four nav colours, the site name and the two mail-from fields. `config.php`
+// requires it and `auth.php` requires `config.php`, so it is loaded at the top of
+// every page in the app — which makes it the only file here whose *contents* are
+// edited by the running application and whose *syntax* the whole application
+// depends on. (`login.php`, `builder.php` and `help.php` used to load it a second
+// time each, with their own copies of the defaults; see `apply()`.)
 //
 // The Admin Panel used to write it with `file_put_contents($path, $php)`. That call
 // opens the live file with O_TRUNC: for the length of the write, the file every page
@@ -107,10 +108,10 @@ class BrandingConfig
     /**
      * Every setting the generated file holds, and what the app uses when it does
      * not hold one. The same eight names and the same eight fallbacks are spelled
-     * out in `login.php`, `builder.php`, `help.php` and `config.php`, which is where
-     * a page gets them when this file has never been written; those are reads and
-     * they stay where they are. This is the list the *writer* works from, and a
-     * name absent here cannot be stored at all.
+     * used to be spelled out again in `login.php`, `builder.php`, `help.php` and
+     * `config.php` — four copies of one list, which is four things to change and
+     * three chances to forget. `apply()` is what those four became. A name absent
+     * from here cannot be stored, and does not exist as far as this app knows.
      */
     const DEFAULTS = [
         'BRAND_LOGO'       => '',
@@ -140,14 +141,42 @@ class BrandingConfig
     /**
      * Load the generated file, if it is there and nothing has loaded it already.
      *
-     * The guard is on a constant rather than on a flag of our own because four other
-     * files require this same path on their own account; a second `require` of it
-     * would redefine eight constants and emit eight warnings.
+     * The guard is on a constant rather than on a flag of our own so that a file
+     * something else has already loaded — a `db_credentials.php` that defines its
+     * own branding, a page in some future arrangement — is not loaded twice. Since
+     * `render()` emits `defined(…) || define(…)`, loading it twice would be harmless
+     * anyway; the guard is what makes it free as well.
      */
     public function load()
     {
         if (!defined('BRAND_LOGO') && @is_file($this->path())) {
             require_once $this->path();
+        }
+    }
+
+    /**
+     * Load the file and make sure all eight names exist.
+     *
+     * This is the read side, and it is one call because it used to be seven lines
+     * repeated in four files — `config.php`, `login.php`, `builder.php` and
+     * `help.php` — each spelling out the same defaults, and two of them guarding the
+     * `require` on a different constant from the other two. Templates use the
+     * constants directly (`<?= htmlspecialchars(BRAND_ACCENT) ?>` sits inside the
+     * CSS), so what a page needs is the names defined, not an array returned.
+     *
+     * Defining constants is a global side effect, which nothing else in `lib/` has.
+     * It is the point of this file rather than an exception to the rule: the names
+     * are the interface every page already reads, and the alternative is four copies
+     * of the list that can disagree about what colour the nav bar is.
+     *
+     * Never overrides. A constant already defined — by `db_credentials.php`, which
+     * `config.php` documents as the way to override any of these — is left alone.
+     */
+    public function apply()
+    {
+        $this->load();
+        foreach (self::DEFAULTS as $name => $default) {
+            if (!defined($name)) { define($name, $default); }
         }
     }
 
@@ -197,6 +226,13 @@ class BrandingConfig
      * including a site name somebody pastes a quote into — can close the string and
      * add a statement. The self-test counts the `define` calls in the result for
      * exactly that reason.
+     *
+     * `defined(…) || define(…)` rather than a bare `define()`. `config.php` offers
+     * `db_credentials.php` as the place to override any of these, and a bare
+     * `define()` of a name that is already taken raises a warning and then keeps the
+     * first value — so the documented override worked while complaining about
+     * itself. The guard makes it silent, and makes this file safe to load after
+     * anything else that has an opinion about the same eight names.
      */
     public static function render(array $values)
     {
@@ -208,9 +244,12 @@ class BrandingConfig
              . "// next save from either form overwrites the whole file.\n"
              . "// ============================================================\n";
         foreach (self::DEFAULTS as $name => $default) {
-            $value = array_key_exists($name, $values) ? (string)$values[$name] : $default;
-            $php  .= 'define(' . str_pad(var_export($name, true) . ',', 20)
-                   . ' ' . var_export($value, true) . ");\n";
+            $value  = array_key_exists($name, $values) ? (string)$values[$name] : $default;
+            $quoted = var_export($name, true);
+            // Padded into columns because this file is hand-editable by design —
+            // it is what somebody reaches for when the Admin Panel cannot be.
+            $php   .= str_pad('defined(' . $quoted . ')', 28) . ' || define('
+                    . str_pad($quoted . ',', 20) . ' ' . var_export($value, true) . ");\n";
         }
         return $php;
     }

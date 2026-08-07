@@ -3496,6 +3496,53 @@ check(strpos($panelSource, 'file_put_contents') === false,
 check(strpos($panelSource, "define('BRAND_") === false,
       'and generates none of the file it used to build by hand');
 
+// ── The read side: one list of eight names, not five ─────────
+// `config.php`, `login.php`, `builder.php` and `help.php` each used to spell out the
+// same defaults, and two of them guarded the require on a different constant from
+// the other two. A page carrying its own copy of a default is a page that can
+// disagree with the Admin Panel about what colour the nav bar is.
+// Not a search for the colour itself — `#1a252f` is a perfectly ordinary dark shade
+// and several stylesheets use it for something that is not the nav bar. What must
+// not come back is a page *declaring* one of these names, or reaching for the
+// generated file on its own account.
+$pagesWithTheirOwn = [];
+$pagesLoadingItThemselves = [];
+foreach ((array)glob(__DIR__ . '/../*.php') as $page) {
+    // The generated file declares all eight; that is what it is.
+    if (basename($page) === 'branding_config.php') { continue; }
+    $src = file_get_contents($page);
+    if (strpos($src, "define('BRAND_") !== false)      { $pagesWithTheirOwn[] = basename($page); }
+    if (strpos($src, "/branding_config.php'") !== false) { $pagesLoadingItThemselves[] = basename($page); }
+}
+checkSame([], $pagesWithTheirOwn, 'no page declares a branding constant of its own');
+checkSame([], $pagesLoadingItThemselves, 'and none of them reaches for the file directly');
+checkMentions(file_get_contents(__DIR__ . '/../config.php'), '->apply()',
+              'config.php is the one place the eight names are brought into being');
+
+// Every one of them is defined in this process — config.php did it on the way in —
+// so `apply()` here must be a silent no-op rather than eight warnings and an
+// argument about who was right.
+$siteBefore = SITE_NAME;
+$brandCfg->apply();
+$defined = 0;
+foreach (BrandingConfig::DEFAULTS as $name => $unusedDefault) {
+    if (defined($name)) { $defined++; }
+}
+checkSame(8, $defined, 'apply() leaves all eight names defined');
+checkSame($siteBefore, SITE_NAME, 'and overrides nothing that was already set');
+
+// The same promise for the generated file itself, which is the half that a bare
+// `define()` got wrong: config.php offers db_credentials.php as the way to override
+// any of these, and a `define()` of a name already taken warns and then keeps the
+// first value — the documented override worked while complaining about itself. Any
+// unsuppressed warning is a failed check in this harness, so loading it below is
+// the assertion: eight of them would show up as eight failures.
+$reloadPath = $brandDir . '/reload_test.php';
+file_put_contents($reloadPath, BrandingConfig::render(['SITE_NAME' => 'Something Else']));
+include $reloadPath;
+checkSame($siteBefore, SITE_NAME,
+          'loading the generated file again changes no constant that is already set');
+
 chdir($brandCwd);
 
-reportChecks(936);
+reportChecks(942);
