@@ -343,8 +343,12 @@ class AssetLibrary
     public function pool($type, $content)
     {
         try {
+            // toPlainText() rather than strip_tags(), which is not a parser: it
+            // deletes from a "<" to the end of the value, so a block reading
+            // "Kids <12 eat free" was labelled "Auto: Kids". Same funnel as the
+            // content itself, so the label cannot disagree with what the sign says.
             $label = self::AUTO_LABEL_PREFIX
-                   . self::firstCharacters(strip_tags((string)$content), self::LABEL_CHARS);
+                   . self::firstCharacters(toPlainText((string)$content), self::LABEL_CHARS);
             $this->insert((string)$type, (string)$content, $label, true);
             return intval($this->pdo->lastInsertId());
         } catch (Throwable $e) {

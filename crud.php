@@ -572,7 +572,10 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
                                  onerror="this.style.display='none'">
                         <?php else: ?>
                             <span style="font-size:12px; color:#555;">
-                                <?= htmlspecialchars(mb_strimwidth(strip_tags($row['content']), 0, 40, '…')) ?>
+                                <?php // toPlainText(), not strip_tags(): the latter deletes from a "<"
+                                      // to the end of the value, so a stored "Kids <12 eat free"
+                                      // previewed here as "Kids " while the sign showed the line. ?>
+                                <?= htmlspecialchars(mb_strimwidth(toPlainText($row['content']), 0, 40, '…')) ?>
                             </span>
                         <?php endif; ?>
                     </td>

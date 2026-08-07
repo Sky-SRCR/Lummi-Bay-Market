@@ -85,7 +85,7 @@ written down rather than remembered:
 | 45 | The sign itself printed "Carousel — no slides added yet" where a customer could read it. | Draw nothing. | Open | — |
 | 46 | Deployment step 3 had no do-not-overwrite list, so re-uploading reverted live branding and restored `setup.php`. | Write down what to skip. | Open | — |
 | 48 | The test database differs from MySQL in twelve ways, including row locking stubbed out entirely. | Test against real MySQL as well. | Open | — |
-| 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | **Done** — measured rather than asserted. `plain_text.php` went from 2 of 17 mutations killed to **17 of 17**; `schema.php` from 43 of 67 to **65 of 67**, the two survivors being equivalent mutants named in §4bb. Most of what lived was in the four convergence *steps* — either backfill's `WHERE` clause could be deleted in silence. What is still untested is `schema.php`'s MySQL-only statements, and that is **#48's**, not this one's. | §4o, §4bb |
+| 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | **Done** — measured rather than asserted. `plain_text.php` went from 2 of 17 mutations killed to **17 of 17**; `schema.php` from 43 of 67 to **65 of 67**, the two survivors being equivalent mutants named in §4bb. Most of what lived was in the four convergence *steps* — either backfill's `WHERE` clause could be deleted in silence. Writing the checks also turned up a live bug and it was fixed: `strip_tags()` deleted from a typed `<` to the end of a value, so `Kids <12 eat free` was stored as `Kids`. What is still untested is `schema.php`'s MySQL-only statements, and that is **#48's**, not this one's. | §4o, §4bb |
 | 50 | About 29 checks in the suite could not fail, and five invariants had no automated check at all. | Replace the hollow ones, and cover the missing rules. | Open — the harness itself was hardened so a suite that stops early now fails, but the 29 have not been swept. | — |
 | 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | Part done — **the live PHP version is still unknown.** Settings → This Server answers it the first time an admin opens it after deploy; until then the 7.1 rule stands. | §4g |
 
@@ -96,6 +96,14 @@ the audit, so it has no number here and the tally below does not count it. It is
 worth knowing about while reading the rest of this file: several entries are written
 on the premise that *nothing anywhere can be taken back*, and that is now true only
 of things that have been published.
+
+The **`<` bug** (§4bb) has no number either, because the audit did not find it —
+covering #49 did. A text block reading `Kids <12 eat free` was stored as `Kids`,
+because `strip_tags()` deletes from a `<` to the end of a value when nothing closes
+it. It is fixed, in `toPlainText()` and in the two places that were calling
+`strip_tags()` themselves. Worth knowing about because it is the shape several open
+items are also about: a value quietly coerced on the way into the database, with the
+page reporting success.
 
 ## Where this stands
 

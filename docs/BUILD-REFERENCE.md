@@ -66,7 +66,7 @@ Design rules, applied to every module added by this build:
 | `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
 | `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. `firstInWindow()` and `stateFile()` are public for the same reason `report()` needs them: a repeated *attempt to fix* something needs the same restraint as a repeated report of it, and this module is where the state directory is decided. Depends on nothing: no database, no session, no config. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
-| `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. Six statements whose **order** is the substance: breaks are rewritten before the strip, or `strip_tags` takes the line break away with the tag; entities are decoded after it, because `strip_tags` eats from a `<` to the end of a value and decoding first would delete the rest of a price line (§4bb). The cost of that order is that encoded markup lands as literal text, inert only because every renderer draws stored text with `textContent`. |
+| `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. Seven statements whose **order** is the substance (§4bb): breaks are rewritten before the strip, or `strip_tags` takes the line break away with the tag; a `<` that cannot open a tag is escaped before the strip, because `strip_tags` is not a parser and deletes from a `<` to the end of the value; and entities are decoded after it, since a browser sends a typed `<` back as `&lt;`. `PLAIN_TEXT_NOT_A_TAG` is the single answer to "is this markup?" and is used in exactly one place. The cost of the order is that encoded markup lands as literal text, inert only because every renderer draws stored text with `textContent`. **The only caller of `strip_tags()` in the repo** — a label or a preview that wants plain text asks this, or it disagrees with the sign. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 
 `lib/` is denied to the browser by `lib/.htaccess`. Nothing in `lib/` prints,
@@ -2593,7 +2593,7 @@ were mutation-tested line by line, and the numbers are why the item existed.
 
 | | before | after |
 |---|---|---|
-| `lib/plain_text.php` | 2 of 17 killed | **17 of 17** |
+| `lib/plain_text.php` | 2 of 17 killed | **17 of 17** (and 26 of 26 once the bug below was fixed) |
 | `lib/schema.php` | 43 of 67 killed | **65 of 67** |
 
 Both survivor counts hide the same shape: the checks that existed were about *outcomes
@@ -2602,7 +2602,8 @@ silence.
 
 #### The sanitiser had one check on it, and it exercised one line
 
-`toPlainText()` is six statements, and every text block on every sign goes through it —
+`toPlainText()` was six statements when it was measured, and every text block on every
+sign goes through it —
 `crud.php`, `AssetLibrary::saveEdit()` and `LayoutStore::publish()` all funnel in. The
 only thing standing over it was a publish asserting that `<script>alert(1)</script>Hello`
 stores as `alert(1)Hello`, which kills exactly one mutation: deleting `strip_tags`. The
@@ -2684,14 +2685,51 @@ One more is worth recording because of *how* it dies: making the repair lock blo
 lock and then calls again in the same process. A hang rather than a red line, but not a
 survivor.
 
+#### The bug the coverage found, and the fix it got
+
+Writing the characterisation check turned one up. `strip_tags` is **not a parser**: it
+enters tag mode at any `<` that is not followed by whitespace, and with nothing to close
+it, deletes the rest of the value. The Builder reads a text block with `innerText`, so a
+typed `<` reaches the server literally — and `Kids <12 eat free` was stored as `Kids`.
+Silently, on the way *into* the database, with nothing to see in the Builder, no error
+anywhere, and no undo. It was recorded here as found-not-fixed for one commit, and then
+fixed on the owner's say-so.
+
+The fix is one statement before the strip: escape every `<` that HTML could not open a
+tag with, and let the decode already at the end turn it back into a character.
+
+```php
+define('PLAIN_TEXT_NOT_A_TAG', '#<(?![a-zA-Z!/?][^<>]*>)#');
+```
+
+A `<` opens a tag only when a letter, `/`, `!` or `?` follows it **and** something closes
+it before the next `<`. That second half matters as much as the first: `Sale <best value`
+has a letter after the `<` and is still not a tag, because no tag spans the end of the
+value. What reaches `strip_tags` afterwards is exactly what a browser would treat as
+markup, so `<b>`, `</div>`, `<!-- -->`, `<?php`, `<B>` and an `<img>` full of quoted
+attributes are all still taken away.
+
+Rejected: **swapping the decode in front of the strip**, which is the fix that suggests
+itself and is the one that breaks the sign — it hands `strip_tags` the very `&lt;` this
+exists to keep away from it. And **an allow-list HTML parser**, which ADR-0002 already
+turned down for the whole feature and which this does not need: the question here is not
+*which* tags are safe, it is whether a thing is a tag at all.
+
+Two other callers of `strip_tags` had the same defect one step further out, both on
+already-plain text, and both now ask `toPlainText()` instead: the pooled row's auto label
+(`Kids <12 eat free` was filed in the Library as *"Auto: Kids "*, losing the only clue to
+which block it came from) and `crud.php`'s 40-character asset preview, which showed a
+line the sign did not. `strip_tags()` is now called in exactly one place in the repo, and
+§5 has the grep that keeps it that way.
+
+**9 further mutations, all 9 killed** — including the two that needed the boundary put
+under load: `[^<>]*` widened to `.*`, which lets the search for a closing `>` run past
+the next `<` (caught by `Sale <best and <b>bold</b>`), and dropping the upper-case half of
+the tag-name class (caught by `<B>OPEN</B>`). `crud.php` is a page and has no harness;
+its change is the same one-word substitution as `assets.php`, which does.
+
 Left standing:
 
-- **A literal `<` typed into the Builder still takes the rest of the line with it.** The
-  Builder reads a text block with `innerText`, so a typed `<` reaches the server as one,
-  and `strip_tags` removes everything from it onward: `Kids <12 eat free` reaches the sign
-  as `Kids`. This is a real content loss on a real kind of price sign, and it is now a
-  characterisation check rather than a surprise — fixing it means changing a sanitiser,
-  which is somebody's decision and not a coverage task's to take.
 - **`lib/schema.php`'s statements are still MySQL-only**, which is the half of #49 that
   #48 owns. Everything above tests the *decisions* and the *steps*; no SQLite fixture can
   execute an `ALTER TABLE … MODIFY COLUMN`. `tools/rehearse_phase1.php` remains the only
@@ -2726,14 +2764,15 @@ node tools/selftest_builder_undo.js      # and under the fourth: the last thing 
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
                                               # the get_canvas_elements endpoint NAME, and
                                               # server_report.php's expected-column list
-grep -rn "strip_tags\|html_entity_decode" --include=*.php .  # lib/plain_text.php is the sanitiser, and
-                                              # the order of those two calls is load-bearing in both
-                                              # directions (§4bb). The only other hits are label
-                                              # truncation for display — crud.php's asset preview and
-                                              # assets.php's auto-label — and neither decides what is
-                                              # stored. A new hit on a path that WRITES is a second
-                                              # sanitiser with its own opinion about that order; call
-                                              # toPlainText() instead
+grep -rn "strip_tags(\|html_entity_decode(" --include=*.php .  # exactly TWO calls, both in
+                                              # lib/plain_text.php and adjacent, with the escape of a
+                                              # non-tag "<" between them. Every other hit is a comment
+                                              # naming them. strip_tags is not a parser — it deletes
+                                              # from a "<" to the end of the value — so a second caller
+                                              # is a second answer to "is this markup?", and the first
+                                              # thing it will get wrong is a price line reading
+                                              # "Kids <12 eat free" (§4bb). Call toPlainText() instead,
+                                              # for a label and a preview as much as for what is stored
 grep -rn "information_schema\." --include=*.php lib/  # only lib/schema.php: the three reads
                                               # plus one comment. server_report.php asks
                                               # readSchemaFacts() instead of writing a fourth
