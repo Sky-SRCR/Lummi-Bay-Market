@@ -383,6 +383,23 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
     drewNothing('{"slides":[{"title":"","price":null}]}', renderCarousel, 'a slide with every field left blank');
     drewNothing('{"slides":[null,"three",7]}',            renderCarousel, 'a carousel whose slides are not slides');
 
+    section('Nor a picture or a film nobody chose (#45, third pass)');
+
+    // Not the page's own ink this time but the browser's. `img.src = ''` is a
+    // *broken* image by definition, and an autoplaying <video> with no <source>
+    // never plays anything — what either one looks like is then the browser's
+    // decision, and a store's sign must not look different because of which
+    // browser the television shipped with. Drawing nothing is the one rendering
+    // that is the same everywhere, and the true one: there is no picture here.
+    drewNothing('',        renderImage, 'an image block with no file');
+    drewNothing('|cover',  renderImage, 'an image block with a fit but no file');
+    drewNothing('   ',     renderImage, 'an image block whose path is blank');
+    drewNothing(null,      renderImage, 'an image whose linked asset has been deleted');
+    drewNothing({},        renderImage, 'an image whose content is not a path at all');
+    drewNothing('',        renderVideo, 'a video block with no file');
+    drewNothing('   ',     renderVideo, 'a video block whose path is blank');
+    drewNothing(null,      renderVideo, 'a video whose linked asset has been deleted');
+
     // Guarding the other way. "Draw nothing" is about blocks with nothing in them,
     // and a fix that quietened a carousel which does have slides would be a far
     // worse fault than the one #45 reports.
@@ -422,6 +439,17 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
     check(picture.children.length > 0, 'a slide that is only a photograph is still drawn');
     check(picturesUnder(picture).indexOf('assets/crab.jpg') > -1, 'with the photograph on it');
 
+    const photo = stubEl('div');
+    renderImage(photo, 'uploads/salmon.jpg|cover');
+    checkSame('uploads/salmon.jpg', picturesUnder(photo)[0], 'an image block that has a file still shows it');
+    checkSame('cover', photo.children[0].style.objectFit,    'fitted the way the author asked');
+
+    const film = stubEl('div');
+    renderVideo(film, 'uploads/boat.webm');
+    checkSame(1, film.children.length,                     'a video block that has a file still plays it');
+    checkSame('uploads/boat.webm', film.children[0].children[0].src, 'from the path it was given');
+    checkSame('video/webm',        film.children[0].children[0].type, 'with the type the browser needs to decide it can');
+
     // The case in between, and the one that says most about what this pass is: a
     // carousel that is part empty draws the part that isn't, and nothing for the
     // rest. Skipping the blanks in the same place the slides are built is what
@@ -451,6 +479,13 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
     // fixes it. Matched on the ASCII half, for the reason given above.
     check(builder.indexOf('click to edit in inspector') > -1,
           'and tells the author outright when a marquee has no text yet');
+    check(builder.indexOf("svgPlaceholder(el.width, el.height, 'Image')") > -1,
+          'it draws a placeholder where an image block has no file');
+    // The video was the one block with nothing on either surface. The Viewer went
+    // silent for it, so the Builder had to start speaking: without this the block
+    // would exist in the database and be drawn by neither page.
+    check(builder.indexOf("svgPlaceholder(el.width, el.height, 'Video')") > -1,
+          'and one where a video block has none either');
 
     // End to end, through the real poll: an empty carousel and an empty table
     // beside a price. The blocks are still appended — .element-block paints
@@ -468,12 +503,14 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
             el(2, 'carousel', '{"slides":[]}'),
             el(3, 'table',    '{"headers":[],"rows":[]}'),
             el(4, 'marquee',  '{"text":""}'),
-            el(5, 'carousel', '{"slides":[{},{"imageOnly":true}]}')
+            el(5, 'carousel', '{"slides":[{},{"imageOnly":true}]}'),
+            el(6, 'image',    ''),
+            el(7, 'video',    '')
         ],
         block_styles: {}
     });
     loadLayout(); await settle();
-    checkSame(5, canvas.children.length, 'all five blocks are laid out');
+    checkSame(7, canvas.children.length, 'all seven blocks are laid out');
     checkSame('Sockeye 18.99', inkIn(canvas),
               'and a customer reads the price, and nothing addressed to the author');
     // The blocks only — the canvas paints its own colour, which is the Display's
@@ -481,6 +518,8 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
     const onTheBlocks = canvas.children.map(paintUnder).join(' ');
     check(onTheBlocks.indexOf('#c0392b') === -1, 'with no red bar over an unwritten marquee');
     check(onTheBlocks.indexOf('#1a1a2e') === -1, 'and no navy panel over an unchosen picture');
+    checkSame(0, canvas.children.map(c => c.children.length).reduce((a, b) => a + b, 0),
+              'and not one of the six empty blocks put anything inside itself');
 
     section('One poll at a time');
 

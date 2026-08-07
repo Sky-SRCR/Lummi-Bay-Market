@@ -82,7 +82,7 @@ written down rather than remembered:
 | 42 | Six smaller Builder rough edges: section minimum size measured in screen pixels, Fit cannot fit a very large canvas, no way to unhide a section, deleting a slide field cannot be undone, marquee "Transparent" loses the colour, and dead code. | All six. | Open | — |
 | 43 | Deleting an account wrote to three tables with no transaction, going around the owning module. | All-or-nothing, through the module. | **Done** — settled by #20: closing is one transaction in `AccountAdmin`, and no `DELETE FROM users` exists anywhere. | §4l |
 | 44 | Nothing set a timezone, so "editing since 2:15pm" followed whatever the host's `php.ini` happened to say. | A store timezone setting on the Branding page. | Open | — |
-| 45 | The sign itself printed "Carousel — no slides added yet" where a customer could read it. | Draw nothing. | **Done** — and it was two blocks, not one: `renderTable()` printed "Table — no data" over a grey panel drawn to hold it, and both are closed. Drawing nothing loses no warning, because the Builder already labels the same blocks `↻ Carousel — 0 slides` and `⋞ Table — 0 cols, 0 rows` on its own canvas — the surface the author is actually looking at. A second pass then took the two cases that are the same defect in colour rather than in English: a marquee with no text painted a solid `#c0392b` bar and scrolled an empty span along it, and a carousel slide with no image filled its image well with `#1a1a2e`. An **image** with no asset and a **video** with no source are still open, for a number of their own: see §4aa. | §4aa |
+| 45 | The sign itself printed "Carousel — no slides added yet" where a customer could read it. | Draw nothing. | **Done** — and it was two blocks, not one: `renderTable()` printed "Table — no data" over a grey panel drawn to hold it, and both are closed. Drawing nothing loses no warning, because the Builder already labels the same blocks `↻ Carousel — 0 slides` and `⋞ Table — 0 cols, 0 rows` on its own canvas — the surface the author is actually looking at. A second pass then took the two cases that are the same defect in colour rather than in English: a marquee with no text painted a solid `#c0392b` bar and scrolled an empty span along it, and a carousel slide with no image filled its image well with `#1a1a2e`. A third took the last two, where the ink was the browser's rather than the page's — an **image** with no file is a *broken* image, not an absent one, and an empty `<video>` is a rectangle whose colour the browser picks. All five block types draw nothing now. The Builder gained a `'Video'` placeholder in the same pass, because that block had nothing on either surface. | §4aa |
 | 46 | Deployment step 3 had no do-not-overwrite list, so re-uploading reverted live branding and restored `setup.php`. | Write down what to skip. | Open | — |
 | 48 | The test database differs from MySQL in twelve ways, including row locking stubbed out entirely. | Test against real MySQL as well. | **Done** | §4u |
 | 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | Part done — `schema.php`'s *decision* is a pure function with 43 checks (§4o). Its *statements* now run for real on the MySQL leg (#48), which leaves the mutation coverage on `plain_text.php` as the open half. | §4o, §4u |
@@ -165,9 +165,16 @@ went 75 → 129, and the injection that matters most is the one that *passed*: m
 an image stop counting as something a slide shows broke nothing, which would have
 taken every photograph off every sign in the store. That gap is covered now.
 
-What is still open is the **image** with no asset and the **video** with no source.
-Those are a browser rendering a missing file rather than this page choosing to draw
-something, which is a different question, and they are left for a number of their own.
+A third pass then took the last two, on the same instruction. An **image** with no
+file and a **video** with no source were held back because the ink is the browser's
+rather than the page's — which turned out to be the argument for closing them, not
+against: `src=''` is a *broken* image by definition, and what a broken image or an
+empty `<video>` looks like differs by browser. A sign must not look different because
+of which browser the television shipped with. Both branches moved out of the render
+loop into `renderImage()` and `renderVideo()`, and the Builder gained a `'Video'`
+placeholder, because that block had nothing to show on either surface. 129 → 169.
+
+**#45 is closed.** Five block types, six drawings, all of them nothing now.
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

@@ -2833,15 +2833,54 @@ picture and no words at all; that is what `imageOnly` is for. Deciding a slide i
 empty whenever it has no text would have taken every photograph off every sign in the
 store and nothing would have said so. Two checks now cover it, and the suite is 129.
 
-**Still not covered, and still deliberately.** Two blocks are left:
+#### Third pass: the picture and the film nobody chose
 
-- an **image** with no asset sets `img.src = ''`, which resolves to the page URL and
-  can leave a broken-image icon;
-- a **video** with no source is an empty `<video>` element.
+The last two, taken on the same instruction. These are a different question from the
+first four, and the difference is the whole reason they were held back: the ink is
+not the page's. Nothing here writes a sentence or paints a panel — it appends an
+element and lets the browser decide what a missing file looks like.
 
-Neither is a sentence and neither is a painted panel — they are a browser's own
-rendering of a missing file, which is a different question from what this page
-chooses to draw, and no undo exists anywhere in this app. Worth their own number.
+Which is exactly why they belong closed. `img.src = ''` is not an absent picture, it
+is a **broken** one by definition — the empty string puts the element straight into
+the broken state — and what a broken image looks like is the browser's choice: an
+icon on some, a blank box on others, at 100% × 100% because that is what
+`.element-block img` says. An autoplaying `<video>` with no `<source>` is the same
+shape of thing: it never plays, and its rectangle is black on one browser and
+transparent on the next. The old code even had the guard half-written — `if
+(content)` skipped the `<source>` and appended the empty player regardless.
+
+A store's sign must not look different because of which browser the television
+shipped with. Appending nothing is the one rendering that is the same everywhere, and
+it is also the true one: there is no picture here.
+
+**The empty path is not only the unfinished block.** `content` is `db_content` for a
+block linked to an asset, so an asset deleted out from under a live layout arrives
+here as null. That is the case that reaches a sign without anybody editing it.
+
+Both branches came out of the render loop into `renderImage()` and `renderVideo()`,
+beside the other three. The loop is an entry point and was carrying two blocks of
+element-shaping logic that nothing could call; a named function is testable, and
+these are the two that most needed testing, being the ones whose failure looks
+different in each browser.
+
+**The Builder had to start speaking for the video.** Drawing nothing is only safe
+while the author can still see the block, and the video was the one case with nothing
+on either surface — an empty `<video>` in the Builder too. It now gets the drawn
+placeholder an image already got (`svgPlaceholder(w, h, 'Video')`), cleared when a
+file is uploaded or an asset linked. Without it this pass would have made a block
+that exists in the database and is drawn by neither page.
+
+**Coverage.** 129 checks to 169: eight more empty shapes, five positive checks that a
+block with a file still shows it — path, fit mode, source and MIME type — and the two
+Builder placeholders asserted like the three labels before them.
+
+**Verified by injection, four times.** Appending the broken image anyway fails 6;
+appending the empty player anyway fails 4; removing the Builder's `'Video'`
+placeholder fails 1; a video that never plays fails 3.
+
+**#45 is closed.** All five block types that drew something when they had nothing now
+draw nothing: two sentences, two colours, and two elements whose appearance was the
+browser's to choose.
 
 ---
 

@@ -502,39 +502,10 @@ $canvasH = $display->canvasHeight();
                         block.textContent = content || '';
 
                     } else if (el.type === 'image') {
-                        var _p   = (content || '').split('|');
-                        var _src = _p[0];
-                        var _fit = _p[1] || 'fill';
-                        var img = document.createElement('img');
-                        img.src = _src || '';
-                        img.alt = '';
-                        // Apply fit mode
-                        if (_fit === 'contain' || _fit === 'cover') {
-                            img.style.objectFit = _fit;
-                        } else if (_fit === 'fit-w') {
-                            img.style.height = 'auto';
-                        } else if (_fit === 'fit-h') {
-                            img.style.width = 'auto';
-                        } else {
-                            img.style.objectFit = 'fill';
-                        }
-                        block.appendChild(img);
+                        renderImage(block, content);
 
                     } else if (el.type === 'video') {
-                        var vid = document.createElement('video');
-                        vid.autoplay   = true;
-                        vid.loop       = true;
-                        vid.muted      = true;
-                        vid.playsInline = true;
-                        if (content) {
-                            var src = document.createElement('source');
-                            src.src  = content;
-                            var _ext = content.split('.').pop().toLowerCase();
-                            var _mime = {mp4:'video/mp4',webm:'video/webm',ogv:'video/ogg',ogg:'video/ogg'};
-                            if (_mime[_ext]) src.type = _mime[_ext];
-                            vid.appendChild(src);
-                        }
-                        block.appendChild(vid);
+                        renderVideo(block, content);
 
                     } else if (el.type === 'carousel') {
                         renderCarousel(block, content, blockStyles);
@@ -567,6 +538,80 @@ $canvasH = $display->canvasHeight();
             // silently. The server no longer produces it; this end no longer
             // swallows it either way.
             .catch(function() { pollFailed(); });
+    }
+
+    // ── Image ───────────────────────────────────────────────────
+    //
+    // Lifted out of the render loop to sit beside the other four, because the
+    // question it now has to answer is the same one they answer and it is easier
+    // to be sure of — and to test — in a function with a name.
+    function renderImage(block, content) {
+        // `path|fit`. The path is empty when nothing was ever chosen, and also
+        // when the asset a block was linked to has since been deleted: `content`
+        // is `db_content` for a linked block, and that comes back null.
+        var parts = (typeof content === 'string') ? content.split('|') : [];
+        var src   = (parts[0] || '').trim();
+        var fit   = parts[1] || 'fill';
+
+        // An image with no file draws nothing (#45). `img.src = ''` is not an
+        // absent picture — it is a *broken* one, by definition: the empty string
+        // puts the element straight into the broken state, and what a broken image
+        // looks like is then the browser's decision. An icon on some, a blank box
+        // on others, at 100% × 100% because that is what .element-block img says.
+        //
+        // A store's sign must not look different because of which browser the
+        // television happens to ship with. Appending nothing is the one rendering
+        // that is the same everywhere, and it is also the honest one: there is no
+        // picture here.
+        //
+        // The author still sees the block. The Builder draws a placeholder in its
+        // place — svgPlaceholder(w, h, 'Image') — with the asset picker beside it.
+        if (src === '') { return; }
+
+        var img = document.createElement('img');
+        img.src = src;
+        img.alt = '';
+        // Apply fit mode
+        if (fit === 'contain' || fit === 'cover') {
+            img.style.objectFit = fit;
+        } else if (fit === 'fit-w') {
+            img.style.height = 'auto';
+        } else if (fit === 'fit-h') {
+            img.style.width = 'auto';
+        } else {
+            img.style.objectFit = 'fill';
+        }
+        block.appendChild(img);
+    }
+
+    // ── Video ───────────────────────────────────────────────────
+    function renderVideo(block, content) {
+        var path = (typeof content === 'string') ? content.trim() : '';
+
+        // The same answer as the image, for the same reason (#45). An autoplaying
+        // <video> with no source inside it never plays anything; it is a rectangle
+        // whose colour the browser picks — black on some, transparent on others —
+        // and the sign should not depend on which. The `if (content)` below used to
+        // skip only the <source>, and appended the empty player regardless.
+        //
+        // This is the one of the five where the Builder had nothing to say either,
+        // so it now draws the placeholder it already draws for an image.
+        if (path === '') { return; }
+
+        var vid = document.createElement('video');
+        vid.autoplay    = true;
+        vid.loop        = true;
+        vid.muted       = true;
+        vid.playsInline = true;
+
+        var src  = document.createElement('source');
+        src.src  = path;
+        var ext  = path.split('.').pop().toLowerCase();
+        var mime = {mp4:'video/mp4',webm:'video/webm',ogv:'video/ogg',ogg:'video/ogg'};
+        if (mime[ext]) src.type = mime[ext];
+        vid.appendChild(src);
+
+        block.appendChild(vid);
     }
 
     // ── Carousel ────────────────────────────────────────────────

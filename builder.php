@@ -1481,6 +1481,11 @@ function renderBlock(el, parent, isNew) {
         var vid = document.createElement('video');
         vid.autoplay = true; vid.loop = true; vid.muted = true; vid.playsInline = true;
         if (content) { var src = document.createElement('source'); src.src = content; vid.appendChild(src); }
+        // A video with no file gets the drawn placeholder an image already gets,
+        // and for a reason that is now load-bearing: the Viewer draws nothing at
+        // all for it (#45), so this is the only surface left that shows the block
+        // exists. An empty <video> is a rectangle the author has to remember.
+        else { vid.poster = svgPlaceholder(el.width, el.height, 'Video'); }
         block.appendChild(vid);
     } else if (el.type === 'carousel') {
         var cdata = {};
@@ -2280,6 +2285,7 @@ function uploadBlockVideo(input) {
         var vid = target.querySelector('video');
         if (!vid) { showToast('That block is no longer a video block. The file uploaded but was not used.', true); return; }
         vid.innerHTML = '';
+        vid.poster = '';   // there is a file now; the "Video" placeholder comes off
         var src = document.createElement('source');
         src.src = path; vid.appendChild(src); vid.load();
         target.dataset.manualPath = path;
@@ -2307,6 +2313,7 @@ function linkAsset(assetId) {
     } else if (activeBlock.dataset.type === 'video') {
         var vid = activeBlock.querySelector('video');
         vid.innerHTML = '';
+        vid.poster = '';   // as above: a linked asset is a file
         var src = document.createElement('source');
         src.src = match.content; vid.appendChild(src); vid.load();
     }
