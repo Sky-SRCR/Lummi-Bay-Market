@@ -318,6 +318,111 @@ check(in_array('0', $textValues, true), 'a text block reading "0" survives as "0
 checkSame('{"images":["uploads/a.png"],"ms":3000}', $carousel, 'carousel JSON is stored verbatim');
 
 // ─────────────────────────────────────────────────────────────
+section('Only a block type this app knows is published');
+
+// The column is an ENUM, and an ENUM is not an allowlist. MySQL matches a member
+// case-insensitively, and reads a *quoted number* with no matching member as an
+// index into the list — so `type: "1"` wrote a section. Nothing in the publish path
+// looked at the value before handing it over, so a basic account, whose publish may
+// not touch the section layout at all (ADR-0005), could put a section on the canvas
+// at the top level with one hand-made POST.
+//
+// This fixture is SQLite, which stores any of these strings verbatim rather than
+// coercing them, so what these checks prove is the refusal — not MySQL's behaviour
+// behind it. That is the right way round: the refusal is what has to hold on both.
+
+$driveT   = loadTestDisplay($pdo, $driveT->id());
+$goodRows = count(elementsOf($pdo, $driveT->id()));
+$goodStamp = $driveT->layoutStamp();
+
+/** One content block of a stated type, in a section, with an otherwise valid layout. */
+function layoutOfType($type, $extra = [])
+{
+    return [
+        ['type' => 'section', 'temp_id' => 's1', 'width' => 600, 'height' => 380],
+        array_merge(['type' => $type, 'parent_temp_id' => 's1', 'manual_content' => 'x'], $extra),
+    ];
+}
+
+$res = publishAs($layouts, $driveT, layoutOfType('1'), $goodStamp);
+checkSame('rejected', $res->kind(), 'a quoted number as a type is refused — MySQL would read it as a section');
+
+$res = publishAs($layouts, $driveT, layoutOfType('Section'), $goodStamp);
+checkSame('rejected', $res->kind(), 'and so is a type that differs only in case');
+
+$res = publishAs($layouts, $driveT, layoutOfType('iframe'), $goodStamp);
+checkSame('rejected', $res->kind(), 'and one that is simply not a block this app has');
+checkMentions($res->message(), 'unknown type', 'the refusal says what was wrong');
+checkMentions($res->message(), 'iframe', 'and quotes the value it would not store');
+checkMentions($res->message(), 'Nothing was saved', 'and says nothing was saved');
+
+// The one place a publish payload becomes a sentence somebody reads.
+$res = publishAs($layouts, $driveT, layoutOfType('<img src=x onerror=alert(1)>'), $goodStamp);
+checkSame('rejected', $res->kind(), 'a type made of markup is refused too');
+check(strpos($res->message(), '<') === false && strpos($res->message(), '"') === false,
+      'and nothing of what was sent survives into the message but letters and digits');
+
+$res = publishAs($layouts, $driveT, [['type' => 'section', 'temp_id' => 's1'], 42], $goodStamp);
+checkSame('rejected', $res->kind(), 'an entry that is not a block at all is refused');
+checkMentions($res->message(), 'not a block at all', 'and named as such, not as a type');
+
+$res = publishAs($layouts, $driveT, layoutOfType('text', ['block_subtype' => 'headline']), $goodStamp);
+checkSame('rejected', $res->kind(), 'an unknown block style is refused as well');
+checkMentions($res->message(), 'unknown style', 'and told apart from an unknown type');
+
+$res = publishAs($layouts, $driveT, layoutOfType('text', ['block_subtype' => '4']), $goodStamp);
+checkSame('rejected', $res->kind(), 'including the quoted-number form of that trick');
+
+// The refusal is decided before the transaction opens, so there is nothing to roll
+// back: the layout, the stamp and the publish record are all as they were.
+$driveT = loadTestDisplay($pdo, $driveT->id());
+checkSame($goodRows, count(elementsOf($pdo, $driveT->id())), 'a refused publish deleted nothing');
+checkSame($goodStamp, $driveT->layoutStamp(), 'and did not advance the stamp');
+
+// Every type the app does have still publishes — an allowlist that refuses real work
+// is a worse defect than the one it fixes.
+$everyType = [['type' => 'section', 'temp_id' => 's1', 'width' => 900, 'height' => 700]];
+foreach (['text', 'image', 'video', 'carousel', 'marquee', 'table'] as $known) {
+    $everyType[] = ['type' => $known, 'parent_temp_id' => 's1', 'manual_content' => 'x'];
+}
+$res = publishAs($layouts, $driveT, $everyType, $goodStamp);
+check($res->isOk(), 'a layout using every known type publishes');
+checkSame(7, count(elementsOf($pdo, $driveT->id())), 'and all seven elements landed');
+
+// Absent, null and '' are all "not a branded block". '' is not an ENUM member, so
+// letting it through to the column stores the invalid-enum empty string.
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$res = publishAs($layouts, $driveT, layoutOfType('text', ['block_subtype' => '']), $driveT->layoutStamp());
+check($res->isOk(), 'a block stating no style publishes');
+$stored = '';
+foreach (elementsOf($pdo, $driveT->id()) as $row) {
+    if ($row['type'] === 'text') { $stored = $row['block_subtype']; }
+}
+checkSame('free', $stored, 'and is stored as free, never as the empty string');
+
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$res = publishAs($layouts, $driveT, layoutOfType('text', ['block_subtype' => null]), $driveT->layoutStamp());
+check($res->isOk(), 'and so does one stating null');
+
+// Invariant 15 applies to an allowlist as much as to a column: the app's list and
+// the ENUM `schema.php` converges to are two statements of one structure, and a
+// widening that lands in only one of them is a publish refused for a type the
+// database would have taken (item_title_2 and price_2 were exactly that, once).
+function enumMembers($definition)
+{
+    preg_match_all("/'([^']*)'/", $definition, $m);
+    $out = $m[1];
+    sort($out);
+    return $out;
+}
+$appTypes = LayoutStore::ELEMENT_TYPES;  sort($appTypes);
+$appSubs  = LayoutStore::BLOCK_SUBTYPES; sort($appSubs);
+checkSame(enumMembers(SCHEMA_ELEMENT_TYPE_ENUM), $appTypes,
+          'the types a publish accepts are exactly the ones the column converges to');
+checkSame(enumMembers(SCHEMA_BLOCK_SUBTYPE_ENUM), $appSubs,
+          'and the same for block styles');
+
+// ─────────────────────────────────────────────────────────────
 section('Hide and delete cannot cross Displays');
 
 $driveT = loadTestDisplay($pdo, $driveT->id());
@@ -3147,4 +3252,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(826);
+reportChecks(848);

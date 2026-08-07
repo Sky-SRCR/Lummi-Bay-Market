@@ -2392,6 +2392,7 @@ function publishCanvas() {
                           + 'That screen updates within 30 seconds.');
                 loadAssets();
             } else if (res.reason === 'stale' || res.reason === 'locked'
+                       || res.reason === 'rejected'
                        || isTerminalLockReason(res.reason)) {
                 // Nothing was saved, and none of these refusals may be glimpsed and
                 // missed: the layout on screen is still the editor's, and what to do
@@ -2399,6 +2400,11 @@ function publishCanvas() {
                 // edit lock, reload for a screen name tag that moved, ask an admin for
                 // a display that is no longer yours, sign in again for an account that
                 // no longer may. The message says which; a toast would not be read.
+                //
+                // 'rejected' is the layout itself being unstorable rather than the
+                // moment being wrong, and it belongs here for the same reason: the
+                // work is still on screen and unsaved, and nobody may walk away
+                // believing this sign was published.
                 //
                 // The terminal ones also raise the bar, so it is still on screen after
                 // the alert is dismissed. Reaching one here rather than from a beat

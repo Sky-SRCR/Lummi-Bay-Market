@@ -41,6 +41,11 @@
 //   · No statement touches canvas_elements without a display_id predicate.
 //   · A publish whose stamp no longer matches the Display is refused (ADR-0006),
 //     and so is one whose edit lock has moved to somebody else (ADR-0007).
+//   · Every element carries a type this app knows, or the whole publish is refused
+//     before anything is deleted. The column is an ENUM and MySQL does not treat one
+//     as an allowlist: it matches case-insensitively, and a *quoted number* with no
+//     matching member is read as an index into the list. So `type: "1"` wrote a
+//     section, from a basic account's publish, at the top level of the canvas.
 //   · A basic account's publish preserves that Display's sections (ADR-0005),
 //     and cannot parent content into another Display's section.
 //   · type='text' content is stripped to plain text (ADR-0002); carousel/table/
@@ -132,7 +137,7 @@ class ElementResult
  */
 class PublishResult
 {
-    private $kind;      // 'ok' | 'stale' | 'locked' | 'failed'
+    private $kind;      // 'ok' | 'stale' | 'locked' | 'rejected' | 'failed'
     private $stamp;
     private $message;
 
@@ -147,6 +152,13 @@ class PublishResult
     public static function stale($message)  { return new self('stale', '', $message); }
     /** Somebody else holds the edit lock (ADR-0007) — a different refusal from a stale stamp. */
     public static function locked($message) { return new self('locked', '', $message); }
+    /**
+     * The layout itself was not something this app will store, so nothing was
+     * attempted. Distinct from failed(): nothing went wrong, the answer is no.
+     * Distinct from stale() and locked(): reloading will not help and neither will
+     * waiting, because the payload is the problem.
+     */
+    public static function rejected($message) { return new self('rejected', '', $message); }
     public static function failed($message) { return new self('failed', '', $message); }
 
     public function isOk()    { return $this->kind === 'ok'; }
@@ -157,6 +169,19 @@ class PublishResult
 
 class LayoutStore
 {
+    /**
+     * Every value `canvas_elements.type` may hold, and the only ones a publish may
+     * put there. Kept beside the writes rather than derived from `lib/schema.php`:
+     * this is the application's list, the ENUM is the column's, and the self-test
+     * checks the two still say the same thing (§5) so a widening cannot land in one
+     * without the other.
+     */
+    const ELEMENT_TYPES = ['section', 'text', 'image', 'video', 'carousel', 'marquee', 'table'];
+
+    /** The same, for `block_subtype` — the six branded block types plus 'free'. */
+    const BLOCK_SUBTYPES = ['free', 'section_header', 'item_title', 'item_title_2',
+                            'price', 'price_2', 'description'];
+
     private $pdo;
     private $displays;
 
@@ -471,8 +496,13 @@ class LayoutStore
     /**
      * Replace this Display's layout with the submitted one, in one transaction.
      *
-     * Refuses (without writing anything) in two cases, and there is no merge and no
-     * undo behind either — the refusal is the whole safety net:
+     * Refuses (without writing anything) in three cases, and there is no merge and
+     * no undo behind any of them — the refusal is the whole safety net:
+     *
+     *   · the layout contains a block this app does not know how to store. Checked
+     *     first and outside the transaction, because it needs no database at all and
+     *     because the two below describe a moment: a payload that was never storable
+     *     is not going to become storable by being asked again under a row lock.
      *
      *   · somebody else holds the edit lock (ADR-0007). The lock says no at the
      *     door, but a lock can move while a tab sits open, so it is checked again
@@ -492,6 +522,15 @@ class LayoutStore
      */
     public function publish(Display $display, PublishRequest $request)
     {
+        $unknown = self::unknownBlockIn($request->elements());
+        if ($unknown !== null) {
+            return PublishResult::rejected(
+                'That layout contains ' . $unknown . ', which this app cannot store. '
+                . 'Nothing was saved. Reload the display and try again — if it keeps '
+                . 'happening, tell an admin.'
+            );
+        }
+
         try {
             // Inside the try: beginTransaction can throw too (a connection that
             // died between the request starting and this call), and a publish that
@@ -584,6 +623,74 @@ class LayoutStore
     }
 
     // ---- Publish internals -------------------------------------------------
+
+    /**
+     * The first thing in this layout that is not a block this app knows, described
+     * for the person publishing — or null when every element is one it does.
+     *
+     * The column is an ENUM, and an ENUM is not an allowlist. Three ways a value
+     * that is not on the list reaches it anyway, all of them from one unvalidated
+     * `$el['type']`:
+     *
+     *   · **A quoted number.** MySQL reads `'1'` as an *index* into the list when no
+     *     member matches it, so `type: "1"` stores 'section'. Both `!== 'section'`
+     *     guards above see the string "1", so the element skips the section pass and
+     *     is inserted as content — and a basic account, whose publish may not touch
+     *     the section layout at all (ADR-0005), has just put a section on the canvas
+     *     at the top level. That is the hole this method exists to close.
+     *   · **A different case.** ENUM matching is case-insensitive under the default
+     *     collation, so `type: "Section"` stores 'section' by the same route.
+     *   · **Anything else at all**, which MySQL turns into the invalid-enum empty
+     *     string outside strict mode — a row the Builder cannot draw, the Viewer
+     *     cannot draw, and no one can select to delete.
+     *
+     * An entry that is not an array is refused for the same reason: `$el['type']`
+     * on an integer is null, so `[1,2,3]` published three blank text blocks.
+     *
+     * Nothing here trusts the caller to have looked: `createBlock()` in the Builder
+     * decides which types a person can add, and a hand-made POST never goes near it.
+     */
+    private static function unknownBlockIn(array $elements)
+    {
+        foreach ($elements as $el) {
+            if (!is_array($el)) {
+                return 'an entry that is not a block at all (' . self::describeValue($el) . ')';
+            }
+
+            $type = isset($el['type']) ? $el['type'] : 'text';
+            if (!is_string($type) || !in_array($type, self::ELEMENT_TYPES, true)) {
+                return 'a block of an unknown type (' . self::describeValue($type) . ')';
+            }
+
+            // Absent, null and '' all mean "not a branded block": insertContent
+            // stores 'free' for them. Anything else stated has to be one of the six.
+            $subtype = isset($el['block_subtype']) ? $el['block_subtype'] : null;
+            if ($subtype !== null && $subtype !== ''
+                && (!is_string($subtype) || !in_array($subtype, self::BLOCK_SUBTYPES, true))) {
+                return 'a block with an unknown style (' . self::describeValue($subtype) . ')';
+            }
+        }
+        return null;
+    }
+
+    /**
+     * A submitted value, short enough and plain enough to put in a sentence.
+     *
+     * Quoting what arrived is worth it — "unknown type (Section)" tells whoever is
+     * debugging a stuck tab far more than "unknown type" — but it is the one place
+     * a publish payload becomes a message, and messages reach a `<div>` somewhere
+     * eventually. So it is reduced to letters, digits, spaces, hyphens and
+     * underscores, and truncated: what survives cannot carry markup, a quote or a
+     * newline whatever the caller sent.
+     */
+    private static function describeValue($value)
+    {
+        if (!is_string($value)) { return gettype($value); }
+
+        $clean = preg_replace('/[^A-Za-z0-9 _-]/', '', $value);
+        if ($clean === '') { return 'blank'; }
+        return strlen($clean) > 20 ? substr($clean, 0, 20) . '...' : $clean;
+    }
 
     /** Admin publish: this Display's canvas is replaced wholesale. */
     private function replaceWholeLayout(Display $display, array $elements)
@@ -684,6 +791,13 @@ class LayoutStore
             $type = $el['type'] ?? 'text';
             if ($type === 'section') { continue; }
 
+            // '' is not a member of the subtype ENUM — outside strict mode MySQL
+            // stores the invalid-enum empty string for it, and `?? 'free'` only
+            // catches null. unknownBlockIn() lets '' through as "not stated"; this
+            // is where "not stated" becomes 'free'.
+            $subtype = isset($el['block_subtype']) && $el['block_subtype'] !== ''
+                ? $el['block_subtype'] : 'free';
+
             $parentTmp = $el['parent_temp_id'] ?? null;
             $sectionId = $parentTmp ? ($tempMap[$parentTmp] ?? null) : null;
             $assetId   = !empty($el['asset_id']) ? intval($el['asset_id']) : null;
@@ -714,7 +828,7 @@ class LayoutStore
                 $display->id(),
                 $sectionId,
                 $type,
-                $el['block_subtype'] ?? 'free',
+                $subtype,
                 intval($el['x_pos']  ?? 0),
                 intval($el['y_pos']  ?? 0),
                 intval($el['width']  ?? 200),

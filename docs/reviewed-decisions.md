@@ -66,7 +66,7 @@ written down rather than remembered:
 | 26 | A reply that failed to encode sent back a zero-length success, and the sign kept its old layout forever with no notice. | Send a real error, and let the sign notice. | Open | — |
 | 27 | `?display[]=x` became the tag "array" and printed a warning above the document. | Treat it as no sign named. | Open | — |
 | 28 | Missing, unknown and switched-off signs all answered "200 OK", and nothing anywhere set caching rules. | Real error codes, and stop caching. | Open | — |
-| 29 | Publish accepted any block type, so a basic account could insert top-level content. | Accept only known types and refuse the rest. | Open | — |
+| 29 | Publish accepted any block type, so a basic account could insert top-level content. | Accept only known types and refuse the rest. | **Done** — the ENUM was doing none of the work it looked like it was doing: `type: "1"` stored a *section*. One residual is named in §4u rather than closed. | §4u |
 | 30 | Wrong-shaped and absurd values were coerced and written rather than refused. | Refuse the publish. | Open | — |
 | 31 | Two blocks sharing a temporary id silently reparented one of them into the wrong section. | Refuse the publish. | Open | — |
 | 32 | Line height was stored with a thousands separator, so some values could not be read back. *(First framed as a prices problem. It never touched prices — no sign has ever shown a stray comma.)* | Clamp it to 0.5–5 and store it plain. | Open | — |
@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**22 done, 2 part done, 27 open.**
+**23 done, 2 part done, 26 open.**
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

@@ -154,6 +154,12 @@ through the app again:
    *decode* is not an empty layout: `PublishRequest::fromPostedJson()` refuses it,
    because publishing an empty layout deletes every element and the old
    `json_decode(...) ?: []` read an unreadable request as exactly that.
+   A third refusal is about the *payload* rather than the moment, and so is decided
+   before the transaction opens: every element must carry a `type` from
+   `LayoutStore::ELEMENT_TYPES`, compared as an exact string. The ENUM on the column is
+   not the check it looks like — MySQL reads a quoted number as an index into the list
+   and matches members case-insensitively, so `type: "1"` and `type: "Section"` both
+   stored a section, from a publish a `basic` account is allowed to make (§4u).
 6. **Text-block content is plain text** (ADR-0002). `toPlainText()` on save for
    `type = 'text'` only; render with `textContent`. Never `innerHTML`, never
    strip carousel/table/marquee JSON or media paths.
@@ -1839,6 +1845,77 @@ Left standing, and named rather than skipped:
   than by name. A future state that shuts an account out *without* clearing `is_active`
   would strand locks again, and the fix would belong in `LockState`.
 
+### 4u. An ENUM is not an allowlist
+
+`insertContent()` took `$el['type']` from the payload and handed it to the `INSERT`.
+Reviewing that line, the reason it looked safe is that the column is
+`ENUM('section','text','image','video','carousel','marquee','table')` — the database
+holds the list, so the database will refuse anything else. It will not. MySQL takes an
+ENUM value three ways, and only one of them is the one that was assumed:
+
+- **A quoted number is an index.** With no member matching the string, `'1'` is read as
+  the *first* member. `type: "1"` stored `section`.
+- **Matching is case-insensitive** under the default collation, so `type: "Section"`
+  stored `section` too.
+- **Anything else** becomes the invalid-enum empty string outside strict mode — a row
+  no page can draw and nobody can select in order to delete.
+
+The first two are the ones with a victim. Both `!== 'section'` guards in the publish
+path compare the *submitted* string, so `"1"` skips the section pass and arrives in
+`insertContent()`, which inserts it — as a section, at the top level of the canvas,
+parented to nothing. That path is open to a `basic` account, whose publish exists
+precisely to leave the section layout alone (ADR-0005). One hand-made POST, and a clerk
+has done the one thing their role says they may not.
+
+`LayoutStore::ELEMENT_TYPES` and `BLOCK_SUBTYPES` are now the list, checked with
+`in_array($v, …, true)` — exact string, no coercion, no case folding — and a layout
+carrying anything else is refused whole. Four things about the shape of that:
+
+- **It is checked before `beginTransaction()`.** The other two refusals describe a
+  moment (a stamp that moved, a lock that moved) and have to be read under the row
+  lock. This one describes the payload, which will not become storable by being asked
+  again. Nothing is opened, so nothing is rolled back.
+- **`rejected` is a new `PublishResult` kind**, not `failed`. Nothing went wrong; the
+  answer is no. `failed` means the write broke and *may* work next time, and the
+  Builder's advice differs on exactly that point. It joins `stale` and `locked` in the
+  branch that raises an `alert()` rather than a toast, because the work is still on
+  screen and unsaved and no one may walk away thinking the sign was published.
+- **An entry that is not an array is refused too.** `$el['type']` on an integer is
+  `null` under `??`, with no diagnostic before PHP 7.4 — so `[1,2,3]` published three
+  blank text blocks.
+- **The value is quoted back, through `describeValue()`.** "unknown type (Section)" is
+  worth far more to whoever is debugging a stuck tab than "unknown type", but this is
+  the one place a publish payload becomes a sentence, and sentences reach a `<div>`
+  eventually. It is reduced to letters, digits, spaces, hyphens and underscores and cut
+  to 20 characters, so what survives cannot carry markup, a quote or a newline.
+
+**The list is duplicated on purpose, and the duplication is tested.** The app's
+allowlist and `SCHEMA_ELEMENT_TYPE_ENUM` are two statements of one structure
+(invariant 15), and the failure mode of drift is a publish refused for a type the
+column would have taken — which is exactly what `item_title_2` and `price_2` were
+before §4g widened the subtype ENUM. So the self-test parses the members out of both
+schema constants and asserts they are the same set as the two class constants; widening
+one without the other now fails the suite rather than the sign.
+
+**Twenty-two checks**, all in `selftest_layout.php`. The fixture is SQLite, which
+stores `"1"` and `"Section"` verbatim rather than coercing them — so what the suite
+proves is the *refusal*, not MySQL's behaviour behind it. That is the right way round:
+the refusal is the thing that has to hold on both engines, and a test that depended on
+the coercion could only ever run where the bug was.
+
+Left standing, and named rather than skipped:
+
+- **A `basic` account can still publish content at the top level** — a `text` block with
+  no `parent_temp_id`, which lands with `section_id NULL` and is therefore layout, in a
+  role that is not supposed to place layout. The Builder cannot produce one
+  (`createBlock()` refuses without a targeted section, and nothing reparents on drag),
+  so this needs a hand-made POST. It was left alone because both plausible fixes are
+  worse than the hole: refusing the publish breaks every Display that legitimately
+  carries admin-made root content, and *preserving* root rows across a basic publish
+  turns that account's delete of a root block into a silent no-op that reports success.
+  Closing it properly means the payload distinguishing "this block is unchanged" from
+  "I made this", which the publish protocol currently cannot say.
+
 ---
 
 ## 5. Verification
@@ -1952,6 +2029,12 @@ grep -rn "lock_holder_id\|lock_activity_at\|lock_taken_at" --include=*.php .  # 
                                               # name them as *catalogue entries* — a column this database
                                               # should have — which is not a read of the table
 grep -rn "block_styles" --include=*.php .     # only lib/brand_styles.php + schema.php's seed
+grep -rn "ELEMENT_TYPES\|BLOCK_SUBTYPES" --include=*.php .  # lib/layout_store.php defines both and
+                                              # unknownBlockIn() is the only reader; the self-test
+                                              # compares them to schema.php's two ENUM constants. A
+                                              # second copy of either list somewhere else is drift
+                                              # waiting to happen — a publish refused for a type the
+                                              # column would have taken (§4u)
 grep -rEn "WHERE +`?id`? *= *'?1'?" --include=*.php .  # must be empty — whitespace and quotes included
 grep -rn "1920\|1080" --include=*.php .        # admin size presets, the seed, tools/, and prose
 grep -rn "viewer.php\"\|viewer.php'" --include=*.php .  # every link must carry ?display=
