@@ -91,8 +91,80 @@ written down rather than remembered:
 
 ## Where this stands
 
-**22 done, 2 part done, 27 open.**
+**22 done, 2 part done, 27 open** — 51 rows in all.
+
+The 22 is 21 numbered rows plus the unnumbered mail-allowance policy, so counting
+only the numbered `Done` rows gives 21 and looks like the tally is off by one. It
+isn't. The two part done are #49 and #51; the 27 open are #15, #19, #21, #23–#33
+(all eleven), #35–#42 (all eight), #44, #45, #46, #48 and #50.
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which
-one comes next is a judgement about the store, not about the code.
+one comes next is a judgement about the store, not about the code. What the next
+section adds is a different question with a factual answer: which of them can be
+worked on *at the same time* without two people editing the same file.
+
+## Parallel lanes
+
+Grouped by which files an item actually touches, because that — not what the item
+is about — is what decides whether two of them can run at once. Within a lane the
+arrows are a working order; between lanes there is nothing to coordinate.
+
+**Two items cannot be parallelised at all, and they bracket everything else:**
+
+| | Why it stands alone |
+|---|---|
+| **#15** | The escaping sweep touches nearly every `.php` file in the repo. Anything running beside it loses its diff. Run it on its own, with every lane merged first — or run it before the lanes open. |
+| **#49, #50** (and #48's fixture half) | They rewrite `tools/selftest_layout.php`, the one file *every* other item appends checks to. Run them after the lanes drain, not beside them. |
+
+The remaining 26 fall into seven lanes. A, B, C, E and G share no files with each
+other at all.
+
+| Lane | Files it owns | Items |
+|------|---------------|-------|
+| **A — deploy & CI** | `HANDOFF.md`, `.github/workflows/php-lint.yml` | #46 → #51 → #48 (CI half) |
+| **B — Viewer/API surface** | `api.php` (dispatch and headers), `viewer.php` | #27 → #28 → #26, and #45 |
+| **C — the publish gate** | `lib/layout_store.php` | #29 → #30 → #31 → #25 → #32 → #35 |
+| **D — admin panel & Displays** | `admin_panel.php`, `lib/displays.php`, `lib/display_admin.php` | #23 → #24 → #21 → #36 → #19 → #44 |
+| **E — Builder JavaScript** | `builder.php` | #40 → #39 → #42, then #41 once Lane C has closed |
+| **F — assets** | `crud.php`, `lib/assets.php` | #37 → #33 |
+| **G — login** | `auth.php`, `login.php` | #38 |
+
+Lane A touches no application code, so it can start immediately and finish
+independently; #51 stalls until the deploy visit answers the live PHP version.
+Lane E is gated by the two node suites rather than by `php -l`, and Lane C by
+`php tools/selftest_layout.php` — see the *Before pushing* block in `CLAUDE.md`.
+
+### Where a lane brushes another
+
+Three items straddle a boundary, and each needs placing on purpose:
+
+- **#32** is really two edits. The defect is `lib/layout_store.php` (lines 324 and
+  729 format a line height with `number_format`'s default thousands separator), so
+  Lane C owns it; `admin_panel.php:1216` is the same one-line follow-on and is
+  Lane D's to take.
+- **#44** needs a new statement and gate in `lib/schema.php`, which is also #49's
+  file. Do #44 *before* #49 starts, not beside it.
+- **#41** is the one item not to hand to a parallel worker. Validating a colour "on
+  the way in and on the way out" means the publish path and the colour picker, so
+  it wants Lanes C and E already settled — schedule it after they close, or split
+  the two halves and name which lane has which.
+
+Two smaller overlaps are safe but worth knowing: **#33** touches api.php's upload
+handlers (around lines 325–357) and **#23**/**#24** touch its background handler
+(around 200–230), both well away from the dispatch and header work in Lane B.
+
+Every lane will also append checks to `tools/selftest_layout.php` and conflict
+there on merge. Those are append-only additions in separate blocks, so they
+resolve mechanically — keeping each lane's checks together and near their own
+subject makes it close to automatic.
+
+### One note on #38
+
+The row above says a secure-cookie setting causes an invisible sign-in loop on
+plain HTTP, and `auth.php` does set `secure` unconditionally. On the live site
+`.htaccess` redirects to HTTPS, so that half is latent in production and bites a
+local or plain-HTTP install instead. The half that is live today is the second
+one: the suspended-account message tells a guesser the password was right. The
+decision is still to fix both; only the urgency of the first is lower than the
+row reads.
