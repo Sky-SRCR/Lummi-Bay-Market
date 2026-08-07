@@ -40,5 +40,11 @@ jobs:
       # nothing else here can see: two branches cut from the same base each take
       # the next free section letter, and git can merge two `### 4u.` headings
       # with no conflict marker, because they are not the same lines.
+      #
+      # Runs even when a step above it failed. It answers a question none of them
+      # ask, and a run that stops at the self-test would skip it silently — during
+      # exactly the window this exists for, since a red self-test on every branch
+      # is what a shared broken base looks like and merging is what happens next.
       - name: Document numbering
+        if: ${{ !cancelled() }}
         run: php tools/check_doc_numbering.php
