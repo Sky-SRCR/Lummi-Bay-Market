@@ -331,8 +331,9 @@ In order, on the one visit:
      it); the reason to read it first is that a hand-raised `upload_max_filesize`
      lives only there and reverts silently. Carry any hand-edit forward.
 
-   `setup.php` should already be gone by the time you get here — **it is not; delete
-   it first.** See the *Known live state* section of `DEPLOY-SKIP.md`.
+   `setup.php` is already gone from the server, and it now deletes itself if it ever
+   comes back — but only when something requests it, so uploading it still opens a
+   window. See the *Known live state* section of `DEPLOY-SKIP.md`.
 4. **Sign in once as an admin.** That first authenticated request is what runs the
    schema convergence: it creates `displays`, seeds the drive-thru Display from
    `canvas_settings`, and backfills `display_id`. (If the sign's poll gets there

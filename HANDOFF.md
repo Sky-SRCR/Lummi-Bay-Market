@@ -75,7 +75,7 @@ it is the standing contract, with the invariants and where later work attaches.
 | `.htaccess` | Server config: index/sensitive-file blocks, security headers, PHP hardening, HTTPS redirect. Frames `viewer.php` for external widgets (see §8) |
 | `lib/.htaccess`, `tools/.htaccess` | Make both folders unreachable from a browser. **Deploy them with the folders** |
 | `reset_password.php` | 2-step emailed 6-digit passcode reset (30-min expiry) |
-| `setup.php` | First-run admin creation; self-disables once a user exists. **Delete on server after setup** |
+| `setup.php` | First-run admin creation; self-disables once a user exists and then **deletes itself** — at the end of a successful setup, or on the first request that finds it disabled. It reads the answer back from disk, so it never claims to have gone while it is still being served |
 | `setup_branding.php` | Redirect shim → `admin_panel.php?tab=branding` |
 | `builder.php` | ~3050-line canvas editor for one Display, mostly inline JS. The heart of the app. Also the read-only mode and the lock heartbeat |
 | `admin_panel.php` | Six tabs: User Management, **Displays** (+ the grant matrix), Display Branding, Site Branding, Settings, Work Area |
@@ -305,14 +305,6 @@ staleness check, no version history), 0007 (one editor per Display).
   schema, check the sign at its new URL, then re-point the TV and the SmartSign2Go
   widget. Steps 15–21 need a second account, two browsers, and one unavoidable
   15-minute wait.
-- **Delete `setup.php` from the live server.** Small, unblocked, and it needs no
-  deploy visit — `https://srcresort.com/lbm/setup.php` answers 200 today with *"Setup
-  is complete. This page is disabled. Please delete setup.php from your server."* It
-  was never deleted after the original setup. Not an admin-creation hole while accounts
-  exist, because it disables itself; it becomes one the moment the app is pointed at an
-  empty or freshly restored database, and meanwhile it is an unauthenticated page that
-  hits the database on every request. Nothing depends on it. See
-  [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) → *Known live state*.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
   `php -l`, 826 self-test checks against SQLite, 80 node checks over `builder.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`

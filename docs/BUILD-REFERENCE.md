@@ -1849,7 +1849,7 @@ Left standing, and named rather than skipped:
 
 Step 3 of *"Before this reaches the sign"* said **upload the files**, and named only
 what must go *up* — `lib/` and `tools/` with their `.htaccess`. Nothing said what must
-not. Every fact needed was already in this repo: `README` §3 says delete `setup.php`
+not. Every fact needed was already in this repo: `README` §3 said delete `setup.php`
 from the server, HANDOFF §5 says `branding_config.php` is generated there. **The
 information existed and the step that needed it did not carry it** — which is the
 defect, not a missing fact. A checklist read with one hand on an FTP client does not
@@ -1912,8 +1912,8 @@ the moment the code moves. So:
   in the same commit.
 
 **Then the live server was asked, and the framing was wrong.** The audit said a
-re-upload *restored* `setup.php`. It answers **200 today** — *"Setup is complete. This
-page is disabled."* — so it was never deleted, and the rule about not re-uploading it
+re-upload *restored* `setup.php`. It answered **200** — *"Setup is complete. This page
+is disabled."* — so it had never been deleted, and the rule about not re-uploading it
 had nothing to be a rule about yet. The rest of group B is the opposite: `HANDOFF.md`,
 `README.md`, `CLAUDE.md`, `docs/` and `.git/config` all answer 404, so the `.md` deny
 guards a hypothesis rather than a live exposure. `schema.sql` answering 403 is the
@@ -1923,12 +1923,46 @@ block low-risk on a server with no staging. That table is recorded in DEPLOY-SKI
 with its date, because a list written from the repo's beliefs about a server is how
 this defect happened the first time.
 
+**And one entry earned its way off the list by deleting itself.** `setup.php` was
+removed from the live server by hand, which closed the finding but not the class: the
+next upload would put it back, and "delete this afterwards" is a job nobody is
+assigned — the reason it survived the original install by months. So it now calls
+`removeSelf()` at both moments it becomes dead weight: after a successful admin
+`INSERT`, and on the first request that finds it already disabled. A rule a person has
+to follow became a file that leaves on its own, which is the shape every other fix in
+this section wanted and could not have.
+
+Three details are the whole design:
+
+- **It reads the answer back from the filesystem**, not from `unlink()`. "Still there"
+  is the only outcome that needs acting on, and a write that fails while printing
+  success is the defect this document has spent twenty sections unpicking — the page
+  would have claimed to be gone while still serving an admin-creation form.
+- **A forbidden delete is expected, not alerted on.** Some hosts will refuse it. An
+  `ErrorPolicy::report()` here would email an admin every hour forever and be triggered
+  by any passing bot, so the page says *"It could not delete itself"* and that sentence
+  is the thing to act on. This is invariant 20's rule applied to decline a caller
+  rather than to add one.
+- **It goes only when it can tell it is finished.** An unreachable database or a
+  missing `users` table throws before either branch, and the file correctly stays.
+
+`removeSelf()` has **no automated check**, and the reason is worth stating rather than
+hiding: it is a page script that runs on include and needs a live database, so
+`selftest_layout.php` cannot reach it, and extracting it into `lib/` would mean a
+module whose entire job is deleting one named file — `lib/` is for data access. It was
+verified by running its exact body twice instead: once against a real file, which
+unlinked itself mid-execution, continued running, and reported `true`; once against a
+target `unlink()` cannot remove, which reported `false` rather than claiming success.
+That second run is the one that matters, and it is the case a passing test would most
+easily have faked.
+
 Left standing, and named rather than skipped:
 
-- **`setup.php` is still on the live server**, and deleting it needs FTP rather than a
-  commit — so it is an outstanding action in HANDOFF §7 and in the list itself, not
-  something this change closed. Post-upload check 3 fails today, deliberately left
-  failing rather than reworded to pass.
+- **Uploading `setup.php` still opens a window.** Self-deletion needs a request, so
+  between the upload and the first hit the file is intact — and that is exactly when a
+  restore to an empty database would find a working form. The do-not-upload rule is not
+  retired by the mechanism, only backstopped by it. Post-upload check 3 now *repairs*
+  what it looks for, but only if somebody runs it.
 - **Two claims in the list are inferences, and say so.** Whether anything backs up
   `uploads/` (nothing in this repo does, and checklist step 1 backs up the database
   only) and whether anybody ever hand-raised `upload_max_filesize` in the live

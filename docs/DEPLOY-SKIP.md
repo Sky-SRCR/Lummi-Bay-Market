@@ -38,7 +38,7 @@ rewrites the file.
 
 | File | Why |
 |------|-----|
-| `setup.php` | Creates the **first admin account** when the `users` table is empty, and is meant to be deleted from the server once setup is done (`README` §3 says so, and so does the page itself). It self-disables while it can count users — but point the app at an empty or freshly restored database and it is a public "make yourself an admin" form again. Nothing in `.htaccess` blocks it. Re-uploading the tree silently puts it back. |
+| `setup.php` | Creates the **first admin account** when the `users` table is empty. It self-disables while it can count users — but point the app at an empty or freshly restored database and it is a public "make yourself an admin" form again. Nothing in `.htaccess` blocks it. **It now deletes itself** once an admin exists, so a re-upload is self-healing on the first request that reaches it — which is a safety net, not permission to upload it. See below. |
 | `.git/` | Served, if it lands in the webroot. It hands out the entire history of the repo to anyone who asks for it. Upload the working files, never the repository. |
 | `*.md` and `docs/` | `HANDOFF.md` names the live database, the credentials path outside the webroot, and where the error log goes. `.htaccess` now denies `.md` as a backstop, but the rule is belt-and-braces — the reason not to upload them is that they are of no use to the server. |
 | `.github/`, `tools/*.js`, `.gitignore` | Nothing on the server runs them. The node suites need a Node that isn't there. |
@@ -48,29 +48,38 @@ rewrites the file.
 `lib/.htaccess` and `tools/.htaccess` must go up *with* their folders or the modules
 and the rehearsal script become readable.
 
-### Known live state — checked 2026-08-07, and one thing is outstanding
+### Known live state — checked 2026-08-07
 
-The audit framed this group as *re-uploading restored `setup.php`*. It was never
-deleted, so there is a file to clear before the rule about not re-uploading it means
-anything. What the live server answered:
+The audit framed this group as *re-uploading restored `setup.php`*. It had never been
+deleted at all: it answered **200** with *"Setup is complete. This page is disabled.
+Please delete setup.php from your server."* It has since been deleted by hand, and it
+now answers 404. What the live server said, once asked:
 
 | Path | Answered | Reading |
 |------|----------|---------|
-| `setup.php` | **200** | *"Setup is complete. This page is disabled. Please delete setup.php from your server."* |
+| `setup.php` | 200 → **404** | Was never deleted after the original setup; deleted by hand 2026-08-07. |
 | `HANDOFF.md`, `README.md`, `CLAUDE.md`, `docs/BUILD-REFERENCE.md` | 404 | Never uploaded. The `.md` deny is a backstop, not a fix for a live exposure. |
 | `.git/config` | 404 | The repository has never been uploaded. |
 | `schema.sql` | 403 | The root `.htaccess` is deployed and its `FilesMatch` blocks work on this host. |
 | `lib/schema.php` | 404 | `lib/` is not on the server yet — the multi-display build is still undeployed. |
 
-**Outstanding: delete `setup.php` from the live server.** It is *not* an
-admin-creation hole today, because accounts exist and it disables itself. It is an
-unauthenticated page that touches the database on every request, confirms what the
-app is, and prints its own removal instructions — and it becomes the form again the
-moment the app is pointed at an empty or restored database. Deleting it needs no
-downtime and nothing depends on it; the app is fully set up.
+**And it will not need deleting by hand again.** `setup.php` now removes itself: at the
+end of a successful setup, and otherwise on the first request that finds it already
+disabled. That is the difference between a rule somebody has to remember and a file
+that leaves on its own — which is the whole complaint behind this list.
 
-Do this **before** the next upload rather than during it. Check 3 below currently
-fails, which is what a working list looks like on its first use.
+Three things it does *not* mean, so nobody leans on it:
+
+- **Upload it and it is still there** until somebody or something requests it. The
+  window between the upload and the first hit is real, and during it a restore to an
+  empty database would find the form intact. The rule stands: do not upload it.
+- **It only goes when it can tell it is finished.** If the database is unreachable, or
+  the `users` table is missing, the count throws and the file stays — correctly, since
+  the app cannot tell whether setup is done.
+- **A host that forbids the delete leaves it there and says so.** The page reads the
+  answer back from the filesystem instead of trusting `unlink()`, so it never claims to
+  have gone while it is still being served. That message — *"It could not delete
+  itself"* — is the one to act on by hand.
 
 ## C. Never delete — these exist only on the server
 
@@ -120,9 +129,10 @@ the repo's, which makes a hand-edit unlikely rather than impossible.
    says who an alert would reach. *"Nowhere to write"* means the log folder was
    deleted or its permissions changed (C), and until it is fixed nothing that goes
    wrong is recorded and no alert can be sent.
-3. **`https://srcresort.com/lbm/setup.php` must be gone** — a 404, not the setup
-   form and not "Setup is complete" (B). *This check fails today; see the outstanding
-   item above.*
+3. **`https://srcresort.com/lbm/setup.php` must be gone** — a 404, not the setup form
+   and not "Setup is complete" (B). Requesting it is also what makes it delete itself
+   if it was uploaded, so this check *repairs* the mistake it is looking for — but only
+   if you actually run it. A page reading *"could not delete itself"* needs a hand.
 4. **The brand logo still renders** in the nav bar — the cheapest proof that
    `uploads/` survived (C).
 5. **`https://srcresort.com/lbm/README.md` must answer 403** — not the file, and not
