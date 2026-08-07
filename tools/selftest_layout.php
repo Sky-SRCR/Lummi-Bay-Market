@@ -1316,6 +1316,97 @@ checkSame('Sockeye  18.99', $kept['manual_content'], 'and the words stay on the 
 checkSame(null, $kept['asset_id'],   'pointing at nothing at all rather than at a row that does not exist');
 
 // ─────────────────────────────────────────────────────────────
+section('A library entry\'s type is read from the row, not from the form');
+
+// The edit form used to post the type back in a hidden field, and that field
+// decided both of the rules an edit has to pass: plain text for a text entry
+// (ADR-0002), the image allow-list for an image entry. Either could be switched
+// off by sending the other word. `update()` takes no type at all now — it reads
+// the row — so the checks below are the rules being unable to be skipped rather
+// than being remembered.
+$pdo     = newTestDb();
+$library = new AssetLibrary($pdo);
+
+$textId = $library->create('text', 'Sockeye  18.99', 'Sockeye price');
+$imgId  = $library->create('image', 'uploads/promo.jpg', 'Summer Promo');
+check($textId > 0, 'an admin adds a text entry');
+check($imgId > 0,  'and an image entry');
+
+// The one moment a caller's word for the type is taken is creation, and it is
+// taken only for the two kinds the add form offers.
+checkSame(0, $library->create('carousel', '{"slides":[]}', 'Forged'),
+          'a type the add form does not offer is refused rather than stored');
+
+// ---- A text entry is plain text however the caller words it -------------------
+$res = $library->update($textId, 'Sockeye price', "<b>Sockeye</b><script>alert(1)</script>\n18.99");
+checkSame(true, $res->isOk(), 'a text entry accepts an edit');
+$stored = $pdo->query("SELECT content FROM assets WHERE id = " . $textId)->fetchColumn();
+check(strpos($stored, '<') === false,
+      'and the markup is stripped on the way in, with no form field able to say otherwise');
+
+// `!empty()` — the page's old guard — is false for a price block reading exactly
+// zero, so the one legitimate falsy value was refused as if the form were empty.
+$res = $library->update($textId, 'Sockeye price', '0');
+checkSame(true, $res->isOk(), 'an entry reading exactly "0" is a real edit, not an empty one');
+checkSame('0', $pdo->query("SELECT content FROM assets WHERE id = " . $textId)->fetchColumn(),
+          'and it is stored as "0"');
+
+$res = $library->update($textId, 'Sockeye price', "   \n  ");
+checkSame(AssetEdit::REFUSED, $res->kind(),
+          'emptying an entry is refused — every block reading it would go blank');
+checkSame('0', $pdo->query("SELECT content FROM assets WHERE id = " . $textId)->fetchColumn(),
+          'and the words that were there are still there');
+
+// ---- An image entry is checked against the allow-list, always -----------------
+checkSame(true, $library->update($imgId, 'Summer Promo', 'uploads/next-week.png')->isOk(),
+          'an image entry accepts an image');
+$res = $library->update($imgId, 'Summer Promo', 'https://elsewhere.example/logo.svg');
+checkSame(AssetEdit::REFUSED, $res->kind(),
+          'and refuses an .svg on another host, which the hidden field could switch off');
+checkSame('uploads/next-week.png', $pdo->query("SELECT content FROM assets WHERE id = " . $imgId)->fetchColumn(),
+          'leaving the image the signs are showing untouched');
+checkMentions($res->message(), 'Nothing was changed', 'and says so');
+
+// ---- No such row is not a successful save -------------------------------------
+// The bare UPDATE this replaced matched nothing and returned true, so deleting an
+// entry in one tab and saving it in another printed "Asset updated successfully".
+$res = $library->update(999999, 'Ghost', 'uploads/ghost.png');
+checkSame(AssetEdit::MISSING, $res->kind(), 'saving an entry that no longer exists is refused');
+checkSame(false, $res->isOk(), 'and is never reported as a save');
+
+// ---- The types the page never created but the table holds ---------------------
+// Publishing pools a block's content under the *block's* type, so a carousel row
+// is ordinary here. Its content is JSON: stripping it leaves neither markup nor
+// JSON, and the image allow-list would refuse it outright.
+$carouselId = $library->pool('carousel', '{"slides":[{"caption":"<b>Fresh</b>"}]}');
+check($carouselId > 0, 'publishing a carousel block pools its settings');
+$res = $library->update($carouselId, 'Deli slides', '{"slides":[{"caption":"<b>Fresh today</b>"}]}');
+checkSame(true, $res->isOk(), 'and that entry can still be edited');
+checkMentions($pdo->query("SELECT content FROM assets WHERE id = " . $carouselId)->fetchColumn(),
+              '<b>Fresh today</b>', 'with its JSON stored exactly as it arrived');
+checkSame('carousel', $pdo->query("SELECT type FROM assets WHERE id = " . $carouselId)->fetchColumn(),
+          'and no edit anywhere changes what kind of entry a row is');
+
+// ---- The allow-list itself ----------------------------------------------------
+checkSame(true,  AssetLibrary::isAllowedImageRef('uploads/a.jpg'),        'a jpg is an image');
+checkSame(true,  AssetLibrary::isAllowedImageRef('uploads/A.PNG'),        'so is a PNG in capitals');
+checkSame(true,  AssetLibrary::isAllowedImageRef('uploads/a.png|contain'), 'the Builder\'s |fit suffix is not part of the name');
+checkSame(true,  AssetLibrary::isAllowedImageRef('uploads/a.png?v=2'),    'nor is a query string');
+checkSame(false, AssetLibrary::isAllowedImageRef('uploads/a.svg?v=.png'), 'and a query string cannot disguise one');
+checkSame(false, AssetLibrary::isAllowedImageRef('uploads/a.svg'),        'an svg is markup a browser runs');
+checkSame(false, AssetLibrary::isAllowedImageRef('uploads/a'),            'something with no extension is not an image');
+checkSame(false, AssetLibrary::isAllowedImageRef(''),                     'and neither is nothing at all');
+
+// The field itself must be gone, not merely unread: a hidden input still on the
+// page is one `$_POST` read away from deciding this again. (The name survives in
+// crud.php's prose, which is why these look for the two places it would be code.)
+$crudSource = file_get_contents(__DIR__ . '/../crud.php');
+check(strpos($crudSource, "'edit_type'") === false,
+      'the editor reads no type from the request');
+check(strpos($crudSource, 'name="edit_type"') === false,
+      'and does not send one for it to read');
+
+// ─────────────────────────────────────────────────────────────
 section('A reset code gets five guesses in total, not five per browser');
 
 // The defect these cover: the budget used to live in $_SESSION, which belongs to
@@ -3147,4 +3238,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(826);
+reportChecks(855);

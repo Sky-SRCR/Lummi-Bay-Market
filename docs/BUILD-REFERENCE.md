@@ -58,7 +58,7 @@ Design rules, applied to every module added by this build:
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. `setAccess()` takes **both** axes of the matrix the form covered — the accounts *and* the Displays — because an unticked box and a cell the form never rendered are the same absence in a POST, and only one of them means "revoke"; and a revoke frees the edit lock on the Display it takes away, by holder, inside the same transaction. |
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, `assetUsage()` — which Displays depend on a library entry — and the sweep of the library rows a publish strands, scoped to the ids that Display's own previous layout held. |
-| `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `update` / `delete` / `pool` / `pooledNotIn` / `discardPooled` | **Every** `assets` statement. The decision it holds: `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::snapshot()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
+| `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `update` → `AssetEdit` / `delete` / `pool` / `pooledNotIn` / `discardPooled` / `isAllowedImageRef` | **Every** `assets` statement. The decision it holds: `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. And **the row says what kind of thing it is** (§4u): `update()` takes no type from its caller, because the two rules an edit must pass — plain text for a text row (ADR-0002), `IMAGE_EXTENSIONS` for an image row — were both switchable by a hidden form field that said the other word. A type is written once, by `create()`, and only ever `text` or `image`; the `carousel`/`table`/`marquee` rows `pool()` writes are stored verbatim, since stripping JSON leaves neither markup nor JSON. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::snapshot()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
 | `upload_limits.php` | `UploadLimit::bytes` / `describe` / `describeBytes` / `bodyWasDropped` / `smallestOf` / `toBytes` | How big a file can actually reach this server — the smallest of the app's 50 MB ceiling and PHP's `upload_max_filesize` and `post_max_size`, not the app's opinion. And the silent case: exceeding `post_max_size` is not an error PHP reports, it abandons the body, so a 40 MB video was answered *"Security token mismatch. Please reload the page."* `smallestOf()` takes the ini values as an argument because both settings are PHP_INI_PERDIR and the cases worth testing are unreachable otherwise. Depends on nothing. |
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `verify` / `consume` / `redeem` / `discard`, and `PasswordResetCompletion(PDO, ResetTokenStore, AccountStore)` → `ResetOutcome` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. It is now the composition of two halves that have to fall on opposite sides of a transaction boundary: `verify()` spends the guess and must never be rolled back, `consume()` spends the code and must be. `PasswordResetCompletion` is the use case (invariant 22) — code consumed, password changed, lockout released, or nothing at all — and `ResetOutcome` has three answers rather than two, because "refused" and "the database would not take it" have to look different to the visitor and identical to a stranger probing for usernames. |
@@ -1839,6 +1839,91 @@ Left standing, and named rather than skipped:
   than by name. A future state that shuts an account out *without* clearing `is_active`
   would strand locks again, and the fix would belong in `LockState`.
 
+### 4u. The form said what kind of thing it was editing
+
+Decision #37. The Library's edit form posted the row's type back in a hidden field,
+and `crud.php` decided from that field alone what the new content was allowed to be.
+Two rules hung off one request parameter:
+
+```php
+$type    = $_POST['edit_type'] ?? '';
+$content = ($type === 'text') ? toPlainText(...) : trim(...);   // ADR-0002
+if ($type === 'image' && !isAllowedImageRef($content)) { refuse; }
+```
+
+Send the other word and the matching rule is not enforced — it is not bypassed by a
+trick, it is simply not the branch that runs. `edit_type=image` while editing a text
+entry stores markup in a value ADR-0002 says is plain text. `edit_type=text` while
+editing an image entry skips the allow-list, so the entry every sign reads its
+picture from can be pointed at an `.svg` on any host. Both are one edit to one row
+that every Display drawing on it picks up within thirty seconds, with no publish and
+no undo.
+
+**The type was never the caller's to state.** Nothing changes a row's type, no form
+offers to, and the database already knows it. So `update()` takes an id, a label and
+a content candidate, reads the row, and applies the rule for the type it finds. The
+interface has no parameter to get wrong and no branch a caller can pick. That is the
+whole fix; everything below is what fell out of reading the row.
+
+- **A save is not a save when there is no row.** The `UPDATE … WHERE id = ?` it
+  replaced matched nothing and returned `true`, so an entry deleted in one tab and
+  saved in another printed *"Asset updated successfully."* — the §4g pattern exactly,
+  a write that failed quietly and reported success. `update()` returns `AssetEdit`
+  now: `ok`, `missing`, `refused`, `failed`, four outcomes because the page has four
+  things to say and must not work out which by reading a message string.
+- **`!empty($content)` was refusing a real price.** The page's guard against blanking
+  a row — right to exist, since blanking one blanks that line on every sign reading
+  it — is false for a text entry reading exactly `0`. It is `=== ''` inside the
+  module now, which is the same lesson the self-test already carries for
+  `manual_content` and the same falsy-coalesce family as §4g's `?:` on a decode.
+- **A file upload onto a text entry is refused before the file is moved.** The form
+  only ever shows a file picker for an image entry, so a POST carrying one for a text
+  entry is not the form we rendered. It used to be accepted, and the entry's words
+  became `uploads/crud_1712….jpg` — rendered, as words, on every sign using it.
+- **A failed `move_uploaded_file()` said nothing at all**, and fell through to save
+  whatever was in the path field. It reports now.
+- **The allow-list moved to the module and there is one of it.** `IMAGE_EXTENSIONS`
+  is what an upload's extension is checked against, what a path typed into the add
+  form is checked against, and what an image row's content is checked against on
+  every write. Three doors into one table had been carrying their own copy of the
+  same list.
+- **`carousel`, `table` and `marquee` rows are ordinary here, and the old form drew
+  them as images.** Publishing pools a block's content under the *block's* type, so
+  those rows exist — holding JSON. The editor had two branches, text and
+  everything-else-is-an-image, so a carousel entry was rendered with its JSON inside
+  an `<img src>` and offered a file picker to replace it. Now the third case is drawn
+  as what it is, and stored verbatim: stripping markup out of JSON leaves neither.
+  This is also why the rule is "text is plain text" rather than "not-text is an
+  image" — the latter would have made those entries uneditable.
+- **`create()` is the one moment a caller's word for a type is taken**, and it takes
+  it only for the two the add form offers. A row of some third type created there
+  could afterwards only be edited by guessing what it had been.
+
+**Twenty-eight checks, eight mutations, all eight killed** (kill counts 2, 6, 6, 4,
+2, 4, 2, 2). The two worth naming are the two halves of the original defect —
+dropping the plain-text conversion kills 2, dropping the image allow-list kills 6 —
+because those are what a hidden field saying the wrong word actually did, and neither
+was detectable before: no test could send a type at all, since the page was the only
+thing that had one. Two of the checks read `crud.php`'s source rather than running
+it, for the field itself: a hidden input still on the page is one `$_POST` read from
+deciding this again, and the page is not reachable from the fixture.
+
+Left standing, and named rather than skipped:
+
+- **The add form still reads its type from the request**, which is correct — there is
+  no row yet, and the person is choosing. It is pinned to the two values the
+  `<select>` offers, so the range of what a stored type can be is closed at both ends.
+- **Nothing repairs a row a previous version mis-typed.** A text entry that already
+  holds markup, or an image entry already pointing at an `.svg`, stays as it is until
+  somebody edits it — at which point the rule applies and the refusal explains
+  itself. Rewriting stored content on read is a write the person did not ask for, on
+  a table with no undo.
+- **The Library page is admin-only for editing, so this was never a privilege
+  boundary** — an admin can point an image entry at any allowed host either way. What
+  it was is a rule that could be skipped by accident: a stale tab, a resubmitted form,
+  a copied POST. Decision #24 (validating a background address in the module rather
+  than the panel) is the same shape on the `displays` side and is still open.
+
 ---
 
 ## 5. Verification
@@ -1975,6 +2060,17 @@ grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?assets`?" --include=*.php .
                                               # LayoutStore::snapshot(), read-only and on the path a
                                               # Screen polls every 30 seconds. A second writer here is
                                               # how row sharing came back — invariant 17
+grep -rn "edit_type" --include=*.php .        # prose in crud.php and lib/assets.php naming the field that
+                                              # used to be here, plus the two self-test checks that read
+                                              # crud.php's source for it. No hit may be code: a
+                                              # `'edit_type'` string or a `name="edit_type"` input is the
+                                              # §4u defect back — the row's type stated by the request,
+                                              # and with it which rule an edit has to pass
+grep -rn "IMAGE_EXTENSIONS\|isAllowedImageRef" --include=*.php .  # lib/assets.php defines both; crud.php
+                                              # asks for the add form and for the upload MIME/extension
+                                              # check. A literal list of image extensions in any other
+                                              # file is a fourth opinion about what an image entry may
+                                              # point at — the three that existed disagreed by omission
 grep -rn "auto_pooled\|Auto: " --include=*.php .  # lib/assets.php owns the marker; schema.php backfills
                                               # it; crud.php renders a badge and warns in the label hint.
                                               # Anything that *decides* whether a row may be deleted

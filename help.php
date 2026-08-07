@@ -670,7 +670,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h3>Adding an asset</h3>
     <ol class="steps">
         <li><span>Go to <strong>Assets</strong> in the top navigation.</span></li>
-        <li><span>Choose the asset type (Text, Image, or Video) and fill in the content and an optional label.</span></li>
+        <li><span>Choose the asset type &mdash; <strong>Text</strong> or <strong>Image</strong> &mdash; and fill in the content and an optional label.</span></li>
         <li><span>Click <strong>Add Asset</strong>.</span></li>
     </ol>
 
@@ -683,6 +683,19 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     </ol>
 
     <div class="tip"><strong>Tip:</strong> Link your price blocks to price assets. When a price changes, update the asset once — then publish — and every block showing that price updates at the same time.</div>
+
+    <h3>Editing an entry</h3>
+    <p>What kind of entry it is — text or image — is fixed when it is added, and the edit form
+       shows it. A <strong>text</strong> entry holds words only: any formatting pasted into it is
+       removed, because signs draw text literally. An <strong>image</strong> entry holds a path or
+       address ending in <strong>.jpg</strong>, <strong>.jpeg</strong>, <strong>.png</strong>,
+       <strong>.gif</strong> or <strong>.webp</strong>, and anything else — an <strong>.svg</strong>
+       especially — is refused rather than saved.</p>
+    <p>An entry cannot be saved empty: every block reading it would go blank on the next poll, and
+       there is no undo. Clear the blocks first if that is really what you want. You may also see
+       entries of other kinds, such as <strong>carousel</strong> or <strong>table</strong>, which
+       publishing saved for a block of that sort; those hold that block's own settings and are
+       best left alone unless you know what they should say.</p>
 
     <h3>&ldquo;Auto:&rdquo; entries, and the Tidy up button</h3>
     <p>Publishing keeps a copy of every text block's words in this library, so you will see
