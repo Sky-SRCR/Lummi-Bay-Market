@@ -563,12 +563,15 @@ function noteColumn(PDO $pdo, $table, $column, $who)
     echo '  ' . ($there ? 'present' : 'ABSENT ') . "  $table.$column — added by $who\n";
 }
 
-noteColumn($pdo, 'users', 'failed_attempts', 'login.php on any sign-in attempt');
-noteColumn($pdo, 'users', 'last_failed_at',  'login.php on any sign-in attempt');
-noteColumn($pdo, 'users', 'locked_until',    'login.php on any sign-in attempt');
+noteColumn($pdo, 'users', 'failed_attempts', 'convergence, on any authenticated page');
+noteColumn($pdo, 'users', 'last_failed_at',  'convergence, on any authenticated page');
+noteColumn($pdo, 'users', 'locked_until',    'convergence, on any authenticated page');
 noteColumn($pdo, 'users', 'closed_at',       'the admin panel when it is opened');
 noteColumn($pdo, 'password_resets', 'attempts', 'reset_password.php when it is opened');
 echo "  Absent is survivable: every reader copes, and the column arrives on first use.\n";
+echo "  The three lockout columns no longer arrive from login.php — nothing pre-auth\n";
+echo "  converges any more, so on a database missing them the first sign-in has no\n";
+echo "  lockout and the Builder it lands on adds them (BUILD-REFERENCE 4v).\n";
 
 echo "\n" . (count($failures) ? count($failures) . " FAILED\n" : "Rehearsal clean.\n");
 exit(count($failures) ? 1 : 0);

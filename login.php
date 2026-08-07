@@ -31,21 +31,40 @@ $error = '';
 // What is left here is the two things a page does: start a session, or print a
 // sentence.
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    ensureLockoutColumns($pdo); // idempotent; kept off the public viewer path
+    if (!csrfOk()) {
+        // Login CSRF is real and is not about protecting this account: it signs a
+        // visitor into somebody *else's* account, quietly, and then everything they
+        // do afterwards is done in that account's name. Every other POST in the app
+        // was already covered; this one was not.
+        //
+        // It refuses **softly**, which is the whole design of it. verifyCsrf() ends
+        // the request with a 403 and the word "security", and on the front door that
+        // is the wrong answer to the commonest cause by far: a browser that is not
+        // keeping the session cookie has no token to send and never will, so a hard
+        // failure there is #38's invisible loop again with a frightening sentence
+        // on it. So the page says what is actually likely to be wrong, keeps the
+        // username typed, and lets them try again.
+        //
+        // It also happens before the account is looked at, so a request with no
+        // token accrues no failed attempt and cannot be used to lock somebody out.
+        $error = 'Your sign-in form had expired, so nothing was sent. Please try again — '
+               . 'and if this keeps happening, this browser is not keeping cookies for '
+               . 'this site, which sign-in needs.';
+    } else {
+        $outcome = (new LoginAttempt(new AccountStore($pdo)))
+            ->attempt($_POST['username'] ?? '', $_POST['password'] ?? '');
 
-    $outcome = (new LoginAttempt(new AccountStore($pdo)))
-        ->attempt($_POST['username'] ?? '', $_POST['password'] ?? '');
+        if ($outcome->isOk()) {
+            session_regenerate_id(true);
+            $_SESSION['user_id']  = $outcome->accountId();
+            $_SESSION['username'] = $outcome->username();
+            $_SESSION['role']     = $outcome->role();
+            header('Location: builder.php');
+            exit;
+        }
 
-    if ($outcome->isOk()) {
-        session_regenerate_id(true);
-        $_SESSION['user_id']  = $outcome->accountId();
-        $_SESSION['username'] = $outcome->username();
-        $_SESSION['role']     = $outcome->role();
-        header('Location: builder.php');
-        exit;
+        $error = $outcome->message();
     }
-
-    $error = $outcome->message();
 }
 ?>
 <!DOCTYPE html>
@@ -111,6 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="error"><?= htmlspecialchars($error) ?></div>
     <?php endif; ?>
     <form method="POST">
+        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
         <label for="username">Username</label>
         <input type="text" id="username" name="username"
                value="<?= htmlspecialchars($_POST['username'] ?? '') ?>"

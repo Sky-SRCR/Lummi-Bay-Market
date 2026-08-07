@@ -177,7 +177,7 @@ class LoginAttempt
         // Both of these are ahead of the lockout on purpose: "please wait 15
         // minutes" is advice that comes true, and for an account nobody can ever
         // sign in to it would not.
-        $lockedUntil = $this->stamp($account, 'locked_until');
+        $lockedUntil = $this->lockoutEndsAt($account, $now);
         if ($lockedUntil !== null && $lockedUntil > $now) {
             return LoginOutcome::refused(LoginOutcome::LOCKED, self::lockedMessage($lockedUntil - $now));
         }
@@ -207,7 +207,7 @@ class LoginAttempt
      */
     private function countFailure(array $account, $now)
     {
-        $lockedUntil = $this->stamp($account, 'locked_until');
+        $lockedUntil = $this->lockoutEndsAt($account, $now);
         $lastFailed  = $this->stamp($account, 'last_failed_at');
 
         // A fresh five if the last lockout has run out, or if the last failure is
@@ -216,11 +216,11 @@ class LoginAttempt
         $agedOut        = $lastFailed  !== null && ($now - $lastFailed) > self::WINDOW_SECONDS;
         $attempts       = (($lockoutExpired || $agedOut) ? 0 : intval($account['failed_attempts'])) + 1;
 
-        $stamp = date('Y-m-d H:i:s', $now);
+        $stamp = gmdate('Y-m-d H:i:s', $now);
 
         if ($attempts >= self::MAX_ATTEMPTS) {
             $this->accounts->registerFailedLogin(
-                intval($account['id']), $attempts, $stamp, date('Y-m-d H:i:s', $now + self::WINDOW_SECONDS));
+                intval($account['id']), $attempts, $stamp, gmdate('Y-m-d H:i:s', $now + self::WINDOW_SECONDS));
             return LoginOutcome::refused(LoginOutcome::LOCKED, self::lockedMessage(self::WINDOW_SECONDS));
         }
 
@@ -228,11 +228,47 @@ class LoginAttempt
         return LoginOutcome::refused(LoginOutcome::REFUSED, self::REFUSED_MESSAGE);
     }
 
-    /** A stored datetime as a timestamp, or null when there is nothing readable. */
+    /**
+     * When this account's lockout ends, or null — and **a stamp further out than
+     * one window is not a lockout at all**, whatever the column says.
+     *
+     * ADR-0001 says a lockout is one window long, so a row claiming more than that
+     * was not written by this code, and there is exactly one way it can exist:
+     * these stamps used to be local wall-clock and are now UTC (see `stamp()`), so
+     * every row on the live database the day this deploys is in the other format,
+     * and on a server east of UTC reading one as UTC puts it *further* into the
+     * future. Serving it would mean a fifteen-minute lockout lasting the rest of
+     * the shift, on the one page nobody can work around.
+     *
+     * Ignored rather than truncated, because "no later than one window from now"
+     * re-anchors on every request and therefore never arrives. And ignoring is
+     * cheap: `failed_attempts` is untouched, so the very next wrong password counts
+     * as the sixth and locks the account straight back — with a stamp this code
+     * wrote. The hole is one guess wide and it closes itself.
+     */
+    private function lockoutEndsAt(array $account, $now)
+    {
+        $until = $this->stamp($account, 'locked_until');
+        if ($until === null) { return null; }
+        if ($until > $now + self::WINDOW_SECONDS) { return null; }
+        return $until;
+    }
+
+    /**
+     * A stored datetime as a timestamp, or null when there is nothing readable.
+     *
+     * **Read as UTC, because that is how it is written.** The pair used to be
+     * `date()` and a bare `strtotime()` — self-consistent, and wrong for the reason
+     * the edit lock was wrong before §4t: local wall-clock is not monotonic, so the
+     * autumn fall-back replays an hour, and for that hour a lockout stamped in the
+     * second pass compares as older than one stamped in the first while
+     * `strtotime()` resolves the repeated hour to its first occurrence. Fifteen
+     * minutes of brute-force protection, once a year, in the dark.
+     */
     private function stamp(array $account, $key)
     {
         if (!isset($account[$key]) || $account[$key] === null || $account[$key] === '') { return null; }
-        $when = strtotime((string)$account[$key]);
+        $when = strtotime((string)$account[$key] . ' UTC');
         return ($when === false) ? null : $when;
     }
 

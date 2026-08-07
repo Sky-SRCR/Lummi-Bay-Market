@@ -274,7 +274,17 @@ function convergedSchemaShape()
             'displays' => ['id' => $col('int(11)'), 'lock_taken_at' => $col('datetime', true)],
             'display_permissions' => ['id' => $col('int(11)')],
             'block_styles'        => ['block_type' => $col('varchar(50)')],
-            'users'               => ['id' => $col('int(11)')],
+            // The three ADR-0001 lockout columns are part of a converged shape as
+            // of the day they became gated plan entries rather than three ALTERs
+            // fired from the pre-auth login page. A shape without them would make
+            // the "a converged database is issued no DDL" check pass for the wrong
+            // reason — by never asking.
+            'users'               => [
+                'id'              => $col('int(11)'),
+                'failed_attempts' => $col('int(11)'),
+                'last_failed_at'  => $col('datetime', true),
+                'locked_until'    => $col('datetime', true),
+            ],
         ],
         'indexes' => [
             'canvas_elements' => ['PRIMARY' => true, 'display_id' => true],

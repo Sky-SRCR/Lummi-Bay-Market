@@ -1148,7 +1148,7 @@ checkSame(0, intval($pdo->query("SELECT failed_attempts FROM users WHERE id = 2"
 // A failure older than the window does not stack onto a new one — the age-out
 // half of the single window, which is the half with no other way to reach it.
 $pdo->prepare("UPDATE users SET failed_attempts = 4, last_failed_at = ?, locked_until = NULL WHERE id = 2")
-    ->execute([date('Y-m-d H:i:s', time() - LoginAttempt::WINDOW_SECONDS - 60)]);
+    ->execute([gmdate('Y-m-d H:i:s', time() - LoginAttempt::WINDOW_SECONDS - 60)]);
 checkSame(LoginOutcome::REFUSED, $signIn->attempt('clerk', 'wrong-again')->kind(),
           'a stale run of failures does not lock the account on the next single mistake');
 checkSame(1, intval($pdo->query("SELECT failed_attempts FROM users WHERE id = 2")->fetchColumn()),
@@ -1157,7 +1157,7 @@ checkSame(1, intval($pdo->query("SELECT failed_attempts FROM users WHERE id = 2"
 // A suspension while the lockout is live: still the suspended sentence, because
 // "wait 15 minutes" is advice that would never come true.
 $pdo->prepare("UPDATE users SET is_active = 0, failed_attempts = 5, locked_until = ? WHERE id = 2")
-    ->execute([date('Y-m-d H:i:s', time() + 600)]);
+    ->execute([gmdate('Y-m-d H:i:s', time() + 600)]);
 checkSame(LoginOutcome::SUSPENDED, $signIn->attempt('clerk', 'right-password')->kind(),
           'a locked-out account that is also suspended is told the thing that will not expire');
 
@@ -1165,6 +1165,66 @@ checkSame(LoginOutcome::SUSPENDED, $signIn->attempt('clerk', 'right-password')->
 checkSame(LoginOutcome::INCOMPLETE, $signIn->attempt('', 'anything')->kind(), 'no username is not an attempt');
 checkSame(LoginOutcome::INCOMPLETE, $signIn->attempt('sky', '')->kind(),      'and neither is no password');
 checkSame(LoginOutcome::INCOMPLETE, $signIn->attempt('   ', 'anything')->kind(), 'nor a username of spaces');
+
+// ---- The lockout's clock ------------------------------------------------------
+// Same defect the edit lock had before §4t, in a different table: written with
+// date() and compared with a bare strtotime(), which agrees with itself and is
+// still wrong, because local wall-clock is not monotonic. The autumn fall-back
+// replays an hour; for that hour a stamp from the second pass sorts below one from
+// the first and strtotime resolves the repeat to its first occurrence. There is no
+// way to move this process's clock into November and no need to — the bug is
+// entirely "wrote local, compared as if absolute", so what is asserted is that the
+// storage is absolute.
+$tzWas = date_default_timezone_get();
+date_default_timezone_set('America/Los_Angeles');   // the store's own zone, 7-8h off UTC
+
+$pdo->exec("UPDATE users SET is_active = 1, closed_at = NULL, failed_attempts = 0,
+                             last_failed_at = NULL, locked_until = NULL WHERE id = 2");
+$signIn->attempt('clerk', 'wrong-once');
+$stored = $pdo->query("SELECT last_failed_at FROM users WHERE id = 2")->fetchColumn();
+check(abs(strtotime($stored . ' UTC') - time()) <= 5,
+      'a failed attempt is stamped in UTC even when the server is not on it');
+check(abs(strtotime($stored) - time()) > 3600,
+      'read as local time that same string is hours out — which is what used to be stored');
+
+// And the round trip: what was just written has to be read back as the same moment,
+// or the age-out compares a stamp against a clock seven hours from it.
+$signIn->attempt('clerk', 'wrong-twice');
+checkSame(2, intval($pdo->query("SELECT failed_attempts FROM users WHERE id = 2")->fetchColumn()),
+          'and the failure written in UTC is read back as recent, so the second one stacks on it');
+
+// Every locked_until already on the live database was written in local time, and on
+// a server east of UTC reading one as UTC puts it further into the future — a
+// fifteen-minute lockout lasting the rest of the shift, on the page nobody can work
+// around. A stamp further out than one window was not written by this code.
+$pdo->prepare("UPDATE users SET failed_attempts = 5, last_failed_at = ?, locked_until = ? WHERE id = 2")
+    ->execute([gmdate('Y-m-d H:i:s', time()), gmdate('Y-m-d H:i:s', time() + 600)]);
+checkSame(LoginOutcome::LOCKED, $signIn->attempt('clerk', 'right-password')->kind(),
+          'a lockout inside the window holds, correct password and all');
+
+$staleLockout = function () use ($pdo) {
+    $pdo->prepare("UPDATE users SET failed_attempts = 5, last_failed_at = ?, locked_until = ? WHERE id = 2")
+        ->execute([gmdate('Y-m-d H:i:s', time()), gmdate('Y-m-d H:i:s', time() + 86400)]);
+};
+
+$staleLockout();
+checkSame(true, $signIn->attempt('clerk', 'right-password')->isOk(),
+          'one stamped a day out is not honoured — ADR-0001 says a lockout is one window long');
+
+// And not honouring it does not hand the account to a guesser. The counter is left
+// alone, so their one recovered guess counts as the sixth and locks it straight
+// back — with a stamp this code wrote, in the format it can read.
+$staleLockout();
+checkSame(LoginOutcome::LOCKED, $signIn->attempt('clerk', 'wrong-password')->kind(),
+          'a wrong password against that same stale row locks the account again at once');
+$reLocked = $pdo->query("SELECT locked_until, failed_attempts FROM users WHERE id = 2")->fetch();
+checkSame(6, intval($reLocked['failed_attempts']), 'the guess it cost still counted');
+check(strtotime($reLocked['locked_until'] . ' UTC') <= time() + LoginAttempt::WINDOW_SECONDS,
+      'and the stamp it was locked with is one this code will honour');
+checkSame(LoginOutcome::LOCKED, $signIn->attempt('clerk', 'right-password')->kind(),
+          'so the hole a legacy row opens is one guess wide, and it closes itself');
+
+date_default_timezone_set($tzWas);
 
 // ---- The role that goes into the session -------------------------------------
 // syncSessionAccount() normalises this on every request after the first, so a
@@ -1211,6 +1271,36 @@ $found = $bareStore->findForSignIn('sky');
 checkSame(0,    intval($found['failed_attempts']), 'the row it hands back fills the missing counters in');
 checkSame(null, $found['locked_until'],            'with a lockout that is not running');
 checkSame(null, $bareStore->findForSignIn('nobody'), 'and a username nobody has is null, not a row');
+
+// ─────────────────────────────────────────────────────────────
+section('The sign-in form is a form, not something another site can fire');
+
+// Login CSRF signs a visitor into somebody *else's* account, and everything they
+// then do is done in that account's name. Every other POST in the app was covered;
+// the front door was not.
+//
+// These read login.php's source, and that is a weaker instrument than the rest of
+// this file — it can show the two lines are there, not that the page behaves. The
+// behaviour they gate, csrfOk(), is checked properly above; what cannot be reached
+// from here is a page that prints HTML and opens a real database. Named rather than
+// dressed up.
+$loginSrc = file_get_contents(__DIR__ . '/../login.php');
+checkMentions($loginSrc, 'name="csrf_token"', 'the sign-in form carries a token');
+checkMentions($loginSrc, 'csrfOk()',          'and the POST is gated on it');
+
+// Not verifyCsrf(): that ends the request with a 403 and the word "security", and
+// the commonest cause on this page by far is a browser not keeping the session
+// cookie — which has no token to send and never will. A hard failure there is the
+// invisible sign-in loop again with something frightening written on it.
+check(strpos($loginSrc, 'verifyCsrf();') === false,
+      'and it refuses softly rather than ending the request with a 403');
+checkMentions($loginSrc, 'not keeping cookies',
+      'the sentence it prints names the cause a person can actually act on');
+
+// The gate is ahead of the account, so a request with no token cannot be used to
+// run somebody's failed-attempt counter up and lock them out.
+check(strpos($loginSrc, 'csrfOk()') < strpos($loginSrc, 'new LoginAttempt'),
+      'and nothing looks at the account until the token has been checked');
 
 // ─────────────────────────────────────────────────────────────
 section('The sign-in cookie is marked Secure exactly when the request is');
@@ -1830,10 +1920,9 @@ check($missing !== null && strpos($missing['note'], 'Do not publish') !== false,
 // Built by giving the real fixture tables a catalogue that is silent about
 // password_resets. The table is there and so is its column; the catalogue does not
 // mention it.
+// (The three lockout columns used to be patched onto the shape here. They are in
+// convergedSchemaShape() itself now that the plan gates on them.)
 $shape = convergedSchemaShape();
-$shape['columns']['users']['failed_attempts'] = ['type' => 'int(11)',  'nullable' => false];
-$shape['columns']['users']['last_failed_at']  = ['type' => 'datetime', 'nullable' => true];
-$shape['columns']['users']['locked_until']    = ['type' => 'datetime', 'nullable' => true];
 $pPdo = newTestDb();
 fakeCatalogue($shape, $pPdo);
 $partial = new ServerReport($pPdo);
@@ -1880,7 +1969,7 @@ checkSame(['seed_block_styles', 'seed_legacy_display'], planSteps($converged),
 // The fallback has to be the old behaviour exactly, or a host whose catalogue
 // cannot be read would quietly stop converging.
 $blind = signageSchemaPlan(SchemaFacts::unknown());
-checkSame(17, count(planStatements($blind)),
+checkSame(20, count(planStatements($blind)),
           'a database whose catalogue cannot be read is issued every statement, as before');
 checkSame(4, count(planSteps($blind)), 'and every step');
 checkSame(false, SchemaFacts::unknown()->known(), 'and it says so rather than answering false');
@@ -1924,10 +2013,39 @@ check(planWants($plan, 'MODIFY COLUMN display_id INT(11) NOT NULL'),
 // that has them all.
 $empty = readSchemaFacts(fakeCatalogue(['columns' => [], 'indexes' => [], 'constraints' => []]));
 checkSame(false, $empty->known(), 'a catalogue with nothing to say about this app is unknown, not empty');
-checkSame(17, count(planStatements(signageSchemaPlan($empty))),
+checkSame(20, count(planStatements(signageSchemaPlan($empty))),
           'so it falls back to trying everything rather than creating what already exists');
 
 // ---- One thing missing asks for exactly that thing ---------------------------
+
+// The three ADR-0001 lockout columns, which reached the live database a different
+// way until recently: three ungated ALTERs fired from login.php on every sign-in
+// POST — DDL with no account behind it, three metadata locks on `users` per
+// password guess. They are gated plan entries now, and a gate nothing checks is a
+// gate that may as well not be there (invariant 19).
+$shape = convergedSchemaShape();
+unset($shape['columns']['users']['failed_attempts']);
+unset($shape['columns']['users']['last_failed_at']);
+unset($shape['columns']['users']['locked_until']);
+$plan = schemaPlanFor($shape);
+checkSame(3, count(planStatements($plan)), 'a database with no lockout columns is issued exactly three statements');
+check(planWants($plan, 'ALTER TABLE users ADD COLUMN failed_attempts'), 'the counter');
+check(planWants($plan, 'ALTER TABLE users ADD COLUMN last_failed_at'),  'the stamp it ages out from');
+check(planWants($plan, 'ALTER TABLE users ADD COLUMN locked_until'),    'and the lockout itself');
+
+$shape = convergedSchemaShape();
+unset($shape['columns']['users']['locked_until']);
+$plan = schemaPlanFor($shape);
+checkSame(1, count(planStatements($plan)), 'and a database missing only one of them is issued only that one');
+check(planWants($plan, 'ALTER TABLE users ADD COLUMN locked_until'), 'namely the one it is missing');
+
+// Each carries `need => true`, which is what decides whether a failure is worth
+// emailing an admin about (invariant 20). A column that genuinely could not be
+// added is the state that sat unnoticed on the live database for months.
+foreach ($plan as $entry) {
+    if (!isset($entry['sql'])) { continue; }
+    checkSame(true, $entry['need'], 'a lockout column the catalogue says is missing is a certainty, not a guess');
+}
 
 $shape = convergedSchemaShape();
 unset($shape['columns']['assets']['auto_pooled']);
@@ -2833,7 +2951,7 @@ foreach ($blindPlan as $entry) {
     if ($entry['need'] === null) { $guessed[] = $entry['why']; }
     if ($entry['need'] === true) { $certain[] = $entry['why']; }
 }
-checkSame(19, count($guessed), 'with no catalogue, every statement in the plan is a guess');
+checkSame(22, count($guessed), 'with no catalogue, every statement in the plan is a guess');
 checkSame(['seed_block_styles', 'seed_legacy_display'], $certain,
           'and the only certainties are the two steps that ask the rows, not the catalogue');
 $statementNeeds = [];
@@ -3327,4 +3445,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(883);
+reportChecks(904);

@@ -510,6 +510,29 @@ function signageSchemaPlan(SchemaFacts $facts)
         $plan[] = ['why' => $name, 'need' => $need, 'step' => $name];
     };
 
+    // ---- users: the login lockout's three columns (ADR-0001) ----------------
+    // These were three unconditional `ALTER`s issued by `ensureLockoutColumns()`
+    // in auth.php, from login.php, on every sign-in POST. That made them the one
+    // piece of DDL in the app reachable **without an account**: a credential-
+    // stuffing bot — which is the exact threat ADR-0001 was written about — was
+    // issuing three no-op table alterations per guess, each taking a metadata lock
+    // on `users`. Convergence with a gate is what every other statement here gets,
+    // and there was never a reason for these three to be the exception.
+    //
+    // The consequence, stated because it is real: on a database where they have
+    // never been added, the *first* sign-in happens without them, since nothing
+    // pre-auth converges any more. That is exactly the state
+    // `AccountStore::findForSignIn()` already answers for — signing in without a
+    // brute-force counter beats nobody signing in at all — and it lasts until the
+    // first authenticated page load, which is the Builder that same sign-in lands
+    // on.
+    $sql($facts->needsColumn('users', 'failed_attempts'), 'users.failed_attempts',
+         "ALTER TABLE users ADD COLUMN failed_attempts INT NOT NULL DEFAULT 0");
+    $sql($facts->needsColumn('users', 'last_failed_at'), 'users.last_failed_at',
+         "ALTER TABLE users ADD COLUMN last_failed_at DATETIME NULL");
+    $sql($facts->needsColumn('users', 'locked_until'), 'users.locked_until',
+         "ALTER TABLE users ADD COLUMN locked_until DATETIME NULL");
+
     // ---- canvas_elements: columns added since the original install ----------
     // Carried over verbatim from the inline ALTERs that used to sit at the top of
     // api.php, so behaviour on an out-of-date database is unchanged.

@@ -72,7 +72,11 @@ edited in place and every change reaches the sign by hand.
   `RequestScheme::isSecure()`, never set flat: a browser discards a `Secure` cookie
   that arrived over plain HTTP, so the flat version was a correct password landing
   back on a blank login form for ever, with nothing logged and nothing to read. A
-  protection that cannot apply is reported, not applied.
+  protection that cannot apply is reported, not applied. The page also runs **no
+  DDL** — three `ALTER`s per sign-in POST made it the one piece of schema work a bot
+  could reach without an account — and it checks a CSRF token before it looks at the
+  account, **softly**, because a 403 on the front door answers "your browser is not
+  keeping cookies" with the word *security* and no way forward.
 - **PHP 7.1-compatible syntax** — the live server's version is unverified.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.

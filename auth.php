@@ -202,20 +202,18 @@ function takeFlashMessage() {
     ];
 }
 
-// ── Login-lockout helpers (account-keyed brute-force protection) ──
+// ── Login lockout (account-keyed brute-force protection) ──
 // Failed-login state lives in three columns on `users`. A single window governs
 // BOTH how long failures stay "recent" (age-out) and how long a tripped lockout
 // lasts; both numbers, and the counting they drive, are in lib/login_attempt.php
 // with the rest of the sign-in decision. See docs/adr/0001-account-keyed-login-lockout.md.
 //
-// Idempotently add the lockout columns. Called only from the pre-auth
-// pages (login / reset) — deliberately NOT from db_connect.php, so the
-// public viewer poll never runs migrations.
-function ensureLockoutColumns(PDO $pdo): void {
-    try { $pdo->exec("ALTER TABLE users ADD COLUMN failed_attempts INT NOT NULL DEFAULT 0"); } catch (Exception $e) {}
-    try { $pdo->exec("ALTER TABLE users ADD COLUMN last_failed_at DATETIME NULL"); }            catch (Exception $e) {}
-    try { $pdo->exec("ALTER TABLE users ADD COLUMN locked_until DATETIME NULL"); }              catch (Exception $e) {}
-}
+// The three columns are added by `signageSchemaPlan()` like everything else, on an
+// authenticated page, with a gate. `ensureLockoutColumns()` used to live here and
+// fired three unconditional ALTERs from login.php on every sign-in POST — DDL
+// reachable with no account at all, three metadata locks on `users` per password
+// guess, which is precisely what ADR-0001 exists to make expensive for the guesser
+// rather than for the server. Nothing pre-auth converges any more.
 
 // ── Closed accounts ─────────────────────────────────────────
 // A closed account is one that has been retired permanently: the row stays so its
