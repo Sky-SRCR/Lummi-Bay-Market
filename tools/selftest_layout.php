@@ -423,6 +423,190 @@ checkSame(enumMembers(SCHEMA_BLOCK_SUBTYPE_ENUM), $appSubs,
           'and the same for block styles');
 
 // ─────────────────────────────────────────────────────────────
+section('A value no column can hold is refused, not coerced');
+
+// Every one of these used to be `intval($el[…] ?? default)` or a raw string handed
+// to a VARCHAR. Nothing failed: intval answered 0 for a word, MySQL clamped what was
+// too big and cut what was too long, and the publish reported success — so the person
+// went on looking at the layout they drew while the sign showed something else. There
+// is no undo, which is why the answer is a refusal rather than a best guess.
+//
+// This fixture is SQLite and does not clamp or truncate anything, so what these prove
+// is the refusal, not MySQL's behaviour behind it. That is the right way round.
+
+$driveT    = loadTestDisplay($pdo, $driveT->id());
+$goodRows  = count(elementsOf($pdo, $driveT->id()));
+$goodStamp = $driveT->layoutStamp();
+
+/** The valid layout above, with one field on the content block replaced. */
+function layoutWithField($field, $value)
+{
+    return layoutOfType('text', [$field => $value]);
+}
+
+$res = publishAs($layouts, $driveT, layoutWithField('x_pos', 'left'), $goodStamp);
+checkSame('rejected', $res->kind(), 'a position that is a word is refused, not read as 0');
+checkMentions($res->message(), 'x_pos', 'and the refusal names the field');
+checkMentions($res->message(), 'not a number', 'and says what was wrong with it');
+
+$res = publishAs($layouts, $driveT, layoutWithField('width', ''), $goodStamp);
+checkSame('rejected', $res->kind(), 'an empty width is refused rather than becoming a zero-width block');
+
+$res = publishAs($layouts, $driveT, layoutWithField('y_pos', true), $goodStamp);
+checkSame('rejected', $res->kind(), 'and so is a position sent as a boolean');
+
+$res = publishAs($layouts, $driveT, layoutWithField('x_pos', 999999999), $goodStamp);
+checkSame('rejected', $res->kind(), 'a position past any canvas is refused, not clamped by the column');
+checkMentions($res->message(), 'far outside', 'and told apart from a value of the wrong shape');
+
+$res = publishAs($layouts, $driveT, layoutWithField('height', -40), $goodStamp);
+checkSame('rejected', $res->kind(), 'a negative height is refused');
+
+$res = publishAs($layouts, $driveT, layoutWithField('font_size', 0), $goodStamp);
+checkSame('rejected', $res->kind(), 'so is a font size of zero, which is text nobody can read');
+
+$res = publishAs($layouts, $driveT, layoutWithField('z_index', -3), $goodStamp);
+checkSame('rejected', $res->kind(), 'and a stacking order below the canvas, which used to be clamped to 1');
+
+// The limit is generous on purpose: a block half off the edge is a real layout.
+checkSame(2 * DisplayStore::CANVAS_MAX, LayoutStore::COORD_LIMIT,
+          'the coordinate limit is twice the biggest canvas this app allows');
+$res = publishAs($layouts, $driveT, layoutWithField('x_pos', LayoutStore::COORD_LIMIT), $goodStamp);
+check($res->isOk(), 'a block at exactly that limit still publishes');
+
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$res = publishAs($layouts, $driveT, layoutWithField('x_pos', LayoutStore::COORD_LIMIT + 1),
+                 $driveT->layoutStamp());
+checkSame('rejected', $res->kind(), 'one pixel past it does not');
+
+// Width 0 is admitted deliberately: this defect could already have written one, and
+// refusing it would leave a sign nobody can publish without editing SQL.
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$res = publishAs($layouts, $driveT, layoutWithField('width', 0), $driveT->layoutStamp());
+check($res->isOk(), 'a zero width publishes, because a row this bug already wrote may hold one');
+
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$res = publishAs($layouts, $driveT, layoutWithField('locked', 'yes'), $driveT->layoutStamp());
+checkSame('rejected', $res->kind(), 'a lock flag reading "yes" is refused — intval made it 0, meaning unlocked');
+checkMentions($res->message(), 'neither on nor off', 'and says so in those terms');
+
+$res = publishAs($layouts, $driveT, layoutWithField('hidden', 2), $driveT->layoutStamp());
+checkSame('rejected', $res->kind(), 'and a hidden flag that is neither 0 nor 1');
+
+$res = publishAs($layouts, $driveT, layoutWithField('locked', true), $driveT->layoutStamp());
+check($res->isOk(), 'a real boolean is a flag and publishes');
+
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$res = publishAs($layouts, $driveT, layoutWithField('font_color', str_repeat('c', 60)),
+                 $driveT->layoutStamp());
+checkSame('rejected', $res->kind(), 'a colour longer than its column is refused, not silently cut in half');
+checkMentions($res->message(), '50', 'and the refusal quotes the width that column has');
+
+$res = publishAs($layouts, $driveT, layoutWithField('font_family', ['Arial']), $driveT->layoutStamp());
+checkSame('rejected', $res->kind(), 'a font family sent as an array is refused');
+
+$res = publishAs($layouts, $driveT, layoutWithField('manual_content', str_repeat('x', 70000)),
+                 $driveT->layoutStamp());
+checkSame('rejected', $res->kind(), 'content past what the column holds is refused rather than truncated');
+
+$res = publishAs($layouts, $driveT, layoutWithField('asset_id', 'abc'), $driveT->layoutStamp());
+checkSame('rejected', $res->kind(), 'a library id that is not a number is refused');
+checkMentions($res->message(), 'library item', 'and named as a library item, not as a number');
+
+// '' and 0 both mean "this block has no library row" at the insert site, so neither
+// is judged — refusing them would refuse every hand-typed text block.
+$res = publishAs($layouts, $driveT, layoutWithField('asset_id', ''), $driveT->layoutStamp());
+check($res->isOk(), 'a blank library id means no library row and publishes');
+
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$res = publishAs($layouts, $driveT, layoutWithField('asset_id', 0), $driveT->layoutStamp());
+check($res->isOk(), 'and so does a zero one');
+
+// Absent and null are the same silence the insert sites read with `??`, so a null
+// takes the column default rather than being refused for not being a number.
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$res = publishAs($layouts, $driveT, layoutWithField('x_pos', null), $driveT->layoutStamp());
+check($res->isOk(), 'a field sent as null is not stated, so it takes the default');
+
+// line_height is deliberately not refused here: #32 clamps it instead, because every
+// stored value passes back out through the same formatting.
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$res = publishAs($layouts, $driveT, layoutWithField('line_height', 99), $driveT->layoutStamp());
+check($res->isOk(), 'an absurd line height is not this refusal — it is clamped, by decision #32');
+
+// Nothing above was decided inside the transaction, so no refusal cost anybody a row.
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$beforeRows = count(elementsOf($pdo, $driveT->id()));
+$beforeStamp = $driveT->layoutStamp();
+$res = publishAs($layouts, $driveT, layoutWithField('x_pos', 'left'), $beforeStamp);
+checkSame('rejected', $res->kind(), 'a refused publish is refused');
+$driveT = loadTestDisplay($pdo, $driveT->id());
+checkSame($beforeRows, count(elementsOf($pdo, $driveT->id())), 'and deleted nothing');
+checkSame($beforeStamp, $driveT->layoutStamp(), 'and did not advance the stamp');
+
+// What the Builder actually sends, stored exactly as sent. An allowlist that refuses
+// real work is a worse defect than the one it fixes.
+$asBuilderSends = [
+    ['type' => 'section', 'temp_id' => 's1', 'x_pos' => 0, 'y_pos' => 0,
+     'width' => 900, 'height' => 700, 'section_bg' => null, 'locked' => 0,
+     'sort_order' => 0, 'z_index' => 1, 'hidden' => 0],
+    ['type' => 'text', 'block_subtype' => 'price', 'parent_temp_id' => 's1',
+     'x_pos' => 850, 'y_pos' => 120, 'width' => 300, 'height' => 90,
+     'asset_id' => '', 'manual_content' => 'Sockeye 18.99', 'save_to_db_pool' => false,
+     'font_family' => 'Arial', 'font_size' => 42, 'font_color' => '#ffcc00',
+     'font_weight' => 'bold', 'font_style' => 'normal', 'line_height' => 1.4,
+     'text_align' => 'center', 'locked' => 1, 'sort_order' => 0, 'z_index' => 4,
+     'hidden' => 1],
+];
+$res = publishAs($layouts, $driveT, $asBuilderSends, $driveT->layoutStamp());
+check($res->isOk(), 'a payload shaped the way the Builder sends one publishes');
+$priceRow = null;
+foreach (elementsOf($pdo, $driveT->id()) as $row) {
+    if ($row['type'] === 'text') { $priceRow = $row; }
+}
+checkSame(850, intval($priceRow['x_pos']), 'and the position it sent is the position stored');
+checkSame(42,  intval($priceRow['font_size']), 'and the font size');
+checkSame(1,   intval($priceRow['locked']), 'and the lock flag');
+checkSame(1,   intval($priceRow['hidden']), 'and the hidden flag');
+checkSame(4,   intval($priceRow['z_index']), 'and the stacking order');
+
+// Invariant 15 again: these limits are a second statement of what `schema.sql`
+// declares, and a column widened in one place and not the other is a publish refused
+// for a value the database would have taken.
+function schemaColumnTypes($table)
+{
+    $sql = file_get_contents(__DIR__ . '/../schema.sql');
+    if (!preg_match('/CREATE TABLE IF NOT EXISTS ' . $table . ' \((.*?)\n\)/s', $sql, $m)) {
+        return [];
+    }
+    $out = [];
+    foreach (explode("\n", $m[1]) as $line) {
+        if (preg_match('/^\s+([a-z_]+)\s+([A-Za-z]+)(\((\d+)\))?/', $line, $c)) {
+            $out[$c[1]] = ['type' => strtoupper($c[2]),
+                           'width' => isset($c[4]) ? intval($c[4]) : null];
+        }
+    }
+    return $out;
+}
+$columns = schemaColumnTypes('canvas_elements');
+check(count($columns) > 20, 'schema.sql parses, so the two checks below are not vacuous');
+
+$declared = [];
+foreach ($columns as $name => $col) {
+    if ($col['type'] === 'VARCHAR') { $declared[$name] = $col['width']; }
+}
+$applied = LayoutStore::TEXT_LIMITS;
+ksort($declared); ksort($applied);
+checkSame($declared, $applied,
+          'the lengths a publish accepts are exactly the widths schema.sql declares');
+
+$notNumbers = [];
+foreach (array_keys(LayoutStore::NUMBER_RANGE) as $field) {
+    if (!isset($columns[$field]) || $columns[$field]['type'] !== 'INT') { $notNumbers[] = $field; }
+}
+checkSame([], $notNumbers, 'and every field range-checked as a number is an INT column');
+
+// ─────────────────────────────────────────────────────────────
 section('Hide and delete cannot cross Displays');
 
 $driveT = loadTestDisplay($pdo, $driveT->id());
@@ -997,12 +1181,16 @@ section('A hostile publish payload is a refusal, never an escaping error');
 // TypeError — which extends Error, not Exception. `catch (Exception)` let it escape
 // *after* both DELETEs had run: no rollback of the module's own, no result object,
 // and the Builder reported "Network error." for a rejected publish.
+//
+// It is caught before the transaction now (#30) and so answers 'rejected' rather
+// than 'failed'. The Throwable safety net underneath it is still the thing being
+// tested here, and the temp_id check below still reaches it.
 $victim = $store->forId($victim->id());
 $res = $layouts->publish($victim, new PublishRequest(
     [['type' => 'text', 'manual_content' => ['not' => 'a string'], 'temp_id' => 't1']],
     Background::unchanged(), 1, true, $victim->layoutStamp()
 ));
-checkSame('failed', $res->kind(), 'manual_content as an object is a failed result, not a fatal');
+checkSame('rejected', $res->kind(), 'manual_content as an object is refused, never a fatal');
 checkSame(2, count(elementsOf($pdo, $victim->id())), 'and the layout it would have replaced survives');
 checkSame(false, $pdo->inTransaction(), 'with no transaction left open behind it');
 
@@ -3252,4 +3440,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(848);
+reportChecks(888);

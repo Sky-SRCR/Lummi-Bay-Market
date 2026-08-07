@@ -160,6 +160,12 @@ through the app again:
    not the check it looks like — MySQL reads a quoted number as an index into the list
    and matches members case-insensitively, so `type: "1"` and `type: "Section"` both
    stored a section, from a publish a `basic` account is allowed to make (§4u).
+   The same pre-transaction pass refuses a *value* no column will hold as it was sent:
+   the numbers against `LayoutStore::NUMBER_RANGE`, the flags against on-or-off, the
+   text against the widths in `TEXT_LIMITS`. Nothing about the old coercions failed —
+   `intval('abc')` is 0 and MySQL clamps, truncates and rounds the rest without a word
+   outside strict mode — so the alternative to refusing is not an error message, it is
+   a sign quietly showing something other than what was published (§4v).
 6. **Text-block content is plain text** (ADR-0002). `toPlainText()` on save for
    `type = 'text'` only; render with `textContent`. Never `innerHTML`, never
    strip carousel/table/marquee JSON or media paths.
@@ -1916,6 +1922,76 @@ Left standing, and named rather than skipped:
   Closing it properly means the payload distinguishing "this block is unchanged" from
   "I made this", which the publish protocol currently cannot say.
 
+### 4v. A coerced value is a sign saying something nobody published
+
+Every number a publish stored went through `intval($el[…] ?? default)` and every string
+went to its `VARCHAR` untouched. Neither can fail, and that is the defect. Between
+`intval()` and a MySQL outside strict mode there are five silent rewrites:
+
+- **`intval('abc')` is `0`.** A block whose `x_pos` arrived as a word moved to the left
+  edge of the canvas. `intval('')` is 0 too, which is a block with no width.
+- **`intval()` truncates.** `12.9` stored as `12`.
+- **A number past `INT` range is clamped** to `2147483647`.
+- **A string past its column width is cut to fit.** `section_bg` is `VARCHAR(255)`, so a
+  longer path stored the first 255 characters of a path — a background that resolves to
+  nothing, on a sign, with no error anywhere.
+- **`intval('yes')` is `0`**, so a block sent as locked was stored unlocked.
+
+All five report success. The person is then looking at the layout they drew while the
+sign shows a different one, and there is no undo to reach for once the Screen has
+polled. That asymmetry is the whole argument for refusing: a refusal costs one publish
+that has to be retried, and the work is still on screen; a coercion costs a sign that
+nobody knows is wrong.
+
+`unstorableValueIn()` runs in the same pre-transaction pass as the type check, and asks
+three questions:
+
+- **Numbers** — `is_numeric()`, then a range from `NUMBER_RANGE`. `is_numeric` is the
+  whole point: it is false for `'abc'`, `'12px'`, `''` and `true` — every value `intval`
+  answered with a plausible number for — and true for `850` and `'850'`, which is what
+  the Builder sends.
+- **Flags** — `locked` and `hidden` must be `0`, `1`, `'0'`, `'1'`, `true` or `false`.
+- **Text** — a string, no longer than the width `schema.sql` declares for that column.
+
+Four decisions inside that are worth keeping:
+
+- **`isset()`, not `array_key_exists()`.** That is the same question the insert sites ask
+  with `??`: absent and null both mean "not stated", and not-stated takes the column
+  default. Only a value somebody actually sent is judged, so a client that omits a field
+  is not refused for omitting it.
+- **The coordinate limit is `2 × DisplayStore::CANVAS_MAX`, not the canvas.** A block
+  dragged half off the right-hand edge is a real layout — that is how an image is bled —
+  and a text block can measure wider than the sign it sits on. What the limit is for is
+  telling eight hundred and fifty from eight hundred and fifty million.
+- **`width` and `height` may be 0.** A zero-width row is absurd, but *this defect could
+  already have written one* (`intval('')`), and a Builder that round-trips it would then
+  be refused on every publish — a sign nobody can change without SQL. Refusing what only
+  a forged payload can contain is worth it; refusing what our own past writes could
+  contain is not. Negative sizes are refused, because nothing here has ever written one.
+- **`line_height` is not in this list.** Its decision (#32) is to clamp, because stored
+  values pass back out through the same formatting and a refusal would strand the rows
+  the old `number_format()` wrote. Whether a colour is a *usable* colour and whether a
+  path exists are also not asked here — those are #24 and #41. This pass asks shape and
+  size: the two things the column changes without saying so.
+
+**`manual_content` as an array was already a fatal**, not a coercion: `toPlainText()` is
+typed `string`, so a TypeError landed *after* both `DELETE`s had run and the Builder was
+told "Publish failed" for what is a rejected payload. The `catch (Throwable)` underneath
+made that safe; this makes it accurate. Same for `asset_id`: `intval('abc')` is 0, and
+`asset_id` 0 satisfies no foreign key, so a mistyped id failed the whole publish from
+inside the transaction — true, but not why.
+
+**The widths are duplicated on purpose, and the duplication is tested.** `TEXT_LIMITS`
+and the `VARCHAR(n)` declarations in `schema.sql` are two statements of one structure
+(invariant 15), so the self-test parses the `canvas_elements` block out of `schema.sql`
+and asserts the two agree, exactly as §4u does for the ENUMs. It also asserts every
+range-checked field is an `INT` column — and first asserts the parse found more than 20
+columns, so a regex that stops matching cannot leave both checks passing vacuously.
+
+**Forty checks**, in `selftest_layout.php`. Six of them publish rather than refuse: a
+payload shaped exactly the way `builder.php` serialises one, stored and read back field
+by field. An allowlist that refuses real work is a worse defect than the one it fixes.
+
 ---
 
 ## 5. Verification
@@ -2035,6 +2111,13 @@ grep -rn "ELEMENT_TYPES\|BLOCK_SUBTYPES" --include=*.php .  # lib/layout_store.p
                                               # second copy of either list somewhere else is drift
                                               # waiting to happen — a publish refused for a type the
                                               # column would have taken (§4u)
+grep -rn "NUMBER_RANGE\|TEXT_LIMITS\|COORD_LIMIT\|FLAG_FIELDS\|MANUAL_CONTENT_MAX" --include=*.php .
+                                              # same shape, same reason:
+                                              # lib/layout_store.php defines them, unstorableValueIn()
+                                              # is the only reader, and the self-test compares
+                                              # TEXT_LIMITS to the VARCHAR widths in schema.sql. A
+                                              # limit stated twice is a value refused in one place
+                                              # and truncated in the other (§4v)
 grep -rEn "WHERE +`?id`? *= *'?1'?" --include=*.php .  # must be empty — whitespace and quotes included
 grep -rn "1920\|1080" --include=*.php .        # admin size presets, the seed, tools/, and prose
 grep -rn "viewer.php\"\|viewer.php'" --include=*.php .  # every link must carry ?display=

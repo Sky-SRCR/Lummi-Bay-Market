@@ -46,6 +46,10 @@
 //     as an allowlist: it matches case-insensitively, and a *quoted number* with no
 //     matching member is read as an index into the list. So `type: "1"` wrote a
 //     section, from a basic account's publish, at the top level of the canvas.
+//   · Every value a publish sets is one its column can hold as sent, or the whole
+//     publish is refused. `intval()` answers 0 for "abc" and MySQL clamps, truncates
+//     and rounds the rest without a word outside strict mode, so the alternative to
+//     refusing is not an error — it is a sign that quietly says something else.
 //   · A basic account's publish preserves that Display's sections (ADR-0005),
 //     and cannot parent content into another Display's section.
 //   · type='text' content is stripped to plain text (ADR-0002); carousel/table/
@@ -181,6 +185,67 @@ class LayoutStore
     /** The same, for `block_subtype` — the six branded block types plus 'free'. */
     const BLOCK_SUBTYPES = ['free', 'section_header', 'item_title', 'item_title_2',
                             'price', 'price_2', 'description'];
+
+    /**
+     * How far off the edge of the biggest canvas this app allows a block may still
+     * be placed. Twice the canvas, not exactly the canvas: a block dragged half off
+     * the right-hand side is a real thing people do to bleed an image, and a text
+     * block can measure wider than the sign it sits on. What this is for is telling
+     * "eight hundred and fifty" from "eight hundred and fifty million".
+     */
+    const COORD_LIMIT = 2 * DisplayStore::CANVAS_MAX;
+
+    /**
+     * The numbers a publish may set, and the range each is stored in.
+     *
+     * Every one of these was `intval($el[…] ?? default)` and nothing else, which is
+     * three silent rewrites in one call: `intval('abc')` is 0, so a block whose
+     * x_pos arrived as a word moved to the left edge; `intval` truncates, so 12.9
+     * became 12; and a number past the column's INT range is clamped by MySQL to
+     * 2147483647 outside strict mode. All three publish "successfully" and the
+     * person is looking at the layout they drew, not the one that was stored — and
+     * there is no undo to reach for once the sign has redrawn.
+     *
+     * A floor of 0 on width and height rather than 1 is deliberate. A zero-width row
+     * is absurd, but this defect could already have written one (`intval('')`), and
+     * a Builder that round-trips it would then be refused on every publish, leaving
+     * a sign nobody can change without SQL. Refusing what only a forged payload can
+     * contain is worth it; refusing what our own past writes could contain is not.
+     */
+    const NUMBER_RANGE = [
+        'x_pos'      => [-self::COORD_LIMIT, self::COORD_LIMIT],
+        'y_pos'      => [-self::COORD_LIMIT, self::COORD_LIMIT],
+        'width'      => [0, self::COORD_LIMIT],
+        'height'     => [0, self::COORD_LIMIT],
+        'font_size'  => [1, 2000],
+        'z_index'    => [1, 100000],
+        'sort_order' => [0, 100000],
+    ];
+
+    /** The two on/off columns. `intval('yes')` is 0, so "locked" used to mean unlocked. */
+    const FLAG_FIELDS = ['locked', 'hidden'];
+
+    /**
+     * The text columns a publish may set, with the width each one has in
+     * `schema.sql`. Outside strict mode MySQL truncates an over-long value to fit
+     * and says nothing, so a 300-character path arrives as the first 255 characters
+     * of a path — a background that resolves to nothing on the sign. The self-test
+     * reads these widths out of `schema.sql` and checks they still agree (§5).
+     *
+     * Whether the value is a *usable* colour or a path that exists is not asked here
+     * (decisions #24 and #41). This is shape: text, and short enough to survive.
+     */
+    const TEXT_LIMITS = [
+        'font_family' => 100,
+        'font_color'  => 50,
+        'font_weight' => 20,
+        'font_style'  => 20,
+        'text_align'  => 16,
+        'section_bg'  => 255,
+    ];
+
+    /** `manual_content` is TEXT. Truncation there cuts a carousel's JSON mid-string. */
+    const MANUAL_CONTENT_MAX = 65535;
 
     private $pdo;
     private $displays;
@@ -499,8 +564,9 @@ class LayoutStore
      * Refuses (without writing anything) in three cases, and there is no merge and
      * no undo behind any of them — the refusal is the whole safety net:
      *
-     *   · the layout contains a block this app does not know how to store. Checked
-     *     first and outside the transaction, because it needs no database at all and
+     *   · the layout contains something this app cannot store — a block of an
+     *     unknown type, or a value no column will hold as it was sent. Checked first
+     *     and outside the transaction, because it needs no database at all and
      *     because the two below describe a moment: a payload that was never storable
      *     is not going to become storable by being asked again under a row lock.
      *
@@ -522,10 +588,10 @@ class LayoutStore
      */
     public function publish(Display $display, PublishRequest $request)
     {
-        $unknown = self::unknownBlockIn($request->elements());
-        if ($unknown !== null) {
+        $unstorable = self::unstorableIn($request->elements());
+        if ($unstorable !== null) {
             return PublishResult::rejected(
-                'That layout contains ' . $unknown . ', which this app cannot store. '
+                'That layout contains ' . $unstorable . ', which this app cannot store. '
                 . 'Nothing was saved. Reload the display and try again — if it keeps '
                 . 'happening, tell an admin.'
             );
@@ -625,8 +691,34 @@ class LayoutStore
     // ---- Publish internals -------------------------------------------------
 
     /**
-     * The first thing in this layout that is not a block this app knows, described
-     * for the person publishing — or null when every element is one it does.
+     * The first thing in this layout this app will not store, described for the
+     * person publishing — or null when the whole layout is storable.
+     *
+     * One pass, in submission order, and the first problem wins: a block with three
+     * things wrong with it is reported once, and element 1's problem is reported
+     * before element 9's, so a person fixing them works down the canvas rather than
+     * being told about the same block from a different angle on every attempt.
+     *
+     * Nothing here trusts the caller to have looked: `createBlock()` in the Builder
+     * decides which types a person can add and the inspector bounds what they can
+     * type, and a hand-made POST goes near neither.
+     */
+    private static function unstorableIn(array $elements)
+    {
+        foreach ($elements as $el) {
+            if (!is_array($el)) {
+                return 'an entry that is not a block at all (' . self::describeValue($el) . ')';
+            }
+
+            $bad = self::unknownBlockIn($el);
+            if ($bad === null) { $bad = self::unstorableValueIn($el); }
+            if ($bad !== null) { return $bad; }
+        }
+        return null;
+    }
+
+    /**
+     * This element's type and style, if either is not one this app knows — else null.
      *
      * The column is an ENUM, and an ENUM is not an allowlist. Three ways a value
      * that is not on the list reaches it anyway, all of them from one unvalidated
@@ -644,32 +736,114 @@ class LayoutStore
      *     string outside strict mode — a row the Builder cannot draw, the Viewer
      *     cannot draw, and no one can select to delete.
      *
-     * An entry that is not an array is refused for the same reason: `$el['type']`
-     * on an integer is null, so `[1,2,3]` published three blank text blocks.
-     *
-     * Nothing here trusts the caller to have looked: `createBlock()` in the Builder
-     * decides which types a person can add, and a hand-made POST never goes near it.
+     * An entry that is not an array is refused by the caller for the same reason:
+     * `$el['type']` on an integer is null, so `[1,2,3]` published three blank text
+     * blocks.
      */
-    private static function unknownBlockIn(array $elements)
+    private static function unknownBlockIn(array $el)
     {
-        foreach ($elements as $el) {
-            if (!is_array($el)) {
-                return 'an entry that is not a block at all (' . self::describeValue($el) . ')';
+        $type = isset($el['type']) ? $el['type'] : 'text';
+        if (!is_string($type) || !in_array($type, self::ELEMENT_TYPES, true)) {
+            return 'a block of an unknown type (' . self::describeValue($type) . ')';
+        }
+
+        // Absent, null and '' all mean "not a branded block": insertContent
+        // stores 'free' for them. Anything else stated has to be one of the six.
+        $subtype = isset($el['block_subtype']) ? $el['block_subtype'] : null;
+        if ($subtype !== null && $subtype !== ''
+            && (!is_string($subtype) || !in_array($subtype, self::BLOCK_SUBTYPES, true))) {
+            return 'a block with an unknown style (' . self::describeValue($subtype) . ')';
+        }
+
+        return null;
+    }
+
+    /**
+     * This element's first value that no column will hold as it was sent — else null.
+     *
+     * Everything here is checked with `isset()`, which is the same question the insert
+     * sites ask with `??`: absent and null both mean "not stated", and not-stated takes
+     * the column's default. Only a value somebody actually sent is judged.
+     *
+     * What is deliberately *not* here:
+     *
+     *   · **`line_height`.** Its own decision (#32) is to clamp rather than refuse,
+     *     because every stored value passes through `number_format()` on the way out
+     *     as well and a refusal there would strand the rows that bug already wrote.
+     *   · **Whether a colour is a colour, or a path exists** (#24, #41). This asks
+     *     only shape and size — the two things the column silently changes.
+     *   · **`temp_id` / `parent_temp_id`.** Their defect is collision, not shape (#31).
+     */
+    private static function unstorableValueIn(array $el)
+    {
+        foreach (self::NUMBER_RANGE as $field => $range) {
+            if (!isset($el[$field])) { continue; }
+
+            $value = $el[$field];
+            // is_numeric is the whole point: it is false for 'abc', for '12px', for
+            // '' and for true — every value intval() answered with a plausible
+            // number for. It is true for '850' and 850, which is what arrives.
+            if (!is_numeric($value)) {
+                return 'a block whose ' . $field . ' is not a number ('
+                     . self::describeValue($value) . ')';
             }
 
-            $type = isset($el['type']) ? $el['type'] : 'text';
-            if (!is_string($type) || !in_array($type, self::ELEMENT_TYPES, true)) {
-                return 'a block of an unknown type (' . self::describeValue($type) . ')';
-            }
-
-            // Absent, null and '' all mean "not a branded block": insertContent
-            // stores 'free' for them. Anything else stated has to be one of the six.
-            $subtype = isset($el['block_subtype']) ? $el['block_subtype'] : null;
-            if ($subtype !== null && $subtype !== ''
-                && (!is_string($subtype) || !in_array($subtype, self::BLOCK_SUBTYPES, true))) {
-                return 'a block with an unknown style (' . self::describeValue($subtype) . ')';
+            $number = $value + 0;
+            if ($number < $range[0] || $number > $range[1]) {
+                return 'a block whose ' . $field . ' is far outside what a sign can show ('
+                     . self::describeValue((string)$value) . ')';
             }
         }
+
+        foreach (self::FLAG_FIELDS as $field) {
+            if (!isset($el[$field])) { continue; }
+            if (!in_array($el[$field], [0, 1, '0', '1', true, false], true)) {
+                return 'a block whose ' . $field . ' is neither on nor off ('
+                     . self::describeValue($el[$field]) . ')';
+            }
+        }
+
+        foreach (self::TEXT_LIMITS as $field => $limit) {
+            if (!isset($el[$field])) { continue; }
+
+            $value = $el[$field];
+            if (!is_string($value)) {
+                return 'a block whose ' . $field . ' is not text ('
+                     . self::describeValue($value) . ')';
+            }
+            if (strlen($value) > $limit) {
+                return 'a block whose ' . $field . ' is longer than the ' . $limit
+                     . ' characters that setting holds';
+            }
+        }
+
+        if (isset($el['manual_content'])) {
+            $content = $el['manual_content'];
+            // An array here is not merely wrong, it throws: toPlainText() takes a
+            // string, so a TypeError landed *after* the layout had been deleted and
+            // the Builder was told "Publish failed" for what is a rejected payload.
+            if (!is_string($content) && !is_int($content) && !is_float($content)) {
+                return 'a block whose content is not text (' . self::describeValue($content) . ')';
+            }
+            if (strlen((string)$content) > self::MANUAL_CONTENT_MAX) {
+                return 'a block holding more content than one block can store';
+            }
+        }
+
+        // `!empty()` is what the insert asks, so '', '0', 0 and null all mean "no
+        // library row" and are not judged. Anything else has to be a real id: the
+        // old `intval('abc')` was 0, and asset_id 0 satisfies no foreign key, so a
+        // mistyped id failed the whole publish from inside the transaction with
+        // "Publish failed. Nothing was saved." — true, but not why.
+        if (!empty($el['asset_id'])) {
+            $assetId = $el['asset_id'];
+            if (!is_numeric($assetId) || $assetId + 0 != intval($assetId)
+                || intval($assetId) < 1 || intval($assetId) > 2147483647) {
+                return 'a block pointing at a library item that is not one ('
+                     . self::describeValue($assetId) . ')';
+            }
+        }
+
         return null;
     }
 
