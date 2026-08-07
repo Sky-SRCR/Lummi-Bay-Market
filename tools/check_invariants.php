@@ -323,6 +323,59 @@ if (!$badLinks) {
     $failures[] = 'viewer.php links carry a Display';
 }
 
+// ---- Nothing HTML-escaped goes inside a <script> --------------------------------
+// The other half of #15, and the half a plain grep cannot decide: the same value, the
+// same escaping call, and whether it is safe depends on which element it lands in.
+//
+// Inside `<script>` the HTML parser decodes nothing — the content is raw text until
+// `</script`. So `Markup::text()` there is not merely useless, it is misleading in
+// two directions: `&#039;` reaches the reader as six literal characters, and — the
+// part that bites — `htmlspecialchars()` does not touch a backslash. A value ending
+// in one, dropped into `var x = '…';`, escapes the quote that was meant to close the
+// string, and everything after it is code.
+//
+// Region-aware because it has to be: admin_panel.php mentions `<script>` inside a PHP
+// comment explaining why SVG uploads are refused, and a regex that believed it would
+// treat two thirds of the file as JavaScript. Only T_INLINE_HTML moves the state, so
+// what PHP comments say about script tags cannot move it.
+$badInScript = [];
+foreach (phpFilesUnder($root, '', ['lib/', 'tools/']) as $rel) {
+    $inScript = false;
+    $echoing  = null;
+    foreach (token_get_all(file_get_contents($root . '/' . $rel)) as $t) {
+        if (is_array($t) && $t[0] === T_INLINE_HTML) {
+            $open  = strripos($t[1], '<script');
+            $close = strripos($t[1], '</script');
+            if ($open !== false || $close !== false) {
+                $inScript = ($open !== false && ($close === false || $open > $close));
+            }
+            continue;
+        }
+        if (is_array($t) && ($t[0] === T_OPEN_TAG_WITH_ECHO || $t[0] === T_ECHO)) {
+            $echoing = '';
+            continue;
+        }
+        if ($echoing === null) { continue; }
+        if (is_array($t) && $t[0] === T_CLOSE_TAG) {
+            if ($inScript && strpos($echoing, 'Markup::') !== false) {
+                $badInScript[] = $rel . ': ' . trim(preg_replace('/\s+/', ' ', $echoing));
+            }
+            $echoing = null;
+            continue;
+        }
+        $echoing .= is_array($t) ? $t[1] : $t;
+    }
+}
+$checked++;
+if (!$badInScript) {
+    echo "  ok   nothing escaped for HTML is echoed inside a <script> (#15)\n";
+} else {
+    echo "  FAIL a value escaped for HTML is echoed inside a <script> (#15)\n";
+    foreach ($badInScript as $where) { echo "       $where\n"; }
+    echo "       HttpReply::jsValue() is the escaping for that element.\n";
+    $failures[] = 'HTML escaping inside a <script>';
+}
+
 // ---- What this does not cover ---------------------------------------------------
 echo "\nStill by eye — §5 greps this cannot decide:\n";
 foreach ([

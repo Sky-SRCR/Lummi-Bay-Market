@@ -927,7 +927,11 @@ function onScroll() {
     });
     links.forEach(function(a) {
         var target = a.getAttribute('href').slice(1);
-        a.style.borderLeftColor = (target === active) ? '<?= Markup::text(BRAND_ACCENT) ?>' : 'transparent';
+        // Not Markup::text(): this is inside <script>, where the HTML parser decodes
+        // nothing, so an entity stays an entity and a backslash stays a backslash —
+        // and a value ending in one escapes the quote that was supposed to close this
+        // string. HttpReply::jsValue() produces the literal, quotes included (#15).
+        a.style.borderLeftColor = (target === active) ? <?= HttpReply::jsValue(BRAND_ACCENT) ?> : 'transparent';
         a.style.color = (target === active) ? '#fff' : '';
         a.style.background = (target === active) ? '#22303f' : '';
     });
