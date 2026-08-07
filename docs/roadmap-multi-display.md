@@ -326,8 +326,13 @@ In order, on the one visit:
    - **Do not mirror or sync-with-delete.** File-by-file, or folder overwrite. A
      mirroring client deletes `uploads/` — every image and video on every sign, in
      no backup, with no undo.
-   - And **diff the live root `.htaccess`** before replacing it: a hand-raised
-     `upload_max_filesize` lives only there and reverts silently.
+   - And **read the live root `.htaccess` before replacing it — then replace it.** It
+     must go up (the security headers and the `viewer.php` framing exception are in
+     it); the reason to read it first is that a hand-raised `upload_max_filesize`
+     lives only there and reverts silently. Carry any hand-edit forward.
+
+   `setup.php` should already be gone by the time you get here — **it is not; delete
+   it first.** See the *Known live state* section of `DEPLOY-SKIP.md`.
 4. **Sign in once as an admin.** That first authenticated request is what runs the
    schema convergence: it creates `displays`, seeds the drive-thru Display from
    `canvas_settings`, and backfills `display_id`. (If the sign's poll gets there

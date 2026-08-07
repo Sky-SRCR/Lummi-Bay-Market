@@ -48,13 +48,43 @@ rewrites the file.
 `lib/.htaccess` and `tools/.htaccess` must go up *with* their folders or the modules
 and the rehearsal script become readable.
 
+### Known live state — checked 2026-08-07, and one thing is outstanding
+
+The audit framed this group as *re-uploading restored `setup.php`*. It was never
+deleted, so there is a file to clear before the rule about not re-uploading it means
+anything. What the live server answered:
+
+| Path | Answered | Reading |
+|------|----------|---------|
+| `setup.php` | **200** | *"Setup is complete. This page is disabled. Please delete setup.php from your server."* |
+| `HANDOFF.md`, `README.md`, `CLAUDE.md`, `docs/BUILD-REFERENCE.md` | 404 | Never uploaded. The `.md` deny is a backstop, not a fix for a live exposure. |
+| `.git/config` | 404 | The repository has never been uploaded. |
+| `schema.sql` | 403 | The root `.htaccess` is deployed and its `FilesMatch` blocks work on this host. |
+| `lib/schema.php` | 404 | `lib/` is not on the server yet — the multi-display build is still undeployed. |
+
+**Outstanding: delete `setup.php` from the live server.** It is *not* an
+admin-creation hole today, because accounts exist and it disables itself. It is an
+unauthenticated page that touches the database on every request, confirms what the
+app is, and prints its own removal instructions — and it becomes the form again the
+moment the app is pointed at an empty or restored database. Deleting it needs no
+downtime and nothing depends on it; the app is fully set up.
+
+Do this **before** the next upload rather than during it. Check 3 below currently
+fails, which is what a working list looks like on its first use.
+
 ## C. Never delete — these exist only on the server
 
 | Path | What is in it |
 |------|---------------|
-| `uploads/` | Every image, video and background anybody has uploaded, **including the brand logo** `branding_config.php` points at. Git-ignored, so no upload can overwrite it — only a mirroring client can destroy it, and nothing recovers it. |
+| `uploads/` | Every image, video and background anybody has uploaded, **including the brand logo** `branding_config.php` points at. Git-ignored, so no upload can overwrite it — only a mirroring client can destroy it. |
 | `logs/` — or `../../private/logs/`, whichever `ErrorPolicy::stateDir()` picked | `lbm-error.log` and its rotated `.1`, the alert throttle's `alert-*.stamp` and `report-*.stamp` files, the cached recipient list `alert-recipients.txt`, and `schema-repair.lock`. |
 | `../../private/db_credentials.php` | `DB_HOST/DB_NAME/DB_USER/DB_PASS`, and `LBM_LOG_DIR` if it is set. Outside the webroot, so it is not in the upload path — the only rule is **never copy it inside**. |
+
+**Whether anything backs `uploads/` up is unverified.** Nothing in this repo does, and
+checklist step 1 backs up the *database* only — so treat it as unrecoverable until
+somebody confirms the host takes file-level backups. If it does, name where they are
+here; that is the difference between losing the store's photographs and losing an
+afternoon.
 
 Deleting the log folder is survivable, and it is worth knowing exactly how far:
 the directory, its deny-all `.htaccess` and its empty `index.html` are rewritten on
@@ -64,17 +94,25 @@ what went wrong on the sign, which is the thing you would be reading if somethin
 had. `schema-repair.lock` is an `flock` and is expected to be zero bytes; deleting
 it while the site is idle is harmless.
 
-## D. Overwrite, but look at the live one first
+## D. Overwrite, but read the live one first
 
-`.htaccess` (root) must be uploaded — it carries the security headers and the
-`viewer.php` framing exception every Display depends on. But it is also the one
-file somebody may have edited **on the server**: raising `php_value
-upload_max_filesize` / `post_max_size` to let a bigger video through is done there
-and nowhere else. Uploading the repo's copy reverts that, and the only sign of it
-is the upload limit quietly dropping back. Diff the live copy before replacing it,
-and carry any hand-edit forward.
+**The root `.htaccess` always goes up.** It carries the security headers, the `.sql`
+and `.md` denials, and the `viewer.php` framing exception every Display depends on —
+group B's backstop is *in* this file, so a deploy that skipped it to protect a
+hand-edit would leave the docs served if they were ever uploaded. Overwrite it, and
+carry any hand-edit forward by hand. **Read before you replace, not instead of
+replacing** — that is the precedence rule, and it is the one place in this list where
+"leave the live copy alone" would be the wrong instinct.
 
-## After you upload, four checks that catch a mistake from this list
+What to look for in the live copy: it is the one file somebody may have edited **on
+the server**, because raising `php_value upload_max_filesize` / `post_max_size` to let
+a bigger video through is done there and nowhere else. Uploading over it reverts that,
+and the only sign is the upload limit quietly dropping back. Whether anyone ever did
+is unverified — the file denies itself to a browser by design, so only somebody with
+FTP can answer it. `schema.sql` answering 403 says the live copy is at least roughly
+the repo's, which makes a hand-edit unlikely rather than impossible.
+
+## After you upload, five checks that catch a mistake from this list
 
 1. **Admin Panel → Settings → This Server** — the site name is the store's, not
    "Store Display System" (A), and the upload limit is what it was (D).
@@ -83,6 +121,12 @@ and carry any hand-edit forward.
    deleted or its permissions changed (C), and until it is fixed nothing that goes
    wrong is recorded and no alert can be sent.
 3. **`https://srcresort.com/lbm/setup.php` must be gone** — a 404, not the setup
-   form and not "Setup is complete" (B).
+   form and not "Setup is complete" (B). *This check fails today; see the outstanding
+   item above.*
 4. **The brand logo still renders** in the nav bar — the cheapest proof that
    `uploads/` survived (C).
+5. **`https://srcresort.com/lbm/README.md` must answer 403** — not the file, and not
+   404. 403 proves the new `.htaccess` block parsed and is doing its job; **404 only
+   proves nobody uploaded the docs this time**, which is the right outcome but not a
+   test of the rule. Load any page of the app first: a mistake in `.htaccess` is a 500
+   on everything, so the app answering at all is what clears that risk (D).

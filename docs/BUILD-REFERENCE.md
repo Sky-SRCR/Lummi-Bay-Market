@@ -1891,10 +1891,14 @@ the moment the code moves. So:
 
 - **An `.htaccess` backstop for the one class where forgetting is silently
   exploitable.** Root `.htaccess` now denies `.md` alongside `.sql`. Uploading
-  `HANDOFF.md` published the live database name, the credentials path and the log
+  `HANDOFF.md` would publish the live database name, the credentials path and the log
   locations to anyone who guessed the URL; every other skipped file is either already
-  denied (`schema.sql`, `lib/`, `tools/`) or harmless. The rule is belt-and-braces —
-  it is not a reason to upload docs.
+  denied (`schema.sql`, `lib/`, `tools/`) or harmless. The rule is belt-and-braces — it
+  is not a reason to upload docs. It also **reverses the instinct on one file**: the
+  backstop lives in the root `.htaccess`, so that file must be *overwritten* on every
+  deploy, and group D's "look at the live one first" means read-then-replace, never
+  read-instead-of-replace. A list that pointed two ways on the file every page depends
+  on would be this same defect in miniature, so the precedence is written down.
 - **Four checks afterwards, on screens the app already has.** Settings → This Server
   answers A and D (the site name, the upload limit); Settings → Errors and Alerts
   answers C (*"Nowhere to write"* means the log folder was deleted, and until it is
@@ -1907,9 +1911,31 @@ the moment the code moves. So:
   root-level hit is a second file an upload would revert, and it belongs on the list
   in the same commit.
 
+**Then the live server was asked, and the framing was wrong.** The audit said a
+re-upload *restored* `setup.php`. It answers **200 today** — *"Setup is complete. This
+page is disabled."* — so it was never deleted, and the rule about not re-uploading it
+had nothing to be a rule about yet. The rest of group B is the opposite: `HANDOFF.md`,
+`README.md`, `CLAUDE.md`, `docs/` and `.git/config` all answer 404, so the `.md` deny
+guards a hypothesis rather than a live exposure. `schema.sql` answering 403 is the
+useful one — it proves the live `.htaccess` is roughly the repo's and that
+`FilesMatch` + `Order allow,deny` parse on this host, which is what makes the new
+block low-risk on a server with no staging. That table is recorded in DEPLOY-SKIP.md
+with its date, because a list written from the repo's beliefs about a server is how
+this defect happened the first time.
+
 Left standing, and named rather than skipped:
 
-- **Nothing verifies the deploy actually followed the list.** The four checks catch
+- **`setup.php` is still on the live server**, and deleting it needs FTP rather than a
+  commit — so it is an outstanding action in HANDOFF §7 and in the list itself, not
+  something this change closed. Post-upload check 3 fails today, deliberately left
+  failing rather than reworded to pass.
+- **Two claims in the list are inferences, and say so.** Whether anything backs up
+  `uploads/` (nothing in this repo does, and checklist step 1 backs up the database
+  only) and whether anybody ever hand-raised `upload_max_filesize` in the live
+  `.htaccess`. Both are one sentence from somebody with FTP; both are marked unverified
+  rather than asserted, because the severity of group C and the existence of group D
+  rest on them.
+- **Nothing verifies the deploy actually followed the list.** The five checks catch
   three of the four groups after the fact; a mirroring client's deletion of `uploads/`
   is caught by check 4 and by then it has happened. A `.deployignore` would only help
   if the upload went through a tool that reads one, and it does not — this is
