@@ -2839,19 +2839,39 @@ checkSame(true, ErrorPolicy::handleError(E_NOTICE, 'a notice', '', 0),
 
 // The app is full of deliberate `@` calls — this very module's filesystem writes,
 // schemaTry, the reset email. Logging them would bury the real entries.
+//
+// Both sides of this comparison are cleared first. `log()` stats the same path on
+// every call, and on some PHP builds the cached answer survives the append that
+// follows it — so an uncleared `$before` is the size the file was several entries
+// ago, and the check fails on a log that behaved perfectly.
+clearstatcache(true, $logPath);
 $before = filesize($logPath);
 $was    = error_reporting(0);
 ErrorPolicy::handleError(E_WARNING, 'a deliberately suppressed call', '', 0);
 error_reporting($was);
-clearstatcache();
+clearstatcache(true, $logPath);
 checkSame($before, filesize($logPath), 'a suppressed diagnostic is not logged at all');
 
 // A shared host has a disk quota, and this file is appended to by every request
 // forever.
 file_put_contents($logPath, str_repeat('x', ErrorPolicy::MAX_LOG_BYTES + 1));
 ErrorPolicy::log('the entry that tipped it over');
+clearstatcache(true, $logPath);
 check(file_exists($logPath . '.1'), 'an oversized log is rotated rather than grown forever');
 check(filesize($logPath) < 1024, 'and the live file starts again');
+
+// Twice in one request. `log()` used to size the file against a stat it had taken
+// before its own last append, so a request that logged its way past the limit —
+// a loop of warnings, which is exactly when the file runs away — kept appending.
+$busyDir  = newTestStateDir();
+$busyPath = $busyDir . '/lbm-error.log';
+ErrorPolicy::useLogFile($busyPath);
+ErrorPolicy::log('the first entry of this request');
+file_put_contents($busyPath, str_repeat('x', ErrorPolicy::MAX_LOG_BYTES + 1));
+ErrorPolicy::log('and the second, which finds a file that grew underneath it');
+clearstatcache(true, $busyPath);
+check(file_exists($busyPath . '.1'),
+      'a second entry in the same request still sees the size the file is now');
 
 // ─────────────────────────────────────────────────────────────
 section('Alerts: one per problem per hour, to admins only');
@@ -3456,4 +3476,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(909);
+reportChecks(910);

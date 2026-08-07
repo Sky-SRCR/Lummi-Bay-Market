@@ -361,6 +361,13 @@ class ErrorPolicy
             $path = self::logFile();
             if ($path === '') { return false; }
 
+            // PHP caches the result of a stat per path, and this function stats the
+            // same path on every call — so the second entry of a request would be
+            // sized against what the file was before the first one was appended, and
+            // a request that logs in a loop would never see the file cross the limit
+            // at all. Ask the filesystem again; it is one syscall on the rare path.
+            clearstatcache(true, $path);
+
             // `is_file` first: statting a path that is not there is a warning, and a
             // warning raised inside the thing that writes warnings down is a loop
             // waiting for somebody to remove one `@`.
