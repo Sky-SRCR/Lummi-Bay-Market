@@ -61,7 +61,7 @@ written down rather than remembered:
 | 21 | The admin panel coerced values it could not parse and reported success — an unreadable colour, an account id that isn't one. | Refuse, and say so. | Open | — |
 | 22 | Turning off a Display, suspending an account, or renaming a tag each left the edit lock behind, and never re-checked whether the holder may still sign in. | Free the lock when reach changes, never honour a lock whose holder cannot sign in, and tell the person. A rename tells them but keeps their lock. | **Done** | §4t |
 | 23 | Choosing "Image" for a background when no image is stored leaves a colour where a filename goes — the sign goes near-black. | Refuse the change. | Open | — |
-| 24 | The background address was validated in the admin panel but not in the API, so a publish could point every screen at any host. *(The "any host" half was aimed at the image branch, which the API cannot reach — an image background is a validated upload under a name the server chose. What a publish could really do is write any string into the colour column four readers assume is six hex digits, which ends in a sign keeping the colour it had and a picker publishing black. §4v has the detail.)* | Validate it in the module. | **Done** | §4v |
+| 24 | The background address was validated in the admin panel but not in the API, so a publish could point every screen at any host. *(The "any host" half was aimed at the image branch, which the API cannot reach — an image background is a validated upload under a name the server chose. What a publish could really do is write any string into the colour column four readers assume is six hex digits, which ends in a sign keeping the colour it had and a picker publishing black. §4x has the detail.)* | Validate it in the module. | **Done** | §4x |
 | 25 | The public feed served blocks an admin had deliberately hidden, content and all. | Leave them out. | Open | — |
 | 26 | A reply that failed to encode sent back a zero-length success, and the sign kept its old layout forever with no notice. | Send a real error, and let the sign notice. | Open | — |
 | 27 | `?display[]=x` became the tag "array" and printed a warning above the document. | Treat it as no sign named. | Open | — |
@@ -73,11 +73,11 @@ written down rather than remembered:
 | 33 | An account with no signs assigned could still write the shared asset library and upload files. | Nothing until it has a sign. | Open | — |
 | 34 | A file bigger than the server's real limit was reported as a security problem. | Detect it and say so plainly. | **Done** | §4n |
 | 35 | A publish that collided with another died as a PHP timeout before it could reach its own clean message. | Give up on the collision sooner, and report it properly. | Open | — |
-| 36 | The branding file was written in place with no locking, so a short write took the whole app down. | Write a temporary file, then swap it in. | **Done** | §4w |
-| 37 | The asset editor read the file type from a hidden form field instead of the stored record. | Read it from the record. | **Done** | §4u |
-| 38 | Two login problems: a secure-cookie setting causes an invisible sign-in loop on plain HTTP, and the suspended-account message tells a guesser the password was right. | Fix both. | Open | — |
+| 36 | The branding file was written in place with no locking, so a short write took the whole app down. | Write a temporary file, then swap it in. | **Done** | §4y |
+| 37 | The asset editor read the file type from a hidden form field instead of the stored record. | Read it from the record. | **Done** | §4w |
+| 38 | Two login problems: a secure-cookie setting causes an invisible sign-in loop on plain HTTP, and the suspended-account message tells a guesser the password was right. | Fix both. | **Done** | §4u, §4v |
 | 39 | Double-clicking Publish produced a success message and a stale-sign warning together. | Ignore the second while the first is still running. | Open | — |
-| 40 | A basic account with the sign open read-only threw an error on every canvas click. | Guard the lookup. | Open | — |
+| 40 | A basic account with the sign open read-only threw an error on every canvas click. | Guard the lookup. | **Done** — the click-path lookup was settled by #3; the same banner's second lookup, the one at page load, was guarded to match. | §4j |
 | 41 | An unreadable stored colour round-tripped through the colour picker and published back as black. | Validate on the way in and on the way out. | Open | — |
 | 42 | Six smaller Builder rough edges: section minimum size measured in screen pixels, Fit cannot fit a very large canvas, no way to unhide a section, deleting a slide field cannot be undone, marquee "Transparent" loses the colour, and dead code. | All six. | Open | — |
 | 43 | Deleting an account wrote to three tables with no transaction, going around the owning module. | All-or-nothing, through the module. | **Done** — settled by #20: closing is one transaction in `AccountAdmin`, and no `DELETE FROM users` exists anywhere. | §4l |
@@ -91,7 +91,10 @@ written down rather than remembered:
 
 ## Where this stands
 
-**25 done, 2 part done, 24 open.**
+**26 done, 2 part done, 22 open** — counted off the Status column above, which is
+50 rows because there is no #47. The 51st item is the unnumbered policy named at the
+top; it has no row and therefore no status, and two branches counting the same table
+have each quietly folded it into a different total. It is counted here as neither.
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

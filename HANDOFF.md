@@ -59,20 +59,22 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/display_admin.php` | `DisplayAdmin` — create/edit/delete a Display across all three tables; writes no SQL itself |
 | `lib/display_request.php` | Which Display a request means, and whether the actor may have it. Both the Builder and every API write resolve through here |
 | `lib/plain_text.php` | `toPlainText()` — signage content is plain text (ADR-0002) |
+| `lib/login_attempt.php` | `LoginAttempt` — what a refused sign-in is allowed to say, and in what order the questions are asked (ADR-0008). Every question that does not depend on the password is answered first, so no sentence and no counter can tell a guesser the password was right. Holds no PDO: it decides, `AccountStore` writes |
+| `lib/request_scheme.php` | `RequestScheme` — is the browser's own leg of this request HTTPS, and may the session cookie therefore claim `Secure` (ADR-0009). Asserting it over plain HTTP made every sign-in loop back to a blank form in silence. Also the scheme the viewer address is built from, which had its own copy of the question and got it wrong behind a proxy |
 | `lib/error_policy.php` | The error policy, set in code: errors off, logging on, the three handlers, and the notice a Screen / an endpoint / a person gets when something breaks. `report()` is for a problem the app survived, and throttles the log as well as the email when the problem repeats on its own |
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
 | `lib/branding.php` | `BrandingConfig` / `BrandingWrite` — the **only** writer of `branding_config.php`, which every page of the app requires. Renders it, parses it, writes a temporary copy, reads that back byte for byte, and swaps it in with one `rename()`, so a reader gets the whole old file or the whole new one and a failed save leaves the site on exactly what it had |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **942 checks**. Run before pushing |
-| `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **27 checks** |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **1030 checks**. Run before pushing |
+| `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **39 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit), **53 checks** |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data. It also publishes every element type and block subtype the schema allows and reads them back, checks that a deleted Display really cascades, and prints which of the five page-added columns landed |
 | `config.php` | Brings the eight branding constants (`BRAND_*`, `SITE_NAME`, `MAIL_FROM`, `MAIL_FROM_NAME`) into being through `lib/branding.php`. The one place that loads `branding_config.php` |
 | `db_connect.php` | PDO `$pdo`; loads creds from `../../private/db_credentials.php` |
-| `auth.php` | `session_start`; `requireLogin/requireAdmin/isAdmin/currentUser`; `csrfToken()/verifyCsrf()`; the login-lockout columns |
+| `auth.php` | `session_start` with the cookie attributes `RequestScheme` decides, in both the pre-7.3 and 7.3+ forms; `requireLogin/requireAdmin/isAdmin/currentUser`; `csrfToken()/verifyCsrf()`. It no longer adds the login-lockout columns — those are gated entries in `signageSchemaPlan()` |
 | `branding_config.php` | Generated brand theme (`BRAND_*` constants) plus `SITE_NAME` and the two mail-from fields. Written only by `lib/branding.php`, and never in place |
-| `login.php` / `logout.php` | Auth; account-keyed DB login lockout (5 tries / 15-min window) |
+| `login.php` / `logout.php` | Auth; account-keyed DB login lockout (5 tries / 15-min window, stamped in UTC). Every sentence it can print and every counter it writes are `LoginAttempt`'s, so no message it shows depends on something a stranger must not learn. It runs no DDL and it carries a CSRF token |
 | `.htaccess` | Server config: index/sensitive-file blocks, security headers, PHP hardening, HTTPS redirect. Frames `viewer.php` for external widgets (see §8) |
 | `lib/.htaccess`, `tools/.htaccess` | Make both folders unreachable from a browser. **Deploy them with the folders** |
 | `reset_password.php` | 2-step emailed 6-digit passcode reset (30-min expiry) |
@@ -139,7 +141,7 @@ anything, they hold every Display by role.
 - The live `branding_config.php` still uses the default `SITE_NAME`
   ("Store Display System"), not "Lummi Bay Market".
 - **The webroot directory must be writable by the web user**, not just
-  `branding_config.php` itself. Since §4w that file is replaced by writing a
+  `branding_config.php` itself. Since §4y that file is replaced by writing a
   temporary copy beside it and `rename`-ing over it, so the permission that matters
   moved from the file to the folder. If only the file was made writable, the first
   save after this deploy fails with *"Check the folder permissions."* and nothing is
@@ -301,7 +303,7 @@ staleness check, no version history), 0007 (one editor per Display).
   URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
   account, two browsers, and one unavoidable 15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 826 self-test checks against SQLite, 80 node checks over `builder.php`'s
+  `php -l`, 914 self-test checks against SQLite, 92 node checks over `builder.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare

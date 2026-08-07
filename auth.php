@@ -5,9 +5,19 @@
 // opening a session it never reads. A framed Screen returns no cookie, so each
 // poll was minting a fresh session file: thousands a day, per Screen, reaped by
 // nothing.
+require_once __DIR__ . '/lib/request_scheme.php';
+
 if (!defined('AUTH_NO_SESSION') && session_status() === PHP_SESSION_NONE) {
-    // Harden the session cookie: unreadable to page scripts (HttpOnly),
-    // HTTPS-only (Secure), and not sent on cross-site requests (SameSite=Lax).
+    // Harden the session cookie: unreadable to page scripts (HttpOnly), not sent
+    // on cross-site requests (SameSite=Lax), and marked Secure on the requests
+    // where Secure is a protection rather than a wall.
+    //
+    // `Secure` used to be a flat `true`, and on a deployment reached over plain
+    // HTTP that is not a hardening — it is an invisible sign-in loop. The browser
+    // discards the cookie, builder.php finds no session, and the correct password
+    // lands back on a blank login form with nothing to read. So the flag is
+    // decided per request, by lib/request_scheme.php, which is where the reasoning
+    // about proxies and forged headers is written down.
     //
     // Two forms, because the options-array signature arrived in PHP 7.3 and this
     // app targets 7.1 with the live version unverified. On 7.1 the array form is
@@ -20,11 +30,11 @@ if (!defined('AUTH_NO_SESSION') && session_status() === PHP_SESSION_NONE) {
         session_set_cookie_params([
             'path'     => '/',
             'httponly' => true,
-            'secure'   => true,
+            'secure'   => RequestScheme::isSecure($_SERVER),
             'samesite' => 'Lax',
         ]);
     } else {
-        session_set_cookie_params(0, '/; SameSite=Lax', '', true, true);
+        session_set_cookie_params(0, '/; SameSite=Lax', '', RequestScheme::isSecure($_SERVER), true);
     }
     session_start();
 }
@@ -192,35 +202,18 @@ function takeFlashMessage() {
     ];
 }
 
-// ── Login-lockout helpers (account-keyed brute-force protection) ──
-// Failed-login state lives in three columns on `users`. A single window
-// governs BOTH how long failures stay "recent" (age-out) and how long a
-// tripped lockout lasts. See docs/adr/0001-account-keyed-login-lockout.md.
-const LOGIN_LOCKOUT_MAX    = 5;    // failed attempts before lockout
-const LOGIN_LOCKOUT_WINDOW = 900;  // 15 minutes, in seconds
-
-// Idempotently add the lockout columns. Called only from the pre-auth
-// pages (login / reset) — deliberately NOT from db_connect.php, so the
-// public viewer poll never runs migrations.
-function ensureLockoutColumns(PDO $pdo): void {
-    try { $pdo->exec("ALTER TABLE users ADD COLUMN failed_attempts INT NOT NULL DEFAULT 0"); } catch (Exception $e) {}
-    try { $pdo->exec("ALTER TABLE users ADD COLUMN last_failed_at DATETIME NULL"); }            catch (Exception $e) {}
-    try { $pdo->exec("ALTER TABLE users ADD COLUMN locked_until DATETIME NULL"); }              catch (Exception $e) {}
-}
-
-// Wipe all lockout state for one account. Called on a successful login
-// and on a completed password reset (the two recovery paths).
+// ── Login lockout (account-keyed brute-force protection) ──
+// Failed-login state lives in three columns on `users`. A single window governs
+// BOTH how long failures stay "recent" (age-out) and how long a tripped lockout
+// lasts; both numbers, and the counting they drive, are in lib/login_attempt.php
+// with the rest of the sign-in decision. See docs/adr/0001-account-keyed-login-lockout.md.
 //
-// The statement lives in lib/accounts.php, which checks the three columns exist
-// first. This used to assume them, so on a database where ensureLockoutColumns()
-// could not apply — no ALTER privilege, a full disk — it threw "unknown column" at
-// the end of a *successful* sign-in, and nobody could get in on any account. The
-// comment in login.php has always said this helper swallows its own failures; now
-// it does.
-function clearLockout(PDO $pdo, int $userId): void {
-    $store = new AccountStore($pdo);
-    $store->clearLoginLockout($userId);
-}
+// The three columns are added by `signageSchemaPlan()` like everything else, on an
+// authenticated page, with a gate. `ensureLockoutColumns()` used to live here and
+// fired three unconditional ALTERs from login.php on every sign-in POST — DDL
+// reachable with no account at all, three metadata locks on `users` per password
+// guess, which is precisely what ADR-0001 exists to make expensive for the guesser
+// rather than for the server. Nothing pre-auth converges any more.
 
 // ── Closed accounts ─────────────────────────────────────────
 // A closed account is one that has been retired permanently: the row stays so its

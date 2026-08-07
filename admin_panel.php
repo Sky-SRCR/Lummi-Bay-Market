@@ -43,11 +43,12 @@ $grantStore   = new GrantStore($pdo);
 $displayAdmin = new DisplayAdmin($pdo, $displayStore, $layoutStore, $grantStore);
 
 // Accounts are closed, never deleted, so an id number can never come back into
-// service under a different person (lib/accounts.php). The column that records it
-// converges here for the same reason as everything above. AccountAdmin holds the
+// service under a different person (lib/accounts.php). `closed_at` used to be added
+// by an `AccountStore::ensureSchema()` call on this line — one ungated ALTER per
+// page load; it is in the plan `ensureSignageSchema()` ran above, which is why the
+// store is built after that call rather than before. AccountAdmin holds the
 // transaction that surrenders their grants and their edit lock in the same breath.
 $accountStore = new AccountStore($pdo);
-$accountStore->ensureSchema();
 $accountAdmin = new AccountAdmin($pdo, $accountStore, $grantStore, $displayStore);
 
 // The one moment an alert can learn who to write to. When the database is
@@ -62,7 +63,11 @@ $accountAdmin = new AccountAdmin($pdo, $accountStore, $grantStore, $displayStore
  * being copied to a device that has no idea what page it came from.
  */
 function viewerUrlFor(Display $display): string {
-    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    // The same question the session cookie is decided from, asked once. This copy
+    // knew only about the HTTPS server variable, so on a host that terminates TLS
+    // at a proxy it printed an http:// address for a site that is HTTPS — and the
+    // person it fails is standing at a television with no way to tell why.
+    $scheme = RequestScheme::scheme($_SERVER);
     $host   = $_SERVER['HTTP_HOST'] ?? 'localhost';
     $dir    = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/');
     return $scheme . '://' . $host . $dir . '/viewer.php?display=' . urlencode($display->tag());
@@ -73,7 +78,7 @@ function viewerUrlFor(Display $display): string {
 // so a half-written one is not a failed save — it is the whole site down until
 // somebody notices. BrandingConfig owns the file: it writes a temporary copy,
 // checks it, and swaps it in with a single rename, so a reader gets the whole old
-// file or the whole new one. See §4w. This page collects the two forms and prints
+// file or the whole new one. See §4y. This page collects the two forms and prints
 // what came back; it knows neither the filename nor the eight setting names.
 $branding = new BrandingConfig(__DIR__);
 $branding->load();

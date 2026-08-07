@@ -361,19 +361,19 @@ class ErrorPolicy
             $path = self::logFile();
             if ($path === '') { return false; }
 
-            // The size PHP remembers is not the size of the file. `filesize()` is
-            // served from the stat cache, and this log's other writers are *other
-            // requests* — every page load is a separate process appending to it —
-            // so a cached answer is one this process took before anybody else's
-            // entry landed. It is also stale within one request: the previous call
-            // to this method statted the file and then appended to it. Deciding
-            // whether to rotate on that number is deciding on the size the log used
-            // to be, which is how it grows past the cap it has.
-            //
+            // PHP caches the result of a stat per path, and this function stats the
+            // same path on every call — so the second entry of a request would be
+            // sized against what the file was before the first one was appended, and
+            // a request that logs in a loop would never see the file cross the limit
+            // at all. The same is true across requests, which is the larger half of
+            // it: every page load is a separate process appending to this one file,
+            // so a cached answer is one this process took before anybody else's entry
+            // landed. Ask the filesystem again; it is one syscall on the rare path.
+            clearstatcache(true, $path);
+
             // `is_file` first: statting a path that is not there is a warning, and a
             // warning raised inside the thing that writes warnings down is a loop
             // waiting for somebody to remove one `@`.
-            @clearstatcache(true, $path);
             if (@is_file($path) && @filesize($path) > self::MAX_LOG_BYTES) {
                 // One generation kept. Two would need a policy for the third.
                 @rename($path, $path . '.1');

@@ -60,6 +60,23 @@ edited in place and every change reaches the sign by hand.
   holds a sign disagree silently. Then make sure the Builder *says so*: `applyLockAnswer()`
   ignores a failed heartbeat on purpose, and `LOCK_TERMINAL` is the fixed list of refusals
   that never come back — each with its own sentence, because what to do next differs.
+- **The front door answers before it reads the password.** Closed, suspended and
+  locked-out are properties of the *account*, so `LoginAttempt` settles all three
+  before `password_verify()` runs — otherwise the sentence a person reads is a
+  function of the password, and a guesser working a suspended account is told the
+  moment they get it right (ADR-0008). Closed is asked before suspended because
+  closing clears `is_active` too; both come before the lockout, because "wait 15
+  minutes" has to be advice that comes true. Those two accrue no failed attempt
+  either — a counter that moves for one password and not another is the same oracle
+  in another form. And the session cookie's `Secure` flag is decided per request by
+  `RequestScheme::isSecure()`, never set flat: a browser discards a `Secure` cookie
+  that arrived over plain HTTP, so the flat version was a correct password landing
+  back on a blank login form for ever, with nothing logged and nothing to read. A
+  protection that cannot apply is reported, not applied. The page also runs **no
+  DDL** — three `ALTER`s per sign-in POST made it the one piece of schema work a bot
+  could reach without an account — and it checks a CSRF token before it looks at the
+  account, **softly**, because a 403 on the front door answers "your browser is not
+  keeping cookies" with the word *security* and no way forward.
 - **PHP 7.1-compatible syntax** — the live server's version is unverified.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.
@@ -69,9 +86,16 @@ edited in place and every change reaches the sign by hand.
 ```
 php -l <every touched .php>
 php tools/selftest_layout.php
+php tools/check_doc_numbering.php          # if a doc gained a section or invariant
 node tools/selftest_builder_readonly.js    # if builder.php was touched
 node tools/selftest_builder_uploads.js     # if builder.php was touched
 ```
+
+`check_doc_numbering.php` also prints the next free section letter. That is the
+question every branch cut from the same base has to answer before it writes a
+write-up, and four of them once answered it with the same letter — ask the tool
+rather than counting, and note that it will not let a document cite a section
+that does not exist yet, which is what a guess looks like from the outside.
 
 `php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it —
 which is why the standing gate is not enough on its own. Extract the `<script>`

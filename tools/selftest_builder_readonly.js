@@ -104,10 +104,96 @@ check(emittedOnlyWhenEditable('<div id="table-modal-overlay">'),    'so is the t
 // can happen to somebody who is only watching. A read-only page has the access bar
 // and the banner above it, and nothing else the lock uses.
 const PRESENT = new Set([
-    'lock-banner', 'lock-access-bar', 'lock-access-text', 'lock-holder',
+    'lock-banner', 'lock-access-bar', 'lock-access-text',
     'control-bar', 'zoom-readout', 'editor-frame', 'canvas-sizer', 'builder-canvas',
     'toast', 'resize-label', 'display-off-banner', 'top-nav'
 ]);
+
+// ---- ...and the list above is checked against the page, not trusted ----------
+
+// PRESENT is the whole basis of this suite, and it is the one part of it nothing
+// was checking. A name listed here resolves to a stub; a name missing from it
+// resolves to null, exactly as the browser would. So a name in this list that the
+// page does not actually emit is worse than useless — it hands back an element
+// where a browser hands back null, and the null-deref this file exists to catch
+// becomes invisible to it.
+//
+// That had already happened: `lock-holder` sat in this list and never was an id at
+// all. It is LOCK_HOLDER, a variable. Harmless, because nothing looked it up — but
+// it got there because a hand-written mirror of the markup had nothing holding it
+// to the markup, and the next such entry need not be harmless.
+
+/**
+ * Where each id sits in the file's PHP conditionals — first occurrence wins.
+ *
+ * Script blocks are stripped first, so an id in a JavaScript template string is not
+ * mistaken for one the page emits. Safe to strip: no `<?php if:` opens or closes
+ * inside a script block, so the conditional stack is untouched by their removal.
+ */
+function emitConditions() {
+    const markup = php.replace(/<script\b(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/gi, '');
+    const stack = [], seen = Object.create(null);
+    const re = /<\?php\s+(if\s*\((.*?)\)\s*:|else\s*:|elseif\s*\((.*?)\)\s*:|endif;)\s*\?>|id="([a-zA-Z0-9_-]+)"/g;
+    let m;
+    while ((m = re.exec(markup))) {
+        if (m[4])                           { if (!(m[4] in seen)) { seen[m[4]] = stack.slice(); } }
+        else if (m[1].startsWith('if'))     { stack.push(m[2].trim()); }
+        else if (m[1].startsWith('elseif')) { if (stack.length) { stack[stack.length - 1] = '__unknown'; } }
+        else if (m[1].startsWith('else'))   { if (stack.length) { stack[stack.length - 1] = '!(' + stack[stack.length - 1] + ')'; } }
+        else if (m[1].startsWith('endif'))  { stack.pop(); }
+    }
+    return seen;
+}
+
+/**
+ * Can the markup emit this node at all for a basic account on a read-only page?
+ *
+ * `$readOnly` and `$isAdmin` are the two this suite fixes. Anything else in a
+ * condition — `!$display->isActive()` is the real case — is a runtime fact it has
+ * no opinion about, so it is tried both ways and a single "yes" is enough. The
+ * question being asked is whether the page *can* emit the node, not whether it
+ * always does: only a node it can never emit makes a PRESENT entry a lie.
+ */
+function canEmitForReadOnlyBasic(conds) {
+    let e = conds.map(function (c) { return '(' + c + ')'; }).join(' && ') || 'true';
+    e = e.replace(/\$readOnly/g, 'true').replace(/\$isAdmin/g, 'false');
+
+    let n = 0;
+    e = e.replace(/\$[A-Za-z_][A-Za-z0-9_]*(?:->[A-Za-z_][A-Za-z0-9_]*\([^)]*\))?|__unknown/g,
+                  function () { return 'U' + (n++) + '_'; });
+    if (n > 8) { return true; }                     // too many to enumerate; do not fail on it
+
+    for (let mask = 0; mask < (1 << n); mask++) {
+        let candidate = e;
+        for (let i = 0; i < n; i++) {
+            candidate = candidate.split('U' + i + '_').join((mask & (1 << i)) ? 'true' : 'false');
+        }
+        try { if (eval(candidate)) { return true; } }   // eslint-disable-line no-eval
+        catch (err) { return true; }                    // unparseable: assume it can appear
+    }
+    return false;
+}
+
+section('The stub DOM is what the page emits, not a wish list');
+
+const EMITS = emitConditions();
+const liars = [];
+PRESENT.forEach(function (id) {
+    if (!(id in EMITS)) {
+        liars.push(id + ' — never an id in builder.php');
+    } else if (!canEmitForReadOnlyBasic(EMITS[id])) {
+        liars.push(id + ' — emitted only when ' + EMITS[id].join(' && '));
+    }
+});
+check(liars.length === 0,
+      'every id the stub answers to is one this page really emits'
+      + (liars.length ? ' — ' + liars.join('; ') : ''));
+
+// The control, and the reason the check above is not hollow: a walker that judged
+// everything present would pass it while proving nothing. #inspector is the node
+// this whole file was written about, and it must come back absent.
+check(!canEmitForReadOnlyBasic(EMITS['inspector'] || []),
+      'and the walker can still tell an editable-only node from an emitted one');
 
 function stubEl(id) {
     return {
@@ -130,7 +216,14 @@ global.document = {
         if (!PRESENT.has(id)) { return null; }
         return nodes[id] || (nodes[id] = stubEl(id));
     },
-    querySelector() { return null; },
+    // Null for everything except the one lookup a page load genuinely depends on:
+    // loadLayout() finds a block's parent section with this, and skips the block
+    // entirely when it comes back null. Left null, a child block silently never
+    // renders and the `isChildBlock` branch of renderBlock() is never taken — the
+    // suite would report drawing a layout it had quietly dropped half of.
+    querySelector(sel) {
+        return /^\.section-block\[data-db-id=/.test(sel || '') ? stubEl('section') : null;
+    },
     querySelectorAll() { return []; },
     createElement(tag) { return stubEl(tag); },
     addEventListener() {},
@@ -181,12 +274,74 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     await survives('targeting a section is a no-op rather than a throw',             () => setTargetSection(stubEl('s')));
     await survives('the align bar update finds nothing to update',                   () => updateAlignBar());
 
+    // Revealing the section banner runs at init, not on a click, and it is the
+    // other half of the same lookup: this page has no banner to reveal. It is
+    // worth its own check because a throw here is more expensive than a throw on
+    // a click — the two calls after it in DOMContentLoaded are the zoom fit and
+    // setupLockWatch(), so a read-only page that threw would also never notice
+    // it had lost the sign.
+    await survives('revealing the section banner finds no banner to reveal', () => showSectionBanner());
+
     // Runs on every page load, read-only or not: the library is still needed to
     // render a block that points at an entry, even with no dropdown to fill.
     global.fetch = () => Promise.resolve({
         json: () => Promise.resolve([{ id: 1, type: 'text', content: 'Sockeye 18.99', label: 'Sockeye' }])
     });
     await survives('the asset library loads with no dropdown to put it in', () => loadAssets());
+
+    // The other half of that page load, and the one with a control in it. loadLayout()
+    // calls toggleBgInputs() and, for a colour background, applyBg() — both of which
+    // reach for the background picker, which is an admin's and only while the page can
+    // edit. They used to be guarded by restating that rule in JavaScript; they now ask
+    // whether the control is there. Nothing exercised either until this, so the seam
+    // was converted and then left unheld — which is how the first one broke.
+    // `status: 'success'` matters — without it loadLayout() takes its early return and
+    // never reaches the background at all, which is a test that passes while running
+    // none of the code it names. And the promise is returned rather than dropped: a
+    // throw inside a `.then` is an unhandled rejection, not something survives() can
+    // see, so dropping it would swallow exactly the failure being tested for.
+    function layoutReplying(display, elements) {
+        global.fetch = () => Promise.resolve({
+            json: () => Promise.resolve({ status: 'success', display: display,
+                                          elements: elements || [],
+                                          block_styles: {}, layout_stamp: 'stamp' })
+        });
+        return loadLayout().then(settle);
+    }
+    await survives('a layout with a colour background loads with no picker to set',
+                   () => layoutReplying({ bg_type: 'color', bg_val: '#123456' }));
+    await survives('and one with an image background does too',
+                   () => layoutReplying({ bg_type: 'image', bg_val: 'bg.png' }));
+    await survives('and choosing a background file finds no file input to read',
+                   () => applyBgFile());
+
+    // Both loads above carry no elements, which exercises the background and not one
+    // line of the drawing — and drawing is what a read-only page is *for*. Somebody
+    // watching a sign sees every block on it; renderBlock() and renderSection() run
+    // for all of them, on a page with no inspector, no align bar and no modals to put
+    // anything in. Each entry below takes a branch of its own: a section to be a
+    // parent, a child inside it, a locked block, a hidden one, one drawn from a
+    // library entry rather than typed, and one of every remaining type.
+    const EVERY_TYPE = [
+        { id: 1, type: 'section',  block_subtype: 'free', x_pos: 0,  y_pos: 0,  width: 600, height: 380, z_index: 1, locked: 0, hidden: 0, section_id: null, manual_content: '',              db_content: '' },
+        { id: 2, type: 'text',     block_subtype: 'free', x_pos: 10, y_pos: 10, width: 200, height: 60,  z_index: 1, locked: 0, hidden: 0, section_id: 1,    manual_content: 'Sockeye 18.99', db_content: '' },
+        { id: 3, type: 'text',     block_subtype: 'price',x_pos: 10, y_pos: 80, width: 200, height: 60,  z_index: 2, locked: 1, hidden: 1, section_id: null, asset_id: 7, manual_content: '', db_content: 'Halibut 24.99' },
+        { id: 4, type: 'image',    block_subtype: 'free', x_pos: 20, y_pos: 20, width: 100, height: 100, z_index: 1, locked: 0, hidden: 0, section_id: null, manual_content: 'a.png',         db_content: '' },
+        { id: 5, type: 'carousel', block_subtype: 'free', x_pos: 30, y_pos: 30, width: 300, height: 200, z_index: 1, locked: 0, hidden: 0, section_id: null, manual_content: '{"slides":[],"interval":5000}', db_content: '' },
+        { id: 6, type: 'table',    block_subtype: 'free', x_pos: 40, y_pos: 40, width: 300, height: 200, z_index: 1, locked: 0, hidden: 0, section_id: null, manual_content: '{"rows":[["a"]]}', db_content: '' },
+        { id: 7, type: 'marquee',  block_subtype: 'free', x_pos: 50, y_pos: 50, width: 300, height: 60,  z_index: 1, locked: 0, hidden: 0, section_id: null, manual_content: '{"text":"hi"}',  db_content: '' },
+        { id: 8, type: 'video',    block_subtype: 'free', x_pos: 60, y_pos: 60, width: 300, height: 200, z_index: 1, locked: 0, hidden: 0, section_id: null, manual_content: 'v.mp4',         db_content: '' }
+    ];
+    await survives('every block type draws on a page that cannot edit any of them',
+                   () => layoutReplying({ bg_type: 'color', bg_val: '#111' }, EVERY_TYPE));
+
+    // The rest of DOMContentLoaded. Both of these are safe by inspection — they
+    // touch only ids the page always emits — but inspection is what this suite
+    // exists to stop relying on, and they are the two calls the banner reveal sits
+    // in front of: a throw up there costs the zoom fit and the lock watch, and a
+    // read-only page with no lock watch never learns it has lost the sign at all.
+    await survives('the zoom fit measures a frame with no controls around it', () => zoomToFit());
+    await survives('and the lock watch starts, which is how this page hears anything', () => setupLockWatch());
 
     section('And what can no longer be reached');
 
@@ -195,6 +350,21 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     // markup and these are the functions a future control would call.
     const block = stubEl('b');
     block.dataset.type = 'text';
+
+    // Why the ~90 unguarded derefs inside the inspector and the two modals are
+    // allowed to stay unguarded. Every one sits behind `if (!activeBlock) return`,
+    // and on this page activeBlock is permanently null — so they are unreachable
+    // rather than safe. §4j calls that a property of today's call graph and not a
+    // rule, which is fair, and these two checks are what make it a rule: the only
+    // assignment that can make activeBlock non-null refuses on a read-only page,
+    // and there is still only one such assignment. A second one appearing is the
+    // change that would quietly put all ~90 back in reach.
+    await survives('selecting a block is refused rather than half-done', () => selectBlock(block));
+    check(activeBlock === null, 'so activeBlock stays null and the inspector derefs stay unreachable');
+    const assigns = js.match(/activeBlock\s*=(?!=)\s*[A-Za-z_$][\w$]*/g) || [];
+    check(assigns.filter(function (a) { return !/=\s*null$/.test(a); }).length === 1,
+          'and activeBlock still has exactly one assignment that can make it non-null');
+
     await survives('showing an inspector that is not there does nothing', () => showInspector(block));
     await survives('multi-select does not reach for it either',           () => toggleMultiSel(stubEl('b2')));
     multiSel.length = 0;   // undo the block the line above pushed in
@@ -268,7 +438,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 27;
+    const expected = 39;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

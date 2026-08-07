@@ -563,12 +563,17 @@ function noteColumn(PDO $pdo, $table, $column, $who)
     echo '  ' . ($there ? 'present' : 'ABSENT ') . "  $table.$column — added by $who\n";
 }
 
-noteColumn($pdo, 'users', 'failed_attempts', 'login.php on any sign-in attempt');
-noteColumn($pdo, 'users', 'last_failed_at',  'login.php on any sign-in attempt');
-noteColumn($pdo, 'users', 'locked_until',    'login.php on any sign-in attempt');
-noteColumn($pdo, 'users', 'closed_at',       'the admin panel when it is opened');
+noteColumn($pdo, 'users', 'failed_attempts', 'convergence, on any authenticated page');
+noteColumn($pdo, 'users', 'last_failed_at',  'convergence, on any authenticated page');
+noteColumn($pdo, 'users', 'locked_until',    'convergence, on any authenticated page');
+noteColumn($pdo, 'users', 'closed_at',       'convergence, on any authenticated page');
 noteColumn($pdo, 'password_resets', 'attempts', 'reset_password.php when it is opened');
 echo "  Absent is survivable: every reader copes, and the column arrives on first use.\n";
+echo "  The three lockout columns no longer arrive from login.php, and closed_at no\n";
+echo "  longer from the admin panel's own ALTER — both are gated plan entries now.\n";
+echo "  On a database missing them the first sign-in has no lockout, and the Builder\n";
+echo "  it lands on adds them (BUILD-REFERENCE 4v). password_resets is the one that\n";
+echo "  still converges from an unauthenticated page, deliberately.\n";
 
 echo "\n" . (count($failures) ? count($failures) . " FAILED\n" : "Rehearsal clean.\n");
 exit(count($failures) ? 1 : 0);
