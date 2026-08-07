@@ -26,22 +26,37 @@ of the system.
 
 ## 2. Git / branch
 
-- **Working branch:** `claude/app-update-planning-1pjqfr` (all work goes here)
-- Push with `git push -u origin claude/app-update-planning-1pjqfr`
-- **PR #3** (`claude/app-update-planning-1pjqfr` → `main`):
-  https://github.com/Sky-SRCR/Lummi-Bay-Market/pull/3 — the whole multi-display
-  build. Open, CI green, not merged.
-- PR #2 (security hardening, login lockout, embeddable viewer, housekeeping) was
-  merged into `main` by hand as `ff361cc`. Start future sessions from `main` once
-  PR #3 lands too.
-- Commit history on this branch (newest first):
-  - `195cb0c` Phase 5: the edit lock and the read-only Builder
-  - `29ed18c` Phase 4: grants and the Display picker
-  - `435cc27` Phase 3: the admin Displays screen
-  - `7765638` Phase 2: canvas dimensions from the Display record
-  - `8eae330` Phase 1: Display-scoped data model and API
-  - `e504857` Add the multi-display roadmap
-  - `31ffc06`, `ff33379`, `94c37ba` — the domain model and the first ADRs
+**Start from `main`.** The phase-by-phase work is finished and merged; the rhythm
+now is one branch and one PR per item from
+[`docs/reviewed-decisions.md`](docs/reviewed-decisions.md), cut fresh from `main`
+each time. There is no standing working branch — an old `HANDOFF` said there was
+(`claude/app-update-planning-1pjqfr`), and following it would have branched off
+something six merges behind.
+
+What has landed, oldest first:
+
+| PR | What | In `main` as |
+|----|------|--------------|
+| #1 | The 22 vendored skills under `.claude/skills/` | `aa9c2af` (squashed — its branch head is not an ancestor) |
+| #2 | Security hardening, login lockout, embeddable viewer, housekeeping | `ff361cc` |
+| #3 | Multi-display, phases 1–6 | `2a5cd84` |
+| #4 | Decision #38, first attempt | **closed unmerged** — superseded by #7, its four unique items carried across in `003f1f1` |
+| #5 | Decision #40, the section banner | `50822b5` |
+| #7 | Decision #38, and the three things that fix left standing | `4961fb8` |
+| #8 | The log's size read from the filesystem, not a cached stat | `5b410c1` |
+
+**Two sessions can be working at once, and twice now they have collided.** Both
+times it was invisible until somebody looked:
+
+- **#4 and #7 were the same decision**, started in parallel from the same `main`.
+  One of them had to be closed and hand-salvaged.
+- **Two branches each took the next free `§4` letter** and produced two `### 4u.`
+  sections. Git merges those without a conflict marker, because they are not the
+  same lines. `php tools/check_doc_numbering.php` exists for this and runs in CI
+  even when the step before it failed; run it before opening a PR that adds a
+  write-up, and before merging one that has been open a while.
+
+Before starting an item, check whether a branch already exists for it.
 
 ## 3. File map (page scripts at repo root; data access in `lib/`)
 

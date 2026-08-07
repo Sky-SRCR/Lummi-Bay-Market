@@ -2720,11 +2720,22 @@ different-shaped Display, including a portrait one.
 
 ## 6. Delivery
 
-One PR per phase, on `claude/app-update-planning-1pjqfr`, restarted from `main`
-after each merge. Every merge reaches the sign by hand, so phase order is
-deployment order and each phase must leave the app coherent on its own.
+One PR per unit of work, cut fresh from `main` each time. Every merge reaches the
+sign by hand, so merge order is deployment order and each PR must leave the app
+coherent on its own.
 
-In the event, Phases 1–5 went out as one PR — `main` had none of them, so there was
-nothing to restart from and no way to review Phase 5's lock without the Displays it
-locks. Phase 6 joined it for the same reason: the docs it corrects describe the code
-in that PR. The rhythm applies from the next phase of work, whatever it is.
+The phases were the unit while there were phases. In the event, Phases 1–5 went out
+as one PR — `main` had none of them, so there was nothing to restart from and no way
+to review Phase 5's lock without the Displays it locks; Phase 6 joined it because the
+docs it corrects describe the code in it. That work is merged. The unit now is **one
+item from `docs/reviewed-decisions.md`**, and there is no standing working branch:
+an earlier version of this section named one, and by the time anybody read it, it was
+six merges behind.
+
+**Two sessions can be working at once.** That has already produced two PRs for the
+same decision, and two branches each claiming `§4u` — a collision git merges without
+a conflict marker, because the two headings are not the same lines. Before opening a
+PR that adds a write-up, and again before merging one that has been open a while, run
+`php tools/check_doc_numbering.php`. It also runs in CI, deliberately even when the
+step before it failed, since a red suite on every branch is what a shared broken base
+looks like and merging is what happens next.
