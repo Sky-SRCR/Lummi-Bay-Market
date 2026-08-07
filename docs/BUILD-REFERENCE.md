@@ -886,10 +886,39 @@ than around it:
   role, but `#section-banner` is emitted only when the account is basic *and* the
   page can edit — so a read-only basic clerk got an uncaught `TypeError` on every
   click in the canvas area. The lookup now goes through `setSectionBanner()`, which
-  is null-safe and needs no role test at all.
+  is null-safe and needs no role test at all. **This is decision #40**, closed here
+  rather than separately, the way #43 was closed by #20.
+- **The same banner had a second lookup, and it was the more expensive one.** The
+  reveal at `DOMContentLoaded` spelled the emit condition out again in JavaScript
+  — `if (!IS_ADMIN && !READ_ONLY)` against markup emitted on `!$isAdmin && !$readOnly`.
+  Two copies of one rule that happened to agree, which is the shape of the defect
+  above and not a fix for it. It now goes through `showSectionBanner()` and carries
+  no role test either, so the markup is the only thing that decides. Worth doing
+  even though the copies did agree: the two calls after it in that handler are the
+  zoom fit and `setupLockWatch()`, so had the rule ever drifted, a basic clerk
+  would have lost not just the banner but the watch that is how a read-only page
+  learns it has lost the sign at all.
 - **`uploadSlideImage()` gets an explicit `READ_ONLY` guard**, because it is the
   one handler that never needed a selected block, and "its modal is not in the
   page" is the argument this section exists to stop relying on.
+- **The background controls were the last place the rule was written twice.**
+  `toggleBgInputs()`, `applyBg()` and `applyBgFile()` guarded with
+  `if (!IS_ADMIN || READ_ONLY) return` against markup emitted on
+  `$isAdmin && !$readOnly`, and `loadLayout()` calls the first two on every page
+  load. That copy was correct in all four role/lock combinations — each was
+  checked — and correctness is not what was wrong with it: it is the same shape,
+  one storey down, as the banner test that threw. All three now ask for their
+  control and give up if it is not there, and the `IS_ADMIN &&` at the call site
+  went with them.
+- **What is *not* guarded, and why.** Roughly ninety derefs inside the inspector
+  and the two modals stay unguarded. Every one sits behind `if (!activeBlock)
+  return`, and `activeBlock` cannot be set here: `selectBlock()` is the only
+  assignment that can make it non-null and it returns on `READ_ONLY`. That is the
+  call-graph property this section warned about rather than a rule — so it is now
+  a rule. The suite asserts both halves: that `selectBlock()` refuses and leaves
+  `activeBlock` null, and that there is still exactly **one** assignment able to
+  make it non-null, since a second one appearing is the change that would put all
+  ninety back in reach.
 
 What did *not* change: `CSRF_TOKEN` still ships, because a read-only admin can take
 the lock over and that POST needs it, and the server-side refusals are untouched.
@@ -901,9 +930,61 @@ rather than merely done: it strips the PHP, evaluates `builder.php`'s own inline
 JavaScript with `READ_ONLY = true`, and stubs a DOM holding **only** the ids that
 page emits, so any lookup of a removed control throws and a throw is a failure. It
 also walks the file's `<?php if (!$readOnly):` blocks to assert the four regions
-really are inside one. Sixteen checks, verified against four mutations: shipping
-the inspector again fails 3, dropping `deselectAll`'s guard fails 1, restoring the
-role-only banner test fails 2, and dropping `loadAssets`'s guard fails 1.
+really are inside one. Thirty-nine checks, and it now runs the page load itself —
+`loadLayout()` for both background types, every block type drawn, then the zoom fit
+and the lock watch — rather than only the click paths. That matters more than
+coverage arithmetic: the three background seams above were converted and then left
+unheld, and the first mutation run proved it by changing them back with the suite
+still green.
+
+Drawing is covered because it is what a read-only page is *for* — somebody watching
+a sign sees every block on it, and `renderBlock()` runs for all of them on a page
+with nowhere to put an inspector. Getting that honest took one correction worth
+recording: `document.querySelector` in the stub returned null for everything, and
+`loadLayout()` finds a block's parent section with exactly that call and skips the
+block when it comes back null. A child block therefore never rendered and
+`renderBlock()`'s `isChildBlock` branch was never taken, while the suite reported
+having drawn the layout. The stub now answers that one selector, and a mutation
+confirms the branch is reached.
+
+Verified against nine mutations: shipping the inspector again fails 3, dropping
+`deselectAll`'s guard fails 1, restoring the role-only test in
+`setSectionBanner()` fails 2 and in `showSectionBanner()` fails 1, dropping
+`loadAssets`'s guard fails 1, dropping the null guard in `applyBg()` fails 1, in
+`toggleBgInputs()` fails 2 and in `applyBgFile()` fails 1, letting `selectBlock()`
+run on a read-only page fails 1, adding a second `activeBlock` assignment fails 1,
+and pointing `zoomToFit()` at a control that is not there fails 1. The drawing
+check carries five of its own, each pinning a branch rather than the call: throwing
+from `renderSection()`, from `renderBlock()`, from its `isChildBlock` branch and
+from its locked-block branch each fail it, as does making `renderBlock()` reach for
+an inspector field — which is the actual defect class, rehearsed.
+
+One deliberate non-failure: restoring `IS_ADMIN &&` in front of the
+`toggleBgInputs()` call leaves the suite green, and should. That call was safe
+before and after — short-circuiting is not a bug — so it was tidied rather than
+fixed, and a check that failed on it would be pinning a preference.
+
+**That stub DOM is now checked against the page rather than trusted.** The list of
+ids it answers to was hand-written, and it was the one part of this suite nothing
+held to the file — which matters more than it sounds, because the failure is
+silent and inverted: a name listed there hands back an element where a browser
+hands back null, so the very null-deref this suite exists to catch stops being
+visible to it. It had already drifted. `lock-holder` was in the list and was never
+an id at all — it is `LOCK_HOLDER`, a JavaScript variable. Nothing looked it up, so
+nothing broke; but nothing was stopping the next entry either.
+
+So the same conditional walk that proves the four regions are editable-only now
+also asks, for every id in that list, whether the markup can emit it at all when
+`$readOnly` is true and `$isAdmin` is false. Conditions it cannot decide —
+`!$display->isActive()` is the real one — are tried both ways and a single "yes" is
+enough, because the question is whether the page *can* emit the node, not whether
+it always does. Two checks, and the second is a control: it asserts the walker
+still judges `#inspector` absent, so a walker that had degenerated into answering
+"present" to everything fails rather than passing while proving nothing. Verified
+against four mutations: restoring `lock-holder` fails 1, adding `inspector` fails 2
+(the list check, and then `showInspector()` really does throw — which is the hazard
+demonstrating itself), adding `bg-type` fails 1, and making the walker always
+answer "present" fails 1.
 
 ### 4k. Two things this repo believed without ever looking
 
