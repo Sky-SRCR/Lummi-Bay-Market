@@ -61,7 +61,7 @@ written down rather than remembered:
 | 21 | The admin panel coerced values it could not parse and reported success — an unreadable colour, an account id that isn't one. | Refuse, and say so. | Open | — |
 | 22 | Turning off a Display, suspending an account, or renaming a tag each left the edit lock behind, and never re-checked whether the holder may still sign in. | Free the lock when reach changes, never honour a lock whose holder cannot sign in, and tell the person. A rename tells them but keeps their lock. | **Done** | §4t |
 | 23 | Choosing "Image" for a background when no image is stored leaves a colour where a filename goes — the sign goes near-black. | Refuse the change. | Open | — |
-| 24 | The background address was validated in the admin panel but not in the API, so a publish could point every screen at any host. | Validate it in the module. | Open | — |
+| 24 | The background address was validated in the admin panel but not in the API, so a publish could point every screen at any host. *(The "any host" half was aimed at the image branch, which the API cannot reach — an image background is a validated upload under a name the server chose. What a publish could really do is write any string into the colour column four readers assume is six hex digits, which ends in a sign keeping the colour it had and a picker publishing black. §4v has the detail.)* | Validate it in the module. | **Done** | §4v |
 | 25 | The public feed served blocks an admin had deliberately hidden, content and all. | Leave them out. | Open | — |
 | 26 | A reply that failed to encode sent back a zero-length success, and the sign kept its old layout forever with no notice. | Send a real error, and let the sign notice. | Open | — |
 | 27 | `?display[]=x` became the tag "array" and printed a warning above the document. | Treat it as no sign named. | Open | — |
@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**23 done, 2 part done, 26 open.**
+**24 done, 2 part done, 25 open.**
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

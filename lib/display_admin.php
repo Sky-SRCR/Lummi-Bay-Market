@@ -559,6 +559,11 @@ class DisplayAdmin
     /** A `#rrggbb` colour, or the dark default the canvas has always had. */
     private static function cleanColor($value)
     {
-        return preg_match('/^#[0-9a-fA-F]{6}$/', (string)$value) ? strtolower($value) : '#1a1a2e';
+        // One rule, asked rather than restated: Background owns what a background
+        // colour is, and the publish path refuses what fails it (decision #24). This
+        // door still coerces instead of refusing, which is decision #21 and still
+        // open — but it can no longer disagree with the other door about *which*
+        // values are the readable ones.
+        return Background::isValidColor($value) ? strtolower((string)$value) : Background::DEFAULT_COLOR;
     }
 }

@@ -54,11 +54,11 @@ Design rules, applied to every module added by this build:
 | Module | Interface, in one line | Hides |
 |--------|------------------------|-------|
 | `schema.php` | `ensureSignageSchema(PDO): void`, plus the three pieces it is made of: `readSchemaFacts(PDO) → SchemaFacts`, `signageSchemaPlan(SchemaFacts) → array`, `runSchemaPlan(PDO, array) → array` | Every idempotent `ALTER`/`CREATE`, the `displays` and `display_permissions` tables, `display_id` + backfill + index + FK, the drive-thru seed, the Brand Standards row seed, the "run at most once per request" latch — and **whether any of it needs to run at all**. The one place in the repo that reads `information_schema`; `ServerReport` asks this rather than writing its own catalogue query. `signageSchemaPlan()` is pure (facts in, ordered work out), which is the only reason this file has any automated coverage: its statements are MySQL-only and the fixture is SQLite. `runSchemaPlan()` returns the entries that failed, each with the database's own reason, and `reportSchemaFailures()` tells an admin — but only about a statement the catalogue said was missing, never about one included as a guess (invariant 20). `SchemaLatch` is the "once per request" latch, as something a test can clear. And the second door: `repairSchemaAfterFailure(PDO, &$why) → bool` is how a caller that has *already failed a query* converges, with the three refusals of invariant 21 in front of it; `schemaErrorSaysTableMissing($sqlstate, $message)` is the only thing outside this file that needs saying about a database error, and `withSchemaRepairLock()` makes convergence installation-wide single-file. |
-| `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. It decides only whether the error was the kind a repair could fix; whether repairing is *safe right now* belongs to `schema.php` (invariant 21), because that question is about DDL and transactions rather than about the `displays` table. |
+| `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents — including **what a background colour is** (§4v): `Background::color()` cannot build a colour that is not one, so the publish path refuses the request and `applyBackground()` declines to write it, rather than each door carrying its own regex and the one without it carrying none — the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. It decides only whether the error was the kind a repair could fix; whether repairing is *safe right now* belongs to `schema.php` (invariant 21), because that question is about DDL and transactions rather than about the `displays` table. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. `setAccess()` takes **both** axes of the matrix the form covered — the accounts *and* the Displays — because an unticked box and a cell the form never rendered are the same absence in a POST, and only one of them means "revoke"; and a revoke frees the edit lock on the Display it takes away, by holder, inside the same transaction. |
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, `assetUsage()` — which Displays depend on a library entry — and the sweep of the library rows a publish strands, scoped to the ids that Display's own previous layout held. |
-| `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `update` → `AssetEdit` / `delete` / `pool` / `pooledNotIn` / `discardPooled` / `isAllowedImageRef` | **Every** `assets` statement. The decision it holds: `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. And **the row says what kind of thing it is** (§4u): `update()` takes no type from its caller, because the two rules an edit must pass — plain text for a text row (ADR-0002), `IMAGE_EXTENSIONS` for an image row — were both switchable by a hidden form field that said the other word. A type is written once, by `create()`, and only ever `text` or `image`; the `carousel`/`table`/`marquee` rows `pool()` writes are stored verbatim, since stripping JSON leaves neither markup nor JSON. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::snapshot()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
+| `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `update` → `AssetEdit` / `delete` / `pool` / `pooledNotIn` / `discardPooled` / `isAllowedImageRef` | **Every** `assets` statement. The decision it holds: `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. And **the row says what kind of thing it is** (§4u): `update()` takes no type from its caller, because the two rules an edit must pass — plain text for a text row (ADR-0002), `IMAGE_EXTENSIONS` for an image row — were both switchable by a hidden form field that said the other word. A type is written once, by `create()`, and only ever `text` or `image`; the `carousel`/`table`/`marquee` rows `pool()` writes are stored verbatim, since stripping JSON leaves neither markup nor JSON. `contentIssue()` is the read that goes with all of it: what a row the old rules let through would be refused or changed for today, in words the Library shows on hover — because nothing rewrites those rows, and an admin cannot decide about a state nothing displays. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::snapshot()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
 | `upload_limits.php` | `UploadLimit::bytes` / `describe` / `describeBytes` / `bodyWasDropped` / `smallestOf` / `toBytes` | How big a file can actually reach this server — the smallest of the app's 50 MB ceiling and PHP's `upload_max_filesize` and `post_max_size`, not the app's opinion. And the silent case: exceeding `post_max_size` is not an error PHP reports, it abandons the body, so a 40 MB video was answered *"Security token mismatch. Please reload the page."* `smallestOf()` takes the ini values as an argument because both settings are PHP_INI_PERDIR and the cases worth testing are unreachable otherwise. Depends on nothing. |
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `verify` / `consume` / `redeem` / `discard`, and `PasswordResetCompletion(PDO, ResetTokenStore, AccountStore)` → `ResetOutcome` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. It is now the composition of two halves that have to fall on opposite sides of a transaction boundary: `verify()` spends the guess and must never be rolled back, `consume()` spends the code and must be. `PasswordResetCompletion` is the use case (invariant 22) — code consumed, password changed, lockout released, or nothing at all — and `ResetOutcome` has three answers rather than two, because "refused" and "the database would not take it" have to look different to the visitor and identical to a stranger probing for usernames. |
@@ -1913,16 +1913,82 @@ Left standing, and named rather than skipped:
 - **The add form still reads its type from the request**, which is correct — there is
   no row yet, and the person is choosing. It is pinned to the two values the
   `<select>` offers, so the range of what a stored type can be is closed at both ends.
-- **Nothing repairs a row a previous version mis-typed.** A text entry that already
-  holds markup, or an image entry already pointing at an `.svg`, stays as it is until
-  somebody edits it — at which point the rule applies and the refusal explains
-  itself. Rewriting stored content on read is a write the person did not ask for, on
-  a table with no undo.
+- **Nothing repairs a row a previous version mis-typed** — and that stays true. A
+  text entry that already holds markup, or an image entry already pointing at an
+  `.svg`, is left exactly as it is. Rewriting stored content on read is a write the
+  person did not ask for, on a table with no undo, and it would change what a sign
+  says without anybody pressing anything. What *was* wrong is that the state was
+  invisible: nothing showed it, and the first anybody learned of one was a refusal
+  while editing something else. `AssetLibrary::contentIssue()` answers what is wrong
+  with a row in a few words, the Library marks those rows **check** with the reason
+  on hover and counts them above the table, and the decision to change anything stays
+  a person's. The text test is the exact predicate *"saving this would change it"*
+  rather than a guess at whether the markup was meant, so the warning is never wrong
+  about the thing it warns about — `Halibut < 5 lb` is not accused of anything.
 - **The Library page is admin-only for editing, so this was never a privilege
   boundary** — an admin can point an image entry at any allowed host either way. What
   it was is a rule that could be skipped by accident: a stale tab, a resubmitted form,
-  a copied POST. Decision #24 (validating a background address in the module rather
-  than the panel) is the same shape on the `displays` side and is still open.
+  a copied POST. Decision #24 was the same shape on the `displays` side; §4v.
+
+### 4v. One door checked the colour and the other did not
+
+Decision #24, and the same shape as §4u one table over: a rule that lived at a door
+rather than in the module, so the door without it was the one with no rule at all.
+`DisplayAdmin` put every colour it stored through `cleanColor()`; `api.php`'s publish
+path called `Background::color($_POST['bg_val'] ?? '#1a1a2e')`, which took whatever
+arrived. So a publish could write any string into `displays.bg_val`.
+
+**What that is worth, stated accurately.** The decision list describes this as
+pointing every screen at any host, which is the `url()` concatenation the *image*
+branch would allow — and the API cannot reach that branch: an image background comes
+from a validated upload under a server-generated name, or from `keepImage()`, which
+changes no path. The colour branch reaches `canvas.style.backgroundColor = bg_val` in
+both clients, and the CSSOM silently discards an assignment it cannot parse. So the
+real defect is narrower and quieter than the row reads: **an unreadable value sits in
+a column four readers assume is six hex digits, and every one of them fails its own
+way without saying so.** The Viewer and the Builder keep the colour they already had;
+the panel's `strcasecmp` sees a change that is not one; and `<input type="color">`
+rounds what it cannot parse to `#000000`, so the next admin who saves anything on
+that Display publishes black. That last one is decision #41, arriving by this route.
+Recording the correction rather than the row, for the same reason #32 carries one:
+the numbering is the owner's and stays as it is, but nobody should re-derive the
+severity from a sentence that was aimed at a different branch.
+
+**The rule is on `Background`, which is what neither door could bypass.**
+`Background::color()` now returns a colour intent or an `INVALID` one — it cannot
+build a colour that is not a colour — and three things fall out:
+
+- **`LayoutStore::publish()` refuses the whole publish**, before the transaction,
+  because nothing about the Display's state decides this and a doomed request should
+  not queue for the row lock. Refusing the *publish* rather than dropping the
+  background from it is invariant 5: dropping it is a merge, and the admin would be
+  told their publish succeeded while the one change they made was discarded. The new
+  `PublishResult::invalid` is a fourth kind because it is a fourth thing to do about
+  it — a stale stamp says reload, a lock says wait, this says the request itself is
+  wrong and neither will help.
+- **`DisplayStore::applyBackground()` declines to write one**, which is the write
+  side agreeing with the checker for the reason §4t gives: a writer that stores what
+  the checker rejects only needs one caller who forgot to check.
+- **`DisplayAdmin::cleanColor()` asks instead of restating.** It still *coerces* —
+  that is decision #21 and still open, and the tests assert the coercion so the
+  difference between the two doors is deliberate rather than forgotten. What it no
+  longer has is its own regex. A drifted copy would have been the worst of both: the
+  panel accepting a spelling the store then declines to write, and reporting success
+  over a Display that did not change. There is a check for exactly that, because the
+  mutation that restores the second regex kills nothing without it — the two agreeing
+  is invisible until they disagree.
+
+Three-digit `#fff` and named colours are refused on purpose. Every value this app has
+written is the six-digit form, and `bg_val` is compared as text, so a second spelling
+of white would make two rows that mean the same thing look different.
+
+**Twenty-three checks, five mutations, all five killed** (20, 8, 4, 2, 2). Not
+touched: `builder.php`, which cannot produce the refusal — its colour input always
+yields six hex digits, and a reason it never sees does not belong in its fixed list
+of ones it acts on (§4t). The generic branch shows the message and keeps the work on
+screen, which is the right outcome for a client that is not this Builder.
+`BrandStyles::cleanColor()` keeps its own rule as well: a different table, a
+different fallback, and the same coercion question, which is #21's to answer.
 
 ---
 
@@ -2066,6 +2132,14 @@ grep -rn "edit_type" --include=*.php .        # prose in crud.php and lib/assets
                                               # `'edit_type'` string or a `name="edit_type"` input is the
                                               # §4u defect back — the row's type stated by the request,
                                               # and with it which rule an edit has to pass
+grep -rn "isValidColor\|DEFAULT_COLOR" --include=*.php .  # lib/displays.php defines both on Background;
+                                              # lib/layout_store.php quotes the default in the refusal;
+                                              # lib/display_admin.php's cleanColor asks rather than
+                                              # restating. A `preg_match` against a hash and hex digits
+                                              # anywhere else is a second opinion about what a background
+                                              # colour is — and the door holding it will accept values the
+                                              # store then declines to write, saying it saved (§4v).
+                                              # BrandStyles::cleanColor is a different table's rule
 grep -rn "IMAGE_EXTENSIONS\|isAllowedImageRef" --include=*.php .  # lib/assets.php defines both; crud.php
                                               # asks for the add form and for the upload MIME/extension
                                               # check. A literal list of image extensions in any other

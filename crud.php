@@ -278,6 +278,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_tidy'])) {
 // ============================================================
 $assets = $library->all();
 
+// Rows the rules above would refuse or change if they were saved today. Nothing
+// rewrites them — see AssetLibrary::contentIssue — but an admin cannot decide about
+// a state nothing shows, and until now the first sign of one was a refusal while
+// editing something else.
+$flagged = 0;
+foreach ($assets as $row) {
+    if (AssetLibrary::contentIssue($row) !== null) { $flagged++; }
+}
+
 // How many auto-saved entries could be tidied away, for the button's label. Null
 // references mean the question cannot be answered, so the button is not offered.
 $referencedNow = isAdmin() ? $layouts->referencedAssetIds() : [];
@@ -367,6 +376,13 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
         .badge-text  { background: #d6eaf8; color: #1a5276; }
         .badge-image { background: #d5f5e3; color: #1e8449; }
         .badge-auto  { background: #fdebd0; color: #7e5109; }
+        .badge-check { background: #fdecea; color: #c0392b; }
+
+        .check-bar {
+            background:#fdecea; border:1px solid #f5c6c1; border-radius:6px;
+            padding:12px 14px; margin-bottom:16px; font-size:13px; color:#a5372b;
+        }
+        .check-bar p { margin:0; }
 
         .tidy-bar {
             background:#fdf6e3; border:1px solid #f5e0a3; border-radius:6px;
@@ -523,6 +539,17 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
     <div class="table-panel">
         <h2>All Saved Assets (<?= count($assets) ?>)</h2>
 
+        <?php if ($flagged > 0): ?>
+        <div class="check-bar">
+            <p><strong><?= intval($flagged) ?></strong>
+               entr<?= $flagged === 1 ? 'y is' : 'ies are' ?> marked <strong>check</strong> below.
+               These were saved before the rules the Library applies today, so they hold
+               something it would now refuse or change. <strong>Nothing has been altered</strong>
+               and no sign has changed — hover the mark to see what is wrong with each, and fix
+               them, or leave them, as you see fit.</p>
+        </div>
+        <?php endif; ?>
+
         <?php if (isAdmin() && $tidyCount === null): ?>
         <div class="tidy-bar">
             <p><strong>Cannot check for unused entries.</strong> The list of blocks
@@ -569,6 +596,11 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
                         <?php if (!empty($row['auto_pooled'])): ?>
                         <span class="badge badge-auto"
                               title="Saved automatically when a sign was published. Renaming it makes it yours, and it will never be tidied away.">auto</span>
+                        <?php endif; ?>
+                        <?php $issue = AssetLibrary::contentIssue($row); ?>
+                        <?php if ($issue !== null): ?>
+                        <span class="badge badge-check"
+                              title="Saved before the Library checked this: <?= htmlspecialchars($issue) ?>. Nothing has been changed.">check</span>
                         <?php endif; ?>
                     </td>
                     <td>

@@ -189,6 +189,43 @@ class AssetLibrary
     }
 
     /**
+     * What an admin should know about this row's stored content, in a few words —
+     * or null when there is nothing to say.
+     *
+     * The rules above apply to every *write*. They say nothing about the rows that
+     * were already here: a text entry holding markup from before ADR-0002, an image
+     * entry pointing at an `.svg` from before the add form checked. Nothing rewrites
+     * those. Rewriting stored content on read is a write nobody asked for, on a
+     * table with no undo, and it would change what a sign says without anybody
+     * pressing anything.
+     *
+     * What was wrong was that they were *invisible*: nothing showed the state, and
+     * the first anybody learned of it was a refusal when they happened to edit one.
+     * So the Library page asks this per row and marks the ones worth a look, and the
+     * decision to change anything stays a person's.
+     *
+     * The text case is deliberately the exact predicate "saving this would change
+     * it" rather than a guess at whether the markup is intentional — that way the
+     * warning is never wrong about the thing it warns about.
+     */
+    public static function contentIssue(array $row)
+    {
+        $type    = isset($row['type'])    ? (string)$row['type']    : '';
+        $content = isset($row['content']) ? (string)$row['content'] : '';
+
+        if ($content === '') {
+            return 'it is empty, so every block reading it shows nothing';
+        }
+        if ($type === self::TYPE_IMAGE && !self::isAllowedImageRef($content)) {
+            return 'it points at a file type this app no longer allows, so the picture may not load';
+        }
+        if ($type === self::TYPE_TEXT && toPlainText($content) !== $content) {
+            return 'it holds formatting that saving it here would remove';
+        }
+        return null;
+    }
+
+    /**
      * Which pooled rows are not in the given list of referenced ids.
      *
      * The caller supplies the referenced ids because they come from

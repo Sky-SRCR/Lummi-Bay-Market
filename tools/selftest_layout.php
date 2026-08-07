@@ -382,6 +382,71 @@ $driveT = loadTestDisplay($pdo, $driveT->id());
 checkSame('uploads/bg_1.png', $driveT->backgroundValue(), 'a basic account cannot change the background');
 
 // ─────────────────────────────────────────────────────────────
+section('A colour that is not a colour is not stored');
+
+// Decision #24. The admin panel put every colour through a `#rrggbb` test and the
+// publish endpoint put none of them through anything, so `bg_val` — a column the
+// Viewer, the Builder and the panel's colour picker all assume is six hex digits
+// — could be set to any string at all by a publish.
+checkSame(true,  Background::isValidColor('#1a2b3c'), 'six hex digits behind a hash is a colour');
+checkSame(true,  Background::isValidColor('#AABBCC'), 'in either case');
+checkSame(false, Background::isValidColor('#fff'),    'three digits is not the form this column holds');
+checkSame(false, Background::isValidColor('red'),     'nor is a name a browser would accept');
+checkSame(false, Background::isValidColor('url(//elsewhere.example/x.svg)'), 'nor anything that is not a colour at all');
+checkSame(false, Background::isValidColor(''),        'nor nothing');
+
+checkSame('color', Background::color('#AABBCC')->kind(), 'a readable colour builds a colour intent');
+checkSame('#aabbcc', Background::color('#AABBCC')->value(), 'stored one way, so two spellings cannot look different');
+checkSame(Background::INVALID, Background::color('red')->kind(),
+          'and an unreadable one builds an intent that names no colour');
+checkSame(false, Background::color('red')->isUsable(), 'which is not usable');
+checkSame(true,  Background::unchanged()->isUsable(), 'leaving the background alone always is');
+checkSame(true,  Background::keepImage()->isUsable(), 'so is switching back to the stored image');
+checkSame(true,  Background::image('uploads/bg_1.png')->isUsable(), 'and so is an image path');
+
+// The whole publish is refused, not just the background: dropping the one change
+// the admin made and reporting success is the merge invariant 5 forbids.
+$driveT   = loadTestDisplay($pdo, $driveT->id());
+$before   = $driveT->backgroundValue();
+$stampWas = $driveT->layoutStamp();
+$res = publishAs($layouts, $driveT, layoutWith('junk bg'), $stampWas, true, 1,
+                 Background::color('url(//elsewhere.example/x.svg)'));
+checkSame(false, $res->isOk(), 'a publish carrying an unreadable colour is refused');
+checkSame('invalid', $res->kind(), 'as something no reload and no waiting will fix');
+checkMentions($res->message(), 'still on screen', 'and the editor is told their work is not lost');
+$driveT = loadTestDisplay($pdo, $driveT->id());
+checkSame($before,   $driveT->backgroundValue(), 'the background it would have overwritten is untouched');
+checkSame($stampWas, $driveT->layoutStamp(),     'and nothing was published, so no Builder is invalidated');
+
+// The write side agrees with the checker, so a caller that skipped the check still
+// cannot store one.
+$store->applyBackground($driveT, Background::color('transparent'));
+$driveT = loadTestDisplay($pdo, $driveT->id());
+checkSame($before, $driveT->backgroundValue(),
+          'and the store declines to write one even when asked directly');
+
+// The other door still coerces rather than refusing — decision #21, still open.
+// Asserted rather than assumed, so the difference is deliberate and visible.
+$panelSign = makeTestDisplay($pdo, 'panel-bg', 'Panel Colour');
+$admin     = new DisplayAdmin($pdo, $store, $layouts, new GrantStore($pdo));
+$res = $admin->setBackgroundColor($panelSign, 'nonsense');
+checkSame(true, $res->isOk(), 'the admin panel still accepts a colour it cannot read');
+checkSame(Background::DEFAULT_COLOR, loadTestDisplay($pdo, $panelSign->id())->backgroundValue(),
+          'and falls back to the default, which is #21 and not yet decided against here');
+$admin->setBackgroundColor(loadTestDisplay($pdo, $panelSign->id()), '#ABCDEF');
+checkSame('#abcdef', loadTestDisplay($pdo, $panelSign->id())->backgroundValue(),
+          'a readable one is stored lowercased, by the same rule the publish path uses');
+
+// And this is what "the same rule" is worth. Should this door's idea of a colour
+// ever drift from Background's — a second regex that accepts three-digit hex, say
+// — the panel would accept the value, the store would decline to write it, and the
+// admin would be told it saved. Asking rather than restating is what stops that,
+// and this is the check that notices if it stops being asked.
+$admin->setBackgroundColor(loadTestDisplay($pdo, $panelSign->id()), '#fff');
+checkSame(Background::DEFAULT_COLOR, loadTestDisplay($pdo, $panelSign->id())->backgroundValue(),
+          'a spelling the module refuses is refused here too, not accepted and then quietly dropped');
+
+// ─────────────────────────────────────────────────────────────
 section('The snapshot a Screen renders');
 
 $driveT = loadTestDisplay($pdo, $driveT->id());
@@ -1396,6 +1461,27 @@ checkSame(false, AssetLibrary::isAllowedImageRef('uploads/a.svg?v=.png'), 'and a
 checkSame(false, AssetLibrary::isAllowedImageRef('uploads/a.svg'),        'an svg is markup a browser runs');
 checkSame(false, AssetLibrary::isAllowedImageRef('uploads/a'),            'something with no extension is not an image');
 checkSame(false, AssetLibrary::isAllowedImageRef(''),                     'and neither is nothing at all');
+
+// ---- What the rules say about the rows that were already here -----------------
+// Nothing rewrites them: changing stored content on read is a write nobody asked
+// for, on a table with no undo. What was wrong is that the state was invisible, so
+// the Library marks them and the decision stays a person's.
+checkSame(null, AssetLibrary::contentIssue(['type' => 'text', 'content' => 'Sockeye  18.99']),
+          'an ordinary text entry has nothing to say about it');
+checkSame(null, AssetLibrary::contentIssue(['type' => 'image', 'content' => 'uploads/promo.jpg']),
+          'nor an ordinary image entry');
+checkSame(null, AssetLibrary::contentIssue(['type' => 'carousel', 'content' => '{"slides":[]}']),
+          'nor a pooled carousel entry, whose JSON is not markup to strip');
+checkMentions(AssetLibrary::contentIssue(['type' => 'image', 'content' => 'uploads/old.svg']),
+              'no longer allows', 'an image entry left pointing at an svg is marked');
+checkMentions(AssetLibrary::contentIssue(['type' => 'text', 'content' => 'Fresh <b>today</b>']),
+              'formatting', 'a text entry holding markup from before ADR-0002 is marked');
+checkMentions(AssetLibrary::contentIssue(['type' => 'text', 'content' => '']),
+              'empty', 'and so is one that is empty, whatever emptied it');
+// The text test is the exact predicate "saving this would change it", so a row that
+// merely reads oddly is not accused of anything.
+checkSame(null, AssetLibrary::contentIssue(['type' => 'text', 'content' => 'Halibut < 5 lb']),
+          'a stray angle bracket that saving would keep is not a mark against a row');
 
 // The field itself must be gone, not merely unread: a hidden input still on the
 // page is one `$_POST` read away from deciding this again. (The name survives in
@@ -3238,4 +3324,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(855);
+reportChecks(885);

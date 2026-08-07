@@ -132,7 +132,7 @@ class ElementResult
  */
 class PublishResult
 {
-    private $kind;      // 'ok' | 'stale' | 'locked' | 'failed'
+    private $kind;      // 'ok' | 'stale' | 'locked' | 'invalid' | 'failed'
     private $stamp;
     private $message;
 
@@ -147,6 +147,12 @@ class PublishResult
     public static function stale($message)  { return new self('stale', '', $message); }
     /** Somebody else holds the edit lock (ADR-0007) — a different refusal from a stale stamp. */
     public static function locked($message) { return new self('locked', '', $message); }
+    /**
+     * The request itself cannot be carried out — nothing about the Display's state
+     * would make it work, so unlike `stale` and `locked` there is nothing to wait
+     * for or reload. Today the only one is a background colour that is not a colour.
+     */
+    public static function invalid($message) { return new self('invalid', '', $message); }
     public static function failed($message) { return new self('failed', '', $message); }
 
     public function isOk()    { return $this->kind === 'ok'; }
@@ -492,6 +498,19 @@ class LayoutStore
      */
     public function publish(Display $display, PublishRequest $request)
     {
+        // Before the transaction, because nothing about the Display decides this and
+        // a request that cannot be carried out should not take the row lock every
+        // other publish is queuing for. A background colour that is not a colour
+        // refuses the whole publish rather than being dropped from it: dropping it
+        // is a merge, and the person would be told their publish succeeded while the
+        // one change they made to it was thrown away (invariant 5).
+        if (!$request->background()->isUsable()) {
+            return PublishResult::invalid(
+                'That background colour could not be read, so nothing was published.'
+                . ' A colour must be six hex digits, like ' . Background::DEFAULT_COLOR . '.'
+                . ' Your work is still on screen.');
+        }
+
         try {
             // Inside the try: beginTransaction can throw too (a connection that
             // died between the request starting and this call), and a publish that

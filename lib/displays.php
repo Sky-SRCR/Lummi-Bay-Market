@@ -26,9 +26,33 @@ require_once __DIR__ . '/schema.php';
  * What a publish should do with the Display's background — an admin sending
  * "image" with no new file means "keep the current image, just switch back to
  * it", which is not the same request as "set this image".
+ *
+ * **A colour that is not a colour cannot be built here.** Decision #24: the admin
+ * panel put every colour it stored through a `#rrggbb` test, and the publish
+ * endpoint put none of them through anything — `Background::color($_POST['bg_val'])`
+ * took whatever arrived. `bg_val` is a column four readers assume is six hex
+ * digits: the Viewer assigns it to `style.backgroundColor`, the Builder does the
+ * same, the panel's `<input type="color">` shows it, and the panel compares it to
+ * decide whether the colour changed. None of them refuses; each fails its own way.
+ * The browser ones silently ignore an assignment they cannot parse, so the sign
+ * keeps the colour it had and nothing anywhere says the stored value is junk —
+ * until the colour picker rounds it to `#000000` and somebody publishes black.
+ *
+ * The rule is here rather than at either door, so a third door cannot open without
+ * it: `color()` answers with an `invalid` intent instead of a colour one, which
+ * `LayoutStore::publish()` refuses outright and `DisplayStore::applyBackground()`
+ * declines to write. What it is *not* is a coercion — this app has no undo, and
+ * quietly storing something the caller did not ask for is how #21's admin panel
+ * reports success over a value it could not read.
  */
 class Background
 {
+    /** Where an unreadable colour used to land, and the app's own default. */
+    const DEFAULT_COLOR = '#1a1a2e';
+
+    /** A colour intent that names no colour. Nothing writes one; publish refuses it. */
+    const INVALID = 'invalid';
+
     private $kind;
     private $value;
 
@@ -40,10 +64,40 @@ class Background
 
     /** Leave the background exactly as it is (a basic account cannot change it). */
     public static function unchanged()  { return new self('unchanged', null); }
-    public static function color($hex)  { return new self('color', (string)$hex); }
+
+    /**
+     * Set the canvas to a colour — or, when that is not a colour, to nothing at
+     * all. The offending text is kept on the intent so the refusal can quote it.
+     */
+    public static function color($hex)
+    {
+        $hex = (string)$hex;
+        return self::isValidColor($hex)
+            ? new self('color', strtolower($hex))
+            : new self(self::INVALID, $hex);
+    }
+
     public static function image($path) { return new self('image', (string)$path); }
     /** Switch to image without replacing the stored path. */
     public static function keepImage()  { return new self('keep-image', null); }
+
+    /**
+     * Six hex digits behind a hash, and nothing else.
+     *
+     * Three-digit `#fff` is refused deliberately: `displays.bg_val` is compared
+     * against stored values elsewhere and every value this app has ever written is
+     * the six-digit form, so accepting a second spelling of white would make two
+     * rows that mean the same thing look different to `strcasecmp`. A named colour
+     * — `red`, `transparent` — is refused for the same reason, not because a
+     * browser could not draw it.
+     */
+    public static function isValidColor($value)
+    {
+        return preg_match('/^#[0-9a-fA-F]{6}$/', (string)$value) === 1;
+    }
+
+    /** Can this intent be carried out at all? False only for a colour that is not one. */
+    public function isUsable() { return $this->kind !== self::INVALID; }
 
     public function kind()  { return $this->kind; }
     public function value() { return $this->value; }
@@ -465,7 +519,17 @@ class DisplayStore
         return $stmt->fetchColumn();
     }
 
-    /** Apply a background intent. Only ever reached for an admin publish. */
+    /**
+     * Apply a background intent. Only ever reached for an admin publish.
+     *
+     * `Background::INVALID` — a colour that is not a colour — falls through to the
+     * same nothing as `unchanged`. It should never arrive: `LayoutStore::publish()`
+     * refuses the whole publish before this is called, so the caller is never told
+     * a background was set that was not. This is the write side agreeing with the
+     * read side rather than a second policy, for the same reason `claimLock()`'s
+     * WHERE repeats what `LockState::isHeld()` decides — a writer that would store
+     * what the checker rejects only needs one caller who forgot to check.
+     */
     public function applyBackground(Display $display, Background $bg)
     {
         switch ($bg->kind()) {
@@ -480,6 +544,7 @@ class DisplayStore
                           ->execute([$display->id()]);
                 break;
             case 'unchanged':
+            case Background::INVALID:
             default:
                 break;
         }

@@ -393,7 +393,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
     } else {
         echo json_encode([
             'status'  => 'error',
-            'reason'  => $result->kind(),      // 'stale' | 'failed'
+            'reason'  => $result->kind(),      // 'stale' | 'locked' | 'invalid' | 'failed'
             'message' => $result->message(),
         ]);
     }
