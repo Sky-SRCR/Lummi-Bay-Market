@@ -930,11 +930,22 @@ rather than merely done: it strips the PHP, evaluates `builder.php`'s own inline
 JavaScript with `READ_ONLY = true`, and stubs a DOM holding **only** the ids that
 page emits, so any lookup of a removed control throws and a throw is a failure. It
 also walks the file's `<?php if (!$readOnly):` blocks to assert the four regions
-really are inside one. Thirty-eight checks, and it now runs the page load itself —
-`loadLayout()` for both background types, then the zoom fit and the lock watch —
-rather than only the click paths. That matters more than coverage arithmetic: the
-three background seams above were converted and then left unheld, and the first
-mutation run proved it by changing them back with the suite still green.
+really are inside one. Thirty-nine checks, and it now runs the page load itself —
+`loadLayout()` for both background types, every block type drawn, then the zoom fit
+and the lock watch — rather than only the click paths. That matters more than
+coverage arithmetic: the three background seams above were converted and then left
+unheld, and the first mutation run proved it by changing them back with the suite
+still green.
+
+Drawing is covered because it is what a read-only page is *for* — somebody watching
+a sign sees every block on it, and `renderBlock()` runs for all of them on a page
+with nowhere to put an inspector. Getting that honest took one correction worth
+recording: `document.querySelector` in the stub returned null for everything, and
+`loadLayout()` finds a block's parent section with exactly that call and skips the
+block when it comes back null. A child block therefore never rendered and
+`renderBlock()`'s `isChildBlock` branch was never taken, while the suite reported
+having drawn the layout. The stub now answers that one selector, and a mutation
+confirms the branch is reached.
 
 Verified against nine mutations: shipping the inspector again fails 3, dropping
 `deselectAll`'s guard fails 1, restoring the role-only test in
@@ -942,7 +953,11 @@ Verified against nine mutations: shipping the inspector again fails 3, dropping
 `loadAssets`'s guard fails 1, dropping the null guard in `applyBg()` fails 1, in
 `toggleBgInputs()` fails 2 and in `applyBgFile()` fails 1, letting `selectBlock()`
 run on a read-only page fails 1, adding a second `activeBlock` assignment fails 1,
-and pointing `zoomToFit()` at a control that is not there fails 1.
+and pointing `zoomToFit()` at a control that is not there fails 1. The drawing
+check carries five of its own, each pinning a branch rather than the call: throwing
+from `renderSection()`, from `renderBlock()`, from its `isChildBlock` branch and
+from its locked-block branch each fail it, as does making `renderBlock()` reach for
+an inspector field — which is the actual defect class, rehearsed.
 
 One deliberate non-failure: restoring `IS_ADMIN &&` in front of the
 `toggleBgInputs()` call leaves the suite green, and should. That call was safe

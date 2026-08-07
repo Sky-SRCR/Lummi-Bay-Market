@@ -216,7 +216,14 @@ global.document = {
         if (!PRESENT.has(id)) { return null; }
         return nodes[id] || (nodes[id] = stubEl(id));
     },
-    querySelector() { return null; },
+    // Null for everything except the one lookup a page load genuinely depends on:
+    // loadLayout() finds a block's parent section with this, and skips the block
+    // entirely when it comes back null. Left null, a child block silently never
+    // renders and the `isChildBlock` branch of renderBlock() is never taken — the
+    // suite would report drawing a layout it had quietly dropped half of.
+    querySelector(sel) {
+        return /^\.section-block\[data-db-id=/.test(sel || '') ? stubEl('section') : null;
+    },
     querySelectorAll() { return []; },
     createElement(tag) { return stubEl(tag); },
     addEventListener() {},
@@ -293,9 +300,10 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     // none of the code it names. And the promise is returned rather than dropped: a
     // throw inside a `.then` is an unhandled rejection, not something survives() can
     // see, so dropping it would swallow exactly the failure being tested for.
-    function layoutReplying(display) {
+    function layoutReplying(display, elements) {
         global.fetch = () => Promise.resolve({
-            json: () => Promise.resolve({ status: 'success', display: display, elements: [],
+            json: () => Promise.resolve({ status: 'success', display: display,
+                                          elements: elements || [],
                                           block_styles: {}, layout_stamp: 'stamp' })
         });
         return loadLayout().then(settle);
@@ -306,6 +314,26 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
                    () => layoutReplying({ bg_type: 'image', bg_val: 'bg.png' }));
     await survives('and choosing a background file finds no file input to read',
                    () => applyBgFile());
+
+    // Both loads above carry no elements, which exercises the background and not one
+    // line of the drawing — and drawing is what a read-only page is *for*. Somebody
+    // watching a sign sees every block on it; renderBlock() and renderSection() run
+    // for all of them, on a page with no inspector, no align bar and no modals to put
+    // anything in. Each entry below takes a branch of its own: a section to be a
+    // parent, a child inside it, a locked block, a hidden one, one drawn from a
+    // library entry rather than typed, and one of every remaining type.
+    const EVERY_TYPE = [
+        { id: 1, type: 'section',  block_subtype: 'free', x_pos: 0,  y_pos: 0,  width: 600, height: 380, z_index: 1, locked: 0, hidden: 0, section_id: null, manual_content: '',              db_content: '' },
+        { id: 2, type: 'text',     block_subtype: 'free', x_pos: 10, y_pos: 10, width: 200, height: 60,  z_index: 1, locked: 0, hidden: 0, section_id: 1,    manual_content: 'Sockeye 18.99', db_content: '' },
+        { id: 3, type: 'text',     block_subtype: 'price',x_pos: 10, y_pos: 80, width: 200, height: 60,  z_index: 2, locked: 1, hidden: 1, section_id: null, asset_id: 7, manual_content: '', db_content: 'Halibut 24.99' },
+        { id: 4, type: 'image',    block_subtype: 'free', x_pos: 20, y_pos: 20, width: 100, height: 100, z_index: 1, locked: 0, hidden: 0, section_id: null, manual_content: 'a.png',         db_content: '' },
+        { id: 5, type: 'carousel', block_subtype: 'free', x_pos: 30, y_pos: 30, width: 300, height: 200, z_index: 1, locked: 0, hidden: 0, section_id: null, manual_content: '{"slides":[],"interval":5000}', db_content: '' },
+        { id: 6, type: 'table',    block_subtype: 'free', x_pos: 40, y_pos: 40, width: 300, height: 200, z_index: 1, locked: 0, hidden: 0, section_id: null, manual_content: '{"rows":[["a"]]}', db_content: '' },
+        { id: 7, type: 'marquee',  block_subtype: 'free', x_pos: 50, y_pos: 50, width: 300, height: 60,  z_index: 1, locked: 0, hidden: 0, section_id: null, manual_content: '{"text":"hi"}',  db_content: '' },
+        { id: 8, type: 'video',    block_subtype: 'free', x_pos: 60, y_pos: 60, width: 300, height: 200, z_index: 1, locked: 0, hidden: 0, section_id: null, manual_content: 'v.mp4',         db_content: '' }
+    ];
+    await survives('every block type draws on a page that cannot edit any of them',
+                   () => layoutReplying({ bg_type: 'color', bg_val: '#111' }, EVERY_TYPE));
 
     // The rest of DOMContentLoaded. Both of these are safe by inspection — they
     // touch only ids the page always emits — but inspection is what this suite
@@ -410,7 +438,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 38;
+    const expected = 39;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }
