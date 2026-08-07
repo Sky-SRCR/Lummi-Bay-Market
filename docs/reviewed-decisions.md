@@ -64,7 +64,7 @@ written down rather than remembered:
 | 24 | The background address was validated in the admin panel but not in the API, so a publish could point every screen at any host. | Validate it in the module. | Open | — |
 | 25 | The public feed served blocks an admin had deliberately hidden, content and all. | Leave them out. | Open | — |
 | 26 | A reply that failed to encode sent back a zero-length success, and the sign kept its old layout forever with no notice. | Send a real error, and let the sign notice. | Open | — |
-| 27 | `?display[]=x` became the tag "array" and printed a warning above the document. | Treat it as no sign named. | Open | — |
+| 27 | `?display[]=x` became the tag "array" and printed a warning above the document. | Treat it as no sign named. | **Done** | §4v |
 | 28 | Missing, unknown and switched-off signs all answered "200 OK", and nothing anywhere set caching rules. | Real error codes, and stop caching. | **Done** | §4u |
 | 29 | Publish accepted any block type, so a basic account could insert top-level content. | Accept only known types and refuse the rest. | Open | — |
 | 30 | Wrong-shaped and absurd values were coerced and written rather than refused. | Refuse the publish. | Open | — |
@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**23 done, 2 part done, 26 open.**
+**24 done, 2 part done, 25 open.**
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

@@ -26,6 +26,16 @@ checkSame(false, DisplayStore::isValidTag('lobby_1'),    'underscores are not al
 checkSame(false, DisplayStore::isValidTag('Drive-Thru'), 'uppercase is not a valid stored tag');
 checkSame('drive-thru', DisplayStore::normalizeTag('  DRIVE-THRU '), 'input is trimmed and lowercased');
 
+// Decision #27. A request parameter may be an array, and casting one yields `Array`,
+// which this function lowercases to `array` — a perfectly valid tag. So the cast did
+// not produce nonsense that something further down would reject. It produced an address.
+checkSame(true,  DisplayStore::isValidTag('array'), 'the word "array" is a tag an admin may type');
+checkSame('',    DisplayStore::normalizeTag(['x']), 'but an array folds to nothing, not to that tag');
+checkSame('',    DisplayStore::normalizeTag(['a' => ['b']]), 'and so does a nested one');
+checkSame(false, DisplayStore::isValidTag(DisplayStore::normalizeTag(['x'])),
+          'so nothing an array was folded from is ever a valid tag');
+checkSame('12',  DisplayStore::normalizeTag(12), 'a number is still folded, being something a tag can be');
+
 // ─────────────────────────────────────────────────────────────
 section('Which Display does a request mean?');
 
@@ -54,6 +64,40 @@ checkSame('Display not found', $r->message(), 'unknown tag notice wording (ADR-0
 
 $r = DisplayRequest::forViewing($store, ['display' => 'drive thru!']);
 checkSame(DisplayResolution::UNKNOWN, $r->kind(), 'an invalid tag is rejected, not crashed on');
+
+// ---- `?display[]=x` (decision #27) -------------------------------------------
+// Its own database, because the hazard needs a sign tagged `array` and no later
+// section should have to know one exists.
+//
+// Two Displays here so the editing entry rule cannot fire: this asserts what the
+// array parameter resolves to, not what an account with one sign is given.
+$arrPdo   = newTestDb();
+$arrStore = new DisplayStore($arrPdo);
+$arrSign  = makeTestDisplay($arrPdo, 'array', 'Array Sign');
+makeTestDisplay($arrPdo, 'lobby', 'Lobby', 1080, 1920);
+$arrAdmin = newTestActor($arrPdo, 1, 'admin');
+
+$r = DisplayRequest::forViewing($arrStore, ['display' => ['x']]);
+checkSame(DisplayResolution::NO_TAG, $r->kind(), 'an array in the tag parameter names no sign');
+checkSame('No display specified', $r->message(), 'and says so in the words for a URL that named nothing');
+checkSame(400, $r->httpStatus(), 'which is a bad request rather than a missing sign');
+check($r->display() === null, 'and it does not resolve to the Display somebody tagged "array"');
+
+$r = DisplayRequest::forViewing($arrStore, ['display' => ['a' => ['b']]]);
+checkSame(DisplayResolution::NO_TAG, $r->kind(), 'a nested array is no more an address than a flat one');
+$r = DisplayRequest::forViewing($arrStore, ['display' => []]);
+checkSame(DisplayResolution::NO_TAG, $r->kind(), 'and neither is an empty one');
+
+// The write path answers the same fact the same way, from the same seam. It has to:
+// a page and the endpoint it posts to disagreeing about which sign an address means
+// is the disagreement nobody sees (BUILD-REFERENCE.md §4d).
+$r = DisplayRequest::forEditing($arrStore, ['display' => ['x']], $arrAdmin);
+checkSame(DisplayResolution::NO_TAG, $r->kind(), 'and a write naming a sign that way is not routed to one');
+
+// A scalar tag still reaches the sign named `array`, so the rule is about the shape
+// of the parameter and not about the word.
+$r = DisplayRequest::forViewing($arrStore, ['display' => 'array']);
+check($r->isFound() && $r->display()->id() === $arrSign->id(), 'while typing the tag itself still finds it');
 
 $lobby = makeTestDisplay($pdo, 'lobby', 'Lobby', 1080, 1920);
 $r = DisplayRequest::forViewing($store, []);
@@ -150,6 +194,17 @@ $r = DisplayRequest::forEditing($soloStore, ['display_id' => $solo->id()], $solo
 check($r->isFound(), 'and agrees with an id claim naming it');
 $r = DisplayRequest::forEditing($soloStore, ['display_id' => $solo->id() + 1], $soloAdmin);
 checkSame(DisplayResolution::MISMATCH, $r->kind(), 'but not with one naming a Display it is not');
+
+// And the consequence of decision #27 that is worth stating out loud: an array tag
+// means no sign was named, so at a one-sign store the entry rule applies to it, and
+// a publish carrying `display[]=x` lands on that sign rather than being refused. The
+// safety property is unchanged and is the id claim, not the tag — the request has to
+// agree about which Display it is publishing to, and the check above is the same one.
+$r = DisplayRequest::forEditing($soloStore, ['display' => ['x']], $soloAdmin);
+check($r->isFound() && $r->display()->id() === $solo->id(),
+      'an array tag is treated as no tag, so the sole-Display entry rule covers it too');
+$r = DisplayRequest::forEditing($soloStore, ['display' => ['x'], 'display_id' => $solo->id() + 1], $soloAdmin);
+checkSame(DisplayResolution::MISMATCH, $r->kind(), 'and an id claim that disagrees still refuses the write');
 
 // ─────────────────────────────────────────────────────────────
 section('What the status line says, and what may be stored');
@@ -690,6 +745,21 @@ check($res->isOk(), 'the last Display can be deleted too');
 checkSame(0, $store->count(), 'leaving none');
 checkSame(0, count(allElements($pdo)), 'and no elements behind');
 checkSame(0, count(allGrants($pdo)), 'and no grant pointing at a Display that is gone');
+
+// ---- The same cast, on the panel's side (decision #27) -----------------------
+// Both fields below are read straight from the post, and both used to become the
+// literal `array`: one naming a sign nobody typed, the other spelling — exactly —
+// the confirmation that deletes the sign already tagged that.
+$res = $admin->create(['title' => 'Deli Counter', 'tag' => ['deli'],
+                       'canvas_width' => 1920, 'canvas_height' => 1080]);
+check($res->isOk(), 'a tag posted as an array is treated as a blank one');
+$deliSign = $res->display();
+checkSame('deli-counter', $deliSign->tag(), 'so the tag comes from the title, as a blank tag does');
+
+$res = $admin->destroy($deliSign, ['deli-counter']);
+checkSame(DisplayResult::INVALID, $res->kind(), 'and an array posted as the typed-back tag deletes nothing');
+checkSame('confirm_tag', $res->field(), 'the refusal names the confirmation field');
+checkSame(1, $store->count(), 'the Display is still there');
 
 // ─────────────────────────────────────────────────────────────
 section('Grants decide which Displays are an account\'s');
@@ -3274,4 +3344,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(857);
+reportChecks(877);

@@ -239,7 +239,23 @@ class DisplayRequest
      */
     private static function locate(DisplayStore $store, array $params, $actor)
     {
-        $raw = isset($params[self::PARAM]) ? (string)$params[self::PARAM] : '';
+        // A query parameter is whatever the URL said, and `?display[]=x` makes it an
+        // array. Nothing in this app links to that, and anybody may type it. Casting
+        // one to a string is two defects in one line (decision #27): a warning that
+        // names this file, on a request a crawler can repeat all day into a 2 MB log
+        // that rotates; and the literal tag `array`, which `isValidTag()` accepts —
+        // so on a store where an admin had tagged a sign `array`, that URL was a
+        // working address to it. An array is not an address. Nothing named a sign.
+        //
+        // Deliberately not the answer an array `display_id` gets, which is MISMATCH
+        // (confirmIdentity below). The two parameters do different jobs: the id
+        // claims to confirm a Display already in hand, so a claim that cannot be one
+        // disagrees with something and a write must be refused. The tag *is* the
+        // address, and a non-address disagrees with nothing — there is no sign named
+        // here, which is the state the Viewer and the entry rule already have an
+        // answer for.
+        $named = isset($params[self::PARAM]) ? $params[self::PARAM] : '';
+        $raw   = is_scalar($named) ? (string)$named : '';
 
         if (trim($raw) === '') {
             if ($actor === null) {

@@ -64,7 +64,7 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **857 checks**. Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **877 checks**. Run before pushing |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **27 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end — plus what it does when it loses the display mid-edit, and when either of the two opening reads fails, **72 checks** |
 | `tools/selftest_viewer.js` | `node tools/selftest_viewer.js` — `viewer.php`'s poll against a stubbed DOM and fetch, through every way an answer can arrive: readable, refused, unreadable-with-a-status, and never arriving. **32 checks**. Run it whenever `viewer.php` is touched |
@@ -324,7 +324,7 @@ staleness check, no version history), 0007 (one editor per Display).
   URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
   account, two browsers, and one unavoidable 15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 857 self-test checks against SQLite, 131 node checks over `builder.php`'s and `viewer.php`'s
+  `php -l`, 877 self-test checks against SQLite, 131 node checks over `builder.php`'s and `viewer.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare
@@ -349,10 +349,27 @@ staleness check, no version history), 0007 (one editor per Display).
     shows the message to the person who caused it, and none is polled by anything. It
     is the same *class* as #28 without being the same defect, and if any endpoint ever
     gets a watcher its code should come from whatever decides its refusal.
-- **#27 is next door to all of this and still open.** `DisplayRequest::locate()` casts
-  the `display` parameter with `(string)`, so `?display[]=x` raises an "Array to string
-  conversion" warning and becomes the tag `"Array"`. It sits three lines from code this
-  work touched and was deliberately not fixed — one item at a time.
+- **#27 is done** (§4v). `?display[]=x` no longer casts: an array in the `display`
+  parameter means no sign was named — `400`, "No display specified" — and the same rule
+  is stated a second time in `DisplayStore::normalizeTag()`, because the panel's create
+  and delete forms read a posted tag without going through `DisplayRequest`. Two things
+  found while fixing it that the item did not say:
+  - **The warning half was already covered**, by §4m rather than by this. `ErrorPolicy`
+    sets `display_errors=0` in code and swallows the warning, so nothing has printed
+    above the document since that landed — verified by running the cast under the real
+    policy. What was left was one *log* line per request, on a URL anybody can repeat,
+    through the one path in that module with no throttling.
+  - **The cast produced a valid tag, not a rejected one.** `isValidTag('array')` is
+    true, so on a store where an admin had tagged a sign `array`, `?display[]=x` was a
+    working address to it — another sign's layout on the Screen, which is the thing
+    ADR-0003 exists to prevent. The same word reached the panel: `tag[]=x` named a sign
+    `array` and `confirm_tag[]=x` then spelled the confirmation that deletes it. The
+    mutation proving the guard matters does not fail an assertion about a string; it
+    deletes a Display.
+  - One widening, stated in §4v and asserted: an array tag now means no tag, so the
+    single-Display entry rule covers it, where before the request was refused. The
+    safety property was never the tag — a write still has to agree about which record
+    it means (invariant 12).
 
 Everything from the previous session is resolved and merged: the account-keyed
 login lockout (ADR-0001), the security-hardening pass (stored XSS → plain-text

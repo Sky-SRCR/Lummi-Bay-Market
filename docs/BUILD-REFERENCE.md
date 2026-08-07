@@ -54,7 +54,7 @@ Design rules, applied to every module added by this build:
 | Module | Interface, in one line | Hides |
 |--------|------------------------|-------|
 | `schema.php` | `ensureSignageSchema(PDO): void`, plus the three pieces it is made of: `readSchemaFacts(PDO) → SchemaFacts`, `signageSchemaPlan(SchemaFacts) → array`, `runSchemaPlan(PDO, array) → array` | Every idempotent `ALTER`/`CREATE`, the `displays` and `display_permissions` tables, `display_id` + backfill + index + FK, the drive-thru seed, the Brand Standards row seed, the "run at most once per request" latch — and **whether any of it needs to run at all**. The one place in the repo that reads `information_schema`; `ServerReport` asks this rather than writing its own catalogue query. `signageSchemaPlan()` is pure (facts in, ordered work out), which is the only reason this file has any automated coverage: its statements are MySQL-only and the fixture is SQLite. `runSchemaPlan()` returns the entries that failed, each with the database's own reason, and `reportSchemaFailures()` tells an admin — but only about a statement the catalogue said was missing, never about one included as a guess (invariant 20). `SchemaLatch` is the "once per request" latch, as something a test can clear. And the second door: `repairSchemaAfterFailure(PDO, &$why) → bool` is how a caller that has *already failed a query* converges, with the three refusals of invariant 21 in front of it; `schemaErrorSaysTableMissing($sqlstate, $message)` is the only thing outside this file that needs saying about a database error, and `withSchemaRepairLock()` makes convergence installation-wide single-file. |
-| `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. It decides only whether the error was the kind a repair could fix; whether repairing is *safe right now* belongs to `schema.php` (invariant 21), because that question is about DDL and transactions rather than about the `displays` table. |
+| `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion — including that a non-scalar folds to `''` rather than to the perfectly valid tag `array` (invariant 24), which matters because the panel's create and delete forms read a posted tag without going near `DisplayRequest` — canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. It decides only whether the error was the kind a repair could fix; whether repairing is *safe right now* belongs to `schema.php` (invariant 21), because that question is about DDL and transactions rather than about the `displays` table. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. `setAccess()` takes **both** axes of the matrix the form covered — the accounts *and* the Displays — because an unticked box and a cell the form never rendered are the same absence in a POST, and only one of them means "revoke"; and a revoke frees the edit lock on the Display it takes away, by holder, inside the same transaction. |
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, `assetUsage()` — which Displays depend on a library entry — and the sweep of the library rows a publish strands, scoped to the ids that Display's own previous layout held. |
@@ -68,7 +68,7 @@ Design rules, applied to every module added by this build:
 | `http_cache.php` | `HttpCache::headers()` / `neverStore()` | What may be kept of a reply this app gives: nothing. The three headers it takes to say that to caches of every vintage — `no-store` is the only one that forbids *keeping* the bytes; the other two are for HTTP/1.0 caches, which is what a signage widget or a shop router turns out to be — and the one condition under which it must not try, output having already begun. `headers()` is the rule as data so it can be read without a web server, the same reason `ErrorPolicy::noticeFor()` is pure. There are exactly two callers, `auth.php` and `db_connect.php`, because every entry point includes at least one of them and neither is universal on its own — `viewer.php` opens no session, `logout.php` and `setup_branding.php` open no database. Not three, and not one: there is no page in this app worth caching, and a second *opinion* about that is how one path gets missed, while a second *statement* of the same rule is what makes the coverage total. Deliberately does not reach `uploads/`: those are served by Apache, their filenames carry a `uniqid()` so the bytes behind a path never change, and no-storing a 40 MB video would re-fetch it on the store's connection every time a sign reloaded. Depends on nothing. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
-| `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, **the status line that goes with it** (`httpStatus()`, and `statusForKind()` for the one case nothing can construct), and the editing entry rule. The one place grants are enforced. The wording and the code live together because a Viewer and the poll inside it answering one fact with two different codes is a disagreement nobody would notice was wrong. |
+| `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, **the status line that goes with it** (`httpStatus()`, and `statusForKind()` for the one case nothing can construct), and the editing entry rule. The one place grants are enforced. It also decides what a parameter that is not a string means: an array `display` is no sign named, an array `display_id` is a refused write, and the two answers differ because an address and a confirmation of one are different jobs (invariant 24). The wording and the code live together because a Viewer and the poll inside it answering one fact with two different codes is a disagreement nobody would notice was wrong. |
 
 `lib/` is denied to the browser by `lib/.htaccess`. Nothing in `lib/` prints,
 redirects, reads `$_POST`/`$_GET`, or touches `$_SESSION` — adapters pass what
@@ -366,6 +366,19 @@ through the app again:
     picker page, which is a working page reached by an ordinary `no_tag`. Anything new
     that answers a machine — a second poll, a health endpoint, a webhook — says what it
     is in the status line, or it is a dark sign that reads as a working one.
+24. **A request parameter is not a string until something checks.** `?display[]=x`
+    and `tag[]=x` are things any browser will send and no page here links to, and
+    `(string)` on the array they produce is not a rejection — it is the word `array`,
+    which `isValidTag()` accepts, so it is a *working address* to whatever sign an
+    admin tagged that (decision #27). Both seams that turn a request into a tag now
+    refuse to fold a non-scalar: `DisplayRequest::locate()` treats it as no sign
+    named, and `DisplayStore::normalizeTag()` answers `''`. The tag is the one
+    parameter with two independent readers, which is why it needs the rule in both —
+    the panel's create form and its delete confirmation never go near `locate()`.
+    Note the asymmetry with an array `display_id`, which is a `MISMATCH` rather than
+    an absence, and it is not an inconsistency: an id claims to confirm a Display
+    already in hand, so a malformed claim disagrees with something and a write must
+    be refused; an address that is not an address disagrees with nothing.
 
 ---
 
@@ -2058,6 +2071,89 @@ Left standing, and named rather than skipped:
   cannot observe a sent header. The rule is data and the data is checked; the single
   call site is a grep.
 
+### 4v. The address that was not a string
+
+`viewer.php?display[]=x` is a URL anybody can type, and PHP hands the page an array
+for the one parameter that names a sign. The line that read it cast it to a string.
+
+Two things came out of that cast, and only one of them was in the item as written.
+
+**The warning.** `(string)` on an array is `E_WARNING: Array to string conversion`,
+and decision #27 recorded it printing *above the document* — which it did, when the
+item was raised. §4m has since taken that away: `ErrorPolicy` sets `display_errors=0`
+in code, and its handler logs the warning and returns, so nothing reaches the page.
+Confirmed by running the cast under the real policy rather than assumed: nothing
+printed, one line written. So the live consequence today is the line, and `log()` is
+the one path in that module with **no** throttling — `report()` has a window,
+deliberately, and this is not `report()`. An unauthenticated URL anybody can repeat
+writes an entry per request into a 2 MB file that keeps one generation, which is how
+the record of something worth reading gets rotated away.
+
+**The address.** This is the half that survived, and it is not a crash: the cast
+yields the string `Array`, `normalizeTag()` lowercases it to `array`, and
+`isValidTag('array')` is **true** — five characters of lowercase letters. So the URL
+did not fail. It resolved, cleanly, to whatever Display an admin had tagged `array`,
+and to `UNKNOWN` / "Display not found" only because most stores have not got one. A
+notice that sends somebody hunting for a sign that was never named is the wrong
+sentence (ADR-0003), and on the one store where the tag exists it is not a notice at
+all — it is another sign's layout on the Screen, which is the thing ADR-0003 exists
+to prevent.
+
+**The decision was "treat it as no sign named",** and that is now what both seams do:
+
+| Seam | Reads | An array now means |
+|------|-------|--------------------|
+| `DisplayRequest::locate()` | `display` from the URL or the post | nothing named a sign — `NO_TAG`, "No display specified", `400` |
+| `DisplayStore::normalizeTag()` | `tag` and `confirm_tag` from the panel's forms | `''`, which every caller already treats as "not given" |
+
+Two seams because the tag has two independent readers and only one of them is the
+resolution. The panel's own forms never go near `locate()`, and they are where the
+cast had teeth: `tag[]=x` on the create form named a sign `array`, and then
+`confirm_tag[]=x` on the delete form *spelled that tag exactly* — the typed-back tag
+is the entire safeguard on the one action in this app that loses work with no way
+back. The mutation that removes the guard from `normalizeTag()` does not fail an
+assertion about a string; it deletes a Display, in the test, and the suite says so.
+
+**Not the answer an array `display_id` gets.** That is a `MISMATCH` (§4h), and the
+difference is what the two parameters are for. The id claims to confirm a Display the
+caller is already holding, so a claim that could not have come from a page that knew
+its Display is a *disagreement*, and a write is refused. The tag is the address
+itself; a non-address disagrees with nothing, and "no sign named" is a state both the
+Viewer and the entry rule already have an answer for. Both arms are one line apart in
+the same method, so a reader will notice they differ — the comment there says why.
+
+**One consequence worth stating rather than discovering.** Because an array tag means
+no tag, the editing entry rule (§3) now covers it: an account with exactly one Display
+to work on that posts `display[]=x` gets that Display, where before it got `UNKNOWN`
+and a refusal. That is a widening, and it is the same widening `?display=` (empty) and
+a missing parameter have always had. The safety property is unchanged and it was never
+the tag: the write still has to agree about *which record* it is publishing to
+(invariant 12), so the id claim refuses it, and the entry rule still resolves to
+nothing the moment a second Display is openable. Both are asserted.
+
+20 checks, and three mutations, each verified to fail:
+
+| Mutation | Killed |
+|---|---|
+| `locate()` casts the parameter blindly again | 31 |
+| `normalizeTag()` folds a non-scalar again | 25, one of them a Display deleted by an array |
+| an array tag answers `UNKNOWN` instead of "no sign named" | 16 |
+
+The first two are the code as it shipped for six phases. The third is the plausible
+*alternative* decision, and it is in the list because a check that only proves "not a
+crash" would pass it — the codes and the wording are pinned to what was decided.
+
+Left standing:
+
+- **Nothing else in the repo casts a request value this way.** `grep -rn "(string)\$_GET"`
+  and the `$_POST` form return nothing; every other parameter is read through a module
+  that validates it or through `intval()`, which has no opinion about arrays. The two
+  seams here are the whole surface.
+- **`is_scalar()` and not `is_string()`.** `normalizeTag(12)` has always worked and a
+  caller passing a number is not doing anything wrong. An *object* would still fatal
+  on the cast — but nothing reaches these seams except `$_GET`, `$_POST` and one
+  session value, and none of those can hold one.
+
 ---
 
 ## 5. Verification
@@ -2235,6 +2331,13 @@ grep -rn "httpStatus\|statusForKind" --include=*.php .  # lib/display_request.ph
                                               # api.php (twice) emit; the self-test checks every kind. A
                                               # resolution kind added without a code answers 500 and fails
                                               # the reflection count — add the code and the check together
+grep -rn "is_scalar\|(string)\$_GET\|(string)\$_POST" --include=*.php .  # the two seams that turn a request
+                                              # into a screen name tag, and nothing else: locate() in
+                                              # lib/display_request.php and normalizeTag() in
+                                              # lib/displays.php. The casts must return nothing —
+                                              # `?display[]=x` and `tag[]=x` are an array, and `(string)`
+                                              # on one is a log line plus the valid tag `array`, which is
+                                              # an address to whatever sign is called that — invariant 24
 grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
                                               # DISPLAY_ID / waDisplayId() with it (invariant 12), which
                                               # omission silently opts out of. viewer.php is the one

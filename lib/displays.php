@@ -777,6 +777,17 @@ class DisplayStore
     /** Fold user input toward a valid tag without inventing one: trim, lowercase. */
     public static function normalizeTag($tag)
     {
+        // Anything that is not a scalar cannot be folded toward a tag, and casting it
+        // pretends otherwise: `(string)` on an array is `Array` plus a warning in the
+        // log, and the line below then lowercases that into `array` — which
+        // `isValidTag()` accepts, so the cast did not produce something that would be
+        // refused further down. It produced a tag (decision #27). Every path that turns
+        // a request into a tag comes through here, so a form posting `tag[]=x` named a
+        // sign `array`, and one posting `confirm_tag[]=x` then *spelled the
+        // confirmation* for deleting the sign already tagged that — the one action in
+        // this app that loses work with no way back. Empty is the honest answer: the input said
+        // nothing a tag can be, and empty is already what every caller checks for.
+        if (!is_scalar($tag)) { return ''; }
         return strtolower(trim((string)$tag));
     }
 
