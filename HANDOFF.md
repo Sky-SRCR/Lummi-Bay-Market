@@ -317,12 +317,16 @@ kiosk scroll lock. `git log origin/main` has the detail.
   promotion, enums, `readonly`, `match`, or arrow functions. This container has a
   much newer PHP, for `php -l` only.
 - Before pushing: `php -l` every touched file, then `php tools/selftest_layout.php`,
-  then both node suites (`tools/selftest_builder_readonly.js` and
-  `tools/selftest_builder_uploads.js`) if `builder.php` was touched. A self-test
+  then all four node suites (`tools/selftest_builder_readonly.js`,
+  `tools/selftest_builder_uploads.js`, `tools/selftest_builder_editing.js` and
+  `tools/selftest_builder_undo.js`) if `builder.php` was touched. A self-test
   failure is a release blocker, not a broken test.
-- **No undo exists anywhere in this app.** Publishing overwrites. Prefer refusing a
-  write to merging one — that is why publish has both a staleness check and a lock
-  check, and why neither tries to merge.
+- **Nothing that has been published can be taken back.** Publishing overwrites.
+  Prefer refusing a write to merging one — that is why publish has both a staleness
+  check and a lock check, and why neither tries to merge. The Builder's Undo
+  (ADR-0008) reaches back over the canvas *before* a publish, in one browser tab
+  only; its depth is an admin setting (Settings → Builder Undo, default 5, 0 turns
+  it off) stored in `branding_config.php`, not in the database.
 - Use the vocabulary in [`CONTEXT.md`](CONTEXT.md) — Display, Viewer, Screen, screen
   name tag, canvas, grant, edit lock — in code, comments and UI copy.
 - Files use flat relative includes — keep page scripts at repo root.

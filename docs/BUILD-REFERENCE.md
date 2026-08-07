@@ -147,7 +147,8 @@ through the app again:
    offer, accept, or infer a resize. Duplication is offered only between Displays
    of identical dimensions.
 5. **A publish that would overwrite someone else's work is refused, not merged**
-   (ADR-0006, ADR-0007). There is no undo; refusal is the whole safety net. Two
+   (ADR-0006, ADR-0007). Nothing published can be taken back — the Builder's Undo
+   (ADR-0008) stops at this button — so refusal is the whole safety net. Two
    things can make a publish that refusal: a stamp that has moved, and an edit
    lock that has. Both are checked inside `LayoutStore::publish()`, under the same
    row lock, so neither can be talked out of by a client. And a body that did not
@@ -379,6 +380,27 @@ through the app again:
     stops at must be the same floor. The zoom itself has the mirror-image rule: its
     floor is `min(ZOOM_MIN, fitZoom())`, because a floor that a canvas cannot fit inside
     is a Fit button that does not fit.
+25. **A function that changes the Builder's canvas ends by committing an undo step
+    (ADR-0008).** Undo is a stack of canvas snapshots in the editor's tab, and it is
+    the one place in this app where something can be taken back — so what it can take
+    back is exactly what somebody remembered to report. The rule has two halves,
+    because the alternative to each is a defect that shows up as an Undo that lands
+    somewhere nobody was ever looking at. *A change the code makes on its own* —
+    create, delete, a finished drag or resize (interact.js's `end`, never
+    `handleMove`), an upload's success callback, a modal's Save, a text block's
+    `blur` — commits at the end of the function that made it. *A control the person
+    is operating* commits on the element's `onchange`, never on `oninput`, and the
+    function behind it commits nothing: `updateStyle()` is called from both a select's
+    `onchange` and a colour picker's `oninput`, and a commit inside it would make
+    dragging the swatch forty steps. The safety margin is that `commitUndoStep()`
+    *measures* rather than trusting the call — it compares a fresh snapshot against
+    the last one and keeps nothing if they match — so an operation that changed
+    nothing never spends a step, and a call site somebody forgets folds its change
+    into the next step rather than dropping it. Two matching rules hold the rest up:
+    a restore rebuilds through `renderSection()`/`renderBlock()`, the same pair
+    `loadLayout()` uses, so a block type added later is restorable the day it is
+    added; and `serializeCanvas()` has exactly two callers, Publish and the snapshot,
+    so what Undo believes a block is and what reaches the sign cannot drift apart.
 
 ---
 
@@ -2158,7 +2180,8 @@ in `selftest_layout.php` rather than assumed.
 have a Delete beside them, which sets the field to the stored `null` a sign reads as
 "this slide has no title". The button then relabels itself `+ Restore` — and restoring
 handed back an empty box, because deleting had done `inp.value = ''` and kept no copy.
-In an app whose first rule is that **no undo exists anywhere**, a control that offers
+In an app whose first rule was that **no undo exists anywhere** — §4y has since carved
+out the one exception, and it does not reach inside this modal — a control that offers
 to put something back has to actually have it; the value is stashed on the node and
 read back. A field that *arrived* deleted still restores empty, which is not a loss —
 there is nothing behind it.
@@ -2229,6 +2252,118 @@ Left standing, and deliberately:
 
 ---
 
+### 4y. The first undo this app has ever had
+
+The rule at the top of `CLAUDE.md` used to read *no undo exists anywhere in this
+app*, and everything built since has honoured it by **refusing** rather than
+reversing: a moved layout stamp refuses a publish, an edit lock refuses a second
+editor, a wrong-shaped value is refused rather than coerced. That is the right
+answer when the danger is two people's work colliding. It is no answer at all to the
+ordinary case — one person, alone, who drags a price off a section or deletes the
+wrong block. The only recourse was reloading the Builder, which throws away
+everything unpublished, or rebuilding by hand. Hide is popular partly for this
+reason: it has been the only reversible removal in the app.
+
+**What was built** (ADR-0008) is deliberately the small one: a stack of canvas
+snapshots in the editor's browser tab, taken back a step at a time, with an Undo
+button and Ctrl+Z. Nothing on the server, no schema, no history of publishes. The
+depth is an admin setting — Settings → Builder Undo, default 5, range 0–20, stored
+in `branding_config.php` next to the site name, read through `undoStepsSetting()` in
+`config.php` so the Builder and the settings form cannot disagree about what a
+stored value means. `0` removes the button, the shortcut *and* the snapshots.
+
+Three decisions carry the weight, and each of them is the answer to a way an undo
+goes quietly wrong.
+
+**A step is measured, not announced.** `commitUndoStep()` snapshots the canvas and
+compares it against the last committed snapshot; identical means nothing is kept.
+The obvious design — capture the state *before* each change — fails twice over.
+Clicking Align Left on a block already at the left would spend a step, so the next
+Undo does nothing visible, which is the fastest way to teach somebody a button is
+broken. And a call site somebody forgets would drop that change from the history
+altogether; measuring afterwards folds it into the following step instead — still
+wrong, but recoverable and visible rather than absent.
+
+**A control the person is operating commits on `onchange`; the code commits at the
+end of the function that changed something.** `updateStyle()` is reached from a
+select's `onchange` and from a colour picker's `oninput`, so it records nothing
+itself and the markup carries `onchange="commitUndoStep()"` alongside. That one
+split is why dragging the swatch is one step rather than forty, and why typing a
+price is one step rather than one per character — the browser already knows when an
+edit is finished, and `blur` on a text block is exactly that moment. Ctrl+Z inside a
+text block or a form field is left to the browser, working a character at a time;
+only once the caret leaves does the Builder's own Undo take the whole edit back.
+The keyboard handler was pulled out of `setupCanvas()` into a named
+`handleBuilderKeydown()` on the way past, because a listener handed straight to
+`addEventListener` cannot be run by the suite that would catch it breaking.
+
+**Restore goes back through the renderer.** `restoreCanvas()` rebuilds with
+`renderSection()` and `renderBlock()` — the same pair `loadLayout()` uses — so there
+is one idea of how an element becomes a node and a block type added later is
+restorable the day it is added. Both now return the node they made, which is how a
+child block finds its section without a DOM lookup: a section created in this
+session has no database id to be looked up by.
+
+The serialization that both halves need was two loops inside `publishCanvas()`. It
+came out as `blockContent()` / `serializeSection()` / `serializeBlock()` /
+`serializeCanvas()`, because a second copy would have been two ideas of what a block
+is, drifting apart one block type at a time, with the sign showing whichever one
+publish happened to hold. A snapshot is that payload plus two fields the server never
+sees: `snap_content`, because publish sends no content for a block linked to a
+library entry and a restore still has to put the words back on the screen, and
+`snap_manual_path`, because `renderBlock()` reconstructs an image from its path and
+fit alone — so without it a restored upload looks identical and publishes as a file
+the library was never told about.
+
+**Verification.** `tools/selftest_builder_undo.js` is the fourth harness over
+builder.php's inline JavaScript, and the fourth premise: the last thing they did was
+not what they meant. **108 checks**, and its DOM is the editing suite's with three
+additions the round trip needs — `offsetWidth`/`offsetHeight` read back from
+`style`, `innerText` and `textContent` as one text, and a `dataset` that stores
+strings the way a browser's does. All three are load-bearing rather than tidiness:
+without the first, every serialized width is `0` and the round trip compares two
+canvases of nothing; without the third, a snapshot that recorded `7` never compares
+equal to the page's later `'7'`.
+
+The central check is a round trip — snapshot, change every kind of thing, restore,
+snapshot again, and the two **whole strings** must match. Whole strings on purpose:
+a check that names the fields it cares about goes on passing the day a field is
+added. **Twenty deliberate mutations, all twenty killed.** Two of them found real
+defects rather than confirming the code, and both are in the file now:
+
+- `undoRestoring` was raised *after* `deselectAll()` rather than before it.
+  `deselectAll()` blurs the text block that had focus, and a blur is where a text
+  edit becomes a step — so one press of Undo on an uncommitted edit would record a
+  step on its way to taking one back, then pop the step it had just created instead
+  of the one it restored, leaving the stack claiming something that no longer
+  described anything.
+- `restoreCanvas()` ended with a `setupInteract()` call that could not fail. interact.js
+  binds by CSS selector, not by node, so the restored blocks were already draggable —
+  the same reason `createSection()` has never needed to call it. It is gone, with the
+  reasoning in its place, because a line no test can fail on is decision #50's
+  complaint.
+
+Left standing, and deliberately:
+
+- **The canvas background is not covered.** An uploaded one lives in a
+  `<input type="file">` no snapshot can put back. Restoring the colour but not the
+  picture would be an undo that lies about what it undid, so it says plainly that the
+  background is out of scope — asserted by the suite, so adding it later means
+  amending this rather than discovering it.
+- **There is no redo.** An Undo pressed once too often is itself irreversible, which
+  is a small version of the problem this whole section is about. It was left out for
+  scope, not because it is wrong; ADR-0008 says so.
+- **The history ends with the page.** A reload re-reads the layout from the server,
+  so the steps no longer describe anything that happened, and offering them would be
+  offering to paste an old canvas over a sign somebody else may have published to.
+- **A publish still cannot be taken back.** That is the feature that actually answers
+  "publishing overwrites", and it is a much larger one — a table with its gate, an
+  interaction with the stamp and the lock, and the trap that `LayoutStore::publish()`
+  sweeps the pooled asset rows an old layout referenced, so a snapshot stored by asset
+  id would restore into blank blocks. ADR-0008 records it as deferred, not rejected.
+
+---
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -2246,6 +2381,10 @@ node tools/selftest_builder_editing.js   # and under the third: an ordinary good
                                          # Zoom, resize floors, hide/unhide, slide fields
                                          # and the marquee, run over a DOM whose classList
                                          # and appendChild actually work
+node tools/selftest_builder_undo.js      # and under the fourth: the last thing they did was
+                                         # not what they meant. Round-trips the canvas through
+                                         # snapshot and restore, and drives every mutating
+                                         # control to prove each one leaves a step
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
                                               # the get_canvas_elements endpoint NAME, and
                                               # server_report.php's expected-column list

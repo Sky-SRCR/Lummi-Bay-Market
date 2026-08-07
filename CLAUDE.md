@@ -61,8 +61,13 @@ edited in place and every change reaches the sign by hand.
   ignores a failed heartbeat on purpose, and `LOCK_TERMINAL` is the fixed list of refusals
   that never come back — each with its own sentence, because what to do next differs.
 - **PHP 7.1-compatible syntax** — the live server's version is unverified.
-- **No undo exists anywhere in this app.** Publishing overwrites. Prefer
-  refusing a write to merging one.
+- **Nothing that has been published can be taken back.** Publishing overwrites; a
+  deleted Display, a swept asset row and a saved brand standard are gone. Prefer
+  refusing a write to merging one. The **one** exception is the Builder's Undo
+  (ADR-0008), which reaches back a few steps over the canvas in one browser tab
+  *before* a publish — so a function that changes that canvas ends by committing a
+  step (invariant 25), and everything on the server side of a publish is still
+  written as if no undo existed, because there it does not.
 
 ## Before pushing
 
@@ -72,6 +77,7 @@ php tools/selftest_layout.php
 node tools/selftest_builder_readonly.js    # if builder.php was touched
 node tools/selftest_builder_uploads.js     # if builder.php was touched
 node tools/selftest_builder_editing.js     # if builder.php was touched
+node tools/selftest_builder_undo.js        # if builder.php was touched
 ```
 
 `php -l` cannot see inline JavaScript, and `builder.php` is ~3500 lines of it —
@@ -80,8 +86,10 @@ block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
 sign rather than a stack trace anybody will read.
 
-The three node suites go further and *run* that JavaScript, each under a different
-premise about who is at the keyboard — a page that may not edit, an admin uploading
-a file, and an admin on an ordinary good day — because the defects they exist for
-are invisible to a parse: a lookup for a control the edit lock took away, a `fetch`
-chain with no `.catch()`, and a control that quietly does less than it says.
+The four node suites go further and *run* that JavaScript, each under a different
+premise about the person at the keyboard — a page that may not edit, an admin
+uploading a file, an admin on an ordinary good day, and somebody who wants their
+last change back — because the defects they exist for are invisible to a parse: a
+lookup for a control the edit lock took away, a `fetch` chain with no `.catch()`, a
+control that quietly does less than it says, and an Undo that restores a canvas with
+the content missing.

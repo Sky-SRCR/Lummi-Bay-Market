@@ -157,6 +157,11 @@ function emittedIds(page, source) {
         if      (a === '$readOnly')             { v = page.readOnly; }
         else if (a === '$isAdmin')              { v = page.isAdmin; }
         else if (a === '$display->isActive()')  { v = page.active; }
+        // The Builder's undo depth (ADR-0008), which builder.php computes as
+        // `$readOnly ? 0 : undoStepsSetting()`. Modelled the same way here rather
+        // than as a plain setting, because the whole point of that expression is
+        // that a read-only page has no Undo button whatever the admin set.
+        else if (a === '$undoSteps > 0')        { v = !page.readOnly && (page.undoSteps === undefined ? 5 : page.undoSteps) > 0; }
         else { unknown.add(a); return null; }
         return negated ? !v : v;
     };
@@ -245,7 +250,8 @@ check(emitted.unknown.length === 0,
 ['builder-canvas', 'editor-frame', 'toast', 'lock-banner', 'upload-status'].forEach(function (id) {
     check(PRESENT.has(id), 'a read-only page still has #' + id);
 });
-['inspector', 'align-bar', 'section-banner', 'insp-x', 'carousel-modal-overlay', 'publish-btn'].forEach(function (id) {
+['inspector', 'align-bar', 'section-banner', 'insp-x', 'carousel-modal-overlay', 'publish-btn',
+ 'undo-btn'].forEach(function (id) {
     check(!PRESENT.has(id), 'and does not have #' + id);
 });
 // #section-banner is the node decision #40 is about, and the derivation is what
@@ -264,6 +270,14 @@ check(!editableAdmin.has('section-banner'),
 // between two files' worth of conditions, and this is the only thing asserting it.
 check(PRESENT.has('lock-free-hint') && !editableBasic.has('lock-free-hint'),
       'the "it is free now" hint is on exactly the pages that poll for it — read-only ones');
+
+// Undo (ADR-0008) has two ways to be absent, and both have to keep the button out
+// of the page rather than merely disable it — every lookup for it is guarded, and a
+// guard is only worth having if something really does return null.
+check(editableAdmin.has('undo-btn') && editableBasic.has('undo-btn'),
+      'a page that can edit has an Undo button, admin or not');
+check(!emittedIds({ readOnly: false, isAdmin: true, active: true, undoSteps: 0 }).ids.has('undo-btn'),
+      'and the admin setting at 0 takes it out of a page that could otherwise edit');
 
 function stubEl(id) {
     return {
@@ -496,7 +510,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 65;
+    const expected = 68;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

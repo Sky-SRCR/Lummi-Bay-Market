@@ -89,6 +89,15 @@ written down rather than remembered:
 | 50 | About 29 checks in the suite could not fail, and five invariants had no automated check at all. | Replace the hollow ones, and cover the missing rules. | Open — the harness itself was hardened so a suite that stops early now fails, but the 29 have not been swept. | — |
 | 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | Part done — **the live PHP version is still unknown.** Settings → This Server answers it the first time an admin opens it after deploy; until then the 7.1 rule stands. | §4g |
 
+## Work outside this list
+
+The Builder's **Undo** (ADR-0008, §4y) was asked for directly rather than found by
+the audit, so it has no number here and the tally below is unchanged by it. It is
+worth knowing about while reading the rest of this file: several entries are written
+on the premise that *nothing anywhere can be taken back*, and that is now true only
+of things that have been published. Nothing on this list was closed by it, and #25
+(the public feed serves hidden blocks, content and all) is untouched.
+
 ## Where this stands
 
 **26 done, 2 part done, 23 open.**
