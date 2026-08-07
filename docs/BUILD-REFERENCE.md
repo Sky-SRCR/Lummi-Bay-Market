@@ -56,7 +56,7 @@ Design rules, applied to every module added by this build:
 | `schema.php` | `ensureSignageSchema(PDO): void`, plus the three pieces it is made of: `readSchemaFacts(PDO) → SchemaFacts`, `signageSchemaPlan(SchemaFacts) → array`, `runSchemaPlan(PDO, array) → array` | Every idempotent `ALTER`/`CREATE`, the `displays` and `display_permissions` tables, `display_id` + backfill + index + FK, the drive-thru seed, the Brand Standards row seed, the "run at most once per request" latch — and **whether any of it needs to run at all**. The one place in the repo that reads `information_schema`; `ServerReport` asks this rather than writing its own catalogue query. `signageSchemaPlan()` is pure (facts in, ordered work out), which is the only reason this file has any automated coverage: its statements are MySQL-only and the fixture is SQLite. `runSchemaPlan()` returns the entries that failed, each with the database's own reason, and `reportSchemaFailures()` tells an admin — but only about a statement the catalogue said was missing, never about one included as a guess (invariant 20). `SchemaLatch` is the "once per request" latch, as something a test can clear. And the second door: `repairSchemaAfterFailure(PDO, &$why) → bool` is how a caller that has *already failed a query* converges, with the three refusals of invariant 21 in front of it; `schemaErrorSaysTableMissing($sqlstate, $message)` is the only thing outside this file that needs saying about a database error, and `withSchemaRepairLock()` makes convergence installation-wide single-file. |
 | `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. It decides only whether the error was the kind a repair could fix; whether repairing is *safe right now* belongs to `schema.php` (invariant 21), because that question is about DDL and transactions rather than about the `displays` table. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
-| `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. `setAccess()` takes **both** axes of the matrix the form covered — the accounts *and* the Displays — because an unticked box and a cell the form never rendered are the same absence in a POST, and only one of them means "revoke"; and a revoke frees the edit lock on the Display it takes away, by holder, inside the same transaction. |
+| `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. `destroy()` takes who is asking as well as the tag typed back, and refuses while anybody else holds the edit lock, re-reading it inside the transaction rather than trusting the `Display` the page was rendered from (invariant 27). `setAccess()` takes **both** axes of the matrix the form covered — the accounts *and* the Displays — because an unticked box and a cell the form never rendered are the same absence in a POST, and only one of them means "revoke"; and a revoke frees the edit lock on the Display it takes away, by holder, inside the same transaction. |
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, `assetUsage()` — which Displays depend on a library entry — and the sweep of the library rows a publish strands, scoped to the ids that Display's own previous layout held. Two named reads and no unnamed one: `editorSnapshot()` carries hidden elements because the Builder draws them, `viewerSnapshot()` drops them and everything inside a hidden section because `get_layout` needs no session. There is deliberately no plain `snapshot()` for somebody to reach for by default (invariant 26). |
 | `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `saveEdit` → `AssetEdit` / `delete` / `pool` / `pooledNotIn` / `discardPooled`, plus `isUsableRef` | **Every** `assets` statement. Two decisions it holds. `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. And **a row's type is read from the row**: `saveEdit()` takes no type argument (invariant 23), so nothing can be talked into stripping markup off a path or storing an `.svg` where a Screen will fetch it, and the raw `UPDATE` is private behind it. `isUsableRef()` is the one allow-list for what a stored reference may point at, used by the create path and the edit path alike. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::elementRows()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
 | `upload_limits.php` | `UploadLimit::bytes` / `describe` / `describeBytes` / `bodyWasDropped` / `smallestOf` / `toBytes` | How big a file can actually reach this server — the smallest of the app's 50 MB ceiling and PHP's `upload_max_filesize` and `post_max_size`, not the app's opinion. And the silent case: exceeding `post_max_size` is not an error PHP reports, it abandons the body, so a 40 MB video was answered *"Security token mismatch. Please reload the page."* `smallestOf()` takes the ini values as an argument because both settings are PHP_INI_PERDIR and the cases worth testing are unreachable otherwise. Depends on nothing. |
@@ -419,6 +419,22 @@ through the app again:
     converges, so a predicate on it would not serve one row too many on a database
     that has not caught up — it would throw, and every sign in the store would drop
     to the notice screen. A row with no `hidden` key reads as visible.
+27. **A Display is never destroyed out from under somebody who is editing it.**
+    `DisplayAdmin::destroy()` takes *who is asking* as an argument and refuses —
+    `DisplayResult::BUSY`, nothing written — while the edit lock is held by anybody
+    else. The typed screen name tag is a different safeguard for a different
+    mistake: it catches this admin's own slip, and knows nothing about a colleague.
+    Neither does the element count on the confirm panel, and that is the half of
+    decision #19 that is easy to miss — the count is of what has been *published*,
+    while what a clerk mid-edit loses is a canvas that has never left their browser.
+    The check reads the lock **again, inside the transaction**, because the `Display`
+    the page hands in was read when the page was rendered: a sign somebody opened in
+    the minute since would look free forever. The caller's own lock does not block
+    them, a lapsed lock is nobody's, and a lock held by an account that can no longer
+    sign in is not a lock at all (invariant 8) — a refusal that could never be lifted
+    would be a Display nobody can ever remove. An unknown `$actorId` of 0 collides
+    with every held lock, so a caller that cannot say who is asking is refused rather
+    than obeyed.
 
 ---
 
@@ -2460,8 +2476,115 @@ Left standing, and deliberately:
   `requireAdmin()`, and knowing what is hidden is the whole reason to open it.
 - **`get_layout` still answers 200 for a Display that is off or missing**, with a
   notice as the payload. That is decision #28, and it is a separate change.
-- **Nothing warns before a publish carries a hidden section.** Unchanged from §4x —
-  #19's decision about mid-edit warnings is where that would start.
+- **Nothing warns before a publish carries a hidden section.** Unchanged from §4x,
+  and not covered by #19 either — that turned out to be about deleting a Display
+  (§4aa), not about what a publish says on its way out. Still open.
+
+---
+
+### 4aa. The one button that could take away work nobody had published
+
+Decision **#19**. Deleting a Display removes its layout, its grants and the row, and
+it asks the admin to type the screen name tag back first. That safeguard is real and
+it is aimed at exactly one thing: this admin clicking Delete on the wrong card. It
+knows nothing whatsoever about the clerk who has the sign open in the Builder.
+
+And neither does the number beside it. The confirm panel said *"Delete "Deli Case"
+and its 14 elements?"*, and 14 is a count of `canvas_elements` — of what has been
+**published**. Somebody mid-edit is holding a canvas that has never been published,
+which is why no query on that page can total it up. So the most destructive button
+in the app was quoting a cost that was too low by exactly the amount that had not
+been saved yet, and the person it belonged to would find out from their own Builder
+reporting a sign that no longer exists.
+
+**The decision was to refuse, not to warn harder.** A warning that names the risk
+and then lets you take it is the right shape for the tag — the admin owns that
+mistake. It is the wrong shape here, because the person who pays is not the person
+clicking, and they are not in the room. `destroy()` now takes who is asking and
+answers `DisplayResult::BUSY` while the edit lock is held by anybody else. Nothing
+is written; the same submission is expected to work later, unchanged.
+
+**The check re-reads the lock inside the transaction.** This is the part that would
+have been easy to get subtly wrong. `admin_panel.php` builds a `Display` when it
+renders the page, and the delete panel may sit open for minutes; asking *that*
+object who holds the lock answers a question about the past, so a sign somebody
+opened in the meantime reads as free forever. So the check loads the Display again,
+after `lockLayoutRevision()` has taken the row lock — the same row lock a publish
+takes, for the same reason — leaving no moment between reading who is editing and
+deleting the row for somebody to start.
+
+**Three answers have to stay permitted, or the safeguard becomes a trap.** A refusal
+nobody can ever lift is a Display that can never be removed:
+
+- **The caller's own lock does not block the caller.** `heldByOther()`, never
+  `isHeld()`. An admin who has the sign open in another tab is the whole normal case.
+- **A lapsed lock is nobody's.** The question goes to `LockState`, so the fifteen-minute
+  idle window means the same thing here as everywhere else and a Builder abandoned on a
+  back-office monitor stops blocking on its own.
+- **A lock held by an account that can no longer sign in is not a lock** — invariant 8's
+  rule, arriving here for free because it lives in `LockState::isHeld()` rather than in
+  each caller.
+
+The mirror of that: an `$actorId` of 0 — a caller with no idea who is asking —
+collides with *every* held lock and is refused. Wrong in the safe direction, and it
+means the argument cannot be quietly forgotten into a permissive default.
+
+**`BUSY` is a fourth `DisplayResult` kind rather than a `CONFLICT`,** and it carries
+no `field()`. The distinction is what an adapter should do next: `INVALID` and
+`CONFLICT` mean *change what you typed*, and pointing at the offending input is the
+useful thing to do. Here nothing typed is wrong. Pointing at the tag box would invite
+an admin to retype their way past a colleague, which is precisely the move the
+refusal exists to stop.
+
+**On the panel, the warning moved in front of the button and the button stayed
+live.** The delete panel now names the holder and says the count above is not the
+whole cost — before the tag box, not after the refusal, because an admin who reads it
+never submits at all. It does *not* disable the button. The page is a snapshot: the
+lock can lapse or be taken while the panel sits open, so a disabled button would be
+wrong in both directions, and there would then be two places deciding whether a
+delete may happen. `destroy()` re-reads and is the authority; the paragraph is a
+courtesy.
+
+#### What proves it
+
+**19 checks** in the destroying section of `tools/selftest_layout.php` (873 → 892).
+The refusals all run against the same Display, so each one also asserts that the
+Display, its elements and its grant are all still there; the three *permitted*
+answers each get a throwaway Display of their own, because getting them right means
+the delete goes through and there would be nothing left to check against.
+
+Two are worth naming. One reads the `Display` while the sign is free, keeps it, and
+only then lets the clerk claim the lock — that is the admin panel's real sequence,
+and it is the check that fails if the code trusts the object it was handed. The other
+pins the *order* of the two refusals: a mistyped tag is answered first even with
+somebody editing, because at that point the admin has not yet said which sign they
+mean, and that is answerable without telling them anything about a colleague.
+
+**Ten deliberate mutations, all ten killed** — including the two near-misses: swapping
+`heldByOther()` for `heldBy()` or `isHeld()`, and dropping the `rollBack()` before the
+refusal (which leaves the transaction open and makes the *next* delete fail instead).
+Removing the "already deleted" branch is caught by its message rather than its kind:
+without it the path still answers `FAILED`, by throwing on the missing row and being
+caught, and reports *"could not be deleted"* for a Display that is already gone.
+
+**One line in this change cannot be killed by any mutation, and it stays.**
+`lockLayoutRevision()` is called for the row lock alone, and SQLite has no row
+locking, so the fixture runs identically with it removed. That is decision #48's gap,
+not dead code — the same gap that already covers the identical call in
+`LayoutStore::publish()`. Anybody tempted to delete it as unreachable should note that
+what it protects only exists on MySQL.
+
+Left standing, and deliberately:
+
+- **Turning a Display off is still allowed mid-edit**, and still frees the clerk's
+  lock rather than refusing (§4t). Retiring keeps the layout and is reversible;
+  deleting is neither, and that difference is the whole reason one refuses and the
+  other does not.
+- **An admin can still take the lock over in the Builder and then delete.** That is
+  the intended way through, and it is the sentence the refusal ends with — taking over
+  is a decision made on a screen where you can see what you would be interrupting.
+- **Nothing tells the clerk a delete was attempted.** They keep working, unaware. The
+  alternative is a notification channel this app does not have.
 
 ---
 
@@ -2559,6 +2682,13 @@ grep -rn "releaseLockOn\|releaseLocksHeldBy" --include=*.php .  # lib/displays.p
                                               # releaseLockOnLeave is a different thing and only matches on
                                               # the name. A new caller is fine; a change of reach with NO
                                               # call is invariant 8's second paragraph
+grep -rn "\->destroy(" --include=*.php .      # admin_panel.php and tools/. Every call carries THREE
+                                              # arguments — the Display, the tag typed back, and who is
+                                              # asking — and the third is the whole of invariant 27: it is
+                                              # what tells a colleague's edit lock apart from the caller's
+                                              # own. A two-argument call will not even parse; one passing
+                                              # a literal 0 refuses every held lock, which is safe but
+                                              # means an admin can never delete a sign they have open
 grep -rn "holderActive\|lock_holder_active" --include=*.php .  # lib/displays.php only, and it must appear on
                                               # both sides: the join that fetches it and LockState::isHeld
                                               # that acts on it. The same rule is spelled `users.is_active = 1`

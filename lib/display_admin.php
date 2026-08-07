@@ -3,13 +3,13 @@
 // ADMINISTERING DISPLAYS
 // ============================================================
 // Adding, editing, retiring and destroying a Display — the Phase 3 admin screen's
-// whole vocabulary, behind four methods.
+// whole vocabulary, behind five methods.
 //
-//   create(fields)                → DisplayResult   blank, or a duplicate of another Display
-//   updateDetails(Display, fields)→ DisplayResult   title, screen name tag, location
-//   setActive(Display, bool)      → DisplayResult   retire without losing the layout
-//   destroy(Display, typedTag)    → DisplayResult   the layout and its grants go with it
-//   setAccess(accounts, wanted)   → DisplayResult   who may edit what, in one write
+//   create(fields)                     → DisplayResult   blank, or a duplicate of another Display
+//   updateDetails(Display, fields)     → DisplayResult   title, screen name tag, location
+//   setActive(Display, bool)           → DisplayResult   retire without losing the layout
+//   destroy(Display, typedTag, actor)  → DisplayResult   the layout and its grants go with it
+//   setAccess(accounts, wanted)        → DisplayResult   who may edit what, in one write
 //
 // Why this exists rather than more methods on DisplayStore: administering a
 // Display spans three tables. Creating one as a duplicate writes a `displays` row
@@ -31,8 +31,9 @@
 //     here that changes them.
 //   · A layout may be duplicated only from a Display of identical dimensions
 //     (ADR-0004), and only into an empty one.
-//   · Destroying a Display requires its screen name tag typed back. There is no
-//     undo anywhere in this app, and this is the most destructive button in it.
+//   · Destroying a Display requires its screen name tag typed back, and is refused
+//     outright while somebody else is editing it. Nothing published can be taken
+//     back, and this is the most destructive button in the app.
 //   · A grant is only ever "this account may edit this Display" (ADR-0005). This
 //     module does not know what an account's *role* is — that is the panel's
 //     business, and it is why granting is offered for `basic` accounts only.
@@ -52,6 +53,7 @@ class DisplayResult
     const OK       = 'ok';
     const INVALID  = 'invalid';    // the input cannot be used
     const CONFLICT = 'conflict';   // the input collides with an existing Display
+    const BUSY     = 'busy';       // the input is fine; somebody is in the way right now
     const FAILED   = 'failed';     // the database refused; nothing was changed
 
     private $kind;
@@ -89,6 +91,18 @@ class DisplayResult
     public static function conflict($field, $message)
     {
         return new self(self::CONFLICT, null, $message, $field);
+    }
+
+    /**
+     * Refused because of who is working right now, not because of what was typed.
+     *
+     * Carries no field() on purpose: nothing on the form is wrong, so pointing at
+     * an input would invite the admin to retype their way past a colleague. The
+     * same submission is expected to succeed later, untouched.
+     */
+    public static function busy($message)
+    {
+        return new self(self::BUSY, null, $message, '');
     }
 
     public static function failed($message)
@@ -336,14 +350,32 @@ class DisplayAdmin
     }
 
     /**
-     * Destroy a Display and its layout, behind the screen name tag typed back.
+     * Destroy a Display and its layout, behind the screen name tag typed back —
+     * and never while somebody else has it open.
      *
-     * There is no undo in this app and nothing is versioned, so this is the one
-     * action that can lose work with no way back. The typed tag is the whole
-     * safeguard — an admin who mistypes it gets a refusal, not a deletion.
+     * Nothing published can be taken back and nothing is versioned, so this is the
+     * one action that can lose work outright. The typed tag guards against the
+     * admin's own slip. It does nothing at all about the other half, which is what
+     * decision #19 was: a clerk mid-edit loses a canvas that has never been
+     * published, so no count of stored elements can even see it, and the first they
+     * would hear of it is their Builder reporting a sign that no longer exists. So
+     * a held lock refuses the delete rather than colouring a warning.
+     *
+     * The check is inside the transaction and *re-reads* the Display, because the
+     * one passed in was read when the page was built and a sign somebody opened
+     * since then would look free forever. `lockLayoutRevision()` goes first for the
+     * row lock it takes on the way — the same row lock a publish takes, for the same
+     * reason — so that between reading who is editing and deleting the row there is
+     * no moment for somebody to start.
+     *
+     * @param int $actorId who is asking. Their own lock does not stop them; an
+     *                     unknown 0 collides with every held lock, so a caller that
+     *                     cannot say who is asking is refused rather than obeyed.
      */
-    public function destroy(Display $display, $typedTag)
+    public function destroy(Display $display, $typedTag, $actorId)
     {
+        // Ahead of the lock check because it needs no database at all, and because
+        // a mistyped tag means this admin has not yet said which sign they mean.
         if (DisplayStore::normalizeTag($typedTag) !== $display->tag()) {
             return DisplayResult::invalid('confirm_tag',
                 'Type the screen name tag "' . $display->tag() . '" exactly to delete this display. '
@@ -352,6 +384,19 @@ class DisplayAdmin
 
         try {
             $this->pdo->beginTransaction();
+            // The revision it answers with is of no use here; the row lock it takes
+            // on the way is the whole reason to call it.
+            $this->displays->lockLayoutRevision($display);
+            $current = $this->displays->forId($display->id());
+            if (!$current) {
+                $this->pdo->rollBack();
+                return DisplayResult::failed('That display no longer exists.');
+            }
+            if ($current->lockState()->heldByOther($actorId)) {
+                $this->pdo->rollBack();
+                return $this->beingEdited($current);
+            }
+
             // Elements and grants first, and explicitly: both `ON DELETE CASCADE`
             // constraints may never have applied on a live database that is behind
             // the repo. A layout orphaned by a deleted Display is invisible to
@@ -487,6 +532,25 @@ class DisplayAdmin
     }
 
     // ---- Internals ----------------------------------------------------------
+
+    /**
+     * Why a delete was refused, and what to do about it.
+     *
+     * Names the person, says plainly that the cost is not the element count — the
+     * canvas they have not published is the part nothing on the page can total up —
+     * and gives both ways forward, because the two are for different situations. The
+     * idle window is quoted from the constant so that a change to it cannot leave a
+     * wrong number in a sentence.
+     */
+    private function beingEdited(Display $display)
+    {
+        return DisplayResult::busy(
+            $display->editingSentence()
+            . ' Nothing was deleted. Deleting it now would take the work they have not published yet as'
+            . ' well, and nothing here can count that — it is only on their screen. Wait until they are'
+            . ' done (a builder left idle lets go after ' . intdiv(LockState::IDLE_LAPSE_SECONDS, 60)
+            . ' minutes), or open the display in the builder and take the edit over first.');
+    }
 
     /**
      * The rules a Display's details must satisfy, checked once for create and

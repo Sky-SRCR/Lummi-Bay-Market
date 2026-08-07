@@ -265,14 +265,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tab = 'displays';
     }
 
-    // Delete a display and its layout. There is no undo anywhere in this app, so
-    // the typed screen name tag is the safeguard — DisplayAdmin checks it.
+    // Delete a display and its layout. Nothing published can be taken back, so the
+    // typed screen name tag is the safeguard against this admin's own slip and the
+    // edit lock is the safeguard against somebody else's unpublished work —
+    // DisplayAdmin checks both, and who is asking decides whose lock is in the way.
     if (isset($_POST['action_delete_display'])) {
         $display = $displayStore->forId($_POST['d_id'] ?? 0);
         if (!$display) {
             $msg = 'That display no longer exists.'; $msgType = 'error';
         } else {
-            $res     = $displayAdmin->destroy($display, $_POST['confirm_tag'] ?? '');
+            $res     = $displayAdmin->destroy($display, $_POST['confirm_tag'] ?? '',
+                                              intval($user['id']));
             $msg     = $res->message();
             $msgType = $res->isOk() ? 'success' : 'error';
         }
@@ -815,6 +818,12 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             $did   = $d->id();
             $count = $elementCounts[$did];
             $url   = viewerUrlFor($d);
+            // Who has this Display open right now (ADR-0007). Read once for the card,
+            // because two places below need it and they must not be able to disagree:
+            // the facts line explains why the Builder would open read-only, and the
+            // delete panel warns that the delete will be refused.
+            $cardLock = $d->lockState();
+            $lockedByOther = $cardLock->heldByOther(intval($user['id']));
             // The basic accounts granted this Display. Admins are not listed: they
             // hold every Display and listing them would suggest it is revocable.
             $editors = [];
@@ -850,10 +859,9 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     Admins only — no basic account has been assigned this display
                 <?php endif; ?>
                 <?php
-                // Who has it open right now (ADR-0007). Shown here because "why can I
-                // not edit this?" is asked on this screen; the taking-over is offered
-                // in the Builder, where you can see what you would be interrupting.
-                $cardLock = $d->lockState();
+                // Shown here because "why can I not edit this?" is asked on this
+                // screen; the taking-over is offered in the Builder, where you can
+                // see what you would be interrupting.
                 if ($cardLock->isHeld()):
                 ?>
                     <br><span class="lock-line">Being edited now by
@@ -958,6 +966,32 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                         This cannot be undone — nothing in this app is versioned. Any screen still pointed at
                         <code><?= htmlspecialchars($d->tag()) ?></code> will show “Display not found”.
                     </p>
+                    <?php
+                    // Said before the tag box rather than after the refusal, because the
+                    // element count above is the whole cost only when nobody is in there:
+                    // a clerk mid-edit also loses a canvas that has never been published,
+                    // and no number on this page can include it.
+                    //
+                    // The button stays live on purpose. This page is a snapshot — the lock
+                    // can lapse or be taken in the minute it sits open — so a disabled
+                    // button would be wrong in both directions. DisplayAdmin::destroy()
+                    // re-reads the lock inside its own transaction and is the authority;
+                    // this paragraph is the courtesy.
+                    if ($lockedByOther):
+                    ?>
+                    <p class="hint" style="margin-bottom:10px;color:#c0392b;">
+                        <strong><?= htmlspecialchars($cardLock->holderName() !== ''
+                                       ? $cardLock->holderName() : 'Someone') ?></strong>
+                        is editing this display right now<?php
+                            if ($cardLock->takenAtLabel() !== ''): ?>, since
+                            <?= htmlspecialchars($cardLock->takenAtLabel()) ?><?php
+                            endif; ?>. Deleting it is refused while they are in there — their
+                        unpublished canvas is not part of the <?= $count ?>
+                        element<?= $count === 1 ? '' : 's' ?> counted above, and it would go
+                        with no warning to them. Wait for them to finish, or open the display
+                        in the builder and take the edit over first.
+                    </p>
+                    <?php endif; ?>
                     <form method="POST">
                         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
                         <input type="hidden" name="d_id" value="<?= $did ?>">

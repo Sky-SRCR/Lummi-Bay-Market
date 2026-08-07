@@ -53,7 +53,11 @@ edited in place and every change reaches the sign by hand.
   edit lock the account can no longer even release — releasing goes through the seam that
   has just started refusing it. Free it in the same transaction, by holder, so a colleague
   on the same sign keeps theirs. Renaming a tag is *not* one of these: it changes the
-  address, not who may edit, so the holder keeps the lock and is asked to reload.
+  address, not who may edit, so the holder keeps the lock and is asked to reload. Nor is
+  *deleting* a Display: the one write that can destroy work nobody has published
+  **refuses** while anybody else holds the lock, and re-reads it inside the transaction,
+  because the page's own read is minutes old and no count of published elements can see
+  what is still only on their screen.
   Freeing at the moment of the change only covers the paths somebody listed, so a lock is
   also never *honoured* for a holder who cannot sign in — the rule is in `LockState::isHeld()`
   **and** in `claimLock()`'s `WHERE`, because a read and a write that disagree about who

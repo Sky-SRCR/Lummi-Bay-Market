@@ -656,12 +656,89 @@ grantTestAccess($pdo, $lobby->id(), 2);
 grantTestAccess($pdo, $driveT->id(), 2);
 checkSame(2, count(allGrants($pdo)), 'the clerk has been assigned both Displays');
 
-$res = $admin->destroy($lobby, 'lobbi');
+$res = $admin->destroy($lobby, 'lobbi', 1);
 checkSame(DisplayResult::INVALID, $res->kind(), 'a mistyped tag does not delete a Display');
 checkSame(2, $store->count(), 'both Displays are still there');
 checkSame(2, count(elementsOf($pdo, $lobby->id())), 'and its layout is untouched');
 
-$res = $admin->destroy($lobby, ' LOBBY ');
+// ---- …and not while somebody else is in there (decision #19) -------------------
+// The typed tag guards against the admin's own slip and says nothing at all about
+// the clerk with the canvas open. Nor does the element count: what that clerk
+// stands to lose has never been published, so it is on their screen and nowhere
+// this page can reach.
+//
+// Read while it is still free, and kept. This is the Display object the admin panel
+// hands to destroy(): one read when the page was built, minutes before the button
+// was pressed.
+$lobbyAsRendered = loadTestDisplay($pdo, $lobby->id());
+checkSame(false, $lobbyAsRendered->lockState()->isHeld(), 'nobody was editing when the page was built');
+
+$store->claimLock(loadTestDisplay($pdo, $lobby->id()), 2);
+$res = $admin->destroy(loadTestDisplay($pdo, $lobby->id()), 'lobby', 1);
+checkSame(DisplayResult::BUSY, $res->kind(), 'a Display somebody else is editing is not deleted');
+checkSame(2, $store->count(), 'it is still there');
+checkSame(2, count(elementsOf($pdo, $lobby->id())), 'with its layout');
+checkSame(2, count(allGrants($pdo)), 'and its grant');
+check(strpos($res->message(), 'clerk') !== false, 'the refusal names who is in there');
+check(strpos($res->message(), 'not published') !== false,
+      'and says the cost is the work no count on this page can see');
+checkSame('', $res->field(),
+          'it points at no input — nothing typed was wrong, so there is nothing to retype');
+
+$res = $admin->destroy($lobbyAsRendered, 'lobby', 1);
+checkSame(DisplayResult::BUSY, $res->kind(),
+          'a lock taken since the page was built still refuses the delete');
+checkSame(2, $store->count(), 'nothing was deleted on the strength of a stale read');
+
+// Which refusal comes first is a decision, not an accident: a mistyped tag means
+// this admin has not yet said which sign they mean, and that is answerable without
+// telling them anything about a colleague.
+$res = $admin->destroy(loadTestDisplay($pdo, $lobby->id()), 'lobbi', 1);
+checkSame(DisplayResult::INVALID, $res->kind(),
+          'a mistyped tag is still answered first, even with somebody editing');
+
+$res = $admin->destroy(loadTestDisplay($pdo, $lobby->id()), 'lobby', 0);
+checkSame(DisplayResult::BUSY, $res->kind(),
+          'a caller that cannot say who is asking collides with every held lock');
+checkSame(2, $store->count(), 'and is refused rather than obeyed');
+
+// The other three answers, each on a Display of its own, because getting them right
+// means the delete goes through. A refusal that is never lifted is not a safeguard,
+// it is a Display nobody can ever remove.
+$ownLock = makeTestDisplay($pdo, 'own-lock', 'Own Lock');
+$store->claimLock(loadTestDisplay($pdo, $ownLock->id()), 1);
+$res = $admin->destroy(loadTestDisplay($pdo, $ownLock->id()), 'own-lock', 1);
+check($res->isOk(), 'the admin\'s own lock does not stop the admin');
+
+$lapsed = makeTestDisplay($pdo, 'lapsed-lock', 'Lapsed');
+$store->claimLock(loadTestDisplay($pdo, $lapsed->id()), 2);
+ageTestLock($pdo, $lapsed->id(), LockState::IDLE_LAPSE_SECONDS + 60);
+$res = $admin->destroy(loadTestDisplay($pdo, $lapsed->id()), 'lapsed-lock', 1);
+check($res->isOk(), 'a lapsed lock is nobody\'s and does not stop it either');
+
+// #22's rule reaches this path too: a lock held by an account that can no longer
+// sign in is not a colleague mid-edit, and must not hold a Display hostage.
+$strandedLock = makeTestDisplay($pdo, 'stranded-lock', 'Stranded');
+$store->claimLock(loadTestDisplay($pdo, $strandedLock->id()), 2);
+$pdo->exec("UPDATE users SET is_active = 0 WHERE id = 2");
+$res = $admin->destroy(loadTestDisplay($pdo, $strandedLock->id()), 'stranded-lock', 1);
+check($res->isOk(), 'a lock held by somebody who can no longer sign in does not stop it');
+$pdo->exec("UPDATE users SET is_active = 1 WHERE id = 2");
+
+// A second admin got there first — the re-read is what notices.
+$alreadyGone = makeTestDisplay($pdo, 'already-gone', 'Already Gone');
+$pdo->exec("DELETE FROM displays WHERE id = " . $alreadyGone->id());
+$res = $admin->destroy($alreadyGone, 'already-gone', 1);
+checkSame(DisplayResult::FAILED, $res->kind(), 'a Display somebody else already deleted says so');
+// The wording, not just the kind: without the re-read this path still answers
+// FAILED, by throwing on the missing row and being caught — which reports "could
+// not be deleted" for a Display that is already gone.
+check(strpos($res->message(), 'no longer exists') !== false, 'and says which failure it was');
+
+$store->releaseLock(loadTestDisplay($pdo, $lobby->id()), 2);
+checkSame(2, $store->count(), 'the three throwaway Displays all went, leaving the original two');
+
+$res = $admin->destroy($lobby, ' LOBBY ', 1);
 check($res->isOk(), 'the typed tag is matched after trimming and lowercasing');
 check(strpos($res->message(), '2 elements were deleted') !== false, 'and the confirmation says what was lost');
 checkSame(1, $store->count(), 'the Display is gone');
@@ -675,7 +752,7 @@ checkSame($driveT->id(), intval($grants[0]['display_id']), 'and the surviving Di
 
 // The roadmap decided there is no "last Display" rule: an installation may have
 // none, and the Builder says so rather than the panel refusing.
-$res = $admin->destroy($store->forTag('drive-thru'), 'drive-thru');
+$res = $admin->destroy($store->forTag('drive-thru'), 'drive-thru', 1);
 check($res->isOk(), 'the last Display can be deleted too');
 checkSame(0, $store->count(), 'leaving none');
 checkSame(0, count(allElements($pdo)), 'and no elements behind');
@@ -3366,4 +3443,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(873);
+reportChecks(892);
