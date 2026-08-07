@@ -32,10 +32,14 @@
 // that carried the header. A per-request header cannot mark another person's
 // cookie.
 //
-// Nothing else in the app may ask this question. `admin_panel.php` builds a
-// display URL from `$_SERVER['HTTPS']` directly and is a different question —
-// what to print in a link — but a second opinion about the *cookie* is how the
-// two halves of a rule start disagreeing, so the cookie's answer is only here.
+// Nothing else in the app may *implement* this question, and one other place asks
+// it: `admin_panel.php` builds the absolute viewer address an admin copies onto a
+// TV, and it used to answer for itself from the HTTPS variable alone — so a site
+// behind a TLS-terminating proxy had `http://` printed for it, which is the same
+// defect as the cookie's, one line further from anything that would say so. It
+// calls `scheme()` now. Two callers of one answer is the point; two answers is
+// how the halves of a rule start disagreeing, which is why `isSecure()` appears
+// nowhere else in the tree.
 
 class RequestScheme
 {
@@ -84,5 +88,19 @@ class RequestScheme
         }
 
         return false;
+    }
+
+    /**
+     * The scheme to put in an absolute URL — `https` or `http`.
+     *
+     * The same fact as `isSecure()`, spelled for a caller building a link rather
+     * than a cookie. Printing the wrong one is not a security failure the way an
+     * unprotected cookie is; it is a worse kind of quiet, because what it produces
+     * is an address somebody types into a television across the store and cannot
+     * work out why it will not load.
+     */
+    public static function scheme(array $server)
+    {
+        return self::isSecure($server) ? 'https' : 'http';
     }
 }

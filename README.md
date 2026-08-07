@@ -114,6 +114,8 @@ and are thin adapters. **Data access lives in `lib/`**, one module per table:
 | `lib/display_admin.php` | `DisplayAdmin` — create/edit/delete a Display across all three tables; writes no SQL itself |
 | `lib/display_request.php` | Which Display a request means, and whether this account may have it |
 | `lib/plain_text.php` | `toPlainText()` — signage content is plain text (ADR-0002) |
+| `lib/login_attempt.php` | `LoginAttempt` — every sentence a refused sign-in may say, the order the questions are asked in, and the lockout arithmetic behind it (ADR-0008) |
+| `lib/request_scheme.php` | `RequestScheme` — is this request HTTPS, and may the session cookie claim `Secure` (ADR-0009). Also the scheme the viewer address is built from |
 | `tools/selftest_layout.php` | `php tools/selftest_layout.php` — the real modules against an in-memory database. Run before pushing |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence and scoping against a **copy** of live data, never the live database |
 

@@ -1326,6 +1326,20 @@ checkSame(false, RequestScheme::isSecure(['HTTP_X_FORWARDED_PROTO' => 'http']), 
 checkSame(true,  RequestScheme::isSecure(['HTTP_X_FORWARDED_SSL' => 'on']),  'the older spelling of the same header');
 checkSame(false, RequestScheme::isSecure(['HTTP_X_FORWARDED_SSL' => 'off']), 'and its negative');
 
+// The other caller. admin_panel.php prints an absolute address somebody types into
+// a television, and it used to answer this question itself from $_SERVER['HTTPS']
+// alone — so a site behind a TLS-terminating proxy got an http:// address printed
+// for it. Same fact, one method, no second opinion to drift.
+checkSame('https', RequestScheme::scheme(['HTTPS' => 'on']), 'the link scheme follows the same answer');
+checkSame('http',  RequestScheme::scheme([]),                'and says http when nothing says otherwise');
+checkSame('https', RequestScheme::scheme(['HTTP_X_FORWARDED_PROTO' => 'https']),
+          'including behind a proxy, which is the case the admin panel\'s own copy got wrong');
+// Weaker than the three above and labelled as such: it reads the page's source
+// rather than running it, so it shows the second copy is gone, not that the page
+// behaves. There is no way to call viewerUrlFor() without a request behind it.
+check(strpos(file_get_contents(__DIR__ . '/../admin_panel.php'), "\$_SERVER['HTTPS']") === false,
+      'and no copy of the question is left in admin_panel.php to disagree with it');
+
 // And the report an admin reads has to agree, or the one screen in the app that
 // exists to be trusted calls a correct configuration broken.
 $overHttp  = (new ServerReport(newTestDb(), []))->runtime();
@@ -3476,4 +3490,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(910);
+reportChecks(914);

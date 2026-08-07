@@ -62,7 +62,11 @@ $accountAdmin = new AccountAdmin($pdo, $accountStore, $grantStore, $displayStore
  * being copied to a device that has no idea what page it came from.
  */
 function viewerUrlFor(Display $display): string {
-    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    // The same question the session cookie is decided from, asked once. This copy
+    // knew only about the HTTPS server variable, so on a host that terminates TLS
+    // at a proxy it printed an http:// address for a site that is HTTPS — and the
+    // person it fails is standing at a television with no way to tell why.
+    $scheme = RequestScheme::scheme($_SERVER);
     $host   = $_SERVER['HTTP_HOST'] ?? 'localhost';
     $dir    = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/');
     return $scheme . '://' . $host . $dir . '/viewer.php?display=' . urlencode($display->tag());
