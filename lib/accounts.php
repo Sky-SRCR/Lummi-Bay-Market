@@ -53,16 +53,21 @@ class AccountResult
  * Every statement about whether an account is closed.
  *
  * Not a gatekeeper for all of `users` — creating an account and setting somebody's
- * password from the admin panel are still written there, and sign-in is still
- * `login.php`'s. What lives here is the closure concept and the reads that depend on
- * it, so that the five files which have an opinion about a user row cannot disagree
- * about what a closed one means — plus the three writes that have to happen inside
- * somebody else's transaction, because a page cannot hold a transaction over SQL it
- * writes itself:
+ * password from the admin panel are still written there. What lives here is the
+ * closure concept and the reads that depend on it, so that the files which have an
+ * opinion about a user row cannot disagree about what a closed one means — plus the
+ * three writes that have to happen inside somebody else's transaction, because a
+ * page cannot hold a transaction over SQL it writes itself:
  *
  *   setPassword, clearLoginLockout — a password reset (PasswordResetCompletion)
  *   updateProfile                  — editing an account (AccountAdmin), where a
  *                                    change of role also changes what grants mean
+ *
+ * Sign-in's two statements live here as well (`findForSignIn`,
+ * `registerFailedLogin`), which they did not used to: `login.php` wrote its own
+ * SELECT and its own two lockout UPDATEs. Moving them left `LoginAttempt` holding
+ * no PDO at all, which is what makes "the refusal is decided before the password is
+ * read" a thing that can be checked rather than a thing that is meant.
  *
  * Those three are the only methods here that let an exception out. Everything else
  * answers a question, and a question is better answered "no" than not at all.
@@ -313,6 +318,66 @@ class AccountStore
               WHERE id = ?"
         )->execute([intval($accountId)]);
         return true;
+    }
+
+    /**
+     * The row a sign-in decides from, or null when there is no such username.
+     *
+     * The three lockout columns are added at runtime and may genuinely not be
+     * there, so they are selected only when they are, and filled in as "no
+     * failures yet" when they are not. The version this replaces asked for them
+     * unconditionally and caught the "unknown column" that came back — which
+     * worked, but left the page holding two SELECTs and the knowledge of which
+     * columns are optional, and that knowledge belongs here with the rest of it.
+     *
+     * **A database that cannot be read answers null**, the same as an unknown
+     * username, and `LoginAttempt` turns both into the same sentence. There is no
+     * signing in when `users` is unreadable, so the only question is whether the
+     * refusal says something useful to somebody guessing.
+     */
+    public function findForSignIn($username)
+    {
+        $hasLockout = $this->lockoutColumnsExist();
+        $columns    = "id, username, password_hash, role, is_active"
+                    . ($hasLockout ? ", failed_attempts, last_failed_at, locked_until" : "");
+        try {
+            $stmt = $this->pdo->prepare("SELECT " . $columns . " FROM users WHERE username = ? LIMIT 1");
+            $stmt->execute([(string)$username]);
+            $row = $stmt->fetch();
+        } catch (Throwable $e) {
+            return null;
+        }
+        if (!$row) { return null; }
+        if (!$hasLockout) {
+            $row['failed_attempts'] = 0;
+            $row['last_failed_at']  = null;
+            $row['locked_until']    = null;
+        }
+        return $row;
+    }
+
+    /**
+     * Write one failed sign-in onto the account.
+     *
+     * The counting is `LoginAttempt`'s — how many, and until when — because that
+     * is the policy in ADR-0001 and this is the statement. False when there is
+     * nowhere to write it, which is the same reason `clearLoginLockout()` answers
+     * true in that state: a database whose runtime `ALTER` never applied has no
+     * lockout at all, and a sign-in page that refused to work without one would
+     * be a worse failure than the one it was guarding against.
+     */
+    public function registerFailedLogin($accountId, $attempts, $lastFailedAt, $lockedUntil)
+    {
+        if (!$this->lockoutColumnsExist()) { return false; }
+        try {
+            $this->pdo->prepare(
+                "UPDATE users SET failed_attempts = ?, last_failed_at = ?, locked_until = ?
+                  WHERE id = ?"
+            )->execute([intval($attempts), (string)$lastFailedAt, $lockedUntil, intval($accountId)]);
+            return true;
+        } catch (Throwable $e) {
+            return false;
+        }
     }
 
     /** The account holding this username or email, closed or not, or null. */

@@ -22,6 +22,8 @@ require_once __DIR__ . '/../lib/display_admin.php';
 require_once __DIR__ . '/../lib/password_resets.php';
 require_once __DIR__ . '/../lib/server_report.php';
 require_once __DIR__ . '/../lib/accounts.php';
+require_once __DIR__ . '/../lib/login_attempt.php';
+require_once __DIR__ . '/../lib/request_scheme.php';
 require_once __DIR__ . '/../lib/error_policy.php';   // pulls in lib/alerts.php
 require_once __DIR__ . '/../lib/assets.php';
 require_once __DIR__ . '/../lib/upload_limits.php';

@@ -1070,6 +1070,186 @@ $_SESSION = [];
 checkSame(false, syncSessionAccount($pdo), 'and a session with no account at all is refused');
 
 // ─────────────────────────────────────────────────────────────
+section('Signing in: what is refused, and what the refusal is allowed to say');
+
+// The defect these exist for is an ordering, and an ordering is invisible in a
+// diff: put the account-state checks back below password_verify() and every
+// message in the app is still correct, still helpful, still the same words — and
+// a guesser can once again tell a right password from a wrong one on an account
+// that was supposed to be worthless to them. So what is asserted here is not the
+// wording. It is that the wording does not *move* when the password changes.
+
+$pdo    = newTestDb();
+$hash   = password_hash('right-password', PASSWORD_DEFAULT);
+$pdo->prepare("UPDATE users SET password_hash = ?")->execute([$hash]);
+$signIn = new LoginAttempt(new AccountStore($pdo));
+
+// Account 1 is the admin `sky`, account 2 the basic clerk `clerk` (the fixture).
+$in = $signIn->attempt('sky', 'right-password');
+checkSame(true,    $in->isOk(),       'a live account with its own password signs in');
+checkSame(1,       $in->accountId(),  'and the outcome carries which account it was');
+checkSame('sky',   $in->username(),   'and the name to put in the session');
+checkSame('admin', $in->role(),       'and the role the row says, normalised the way every later request reads it');
+
+checkSame('', $in->message(), 'a sign-in that worked has nothing to print');
+
+$wrong   = $signIn->attempt('sky', 'not-it');
+$unknown = $signIn->attempt('nobody-at-all', 'not-it');
+checkSame(LoginOutcome::REFUSED, $wrong->kind(),   'a wrong password is refused');
+checkSame(LoginOutcome::REFUSED, $unknown->kind(), 'and so is a username nobody has');
+checkSame($wrong->message(), $unknown->message(),  'in exactly the same words, so the form is not an account list (ADR-0001)');
+checkSame(0, intval($pdo->query("SELECT COUNT(*) FROM users WHERE username = 'nobody-at-all'")->fetchColumn()),
+          'and a username nobody has stays a username nobody has');
+
+// ---- The oracle, and the ordering that closes it -----------------------------
+$pdo->exec("UPDATE users SET is_active = 0 WHERE id = 2");
+$suspendedRight = $signIn->attempt('clerk', 'right-password');
+$suspendedWrong = $signIn->attempt('clerk', 'still-not-it');
+checkSame(LoginOutcome::SUSPENDED, $suspendedRight->kind(), 'a suspended account is refused as suspended');
+checkSame(LoginOutcome::SUSPENDED, $suspendedWrong->kind(), 'whether or not the password was the right one');
+checkSame($suspendedRight->message(), $suspendedWrong->message(),
+          'and says the same sentence either way — which is the whole of the fix');
+checkSame(0, intval($pdo->query("SELECT failed_attempts FROM users WHERE id = 2")->fetchColumn()),
+          'the counter cannot answer the question either: a suspended account accrues no failures');
+checkMentions($suspendedRight->message(), 'manager', 'the suspended sentence still says who to ask');
+
+$pdo->exec("UPDATE users SET closed_at = '2026-01-01 00:00:00' WHERE id = 2");
+$closedRight = $signIn->attempt('clerk', 'right-password');
+$closedWrong = $signIn->attempt('clerk', 'nope');
+checkSame(LoginOutcome::CLOSED, $closedRight->kind(), 'a closed account is refused as closed');
+checkSame($closedRight->message(), $closedWrong->message(), 'in the same words whichever password was typed');
+checkSame(LoginOutcome::CLOSED, $signIn->attempt('clerk', 'right-password')->kind(),
+          'and closed is asked before suspended, because closing clears is_active too (invariant 14)');
+check(strpos($closedRight->message(), 'deactivated') === false,
+      'a retired employee is never told they are deactivated, which would mean asking to be switched back on');
+checkMentions($closedRight->message(), 'new one', 'they are told the thing that can actually happen');
+
+// ---- The lockout still works, and still comes second --------------------------
+$pdo->exec("UPDATE users SET is_active = 1, closed_at = NULL WHERE id = 2");
+for ($i = 1; $i < LoginAttempt::MAX_ATTEMPTS; $i++) {
+    $signIn->attempt('clerk', 'wrong-' . $i);
+}
+checkSame(LoginAttempt::MAX_ATTEMPTS - 1,
+          intval($pdo->query("SELECT failed_attempts FROM users WHERE id = 2")->fetchColumn()),
+          'four wrong passwords on a live account are four counted failures');
+
+$fifth = $signIn->attempt('clerk', 'wrong-5');
+checkSame(LoginOutcome::LOCKED, $fifth->kind(), 'the fifth trips the lockout');
+checkMentions($fifth->message(), '15 minute', 'and says how long the wait is');
+checkSame(LoginOutcome::LOCKED, $signIn->attempt('clerk', 'right-password')->kind(),
+          'and the correct password waits it out like every other one (ADR-0001)');
+
+$later = time() + LoginAttempt::WINDOW_SECONDS + 1;
+checkSame(true, $signIn->attempt('clerk', 'right-password', $later)->isOk(),
+          'once the window has passed the right password is taken again');
+checkSame(0, intval($pdo->query("SELECT failed_attempts FROM users WHERE id = 2")->fetchColumn()),
+          'and signing in clears what the failures left behind');
+
+// A failure older than the window does not stack onto a new one — the age-out
+// half of the single window, which is the half with no other way to reach it.
+$pdo->prepare("UPDATE users SET failed_attempts = 4, last_failed_at = ?, locked_until = NULL WHERE id = 2")
+    ->execute([date('Y-m-d H:i:s', time() - LoginAttempt::WINDOW_SECONDS - 60)]);
+checkSame(LoginOutcome::REFUSED, $signIn->attempt('clerk', 'wrong-again')->kind(),
+          'a stale run of failures does not lock the account on the next single mistake');
+checkSame(1, intval($pdo->query("SELECT failed_attempts FROM users WHERE id = 2")->fetchColumn()),
+          'the count starts again at one');
+
+// A suspension while the lockout is live: still the suspended sentence, because
+// "wait 15 minutes" is advice that would never come true.
+$pdo->prepare("UPDATE users SET is_active = 0, failed_attempts = 5, locked_until = ? WHERE id = 2")
+    ->execute([date('Y-m-d H:i:s', time() + 600)]);
+checkSame(LoginOutcome::SUSPENDED, $signIn->attempt('clerk', 'right-password')->kind(),
+          'a locked-out account that is also suspended is told the thing that will not expire');
+
+// ---- An empty form is not a guess ---------------------------------------------
+checkSame(LoginOutcome::INCOMPLETE, $signIn->attempt('', 'anything')->kind(), 'no username is not an attempt');
+checkSame(LoginOutcome::INCOMPLETE, $signIn->attempt('sky', '')->kind(),      'and neither is no password');
+checkSame(LoginOutcome::INCOMPLETE, $signIn->attempt('   ', 'anything')->kind(), 'nor a username of spaces');
+
+// ---- The role that goes into the session -------------------------------------
+// syncSessionAccount() normalises this on every request after the first, so a
+// login that stored the column verbatim gave a row spelling it any other way one
+// meaning for one request and another from then on.
+$pdo->exec("UPDATE users SET role = 'Admin' WHERE id = 1");
+checkSame('basic', $signIn->attempt('sky', 'right-password')->role(),
+          'a role the column does not spell exactly "admin" is not admin');
+$pdo->exec("UPDATE users SET role = 'admin' WHERE id = 1");
+checkSame('admin', $signIn->attempt('sky', 'right-password')->role(),
+          'and the one that does, is — the same answer every later request will reach');
+
+// ---- The database where the runtime ALTER never applied ------------------------
+// login.php used to carry a second SELECT and a try/catch for exactly this, and
+// nothing ever ran it. The three lockout columns are added at runtime, so a host
+// without ALTER, or with a full disk, has a `users` table that predates them —
+// and signing in has to keep working there, without a counter, rather than
+// throwing "unknown column" at everybody on every account.
+$noCounters = new PDO('sqlite::memory:', null, null, [
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+]);
+$noCounters->exec("CREATE TABLE users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL DEFAULT 'basic',
+    is_active INTEGER NOT NULL DEFAULT 1
+)");
+$noCounters->prepare("INSERT INTO users (username, password_hash, role) VALUES ('sky', ?, 'admin')")
+           ->execute([$hash]);
+$bareStore = new AccountStore($noCounters);
+$bareIn    = new LoginAttempt($bareStore);
+checkSame(true, $bareIn->attempt('sky', 'right-password')->isOk(),
+          'a database with no lockout columns still signs people in');
+checkSame(LoginOutcome::REFUSED, $bareIn->attempt('sky', 'wrong')->kind(),
+          'and still refuses a wrong password, with nowhere to write the failure down');
+checkSame(false, $bareStore->registerFailedLogin(1, 3, '2026-01-01 00:00:00', null),
+          'the store says plainly that it could not count it');
+checkSame(true, $bareStore->clearLoginLockout(1),
+          'and clearing a lockout that cannot exist is not a failure');
+
+$found = $bareStore->findForSignIn('sky');
+checkSame(0,    intval($found['failed_attempts']), 'the row it hands back fills the missing counters in');
+checkSame(null, $found['locked_until'],            'with a lockout that is not running');
+checkSame(null, $bareStore->findForSignIn('nobody'), 'and a username nobody has is null, not a row');
+
+// ─────────────────────────────────────────────────────────────
+section('The sign-in cookie is marked Secure exactly when the request is');
+
+// Secure on a plain-HTTP request is not a hardening: the browser discards the
+// cookie, builder.php finds no session, and the correct password lands back on a
+// blank login form for ever. So the flag is a property of the request, and this
+// is the answer for every shape a host reports one in.
+checkSame(true,  RequestScheme::isSecure(['HTTPS' => 'on']),   'HTTPS=on is https');
+checkSame(true,  RequestScheme::isSecure(['HTTPS' => '1']),    'and so is the numeric spelling');
+checkSame(false, RequestScheme::isSecure(['HTTPS' => 'off']),  'IIS sets the variable to "off" rather than leaving it out');
+checkSame(false, RequestScheme::isSecure(['HTTPS' => '']),     'and an empty value is not https either');
+checkSame(false, RequestScheme::isSecure([]),
+          'a request that says nothing at all is plain HTTP — the safe answer, because the other one is a login page nobody can get past');
+checkSame(true,  RequestScheme::isSecure(['SERVER_PORT' => '443']), 'port 443 counts');
+checkSame(false, RequestScheme::isSecure(['SERVER_PORT' => '80']),  'port 80 does not');
+checkSame(true,  RequestScheme::isSecure(['REQUEST_SCHEME' => 'HTTPS']), 'the scheme Apache reports counts, in any case');
+checkSame(true,  RequestScheme::isSecure(['HTTP_X_FORWARDED_PROTO' => 'https']),
+          'a proxy that terminated TLS is believed: the browser\'s own leg is what the flag protects');
+checkSame(true,  RequestScheme::isSecure(['HTTP_X_FORWARDED_PROTO' => ' https , http ']),
+          'and the first hop in the list is the browser\'s one');
+checkSame(false, RequestScheme::isSecure(['HTTP_X_FORWARDED_PROTO' => 'http']), 'a proxy saying http is believed too');
+checkSame(true,  RequestScheme::isSecure(['HTTP_X_FORWARDED_SSL' => 'on']),  'the older spelling of the same header');
+checkSame(false, RequestScheme::isSecure(['HTTP_X_FORWARDED_SSL' => 'off']), 'and its negative');
+
+// And the report an admin reads has to agree, or the one screen in the app that
+// exists to be trusted calls a correct configuration broken.
+$overHttp  = (new ServerReport(newTestDb(), []))->runtime();
+$overHttps = (new ServerReport(newTestDb(), ['HTTPS' => 'on']))->runtime();
+checkMentions($overHttp['Session cookie'][1], 'plain HTTP',
+              'over plain HTTP the report says the missing Secure flag is deliberate');
+checkMentions($overHttp['Session cookie'][1], 'https://',
+              'and says what to do to get the protection back');
+check(strpos($overHttps['Session cookie'][1], 'deliberately') === false,
+      'over HTTPS it does not offer that excuse');
+checkMentions($overHttps['Session cookie'][1], 'not marked Secure',
+              'it complains instead, because on HTTPS the flag is free and was not set');
+
+// ─────────────────────────────────────────────────────────────
 section('The edit lock keeps time in UTC, so it survives a clock that repeats an hour');
 
 // The whole defect in one property: lock stamps must be UTC, whatever zone the
@@ -3147,4 +3327,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(826);
+reportChecks(883);

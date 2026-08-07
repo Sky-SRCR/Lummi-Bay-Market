@@ -64,7 +64,15 @@
   RewriteCond %{HTTPS} off
   RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
-  # Mark session cookie as Secure (HTTPS only)
+  # Mark session cookie as Secure (HTTPS only).
+  #
+  # A default, not the decision: auth.php calls session_set_cookie_params() on
+  # every request and that call wins over these flags. It sets Secure only when
+  # the request actually reached the browser over HTTPS (lib/request_scheme.php),
+  # because a browser silently discards a Secure cookie that arrived over plain
+  # HTTP — and a discarded session cookie is a correct password landing back on a
+  # blank login form with no error anywhere. These two lines are what applies if
+  # auth.php ever stops setting it; the redirect above is what makes them true.
   <IfModule mod_php8.c>
       php_flag session.cookie_secure On
   </IfModule>
