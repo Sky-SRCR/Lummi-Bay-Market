@@ -335,15 +335,18 @@ $canvasH = $display->canvasHeight();
                     canvas.style.backgroundColor = '#111';
                 }
 
-                // Build set of hidden section IDs so their children are also skipped
-                var hiddenSections = new Set(
-                    elements.filter(function(e) { return e.type === 'section' && parseInt(e.hidden); })
-                            .map(function(e) { return parseInt(e.id); })
-                );
+                // Nothing here filters on `hidden`, and that is the fix rather than an
+                // oversight. get_layout needs no session, so what it *sends* is what is
+                // readable — declining to draw a hidden price never stopped anyone
+                // reading it out of the feed with the screen name tag and a browser.
+                // LayoutStore::visibleElements() drops hidden elements, and everything
+                // inside a hidden section, before the reply is built; a second copy of
+                // that rule here could only ever agree with it, and a line that cannot
+                // fail is one nobody notices going wrong.
 
                 // Render sections first, build id→element map
                 var sectionMap = {};
-                elements.filter(function(e) { return e.type === 'section' && !parseInt(e.hidden); }).forEach(function(el) {
+                elements.filter(function(e) { return e.type === 'section'; }).forEach(function(el) {
                     var s = document.createElement('div');
                     s.className    = 'section-block';
                     s.style.left    = el.x_pos  + 'px';
@@ -372,12 +375,11 @@ $canvasH = $display->canvasHeight();
                     sectionMap[el.id] = s;
                 });
 
-                // Render non-section elements (skip hidden; skip children of hidden sections)
-                elements.filter(function(e) {
-                    return e.type !== 'section'
-                        && !parseInt(e.hidden)
-                        && !hiddenSections.has(parseInt(e.section_id));
-                }).forEach(function(el) {
+                // Render non-section elements. A block whose section is not in the
+                // payload is skipped a few lines down by `if (!parent) return;`, which
+                // is the same answer it has always given to a section that is missing
+                // for any other reason.
+                elements.filter(function(e) { return e.type !== 'section'; }).forEach(function(el) {
                   // One element must never take the sign down. An element's stored
                   // content is deliberately unvalidated for the non-text types
                   // (invariant 6), so a table whose `rows` is not an array — from a

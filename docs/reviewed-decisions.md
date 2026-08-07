@@ -62,7 +62,7 @@ written down rather than remembered:
 | 22 | Turning off a Display, suspending an account, or renaming a tag each left the edit lock behind, and never re-checked whether the holder may still sign in. | Free the lock when reach changes, never honour a lock whose holder cannot sign in, and tell the person. A rename tells them but keeps their lock. | **Done** | §4t |
 | 23 | Choosing "Image" for a background when no image is stored leaves a colour where a filename goes — the sign goes near-black. | Refuse the change. | Open | — |
 | 24 | The background address was validated in the admin panel but not in the API, so a publish could point every screen at any host. | Validate it in the module. | Open | — |
-| 25 | The public feed served blocks an admin had deliberately hidden, content and all. | Leave them out. | Open | — |
+| 25 | The public feed served blocks an admin had deliberately hidden, content and all. | Leave them out. | **Done** — dropped before the reply is built, along with everything inside a hidden section, which the feed leaked even though the sign never drew it. The one `snapshot()` became two named ones so no endpoint gets the unfiltered rows by default, and `viewer.php`'s own filter is gone rather than left as a second copy that could only agree. | §4z |
 | 26 | A reply that failed to encode sent back a zero-length success, and the sign kept its old layout forever with no notice. | Send a real error, and let the sign notice. | Open | — |
 | 27 | `?display[]=x` became the tag "array" and printed a warning above the document. | Treat it as no sign named. | Open | — |
 | 28 | Missing, unknown and switched-off signs all answered "200 OK", and nothing anywhere set caching rules. | Real error codes, and stop caching. | Open | — |
@@ -92,15 +92,14 @@ written down rather than remembered:
 ## Work outside this list
 
 The Builder's **Undo** (ADR-0008, §4y) was asked for directly rather than found by
-the audit, so it has no number here and the tally below is unchanged by it. It is
+the audit, so it has no number here and the tally below does not count it. It is
 worth knowing about while reading the rest of this file: several entries are written
 on the premise that *nothing anywhere can be taken back*, and that is now true only
-of things that have been published. Nothing on this list was closed by it, and #25
-(the public feed serves hidden blocks, content and all) is untouched.
+of things that have been published.
 
 ## Where this stands
 
-**26 done, 2 part done, 23 open.**
+**27 done, 2 part done, 22 open.**
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

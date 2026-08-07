@@ -408,7 +408,7 @@ checkSame('uploads/bg_1.png', $driveT->backgroundValue(), 'a basic account canno
 section('The snapshot a Screen renders');
 
 $driveT = loadTestDisplay($pdo, $driveT->id());
-$snapshot = $layouts->snapshot($driveT);
+$snapshot = $layouts->viewerSnapshot($driveT);
 
 checkSame($driveT->layoutStamp(), $snapshot['layout_stamp'], 'the snapshot carries the stamp the Builder must hold');
 checkSame(1920, $snapshot['display']['canvas_width'], 'the snapshot carries the canvas size the Viewer and Builder size themselves from');
@@ -422,9 +422,103 @@ foreach ($snapshot['elements'] as $row) {
 }
 check($onlyMine, 'the snapshot contains only this Display\'s elements');
 
-$lobbySnapshot = $layouts->snapshot(loadTestDisplay($pdo, $lobby->id()));
+$lobbySnapshot = $layouts->viewerSnapshot(loadTestDisplay($pdo, $lobby->id()));
 checkSame(1080, $lobbySnapshot['display']['canvas_width'], 'a portrait Display reports its own dimensions');
 check(count($lobbySnapshot['elements']) === 2, 'and its own elements');
+
+// ─────────────────────────────────────────────────────────────
+section('What a Screen is sent, and what it is not (decision #25)');
+
+// The defect: `get_layout` needs no session — that is what lets a TV poll it — and
+// it used to serve every element a Display had, hidden ones included, with their
+// content. viewer.php declined to *draw* them, which is not the same promise: a
+// price taken down mid-morning, or one staged for next week, was readable by
+// anyone who knew the screen name tag. The filter now happens before the reply is
+// built, and the Viewer's copy of the rule is gone rather than duplicated.
+//
+// The block inside the hidden section is deliberately not hidden itself. That is
+// the case the old code got wrong even in spirit: hiding a section takes its
+// contents off the sign, so leaving those contents in the feed says one thing to
+// the screen and another to anyone reading the JSON.
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$mixed  = [
+    ['type' => 'section', 'temp_id' => 's-open', 'x_pos' => 0,   'y_pos' => 0, 'width' => 600, 'height' => 380],
+    ['type' => 'section', 'temp_id' => 's-shut', 'x_pos' => 620, 'y_pos' => 0, 'width' => 600, 'height' => 380,
+     'hidden' => 1],
+    ['type' => 'text', 'block_subtype' => 'price', 'parent_temp_id' => 's-open',
+     'manual_content' => 'Halibut 24.00', 'x_pos' => 5, 'y_pos' => 5, 'width' => 160, 'height' => 60],
+    ['type' => 'text', 'block_subtype' => 'price', 'parent_temp_id' => 's-shut',
+     'manual_content' => 'Next week 4.50', 'x_pos' => 5, 'y_pos' => 5, 'width' => 160, 'height' => 60],
+    ['type' => 'text', 'block_subtype' => 'free',
+     'manual_content' => 'Staff note do not print', 'x_pos' => 0, 'y_pos' => 900, 'width' => 300, 'height' => 50,
+     'hidden' => 1],
+];
+$res = publishAs($layouts, $driveT, $mixed, $driveT->layoutStamp());
+check($res->isOk(), 'a layout with a hidden section, a visible block inside it, and a hidden note publishes');
+
+$driveT = loadTestDisplay($pdo, $driveT->id());
+$editor = $layouts->editorSnapshot($driveT);
+$screen = $layouts->viewerSnapshot($driveT);
+
+checkSame(5, count($editor['elements']),
+          'the Builder is sent all five — it draws the hidden ones faded and offers the way back');
+checkSame(2, count($screen['elements']),
+          'a Screen is sent the two that are actually on the sign');
+
+$wire = json_encode($screen);
+check(strpos($wire, 'Next week 4.50') === false,
+      'the words inside a hidden section are not in the public reply at all');
+check(strpos($wire, 'Staff note do not print') === false,
+      'nor are the words of a hidden block');
+check(strpos($wire, 'Halibut 24.00') !== false,
+      'while what is on the sign still is — the filter drops the right rows');
+
+$screenHasHidden = false;
+foreach ($screen['elements'] as $row) { if (!empty($row['hidden'])) { $screenHasHidden = true; } }
+check(!$screenHasHidden, 'and no row it does send is marked hidden');
+
+$editorHasHiddenSection = false;
+foreach ($editor['elements'] as $row) {
+    if ($row['type'] === 'section' && !empty($row['hidden'])) { $editorHasHiddenSection = true; }
+}
+check($editorHasHiddenSection,
+      'the editing read still carries the hidden section, or nothing could ever unhide it');
+
+// ---- The rule on its own -------------------------------------------------------
+//
+// Filtered in PHP rather than in the SQL, and these are the reasons. `hidden` is a
+// converged column, and the public feed is the one path that never converges —
+// api.php only repairs the schema on an authenticated request. A `WHERE hidden = 0`
+// against a database the column has not landed on yet does not serve one row too
+// many, it throws, and every sign in the store drops to the notice screen.
+$noColumnYet = [
+    ['id' => 1, 'type' => 'section', 'section_id' => null],
+    ['id' => 2, 'type' => 'text', 'section_id' => 1, 'manual_content' => '9.99'],
+];
+checkSame(2, count(LayoutStore::visibleElements($noColumnYet)),
+          'a database where `hidden` has not been added yet shows everything, rather than nothing');
+
+// PDO hands back strings, and '0' is a true value in PHP if you ask the wrong way.
+checkSame(2, count(LayoutStore::visibleElements([
+    ['id' => 1, 'type' => 'section', 'section_id' => null, 'hidden' => '0'],
+    ['id' => 2, 'type' => 'text', 'section_id' => '1', 'hidden' => '0'],
+])), "a stored '0' is visible, string or not");
+checkSame(0, count(LayoutStore::visibleElements([
+    ['id' => 1, 'type' => 'section', 'section_id' => null, 'hidden' => '1'],
+    ['id' => 2, 'type' => 'text', 'section_id' => '1', 'hidden' => '0'],
+])), "and a stored '1' hides the section and the block inside it, however PDO typed the two ids");
+
+// A root-level block has no section to inherit anything from. Worth its own check
+// because a null array key is '' in PHP: without the guard, a hidden section whose
+// id read back blank would take every root-level block on the sign with it.
+checkSame(1, count(LayoutStore::visibleElements([
+    ['id' => 1, 'type' => 'section', 'section_id' => null, 'hidden' => '1'],
+    ['id' => 9, 'type' => 'text', 'section_id' => null, 'hidden' => '0'],
+])), 'a root-level block is not swept up by an unrelated hidden section');
+checkSame(1, count(LayoutStore::visibleElements([
+    ['id' => '', 'type' => 'section', 'section_id' => null, 'hidden' => '1'],
+    ['id' => 9,  'type' => 'text', 'section_id' => null, 'hidden' => '0'],
+])), 'nor by one whose own id came back blank');
 
 // ─────────────────────────────────────────────────────────────
 section('Suggesting a screen name tag from a title');
@@ -543,7 +637,7 @@ check($res->isOk(), 'a Display can be turned off');
 $lobby = $res->display();
 checkSame(false, $lobby->isActive(), 'and reports itself off');
 checkSame(2, count(elementsOf($pdo, $lobby->id())), 'its layout is kept');
-checkSame(2, count($layouts->snapshot($lobby)['elements']),
+checkSame(2, count($layouts->editorSnapshot($lobby)['elements']),
           'and the editing read still hands the Builder that layout — get_editor_layout');
 
 $r = DisplayRequest::forViewing($store, ['display' => 'lobby']);
@@ -859,7 +953,7 @@ checkSame(false, $store->forId($lobby->id())->lockState()->isHeld(),  'and so is
 
 // ---- The lock is not the Screens' business -------------------------------------
 $store->claimLock($driveT, 1);
-$snapshot = $layouts->snapshot($store->forId($driveT->id()));
+$snapshot = $layouts->viewerSnapshot($store->forId($driveT->id()));
 checkSame(false, array_key_exists('lock_holder_id', $snapshot['display']),
           'a layout snapshot carries no lock holder — get_layout is public');
 checkSame(false, array_key_exists('lock_activity_at', $snapshot['display']),
@@ -3272,4 +3366,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(860);
+reportChecks(873);

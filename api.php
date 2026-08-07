@@ -288,7 +288,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_layout') {
         exit;
     }
 
-    $payload = $layouts->snapshot($resolution->display());
+    // viewerSnapshot, not the Builder's: this reply needs no session, so anything
+    // it carries is readable by anyone who knows the screen name tag. An element an
+    // admin has hidden — and everything inside a hidden section — is left out of it
+    // rather than merely left undrawn by viewer.php's JavaScript.
+    $payload = $layouts->viewerSnapshot($resolution->display());
     $payload['status'] = 'success';
     echo json_encode($payload);
     exit;
@@ -297,15 +301,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_layout') {
 // ============================================================
 // GET: get_editor_layout   (signed in — the Builder's read)
 // ============================================================
-// The same snapshot as get_layout, resolved for *editing*. The difference is the
-// one that matters after Phase 3: a deactivated Display is a notice to a Screen
+// Nearly the same payload as get_layout, and different in two ways that both
+// matter. It resolves for *editing*: a deactivated Display is a notice to a Screen
 // but is still editable (CONTEXT.md), so the Builder cannot share the Viewer's
-// read or retiring a sign would make it impossible to work on.
+// read or retiring a sign would make it impossible to work on. And it is the
+// snapshot that still carries hidden elements, because the Builder draws them
+// faded and offers the box that brings them back.
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_editor_layout') {
     $resolution = DisplayRequest::forEditing($displays, $_GET, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
 
-    $payload = $layouts->snapshot($resolution->display());
+    $payload = $layouts->editorSnapshot($resolution->display());
     $payload['status'] = 'success';
     echo json_encode($payload);
     exit;

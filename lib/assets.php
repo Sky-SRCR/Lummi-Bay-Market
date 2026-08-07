@@ -61,7 +61,7 @@
 // pooled, and the caller puts the two together. See crud.php.
 //
 // The one read of `assets` outside this file is the LEFT JOIN in
-// LayoutStore::snapshot(), which resolves each element's content in the same
+// LayoutStore::elementRows(), which resolves each element's content in the same
 // query that fetches the element. It stays there deliberately: it is read-only,
 // it is on the path a Screen polls every thirty seconds, and splitting it would
 // mean one extra query per block on every sign in the building.

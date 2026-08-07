@@ -80,7 +80,7 @@ it is the standing contract, with the invariants and where later work attaches.
 | `builder.php` | ~3050-line canvas editor for one Display, mostly inline JS. The heart of the app. Also the read-only mode and the lock heartbeat |
 | `admin_panel.php` | Six tabs: User Management, **Displays** (+ the grant matrix), Display Branding, Site Branding, Settings, Work Area |
 | `crud.php` | Asset Library (text/image/video), shared by every Display |
-| `api.php` | JSON API: `get_layout` (public), `get_editor_layout`, `get_assets`, `upload_file`, `upload_video`, `publish`, `hold_lock`, `lock_state`, `release_lock`, `take_over_lock`, `save_brand_styles`, `get_canvas_elements`, `set_element_hidden`, `delete_canvas_element` |
+| `api.php` | JSON API: `get_layout` (public — hidden elements and the contents of hidden sections are left out of it), `get_editor_layout` (signed in; carries them, because the Builder draws them), `get_assets`, `upload_file`, `upload_video`, `publish`, `hold_lock`, `lock_state`, `release_lock`, `take_over_lock`, `save_brand_styles`, `get_canvas_elements`, `set_element_hidden`, `delete_canvas_element` |
 | `viewer.php` | Public fullscreen renderer for one named Display; polls `get_layout` every 30s |
 | `help.php` | In-app user guide |
 

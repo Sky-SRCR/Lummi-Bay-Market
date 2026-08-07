@@ -10,7 +10,9 @@
 // empties all of them. So there is exactly one copy.
 //
 // Interface, in full:
-//   snapshot(Display)                     → the payload a Viewer or Builder renders
+//   editorSnapshot(Display)               → the payload the Builder renders
+//   viewerSnapshot(Display)               → the same, minus everything hidden
+//   visibleElements(rows)                 → static; the rule the second one applies
 //   publish(Display, PublishRequest)      → PublishResult
 //   elementIndex(Display)                 → the admin Work Area list
 //   setElementHidden(Display, id, bool, actorId) → ElementResult
@@ -30,7 +32,7 @@
 // statement against it. `assets` belongs to AssetLibrary the same way — this
 // store asks it to pool a block's content and to drop the rows a publish
 // strands, and writes no statement against that table itself. The one exception
-// is snapshot()'s LEFT JOIN, which is read-only and on the path a Screen polls
+// is elementRows()'s LEFT JOIN, which is read-only and on the path a Screen polls
 // every thirty seconds; see lib/assets.php. This store owns `canvas_elements`.
 //
 // The last two methods above exist because the sweep is a question neither module
@@ -46,6 +48,9 @@
 //   · type='text' content is stripped to plain text (ADR-0002); carousel/table/
 //     marquee JSON and media paths are not.
 //   · Anything that changes the published layout advances the stamp.
+//   · A hidden element is not sent to a Screen at all, nor is anything inside a
+//     hidden section. The public feed needs no session, so "the Viewer does not
+//     draw it" was never the same promise as "nobody can read it".
 
 require_once __DIR__ . '/plain_text.php';
 require_once __DIR__ . '/displays.php';
@@ -195,13 +200,93 @@ class LayoutStore
     // ---- Read ---------------------------------------------------------------
 
     /**
-     * Everything needed to render this Display: its own facts, its elements with
-     * any linked asset content joined in, the shared Brand Standards typography,
-     * and the current layout stamp.
+     * Everything needed to render this Display **in the Builder**: its own facts,
+     * every element with any linked asset content joined in, the shared Brand
+     * Standards typography, and the current layout stamp.
      *
-     * Sections come first so a client can build the DOM tree in one pass.
+     * Hidden elements are included, because the Builder has to draw them — faded,
+     * badged, and with a box to bring them back. Sections come first so a client
+     * can build the DOM tree in one pass.
+     *
+     * There is no plain `snapshot()` any more, and that is deliberate. There used
+     * to be one, serving both this and the public feed, and a hidden block reached
+     * a customer-facing sign's JSON because the obvious name was the unfiltered
+     * one. Neither of these two is the default: a caller has to say which side of
+     * the sign it is on.
      */
-    public function snapshot(Display $display)
+    public function editorSnapshot(Display $display)
+    {
+        return $this->payloadFor($display, $this->elementRows($display));
+    }
+
+    /**
+     * The same payload for a **Screen**, with everything an admin has hidden left
+     * out of it entirely.
+     *
+     * `get_layout` needs no session — that is what lets a TV poll it — so this
+     * response is readable by anyone who knows a screen name tag. The Viewer has
+     * always declined to *draw* a hidden block, but declining to draw is not the
+     * same as declining to send: the words on a price nobody has approved yet, or
+     * one taken down mid-morning, were still a URL away.
+     */
+    public function viewerSnapshot(Display $display)
+    {
+        return $this->payloadFor($display, self::visibleElements($this->elementRows($display)));
+    }
+
+    /**
+     * The rows a Screen may see, out of the rows a Display has.
+     *
+     * A pure function over rows, and filtered here rather than in the SQL for one
+     * reason: `canvas_elements.hidden` is a converged column (lib/schema.php), and
+     * convergence only ever runs on an authenticated request — the public feed is
+     * the one path that cannot repair its own schema. A `WHERE ce.hidden = 0`
+     * against a database where the column has not landed yet does not serve one
+     * block too many, it throws, and every sign in the store goes to the notice
+     * screen. So a row with no `hidden` at all reads as visible, which is exactly
+     * what the Viewer's own JavaScript has always done with it.
+     *
+     * Hiding a section hides what is inside it. That rule lived only in viewer.php
+     * until now, which meant the feed leaked a whole section's contents while the
+     * sign showed none of it.
+     */
+    public static function visibleElements(array $rows)
+    {
+        // Ids are matched through array keys and not compared by hand, because PDO
+        // hands an id back as the string '7' in one row and a section_id back as
+        // the string '7' in another — and PHP normalises a numeric string used as
+        // an array key to the integer, so the two meet whichever way round they
+        // arrive. A cast on either side would be a line that could never change
+        // the answer.
+        // Stated as "nothing points at something hidden" rather than "nothing
+        // points at a hidden *section*". Only a section can have children today,
+        // so a `type === 'section'` test here would be a condition that could
+        // never change the answer — and the general rule is the one that stays
+        // true if a container block is ever added.
+        $hiddenIds = [];
+        foreach ($rows as $row) {
+            if (!empty($row['hidden'])) { $hiddenIds[$row['id']] = true; }
+        }
+
+        $visible = [];
+        foreach ($rows as $row) {
+            // `!empty` and not `== 0`: a row from a database where the column has
+            // not converged has no `hidden` key at all, and that has to read as
+            // visible. See the note above.
+            if (!empty($row['hidden'])) { continue; }
+            $parent = $row['section_id'] ?? null;
+            // A root-level block has no parent, and neither null nor '' may be
+            // allowed to become an array lookup — a null key is '' in PHP, so one
+            // hidden row whose id came back blank would take every root-level
+            // block on the sign with it.
+            if ($parent !== null && $parent !== '' && isset($hiddenIds[$parent])) { continue; }
+            $visible[] = $row;
+        }
+        return $visible;
+    }
+
+    /** One read of `canvas_elements`, shared by both snapshots. */
+    private function elementRows(Display $display)
     {
         $stmt = $this->pdo->prepare(
             "SELECT ce.*, a.content AS db_content
@@ -211,20 +296,22 @@ class LayoutStore
               ORDER BY CASE WHEN ce.type='section' THEN 0 ELSE 1 END, ce.sort_order ASC, ce.id ASC"
         );
         $stmt->execute([$display->id()]);
-        $elements = $stmt->fetchAll();
+        return $stmt->fetchAll();
+    }
 
+    /** The envelope both snapshots share; only the element list differs. */
+    private function payloadFor(Display $display, array $elements)
+    {
         // Brand Standards belongs to BrandStyles, which is the only writer of that
         // table; reading it through the same module keeps one definition of what a
         // stored style looks like.
         $styles = $this->brandStyles()->all();
 
-        $display_ = $display->toClientArray();
-
         return [
             // The Display carries its own background and canvas size. Phase 2 moved
             // the Viewer and Builder onto this key and removed the transitional
             // `settings` alias that stood in for the retired canvas_settings row.
-            'display'      => $display_,
+            'display'      => $display->toClientArray(),
             'elements'     => $elements,
             'block_styles' => $styles,
             'layout_stamp' => $display->layoutStamp(),

@@ -35,7 +35,9 @@ just the first Display's dimensions, not a property of the system.
    renderer that polls `api.php?action=get_layout&display=<tag>` every 30s and
    scales the canvas to whatever screen it is on. **Every viewer URL names its
    Display**; a bare or unknown `?display=` shows a plain notice rather than some
-   other sign's content (ADR-0003).
+   other sign's content (ADR-0003). That feed needs no session, so it carries only
+   what is on the sign: anything an admin has hidden — and everything inside a
+   hidden section — is left out of the reply rather than merely left undrawn.
 
 ## Who can edit what
 

@@ -57,8 +57,8 @@ Design rules, applied to every module added by this build:
 | `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. It decides only whether the error was the kind a repair could fix; whether repairing is *safe right now* belongs to `schema.php` (invariant 21), because that question is about DDL and transactions rather than about the `displays` table. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. `setAccess()` takes **both** axes of the matrix the form covered — the accounts *and* the Displays — because an unticked box and a cell the form never rendered are the same absence in a POST, and only one of them means "revoke"; and a revoke frees the edit lock on the Display it takes away, by holder, inside the same transaction. |
-| `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, `assetUsage()` — which Displays depend on a library entry — and the sweep of the library rows a publish strands, scoped to the ids that Display's own previous layout held. |
-| `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `saveEdit` → `AssetEdit` / `delete` / `pool` / `pooledNotIn` / `discardPooled`, plus `isUsableRef` | **Every** `assets` statement. Two decisions it holds. `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. And **a row's type is read from the row**: `saveEdit()` takes no type argument (invariant 23), so nothing can be talked into stripping markup off a path or storing an `.svg` where a Screen will fetch it, and the raw `UPDATE` is private behind it. `isUsableRef()` is the one allow-list for what a stored reference may point at, used by the create path and the edit path alike. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::snapshot()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
+| `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, `assetUsage()` — which Displays depend on a library entry — and the sweep of the library rows a publish strands, scoped to the ids that Display's own previous layout held. Two named reads and no unnamed one: `editorSnapshot()` carries hidden elements because the Builder draws them, `viewerSnapshot()` drops them and everything inside a hidden section because `get_layout` needs no session. There is deliberately no plain `snapshot()` for somebody to reach for by default (invariant 26). |
+| `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `saveEdit` → `AssetEdit` / `delete` / `pool` / `pooledNotIn` / `discardPooled`, plus `isUsableRef` | **Every** `assets` statement. Two decisions it holds. `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. And **a row's type is read from the row**: `saveEdit()` takes no type argument (invariant 23), so nothing can be talked into stripping markup off a path or storing an `.svg` where a Screen will fetch it, and the raw `UPDATE` is private behind it. `isUsableRef()` is the one allow-list for what a stored reference may point at, used by the create path and the edit path alike. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::elementRows()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
 | `upload_limits.php` | `UploadLimit::bytes` / `describe` / `describeBytes` / `bodyWasDropped` / `smallestOf` / `toBytes` | How big a file can actually reach this server — the smallest of the app's 50 MB ceiling and PHP's `upload_max_filesize` and `post_max_size`, not the app's opinion. And the silent case: exceeding `post_max_size` is not an error PHP reports, it abandons the body, so a 40 MB video was answered *"Security token mismatch. Please reload the page."* `smallestOf()` takes the ini values as an argument because both settings are PHP_INI_PERDIR and the cases worth testing are unreachable otherwise. Depends on nothing. |
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `verify` / `consume` / `redeem` / `discard`, and `PasswordResetCompletion(PDO, ResetTokenStore, AccountStore)` → `ResetOutcome` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. It is now the composition of two halves that have to fall on opposite sides of a transaction boundary: `verify()` spends the guess and must never be rolled back, `consume()` spends the code and must be. `PasswordResetCompletion` is the use case (invariant 22) — code consumed, password changed, lockout released, or nothing at all — and `ResetOutcome` has three answers rather than two, because "refused" and "the database would not take it" have to look different to the visitor and identical to a stranger probing for usernames. |
@@ -401,6 +401,24 @@ through the app again:
     `loadLayout()` uses, so a block type added later is restorable the day it is
     added; and `serializeCanvas()` has exactly two callers, Publish and the snapshot,
     so what Undo believes a block is and what reaches the sign cannot drift apart.
+26. **What the public feed *sends* is the promise, not what the Viewer *draws*.**
+    `get_layout` needs no session — that is the whole point, a TV cannot sign in —
+    so every field in that reply is readable by anyone holding a screen name tag.
+    A hidden element is therefore dropped by `LayoutStore::viewerSnapshot()` before
+    the reply is built, along with everything inside a hidden section, and
+    `viewer.php` filters nothing itself: a second copy of that rule downstream could
+    only ever agree with the first, and would go on looking like protection after
+    the real one broke. The Builder's read is a separate, named method —
+    `editorSnapshot()` — because it must still carry hidden elements to draw them
+    faded and offer the way back. **There is no plain `snapshot()`.** The leak this
+    fixes (decision #25) happened because one method served both and the unfiltered
+    one had the obvious name; neither of these two is a default, so a new endpoint
+    has to say which side of the sign it is on. The filter runs in PHP over the
+    fetched rows rather than in the `WHERE` clause, and that is load-bearing:
+    `hidden` is a converged column and the public feed is the one path that never
+    converges, so a predicate on it would not serve one row too many on a database
+    that has not caught up — it would throw, and every sign in the store would drop
+    to the notice screen. A row with no `hidden` key reads as visible.
 
 ---
 
@@ -2364,6 +2382,89 @@ Left standing, and deliberately:
 
 ---
 
+### 4z. Hidden meant "not drawn", not "not sent"
+
+Decision **#25**. `api.php?action=get_layout` is deliberately public — a TV cannot
+sign in, and that is the whole reason the endpoint exists without a session. It
+served every element a Display had, and `viewer.php` then declined to draw the ones
+marked hidden. Two different promises, and the app was making the weaker one while
+the Builder's HIDDEN badge implied the stronger. A price staged for next week, or
+one pulled off the board at eleven in the morning because it was wrong, was a URL
+and a screen name tag away from being read in full.
+
+The section case was worse than the block case. Hiding a section takes everything
+inside it off the sign, and the children are not themselves marked hidden — that
+rule existed only in viewer.php's JavaScript. So the feed shipped a whole hidden
+section's contents, every price in it, while the sign showed none of them.
+
+**The fix is a rename as much as a filter.** There was one `snapshot()` serving
+both readers, and that is how the leak happened: the obvious name was the
+unfiltered one, and the public endpoint reached for it because there was nothing
+else to reach for. It is now two named methods and no default —
+`editorSnapshot()`, which still carries hidden elements because the Builder draws
+them faded and offers the way back, and `viewerSnapshot()`, which does not. A new
+endpoint has to say which side of the sign it is on. Both share a private
+`elementRows()` and a private `payloadFor()`, so only the element list differs.
+
+**Filtered in PHP, not in the `WHERE` clause**, and that is the one decision here
+worth arguing with. A predicate reads better and moves less data. It would also be
+the second most dangerous line in the app: `canvas_elements.hidden` is a *converged*
+column (§4o), and convergence runs only on authenticated requests — the public feed
+is the one path in this codebase that can never repair its own schema. Against a
+database where the column has not landed, `WHERE ce.hidden = 0` does not serve one
+row too many; it throws, and every sign in the store drops to the notice screen.
+`LayoutStore::visibleElements()` is therefore a pure function over fetched rows, and
+a row with no `hidden` key at all reads as visible — the same reading viewer.php's
+`parseInt(e.hidden)` has always given it, so a database mid-drift behaves exactly as
+it did before rather than going dark.
+
+Two smaller calls inside that function, both found by mutation rather than by
+thinking:
+
+- **No `type === 'section'` test.** The rule is "nothing points at something
+  hidden", not "nothing points at a hidden *section*". Only sections have children
+  today, so the narrower test could not change any answer — and the general one
+  stays true if a container block is ever added.
+- **No id casting.** PDO hands ids back as strings, and PHP normalises a numeric
+  string used as an array key to the integer, so `'7'` and `7` meet on their own.
+  A cast on either side would have been a line that could never change the answer.
+  What *is* load-bearing is the guard above it: a null array key is `''` in PHP, so
+  without `$parent !== null && $parent !== ''` one hidden row whose id came back
+  blank would take every root-level block on the sign with it. That has its own
+  check.
+
+**viewer.php's own filter is gone**, not kept as a belt to the braces. After the
+server drops those rows the client-side test can never be false, and a check that
+cannot fail is one that goes on looking like protection long after the thing it
+guarded moved (decision #50). It could also only ever have protected the lesser
+half of the problem — what is drawn — while the leak was about what is sent. A
+comment stands where it was, naming `visibleElements()` as the one place. The
+`if (!parent) return;` a few lines down already handles a block whose section is
+absent, which is what a child of a hidden section now looks like.
+
+**Verification.** Twelve checks in `tools/selftest_layout.php`, under *What a Screen
+is sent, and what it is not*. The fixture publishes a visible section with a price
+in it, a hidden section with a **not**-hidden price inside it, and a hidden
+root-level note; the editing read must return all five and the Viewer's read two.
+The checks that matter most are on the encoded reply rather than on the row count —
+`json_encode($screen)` must not contain the words of the hidden note or of the price
+inside the hidden section, and must still contain the one on the sign. A row count
+would pass if the filter dropped the right *number* of rows.
+
+**Eleven deliberate mutations, all eleven killed** after the two simplifications
+above; before them, two survived, and both were the hollow lines named there.
+
+Left standing, and deliberately:
+
+- **The Work Area still lists hidden elements to admins.** That page is behind
+  `requireAdmin()`, and knowing what is hidden is the whole reason to open it.
+- **`get_layout` still answers 200 for a Display that is off or missing**, with a
+  notice as the payload. That is decision #28, and it is a separate change.
+- **Nothing warns before a publish carries a hidden section.** Unchanged from §4x —
+  #19's decision about mid-edit warnings is where that would start.
+
+---
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -2503,7 +2604,7 @@ grep -rEn "(INTO|UPDATE|FROM|TABLE) +password_resets|reset_attempts" --include=*
 grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?assets`?" --include=*.php .
                                               # only lib/assets.php, plus schema.php's ALTER and the
                                               # fixture — with ONE standing exception: the LEFT JOIN in
-                                              # LayoutStore::snapshot(), read-only and on the path a
+                                              # LayoutStore::elementRows(), read-only and on the path a
                                               # Screen polls every 30 seconds. A second writer here is
                                               # how row sharing came back — invariant 17.
                                               # tools/ reads the table all over, and writes it once: the
