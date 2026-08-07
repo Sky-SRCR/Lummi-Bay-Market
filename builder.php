@@ -100,7 +100,7 @@ a.pick:hover { background:#3d566e; }
           <span class="tag"><?= Markup::text($d->tag()) ?></span>
           <?php if (!$d->isActive()): ?><span class="off">TURNED OFF</span><?php endif; ?>
         </span>
-        <span class="facts"><?= $d->dimensionsLabel() ?> <?= $d->orientation() ?><?php
+        <span class="facts"><?= Markup::text($d->dimensionsLabel()) ?> <?= Markup::text($d->orientation()) ?><?php
           if ($d->location() !== '') { echo ' · ' . Markup::text($d->location()); } ?></span>
       </a>
     <?php endforeach; ?>
@@ -166,15 +166,8 @@ $_SESSION['last_display'] = $display->tag();
 // offering the choice to someone holding one grant would be a link to a dead end.
 $switchable = count($actor->openable($displayStore->all()));
 
-// Load store branding (defaults if config not yet set)
-if (!defined('BRAND_NAV_BG') && file_exists(__DIR__ . '/branding_config.php')) {
-    require_once __DIR__ . '/branding_config.php';
-}
-if (!defined('BRAND_LOGO'))       define('BRAND_LOGO',       '');
-if (!defined('BRAND_NAV_BG'))     define('BRAND_NAV_BG',     '#1a252f');
-if (!defined('BRAND_NAV_BORDER')) define('BRAND_NAV_BORDER', '#0d1b24');
-if (!defined('BRAND_ACCENT'))     define('BRAND_ACCENT',     '#3498db');
-if (!defined('BRAND_TEXT'))       define('BRAND_TEXT',       '#ffffff');
+// Store branding is loaded by db_connect.php and read through Brand:: — the colours
+// go into the <style> block below, where escaping is not what makes a value safe.
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -190,10 +183,10 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 
 /* ── Nav ── */
 #top-nav {
-    background: <?= Markup::text(BRAND_NAV_BG) ?>; padding: 0 16px; display: flex; align-items: center;
-    gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid <?= Markup::text(BRAND_NAV_BORDER) ?>;
+    background: <?= Brand::navBg() ?>; padding: 0 16px; display: flex; align-items: center;
+    gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid <?= Brand::navBorder() ?>;
 }
-#top-nav .brand { font-weight: bold; font-size: 14px; color: <?= Markup::text(BRAND_TEXT) ?>; }
+#top-nav .brand { font-weight: bold; font-size: 14px; color: <?= Brand::text() ?>; }
 #top-nav .user-badge { margin-left: 20px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #bdc3c7; white-space: nowrap; flex-shrink: 0; }
 #top-nav .nav-spacer { flex: 1; }
 #top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px; padding: 5px 9px; border-radius: 3px; }
@@ -201,7 +194,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 .role-tag { background: <?= $isAdmin ? '#e74c3c' : '#3498db' ?>; color: #fff;
             font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
             text-transform: uppercase; }
-.btn.publish-btn { background: <?= Markup::text(BRAND_ACCENT) ?>; }
+.btn.publish-btn { background: <?= Brand::accent() ?>; }
 
 /* Which sign am I editing? Never left to be inferred from the canvas shape. */
 #top-nav .display-badge { margin-left: 18px; display: flex; align-items: center; gap: 7px;
@@ -288,7 +281,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
    Scaled by the zoom control — transform-origin keeps the top-left anchored so
    scroll position and pointer maths stay predictable. */
 #builder-canvas {
-    width: <?= $canvasW ?>px; height: <?= $canvasH ?>px; background: #fff; position: relative;
+    width: <?= intval($canvasW) ?>px; height: <?= intval($canvasH) ?>px; background: #fff; position: relative;
     flex-shrink: 0; box-shadow: 0 10px 30px rgba(0,0,0,.5);
     background-size: cover; background-position: center;
     transform-origin: top left;
@@ -537,8 +530,8 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 
 <!-- ── Top Nav ── -->
 <div id="top-nav">
-    <?php if (BRAND_LOGO): ?>
-        <img src="<?= Markup::text(BRAND_LOGO) ?>" alt="<?= Markup::text(SITE_NAME) ?>"
+    <?php if (Brand::logo()): ?>
+        <img src="<?= Markup::text(Brand::logo()) ?>" alt="<?= Markup::text(SITE_NAME) ?>"
              style="max-height:32px; max-width:130px; object-fit:contain; flex-shrink:0;">
     <?php endif; ?>
     <span class="brand"><?= Markup::text(SITE_NAME) ?></span>
@@ -549,7 +542,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <span class="display-badge" title="The display you are editing. Publishing sends only this one to its screen.">
         <span class="d-title"><?= Markup::text($display->title()) ?></span>
         <span class="d-tag"><?= Markup::text($display->tag()) ?></span>
-        <span class="d-dims"><?= $display->dimensionsLabel() ?></span>
+        <span class="d-dims"><?= Markup::text($display->dimensionsLabel()) ?></span>
         <?php if (!$display->isActive()): ?><span class="d-off">off</span><?php endif; ?>
     </span>
     <?php if ($switchable > 1): ?>
@@ -740,21 +733,21 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <div class="insp-row">
             <div>
                 <label>X (px)</label>
-                <input type="number" id="insp-x" min="-<?= $canvasW ?>" max="<?= $canvasW ?>" onchange="applyPos('x',this.value)">
+                <input type="number" id="insp-x" min="-<?= intval($canvasW) ?>" max="<?= intval($canvasW) ?>" onchange="applyPos('x',this.value)">
             </div>
             <div>
                 <label>Y (px)</label>
-                <input type="number" id="insp-y" min="-<?= $canvasH ?>" max="<?= $canvasH ?>" onchange="applyPos('y',this.value)">
+                <input type="number" id="insp-y" min="-<?= intval($canvasH) ?>" max="<?= intval($canvasH) ?>" onchange="applyPos('y',this.value)">
             </div>
         </div>
         <div class="insp-row" style="margin-top:4px;">
             <div>
                 <label>W (px)</label>
-                <input type="number" id="insp-w" min="40" max="<?= $canvasW ?>" onchange="applyDim('w',this.value)">
+                <input type="number" id="insp-w" min="40" max="<?= intval($canvasW) ?>" onchange="applyDim('w',this.value)">
             </div>
             <div>
                 <label>H (px)</label>
-                <input type="number" id="insp-h" min="24" max="<?= $canvasH ?>" onchange="applyDim('h',this.value)">
+                <input type="number" id="insp-h" min="24" max="<?= intval($canvasH) ?>" onchange="applyDim('h',this.value)">
             </div>
         </div>
     </div>
@@ -1026,8 +1019,8 @@ var DISPLAY_TAG   = <?= HttpReply::jsValue($display->tag()) ?>;
 // sends both and the server refuses any that disagree (DisplayRequest::ID_PARAM).
 var DISPLAY_ID    = <?= intval($display->id()) ?>;
 var DISPLAY_TITLE = <?= HttpReply::jsValue($display->title()) ?>;
-var CANVAS_W      = <?= $canvasW ?>;
-var CANVAS_H      = <?= $canvasH ?>;
+var CANVAS_W      = <?= intval($canvasW) ?>;
+var CANVAS_H      = <?= intval($canvasH) ?>;
 
 // Whether somebody else holds this Display's edit lock (ADR-0007). Decided by the
 // server before this page was built, and constant for its life: every control that
@@ -1047,7 +1040,7 @@ var LOCK_WARN_SECONDS  = <?= LockState::WARN_AFTER_SECONDS ?>;
 // how big a chosen file is before sending a byte, so a file that cannot arrive is
 // refused in the file picker rather than after two minutes of uploading it. The
 // server checks the same number again; this only saves the wait.
-var UPLOAD_MAX_BYTES = <?= UploadLimit::bytes() ?>;
+var UPLOAD_MAX_BYTES = <?= intval(UploadLimit::bytes()) ?>;
 var UPLOAD_MAX_LABEL = <?= HttpReply::jsValue(UploadLimit::describe()) ?>;
 
 // Editor zoom. The canvas is CSS-scaled, so interact.js deltas — which arrive in

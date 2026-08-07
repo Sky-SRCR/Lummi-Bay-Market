@@ -108,7 +108,16 @@ reads prices off.
   attribute is **not** escaped, because the HTML parser decodes the attribute before the
   JavaScript parser reads it. `Markup::jsInAttr()` is that case, passed as the whole
   argument and never spliced into one; the sentence belongs in a JS function.
-  `tools/check_invariants.php` enforces both.
+  `tools/check_invariants.php` enforces both — and holds every echo on a page to one of
+  five shapes safe by construction (a door, a literal, a safe call, a validated colour, a
+  class constant whose declaration is a number), which is what makes *forgetting* to
+  escape a failing check rather than something noticed later. There is no allow-list: a
+  new line either says which shape it is or converts.
+- **A colour in a `<style>` block is validated, never escaped.** Escaping is for a
+  delimiter and a stylesheet has none — `#fff; } body { … }` survives `Markup::text()`
+  intact and is a closed rule and a new one. The store's brand colours go through
+  `Brand::navBg()` and its three siblings, which answer `#rrggbb` or the documented
+  default because `Color::read()` decided. No page names a `BRAND_*` constant.
 - **A reply's status code comes from its `reason`, never from beside it.**
   `HttpReply` maps the app's own vocabulary of failure onto HTTP once. A code chosen
   at a call site is a second opinion, and it disagrees silently.

@@ -182,7 +182,7 @@ if (isset($_GET['restart'])) {
         <h1>Forgot Password</h1>
         <p class="sub">Enter your username or email address and we'll send you a reset code.</p>
         <?php if ($message): ?>
-            <div class="msg <?= $msgType ?>"><?= Markup::text($message) ?></div>
+            <div class="msg <?= Markup::text($msgType) ?>"><?= Markup::text($message) ?></div>
         <?php endif; ?>
         <form method="POST">
             <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
@@ -195,7 +195,7 @@ if (isset($_GET['restart'])) {
         <h1>Enter Your Reset Code</h1>
         <p class="sub">Check your email for a 6-digit code. It expires in 30 minutes.</p>
         <?php if ($message): ?>
-            <div class="msg <?= $msgType ?>"><?= Markup::text($message) ?></div>
+            <div class="msg <?= Markup::text($msgType) ?>"><?= Markup::text($message) ?></div>
         <?php endif; ?>
         <form method="POST">
             <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">

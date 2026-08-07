@@ -190,6 +190,19 @@ $rules = [
                   . 'silently — the file is outside the repo and nothing else can catch it',
     ],
     [
+        'name'   => 'one module reads the store\'s own colours',
+        'regex'  => '/BRAND_(NAV_BG|NAV_BORDER|ACCENT|TEXT)\b/',
+        'in'     => '',
+        // branding_config.php is the file itself, and admin_panel.php writes it, one
+        // define() per line. lib/brand.php is the only reader. A page naming one of
+        // these is a page that has gone back to interpolating whatever the file holds
+        // into its own stylesheet.
+        'expect' => ['admin_panel.php', 'branding_config.php', 'lib/brand.php'],
+        'why'    => 'these land in a <style> block, where there is no delimiter to escape '
+                  . 'and a value that is not a colour is CSS — Color::read() is what makes '
+                  . 'them safe, and it is called once (§4ac)',
+    ],
+    [
         'name'   => 'the lock columns are read and written in one place',
         'regex'  => '/(SET|WHERE|SELECT|,)\s*`?lock_(holder_id|activity_at|taken_at)`?\s*(=|,|\s|$)/i',
         'in'     => 'lib',
@@ -374,6 +387,244 @@ if (!$badInScript) {
     foreach ($badInScript as $where) { echo "       $where\n"; }
     echo "       HttpReply::jsValue() is the escaping for that element.\n";
     $failures[] = 'HTML escaping inside a <script>';
+}
+
+// ---- Every echo on a page is accounted for --------------------------------------
+// The rule above catches escaping something the *wrong way*. This one catches not
+// escaping it at all, which is the failure that needs no mistake — just a new line on
+// an existing page and nobody remembering that `{{ $u['name'] }}` is the whole of #15.
+// (Short-echo tags are written `{{ … }}` here for the reason lib/markup.php's header
+// gives: a real `?` followed by `>` inside a `//` comment ends PHP mode, and the file
+// still lints clean.)
+//
+// It is a classifier rather than an allow-list. Every echoed expression on a page has
+// to be one of five things, and each of the five is safe for a reason that can be
+// checked here rather than looked up:
+//
+//   a door        Markup::text(), Markup::jsInAttr(), HttpReply::jsValue() — the three
+//                 functions that exist to answer this question.
+//   a literal     a quoted string or a number, written in the source.
+//   a safe call   count(), intval(), intdiv(), floatval(), number_format(),
+//                 urlencode(), rawurlencode(), and date() with a literal format. Each
+//                 returns only digits, or only characters no parser is looking for —
+//                 no quote, no angle bracket, no backslash — whatever it is handed.
+//   a colour      Brand::navBg() and its three siblings, which return `#rrggbb` or a
+//                 default because Color::read() decided (§4ac). The one case in this
+//                 app where escaping would have been the wrong tool: they land in a
+//                 <style> block, which has no delimiter to escape.
+//   a number      a class constant whose declaration in lib/ is a numeric literal.
+//                 Resolved here, not assumed: `Foo::BAR = 'x <b>'` does not pass.
+//
+// A ternary is safe when both of its branches are, and a concatenation when every
+// piece of it is. The condition of a ternary is not echoed, so it is not examined —
+// `$u['is_active'] ? 'Active' : 'Inactive'` is two literals and a question about a
+// database column. Both rules are recursive, which is what makes the five shapes
+// enough: `' · ' . Markup::text($d->location())` is a literal and a door.
+//
+// Nothing is on a list of exceptions, deliberately. Fifteen echoes were converted to
+// get here — ids to intval(), labels to Markup::text() — because an allow-list is a
+// place to put the next one too, and the list stops being read at about the tenth
+// entry. Widening the classifier is a change to what "safe" means and is reviewed as
+// one; adding an int to the seven safe calls is not.
+//
+// Limits worth stating. `intval($x)` is trusted without asking what `$x` is, which is
+// the point — that is what intval is for, and a checker that went looking would be
+// re-implementing PHP. It reads one expression at a time and knows nothing about where
+// a value came from, so it cannot tell a safe `$id` from an unsafe one and does not
+// try: it asks only that the line say which it is. And an echo inside a `<script>` is
+// checked by the rule above, not this one — they answer different questions about the
+// same line, and both have to be satisfied.
+
+$SAFE_CALLS  = ['count', 'intval', 'intdiv', 'floatval', 'number_format',
+                'urlencode', 'rawurlencode', 'date'];
+$SAFE_STATIC = ['Markup::text', 'Markup::jsInAttr', 'HttpReply::jsValue',
+                'Brand::navBg', 'Brand::navBorder', 'Brand::accent', 'Brand::text'];
+
+/** Every `const NAME = <number>;` declared in lib/, as 'Class::NAME'. */
+function numericClassConstants($root)
+{
+    $found = [];
+    foreach (phpFilesUnder($root, 'lib') as $rel) {
+        $class = null;
+        $ts = array_values(array_filter(token_get_all(file_get_contents($root . '/' . $rel)),
+            function ($t) { return !is_array($t) || ($t[0] !== T_WHITESPACE && $t[0] !== T_COMMENT
+                                                     && $t[0] !== T_DOC_COMMENT); }));
+        for ($i = 0; $i < count($ts); $i++) {
+            $t = $ts[$i];
+            if (is_array($t) && $t[0] === T_CLASS && isset($ts[$i + 1]) && is_array($ts[$i + 1])) {
+                $class = $ts[$i + 1][1];
+                continue;
+            }
+            // `const NAME = <number> ;` and nothing else. A negative or an expression
+            // is not matched — not because it would be unsafe, but because deciding
+            // that here is a second opinion about PHP, and there are none of either.
+            if ($class !== null && is_array($t) && $t[0] === T_CONST
+                && isset($ts[$i + 4]) && is_array($ts[$i + 1]) && $ts[$i + 2] === '='
+                && is_array($ts[$i + 3])
+                && ($ts[$i + 3][0] === T_LNUMBER || $ts[$i + 3][0] === T_DNUMBER)
+                && $ts[$i + 4] === ';') {
+                $found[$class . '::' . $ts[$i + 1][1]] = true;
+            }
+        }
+    }
+    return $found;
+}
+
+/** The expression's tokens, whitespace and comments dropped. */
+function expressionTokens($expr)
+{
+    $ts = token_get_all('<?php ' . $expr . ';');
+    array_shift($ts);                 // the open tag this had to be given
+    $out = [];
+    foreach ($ts as $t) {
+        if (is_array($t) && ($t[0] === T_WHITESPACE || $t[0] === T_COMMENT
+                             || $t[0] === T_DOC_COMMENT)) { continue; }
+        $out[] = $t;
+    }
+    if (end($out) === ';') { array_pop($out); }
+    return $out;
+}
+
+/** Is this run of tokens one of the five shapes, or a ternary of two that are? */
+function echoIsAccountedFor(array $ts, array $safeCalls, array $safeStatic, array $numericConsts)
+{
+    if (!$ts) { return false; }
+
+    // ---- parentheses that wrap the whole thing, which say nothing ----
+    // `$a ? ($b ? 'p' : 'q') : 'r'` is two safe branches, and without this the inner
+    // one is a `(` the ternary scan below never sees past.
+    while (count($ts) > 1 && $ts[0] === '(') {
+        $d = 0; $end = null;
+        for ($i = 0; $i < count($ts); $i++) {
+            if ($ts[$i] === '(') { $d++; }
+            if ($ts[$i] === ')') { $d--; if ($d === 0) { $end = $i; break; } }
+        }
+        if ($end !== count($ts) - 1) { break; }   // `(a) . (b)` — not a wrapper
+        $ts = array_slice($ts, 1, count($ts) - 2);
+        if (!$ts) { return false; }
+    }
+
+    // ---- a ternary, if there is one at the top level ----
+    $depth = 0;
+    for ($i = 0; $i < count($ts); $i++) {
+        $t = $ts[$i];
+        if ($t === '(' || $t === '[' || $t === '{') { $depth++; continue; }
+        if ($t === ')' || $t === ']' || $t === '}') { $depth--; continue; }
+        if ($depth !== 0 || $t !== '?') { continue; }
+        // Find this `?`'s own `:`, stepping over any nested ternary between them.
+        $d = 0; $nested = 0;
+        for ($j = $i + 1; $j < count($ts); $j++) {
+            $u = $ts[$j];
+            if ($u === '(' || $u === '[' || $u === '{') { $d++; continue; }
+            if ($u === ')' || $u === ']' || $u === '}') { $d--; continue; }
+            if ($d !== 0) { continue; }
+            if ($u === '?') { $nested++; continue; }
+            // T_DOUBLE_COLON is its own token, so a bare ':' cannot be Foo::BAR.
+            if ($u === ':') {
+                if ($nested > 0) { $nested--; continue; }
+                $left  = array_slice($ts, $i + 1, $j - $i - 1);
+                $right = array_slice($ts, $j + 1);
+                // `$a ?: $b` echoes the condition as well, so it has to hold up too.
+                if (!$left && !echoIsAccountedFor(array_slice($ts, 0, $i),
+                        $safeCalls, $safeStatic, $numericConsts)) { return false; }
+                return ($left === [] || echoIsAccountedFor($left, $safeCalls, $safeStatic, $numericConsts))
+                    && echoIsAccountedFor($right, $safeCalls, $safeStatic, $numericConsts);
+            }
+        }
+        return false;   // a `?` with no `:` of its own is not an expression we can read
+    }
+
+    // ---- a concatenation, when every piece of it holds up on its own ----
+    // Below the ternary, because `.` binds tighter: `$a ? 'x' : 'y' . 'z'` is a ternary
+    // whose second branch is a concatenation, and splitting the other way round would
+    // read the `?` as part of a piece.
+    $depth = 0; $parts = []; $part = [];
+    foreach ($ts as $t) {
+        if ($t === '(' || $t === '[' || $t === '{') { $depth++; }
+        if ($t === ')' || $t === ']' || $t === '}') { $depth--; }
+        if ($depth === 0 && $t === '.') { $parts[] = $part; $part = []; continue; }
+        $part[] = $t;
+    }
+    if ($parts) {
+        $parts[] = $part;
+        foreach ($parts as $p) {
+            if (!echoIsAccountedFor($p, $safeCalls, $safeStatic, $numericConsts)) { return false; }
+        }
+        return true;
+    }
+
+    // ---- one literal, written out in the source ----
+    if (count($ts) === 1 && is_array($ts[0])
+        && in_array($ts[0][0], [T_CONSTANT_ENCAPSED_STRING, T_LNUMBER, T_DNUMBER], true)) {
+        return true;
+    }
+
+    // ---- a class constant whose declared value is a number ----
+    if (count($ts) === 3 && is_array($ts[0]) && $ts[0][0] === T_STRING
+        && is_array($ts[1]) && $ts[1][0] === T_DOUBLE_COLON
+        && is_array($ts[2]) && $ts[2][0] === T_STRING) {
+        return isset($numericConsts[$ts[0][1] . '::' . $ts[2][1]]);
+    }
+
+    // ---- one call, whose parentheses run to the end of the expression ----
+    $name = null; $openAt = null;
+    if (is_array($ts[0]) && $ts[0][0] === T_STRING && isset($ts[1]) && $ts[1] === '(') {
+        $name = $ts[0][1]; $openAt = 1;
+    } elseif (count($ts) > 3 && is_array($ts[0]) && $ts[0][0] === T_STRING
+              && is_array($ts[1]) && $ts[1][0] === T_DOUBLE_COLON
+              && is_array($ts[2]) && $ts[2][0] === T_STRING && $ts[3] === '(') {
+        $name = $ts[0][1] . '::' . $ts[2][1]; $openAt = 3;
+    }
+    if ($name === null) { return false; }
+    if (!in_array($name, $safeCalls, true) && !in_array($name, $safeStatic, true)) { return false; }
+
+    $d = 0;
+    for ($i = $openAt; $i < count($ts); $i++) {
+        if ($ts[$i] === '(') { $d++; }
+        if ($ts[$i] === ')') { $d--; if ($d === 0) { return $i === count($ts) - 1; } }
+    }
+    return false;
+}
+
+/** date() is only as safe as its format string, which therefore has to be written out. */
+function dateFormatIsLiteral(array $ts)
+{
+    if (!is_array($ts[0]) || $ts[0][0] !== T_STRING || $ts[0][1] !== 'date') { return true; }
+    return isset($ts[2]) && is_array($ts[2]) && $ts[2][0] === T_CONSTANT_ENCAPSED_STRING;
+}
+
+$numericConsts = numericClassConstants($root);
+$unaccounted   = [];
+foreach (phpFilesUnder($root, '', ['lib/', 'tools/']) as $rel) {
+    $echoing = null; $startLine = 0;
+    foreach (token_get_all(file_get_contents($root . '/' . $rel)) as $t) {
+        if (is_array($t) && ($t[0] === T_OPEN_TAG_WITH_ECHO || $t[0] === T_ECHO)) {
+            $echoing = ''; $startLine = $t[2]; continue;
+        }
+        if ($echoing === null) { continue; }
+        if ((is_array($t) && $t[0] === T_CLOSE_TAG) || $t === ';') {
+            $expr = trim(preg_replace('/\s+/', ' ', $echoing));
+            if ($expr !== '') {
+                $ts = expressionTokens($expr);
+                if (!$ts || !echoIsAccountedFor($ts, $SAFE_CALLS, $SAFE_STATIC, $numericConsts)
+                    || !dateFormatIsLiteral($ts)) {
+                    $unaccounted[] = $rel . ':' . $startLine . '  ' . $expr;
+                }
+            }
+            $echoing = null; continue;
+        }
+        $echoing .= is_array($t) ? $t[1] : $t;
+    }
+}
+$checked++;
+if (!$unaccounted) {
+    echo "  ok   every echo on a page is a door, a literal, a safe call or a number (#15)\n";
+} else {
+    echo "  FAIL an echo on a page is none of the shapes that are safe by construction (#15)\n";
+    foreach ($unaccounted as $where) { echo "       $where\n"; }
+    echo "       Markup::text() for a value, Markup::jsInAttr() for one an event handler\n";
+    echo "       takes, HttpReply::jsValue() inside a <script>, intval() for an id.\n";
+    $failures[] = 'an echo on a page is unaccounted for';
 }
 
 // ---- What this does not cover ---------------------------------------------------

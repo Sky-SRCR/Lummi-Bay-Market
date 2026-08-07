@@ -2059,7 +2059,26 @@ grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request namin
                                               # DISPLAY_ID / waDisplayId() with it (invariant 12), which
                                               # omission silently opts out of. viewer.php is the one
                                               # exception: a Screen sends the tag alone (ADR-0003)
+grep -rn "htmlspecialchars(" --include=*.php . # lib/markup.php, which names both flags, and
+                                              # lib/error_policy.php's last-resort notice, which cannot
+                                              # depend on it and passes them in full. Anywhere else is a
+                                              # call whose behaviour depends on the host's PHP version —
+                                              # §4ab
+grep -rn "BRAND_NAV_BG\|BRAND_NAV_BORDER\|BRAND_ACCENT\|BRAND_TEXT" --include=*.php .
+                                              # branding_config.php is the file; admin_panel.php writes
+                                              # it; lib/brand.php is the only reader. A page naming one
+                                              # is a page interpolating whatever the config holds into
+                                              # its own <style> block, where escaping is not what makes
+                                              # a value safe — §4ac
 ```
+
+**Three of the checks are not greps and cannot be written as one**, so they live only
+in `tools/check_invariants.php`: whether an escaped value lands inside a `<script>`
+(the same call is right or wrong depending on the element, and a regex looking for
+`<script` is fooled by `admin_panel.php` mentioning one in a PHP comment — only
+`T_INLINE_HTML` may move that state); whether every echo on a page is one of the five
+shapes safe by construction; and whether a class constant's *declared value* is a
+number. All three read the token stream.
 
 `php -l` cannot see inline JavaScript, and `builder.php` is ~3400 lines of it.
 Anything touching that file needs reading, not linting. `node --check` over the
@@ -3039,12 +3058,127 @@ casting non-strings instead of refusing them fails 2, one of which is the warnin
 itself; putting the confirm box back fails the invariant **and** 2 checks; and a
 single raw `htmlspecialchars(` anywhere in a page fails the invariant by name.
 
-**What #15 does not close.** It says "escape every stored value strictly, app-wide",
-and this makes every escaped value strict — it does not prove every value is escaped.
-The sweep found the unescaped interpolations that remain are integers, class
-constants, and app-set strings (`$msgType`, a Display's `dimensionsLabel()`), and
-those are listed above rather than left to be rediscovered. A page added later can
-still forget, and nothing here catches that; what it catches is forgetting *how*.
+**What was left, and then closed.** #15 says "escape every stored value strictly,
+app-wide". The two passes above make every *escaped* value strict and put each one in
+the right context; neither proves every value **is** escaped. A page added later could
+still forget, and nothing caught that — what the invariants caught was forgetting
+*how*.
+
+Measured rather than guessed at: of 319 echoes across the eight pages, 174 went
+through a door and 145 did not. Almost all of the 145 were fine, and — this is the
+part that made a rule possible — they were fine in shapes that can be recognised
+rather than looked up. So the third pass is a classifier, in
+`tools/check_invariants.php`. **Every echoed expression on a page must be one of five
+things:**
+
+| shape | why it is safe |
+|---|---|
+| a door | `Markup::text()`, `Markup::jsInAttr()`, `HttpReply::jsValue()` — the three functions that exist to answer this |
+| a literal | a quoted string or a number, written in the source |
+| a safe call | `count`, `intval`, `intdiv`, `floatval`, `number_format`, `urlencode`, `rawurlencode`, and `date()` with a literal format — each returns only digits, or only characters no parser is looking for, whatever it is handed |
+| a colour | `Brand::navBg()` and its three siblings, which return `#rrggbb` because `Color::read()` decided (§4ac) |
+| a number | a class constant whose declaration in `lib/` is a numeric literal — **resolved**, not assumed, so `Foo::BAR = 'x <b>'` does not pass |
+
+and a ternary is safe when both branches are, a concatenation when every piece is.
+Both rules recurse, which is what makes five shapes enough: `' · ' .
+Markup::text($d->location())` is a literal and a door, and
+`!empty($u['created_at']) ? date('M j, Y', …) : '—'` is a safe call and a literal.
+A ternary's *condition* is not echoed and is not examined.
+
+**Nothing is on a list of exceptions, deliberately.** Fifteen echoes were converted to
+reach that state — ids and dimensions to `intval()`, labels and roles to
+`Markup::text()` — rather than named in an allow-list, because an allow-list is
+somewhere to put the next one too, and it stops being read at about the tenth entry.
+Widening the classifier is a change to what "safe" means here and gets reviewed as
+one; adding an integer to the seven safe calls is not.
+
+**Limits, stated.** `intval($x)` is trusted without asking what `$x` is — that is what
+`intval` is *for*, and a checker that went looking would be re-implementing PHP. It
+reads one expression at a time and knows nothing about where a value came from, so it
+cannot tell a safe `$id` from an unsafe one and does not try: it asks only that the
+line say which it is. An echo inside a `<script>` is judged by the previous rule as
+well as this one — different questions about the same line, and both have to hold.
+
+**Verified by injection, twenty times.** Ten shapes that must fail — `<?= $u['name'] ?>`,
+`$x . $y`, `date($fmt)`, `strtoupper($x)`, an unknown class constant, a ternary with
+one unsafe branch, `Brand::logo()` (a path, not a colour), `$a ?: 'fallback'` (the
+Elvis form echoes its condition), `'a' . $b . 'c'`, and `Markup::text($a) . $b` — and
+ten that must pass, including a parenthesised nested ternary that a first version got
+wrong and now does not.
+
+---
+
+### 4ac. The store's own colours, where escaping was the wrong tool (#15)
+
+The sweep for §4ab turned up a family that was never an escaping problem at all.
+`BRAND_ACCENT` and its three siblings were interpolated into the `<style>` block on
+the Builder, the Help page and the sign-in page — 13 places — and every one of them
+had been dutifully wrapped in `Markup::text()`.
+
+Which does nothing. **Inside a `<style>` the HTML parser is looking for `</style` and
+nothing else**, so escaping leaves the value untouched in every respect that matters,
+while reading at the call site like the question has been dealt with. An accent colour
+of
+
+```
+#fff; } body { background: url(https://example.invalid/x)
+```
+
+is, *after* escaping, exactly those characters inside a stylesheet: a closed rule and
+a new one. There is no delimiter for an entity to neutralise. What is needed there is
+not "make these characters inert" but **"this is a colour"** — and `lib/color.php`
+already knew how to decide that (§4w).
+
+`lib/brand.php` is the reader. `Brand::accent()` answers `#rrggbb` or the documented
+default, `Color::read()` having decided which; `tools/check_invariants.php` holds the
+`BRAND_*` constants to that one file, so a page naming one is a page that has gone
+back to interpolating whatever is in the config.
+
+**It also collected the defaults, which had been written out four times** — once each
+in `login.php`, `help.php`, `builder.php` and `admin_panel.php`, agreeing only because
+nobody had yet had a reason to change one. Those four blocks are gone; `Brand::load()`
+reads the config file, and `db_connect.php` calls it beside `lib/markup.php` for the
+same reason it requires that: a page that forgot would be a fatal error on a live
+screen.
+
+**Not currently reachable through the form, which is why it is worth doing.** #21 made
+the Branding form read every colour through `Color::read()` and refuse the save,
+naming the field — so nothing an admin can type gets here. The other door is the one
+this is about: `branding_config.php` is *generated*, its own header invites a person
+to edit it, it predates the rule that validates the form, and a deployment upgraded
+from before #21 may already hold whatever the old silent substitution wrote. Exactly
+the shape §4w exists for — the write path closed, the rows that were already there
+not.
+
+**A default here is not the #21 defect.** `DisplayAdmin` substituting a colour for one
+an admin had just typed was a lie about a save. This substitutes nothing and saves
+nothing: it reads a file that holds what it holds, and answers the documented default
+— the same one a deployment with no config at all gets. And it is said out loud rather
+than inferred, in two places. `ColorAudit` reports it under a kind of its own,
+`WRONG_IN_APP`, because it is the only unreadable colour in the app that **no sign
+uses** and a finding that read like the others would send somebody to the shop floor
+over a navigation bar; and the Branding tab opens with a notice naming each field and
+quoting what is stored.
+
+`Brand::pick()` and `Brand::unreadable()` are pure, taking the stored value rather
+than reading it, for the reason `layout_rules.php` is (§4o): `define()` cannot be
+undone, so a rule reachable only through the constants could only ever be tested with
+the one value the machine running the suite happens to hold.
+
+**Coverage.** 21 checks in `tools/selftest_layout.php` on both engines — every
+fallback path, each colour falling back to *its own* default rather than a shared one,
+an unknown key throwing rather than answering, the CSS-injection string refused with a
+companion check proving that escaping it would **not** have helped, and the audit
+finding end to end. Plus the invariant, and the tool run against a hand-edited config
+to see the sentence it actually prints.
+
+**What this does not cover.** Two more values reach CSS the same way and are not
+colours: `font-family` in the Brand Standards preview, and the `font_color` in that
+same preview, which is a colour but is read raw rather than through `Color::read()`.
+Both are inside a `style` **attribute**, where escaping does stop the value ending the
+attribute — so the worst available is extra declarations on one `<span>` in the Admin
+Panel, not a rule that escapes into the page. Named here rather than left to be
+rediscovered.
 
 ---
 

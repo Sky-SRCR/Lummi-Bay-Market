@@ -383,7 +383,7 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
         <h2><?= $editAsset ? '&#9998; Edit Asset' : '&#10010; Add New Asset' ?></h2>
 
         <?php if ($message): ?>
-            <div class="msg <?= $msgClass ?>"><?= Markup::text($message) ?></div>
+            <div class="msg <?= Markup::text($msgClass) ?>"><?= Markup::text($message) ?></div>
         <?php endif; ?>
 
         <?php if ($editAsset): ?>
@@ -523,7 +523,7 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
             <tbody>
                 <?php foreach ($assets as $row): ?>
                 <tr>
-                    <td style="color:#95a5a6; font-size:12px;">#<?= $row['id'] ?></td>
+                    <td style="color:#95a5a6; font-size:12px;">#<?= intval($row['id']) ?></td>
                     <td><strong><?= Markup::text($row['label'] ?: '—') ?></strong></td>
                     <td>
                         <span class="badge <?= $row['type'] === 'image' ? 'badge-image' : 'badge-text' ?>">
@@ -548,13 +548,13 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
                     <td>
                         <div class="action-row">
                             <?php if (isAdmin()): ?>
-                            <a href="crud.php?edit_id=<?= $row['id'] ?>" class="btn btn-blue" style="text-decoration:none; font-size:12px; padding:6px 12px;">Edit</a>
+                            <a href="crud.php?edit_id=<?= intval($row['id']) ?>" class="btn btn-blue" style="text-decoration:none; font-size:12px; padding:6px 12px;">Edit</a>
 
                             <form method="POST" action="crud.php" style="display:inline;"
                                   onsubmit="return confirm('Delete this asset? This cannot be undone.')">
                                 <input type="hidden" name="action_delete" value="1">
                                 <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
-                                <input type="hidden" name="delete_id" value="<?= $row['id'] ?>">
+                                <input type="hidden" name="delete_id" value="<?= intval($row['id']) ?>">
                                 <button type="submit" class="btn btn-red" style="font-size:12px; padding:6px 12px;">Delete</button>
                             </form>
                             <?php else: ?>

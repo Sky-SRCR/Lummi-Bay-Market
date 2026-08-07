@@ -8,15 +8,8 @@ if (isLoggedIn()) {
     exit;
 }
 
-// Load store branding (defaults if config not yet set)
-if (!defined('BRAND_NAV_BG') && file_exists(__DIR__ . '/branding_config.php')) {
-    require_once __DIR__ . '/branding_config.php';
-}
-if (!defined('BRAND_LOGO'))       define('BRAND_LOGO',       '');
-if (!defined('BRAND_NAV_BG'))     define('BRAND_NAV_BG',     '#1a252f');
-if (!defined('BRAND_NAV_BORDER')) define('BRAND_NAV_BORDER', '#0d1b24');
-if (!defined('BRAND_ACCENT'))     define('BRAND_ACCENT',     '#3498db');
-if (!defined('BRAND_TEXT'))       define('BRAND_TEXT',       '#ffffff');
+// Store branding is loaded by db_connect.php and read through Brand:: — the colours
+// go into the <style> block below, where escaping is not what makes a value safe.
 
 $error = '';
 
@@ -147,10 +140,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             font-size: 16px; margin-bottom: 18px;
             transition: border-color .2s;
         }
-        input:focus { outline: none; border-color: <?= Markup::text(BRAND_ACCENT) ?>; }
+        input:focus { outline: none; border-color: <?= Brand::accent() ?>; }
         .btn {
             width: 100%; padding: 13px;
-            background: <?= Markup::text(BRAND_ACCENT) ?>; color: #fff;
+            background: <?= Brand::accent() ?>; color: #fff;
             border: none; border-radius: 6px;
             font-size: 16px; font-weight: bold; cursor: pointer;
         }
@@ -168,9 +161,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body>
 <div class="card">
-    <?php if (BRAND_LOGO): ?>
+    <?php if (Brand::logo()): ?>
         <div style="text-align:center; margin-bottom:16px;">
-            <img src="<?= Markup::text(BRAND_LOGO) ?>" alt="<?= Markup::text(SITE_NAME) ?>"
+            <img src="<?= Markup::text(Brand::logo()) ?>" alt="<?= Markup::text(SITE_NAME) ?>"
                  style="max-height:60px; max-width:180px; object-fit:contain;">
         </div>
     <?php endif; ?>

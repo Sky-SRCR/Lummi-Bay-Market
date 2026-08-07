@@ -4381,7 +4381,11 @@ section('Finding the colours nobody can read, before a publish finds them (#41)'
 $aPdo   = newTestDb();
 $aStore = new DisplayStore($aPdo);
 $aLay   = newTestLayoutStore($aPdo);
-$aAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo));
+// The fourth argument is the store's own branding, which lives in a file rather than
+// the database. Named here rather than left to default, or every count below would
+// depend on what `branding_config.php` happens to hold on the machine running this.
+$aBrand = Brand::DEFAULTS;
+$aAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo), $aBrand);
 
 $aDrive = makeTestDisplay($aPdo, 'drive-thru', 'Drive-Thru Menu');
 $aPatio = makeTestDisplay($aPdo, 'patio', 'Patio Board');
@@ -4468,6 +4472,74 @@ checkMentions($found[1]['consequence'], 'every sign', 'and saying that is what i
 // Ordering is the report's whole shape: a list that opens with a cosmetic finding
 // reads like a tidy-up rather than like a sign that cannot be published.
 checkSame(ColorAudit::BLOCKS_PUBLISH, $found[0]['kind'], 'the blocking finding is listed first');
+
+// ─────────────────────────────────────────────────────────────
+section('The colours that are not in the database at all (#15, second half)');
+
+// `branding_config.php` is a generated PHP file the Admin Panel writes and its own
+// header invites a person to edit. What it holds is interpolated into the `<style>`
+// block on the Builder, the Help page and the sign-in page — the one place in this
+// app where escaping is the wrong tool, because a `<style>` has no delimiter for an
+// entity to neutralise and a value that is not a colour is simply more CSS.
+//
+// Every check below goes through `Brand::pick()` rather than the constants, for the
+// reason the module says: `define()` cannot be undone, so a rule reachable only
+// through the constants could only ever be tested with the one value this machine
+// holds.
+
+checkSame('#3498db', Brand::pick('accent', '#3498db'), 'a colour that reads is the colour');
+checkSame('#3498db', Brand::pick('accent', '#3498DB'), 'in the one case this app stores it in');
+checkSame('#3498db', Brand::pick('accent', null),      'an absent value is the documented default');
+checkSame('#3498db', Brand::pick('accent', ''),        'and so is a blank one');
+checkSame('#1a252f', Brand::pick('nav_bg', 'darkblue'),
+          'a CSS colour keyword is not a colour this app stores, so it is the default');
+checkSame('#3498db', Brand::pick('accent', ['#fff']),
+          'and neither is an array, which is what a hand-built config could hold');
+
+// The shape that made this worth doing: escaped, it is still a closed rule and a new
+// one, because nothing in a stylesheet is looking for an entity.
+$aInject = '#fff; } body { background: url(https://example.invalid/x)';
+checkSame('#3498db', Brand::pick('accent', $aInject),
+          'a value that closes the rule and opens another is refused, not escaped');
+checkSame(true, strpos(Markup::text($aInject), 'body {') !== false,
+          'which matters because escaping leaves that value doing exactly what it said');
+
+// Each colour falls back to its own default, not to one shared "some colour".
+checkSame('#0d1b24', Brand::pick('nav_border', 'nope'), 'the border falls back to the border default');
+checkSame('#ffffff', Brand::pick('text', 'nope'),       'and the nav text to its own');
+
+$aThrew = false;
+try { Brand::pick('no_such_colour', '#ffffff'); } catch (Throwable $e) { $aThrew = true; }
+checkSame(true, $aThrew, 'a colour this app does not have is a mistake, not an answer');
+
+// What the Branding tab and the audit both read.
+checkSame([], Brand::unreadable(Brand::DEFAULTS), 'a config that reads has nothing to report');
+checkSame([], Brand::unreadable([]),              'and neither has one that defines nothing yet');
+$aBadCfg = Brand::unreadable(['accent' => 'puce'] + Brand::DEFAULTS);
+checkSame(1, count($aBadCfg),        'one value nobody can read is one thing to report');
+checkSame('accent', $aBadCfg[0]['key'],   'named by the field it is');
+checkSame('Accent', $aBadCfg[0]['label'], 'in the words the Branding form uses');
+checkSame('puce',   $aBadCfg[0]['value'], 'quoting what is actually in the file');
+
+// And it reaches the same report every other unreadable colour reaches, under a kind
+// of its own — because this one is the only colour in the app that no sign uses, and
+// a finding that read like the others would send somebody to the shop floor over a
+// navigation bar.
+$aCfgAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo),
+                            ['accent' => 'puce'] + Brand::DEFAULTS);
+$found = $aCfgAudit->findings();
+checkSame(3, count($found), 'a brand colour nobody can read joins the audit');
+checkSame(ColorAudit::WRONG_IN_APP, $found[2]['kind'], 'under the kind that touches no sign');
+checkSame('', $found[2]['scope'], 'belonging to no Display');
+checkMentions($found[2]['what'], 'branding_config.php', 'named by the file a person would open');
+checkMentions($found[2]['consequence'], '#3498db', 'saying which colour is being drawn instead');
+checkMentions($found[2]['consequence'], 'nothing on the shop floor',
+              'and saying plainly that no sign is affected');
+checkMentions($found[2]['fix'], 'Branding', 'pointing at the tab that rewrites the file');
+
+// The blocking finding is still first. A new kind appended to the list must not have
+// moved the one that stops a sign being published.
+checkSame(ColorAudit::BLOCKS_PUBLISH, $found[0]['kind'], 'and the blocking finding is still first');
 
 // ─────────────────────────────────────────────────────────────
 // Everything above this line runs on both engines. What follows can only be asked
@@ -4614,4 +4686,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Two numbers because the MySQL run adds a section the SQLite one cannot ask for.
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
-reportChecks(testIsMysql() ? 1246 : 1223);
+reportChecks(testIsMysql() ? 1271 : 1248);

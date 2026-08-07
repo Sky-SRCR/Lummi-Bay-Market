@@ -6,15 +6,8 @@ requireCurrentAccount($pdo);
 $me      = currentUser();
 $isAdmin = isAdmin();
 
-// Load branding
-if (!defined('BRAND_NAV_BG') && file_exists(__DIR__ . '/branding_config.php')) {
-    require_once __DIR__ . '/branding_config.php';
-}
-if (!defined('BRAND_LOGO'))       define('BRAND_LOGO',       '');
-if (!defined('BRAND_NAV_BG'))     define('BRAND_NAV_BG',     '#1a252f');
-if (!defined('BRAND_NAV_BORDER')) define('BRAND_NAV_BORDER', '#0d1b24');
-if (!defined('BRAND_ACCENT'))     define('BRAND_ACCENT',     '#3498db');
-if (!defined('BRAND_TEXT'))       define('BRAND_TEXT',       '#ffffff');
+// Store branding is loaded by db_connect.php and read through Brand:: — the colours
+// go into the <style> block below, where escaping is not what makes a value safe.
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -29,17 +22,17 @@ body { background: #1e2b38; color: #d0d8e0; min-height: 100vh; }
 
 /* ── Nav ── */
 #top-nav {
-    background: <?= Markup::text(BRAND_NAV_BG) ?>;
+    background: <?= Brand::navBg() ?>;
     padding: 0 20px; display: flex; align-items: center; gap: 14px;
-    height: 46px; border-bottom: 1px solid <?= Markup::text(BRAND_NAV_BORDER) ?>;
+    height: 46px; border-bottom: 1px solid <?= Brand::navBorder() ?>;
     position: sticky; top: 0; z-index: 100;
 }
 #top-nav .brand { font-weight: bold; font-size: 14px;
-                  color: <?= Markup::text(BRAND_TEXT) ?>; margin-right: auto; }
+                  color: <?= Brand::text() ?>; margin-right: auto; }
 #top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px;
              padding: 5px 9px; border-radius: 3px; }
 #top-nav a:hover { background: #2c3e50; color: #fff; }
-#top-nav a.active { background: <?= Markup::text(BRAND_ACCENT) ?>; color: #fff; }
+#top-nav a.active { background: <?= Brand::accent() ?>; color: #fff; }
 .role-tag { background: <?= $isAdmin ? '#e74c3c' : '#3498db' ?>; color: #fff;
             font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
             text-transform: uppercase; margin-left: 4px; }
@@ -75,7 +68,7 @@ h1.page-title { font-size: 26px; color: #fff; margin-bottom: 6px; }
     font-size: 18px; color: #fff; border-bottom: 2px solid #2c3e50;
     padding-bottom: 10px; margin-bottom: 20px;
 }
-.help-section h3 { font-size: 14px; color: <?= Markup::text(BRAND_ACCENT) ?>;
+.help-section h3 { font-size: 14px; color: <?= Brand::accent() ?>;
                    margin: 24px 0 8px; text-transform: uppercase; letter-spacing: .8px; }
 .help-section p { font-size: 14px; line-height: 1.7; color: #c0cad4; margin-bottom: 10px; }
 .help-section ul, .help-section ol { padding-left: 20px; margin-bottom: 10px; }
@@ -103,7 +96,7 @@ kbd {
 .steps li { counter-increment: step; display: flex; gap: 12px; margin-bottom: 10px; }
 .steps li::before {
     content: counter(step); min-width: 24px; height: 24px; border-radius: 50%;
-    background: <?= Markup::text(BRAND_ACCENT) ?>; color: #fff; font-size: 12px;
+    background: <?= Brand::accent() ?>; color: #fff; font-size: 12px;
     font-weight: bold; display: flex; align-items: center; justify-content: center;
     flex-shrink: 0; margin-top: 2px;
 }
@@ -137,8 +130,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
 <!-- ── Nav ── -->
 <div id="top-nav">
-    <?php if (BRAND_LOGO): ?>
-        <img src="<?= Markup::text(BRAND_LOGO) ?>" alt="Logo"
+    <?php if (Brand::logo()): ?>
+        <img src="<?= Markup::text(Brand::logo()) ?>" alt="Logo"
              style="max-height:32px; max-width:120px; object-fit:contain;">
     <?php else: ?>
         <span class="brand"><?= Markup::text(SITE_NAME) ?></span>
@@ -931,7 +924,9 @@ function onScroll() {
         // nothing, so an entity stays an entity and a backslash stays a backslash —
         // and a value ending in one escapes the quote that was supposed to close this
         // string. HttpReply::jsValue() produces the literal, quotes included (#15).
-        a.style.borderLeftColor = (target === active) ? <?= HttpReply::jsValue(BRAND_ACCENT) ?> : 'transparent';
+        // Brand::accent() answers a colour or the documented default, so this is the
+        // only place the value is asked about and the only place it is escaped.
+        a.style.borderLeftColor = (target === active) ? <?= HttpReply::jsValue(Brand::accent()) ?> : 'transparent';
         a.style.color = (target === active) ? '#fff' : '';
         a.style.background = (target === active) ? '#22303f' : '';
     });

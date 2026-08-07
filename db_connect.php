@@ -33,6 +33,13 @@ ErrorPolicy::installDefault();
 // it. This file is the one include they all already have.
 require_once __DIR__ . '/lib/markup.php';
 
+// The other half of that rule, for the values escaping cannot help with. The store's
+// own colours go into a `<style>` block, where there is no delimiter to escape and a
+// value that is not a colour is CSS. `lib/brand.php` reads them, and reads the config
+// file itself, so no page carries its own copy of the defaults.
+require_once __DIR__ . '/lib/brand.php';
+Brand::load();
+
 $credentialsFile = dirname(__DIR__, 2) . '/private/db_credentials.php';
 
 

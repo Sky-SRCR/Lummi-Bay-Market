@@ -91,6 +91,12 @@ try {
 
 // ---- Looking -------------------------------------------------------------------
 
+// The one thing here that is not in the database. `branding_config.php` sits beside
+// the pages rather than in a table, so --host and --db say nothing about which one is
+// read: it is always this checkout's. Worth knowing when auditing a copy — the brand
+// findings describe the machine the script is on, not the database it connected to.
+Brand::load();
+
 $displays = new DisplayStore($pdo);
 $audit    = new ColorAudit($displays, new LayoutStore($pdo, $displays), new BrandStyles($pdo));
 
@@ -130,6 +136,15 @@ if (!$findings) {
 $headings = [
     ColorAudit::BLOCKS_PUBLISH => 'CANNOT BE PUBLISHED',
     ColorAudit::WRONG_ON_SIGN  => 'WRONG ON THE SIGN, QUIETLY',
+    ColorAudit::WRONG_IN_APP   => 'WRONG ON THE STAFF PAGES ONLY',
+];
+
+// A finding with no Display of its own is shared, and by what differs by kind: a
+// Brand Standards row is shared by every sign, a brand colour by no sign at all.
+// One phrase for both would send somebody to the shop floor over a nav bar.
+$shared = [
+    ColorAudit::WRONG_ON_SIGN => 'every sign — ',
+    ColorAudit::WRONG_IN_APP  => 'every staff page — ',
 ];
 
 $shown = '';
@@ -138,7 +153,7 @@ foreach ($findings as $f) {
         echo "\n" . $headings[$f['kind']] . "\n";
         $shown = $f['kind'];
     }
-    $where = $f['scope'] !== '' ? $f['scope'] . ' — ' : 'every sign — ';
+    $where = $f['scope'] !== '' ? $f['scope'] . ' — ' : $shared[$f['kind']];
     echo "\n  " . $where . $f['what'] . " holds " . quoted($f['value']) . "\n";
     echo "    " . $f['consequence'] . "\n";
     echo "    → " . $f['fix'] . "\n";

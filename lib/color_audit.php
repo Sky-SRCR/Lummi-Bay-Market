@@ -14,7 +14,7 @@
 // no undo in this app, and substituting a colour of our own is the exact defect
 // #21 and #41 are about. Reporting is the whole job. A person picks the colour.
 //
-// **One predicate, three consequences.** `Color::isColor()` decides in all three
+// **One predicate, four consequences.** `Color::isColor()` decides in all four
 // places, but what an unreadable value *does* differs, and an audit that lumped
 // them together would send somebody to the wrong screen:
 //
@@ -24,7 +24,15 @@
 //   displays.bg_val             →  the Screen quietly shows the stylesheet's
 //                                  #1a1a2e instead of the stored colour. The CSSOM
 //                                  discards what it cannot parse and says nothing.
-//   block_styles.font_color     →  the worst of the three, and the one with no
+//   branding_config.php         →  not a table and not a sign: the store's own colours,
+//                                  interpolated into the `<style>` block on the Builder,
+//                                  the Help page and the sign-in page. `Brand::` answers
+//                                  the documented default for one it cannot read, so
+//                                  nothing looks broken and nothing says why. Worth
+//                                  reporting because that file is generated, is
+//                                  documented as hand-editable, and predates the rule
+//                                  that made the Branding form refuse a bad colour.
+//   block_styles.font_color     →  the worst of the four, and the one with no
 //                                  refusal anywhere. BrandStyles cleans on the way
 //                                  *in*, not on the way out, so a row edited by
 //                                  hand is handed to every Screen as it stands.
@@ -38,6 +46,7 @@
 // it takes no writes — the one of these three that reads and never writes.
 
 require_once __DIR__ . '/color.php';
+require_once __DIR__ . '/brand.php';
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/layout_store.php';
 require_once __DIR__ . '/brand_styles.php';
@@ -48,16 +57,28 @@ class ColorAudit
     const BLOCKS_PUBLISH = 'blocks-publish';
     /** The sign renders, in a colour nobody chose. */
     const WRONG_ON_SIGN  = 'wrong-on-sign';
+    /** No sign is affected; the staff pages are drawing a default instead. */
+    const WRONG_IN_APP   = 'wrong-in-app';
 
     private $displays;
     private $layouts;
     private $styles;
+    private $brand;
 
-    public function __construct(DisplayStore $displays, LayoutStore $layouts, BrandStyles $styles)
+    /**
+     * @param array|null $brand key => raw brand colour, or null to read the real
+     *                          `branding_config.php`. Passed in for the same reason
+     *                          `Brand::pick()` is pure: a `define()` cannot be undone,
+     *                          so a test that could only reach the constants could only
+     *                          ever exercise the values this machine happens to hold.
+     */
+    public function __construct(DisplayStore $displays, LayoutStore $layouts, BrandStyles $styles,
+                                array $brand = null)
     {
         $this->displays = $displays;
         $this->layouts  = $layouts;
         $this->styles   = $styles;
+        $this->brand    = $brand;
     }
 
     /**
@@ -127,6 +148,23 @@ class ColorAudit
                                . 'the browser inherits — black text on a dark canvas — because '
                                . 'this value is cleaned on the way in and not on the way out.',
                 'fix'   => 'Settings → Brand Standards → ' . $type . ' → colour.',
+            ];
+        }
+
+        // Last, because it is the only one no customer ever sees. Still reported: the
+        // pages look deliberate, so nobody investigates, and the value stays wrong
+        // until someone opens the Branding tab for an unrelated reason.
+        foreach (Brand::unreadable($this->brand) as $bad) {
+            $cosmetic[] = [
+                'kind'  => self::WRONG_IN_APP,
+                'scope' => '',
+                'what'  => 'the ' . $bad['label'] . ' colour in branding_config.php',
+                'value' => $bad['value'],
+                'consequence' => 'The Builder, the Help page and the sign-in page draw the '
+                               . 'default ' . Brand::DEFAULTS[$bad['key']] . ' instead. No sign '
+                               . 'uses this colour, so nothing on the shop floor is wrong.',
+                'fix'   => 'Settings → Branding → ' . $bad['label'] . '. Saving that form '
+                         . 'rewrites the file.',
             ];
         }
 

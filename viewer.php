@@ -125,7 +125,7 @@ $canvasH = $display->canvasHeight();
     /* The Display's canvas, at the dimensions fixed when it was created
        (ADR-0004) — scaled to fill any Screen via JS. */
     #viewer-canvas {
-        width: <?= $canvasW ?>px; height: <?= $canvasH ?>px;
+        width: <?= intval($canvasW) ?>px; height: <?= intval($canvasH) ?>px;
         position: absolute; top: 0; left: 0;
         transform-origin: top left;
         overflow: hidden;
@@ -258,8 +258,8 @@ $canvasH = $display->canvasHeight();
 <div id="viewer-notice"></div>
 <script>
     // This Display's canvas, fixed at creation (ADR-0004).
-    var CANVAS_W = <?= $canvasW ?>;
-    var CANVAS_H = <?= $canvasH ?>;
+    var CANVAS_W = <?= intval($canvasW) ?>;
+    var CANVAS_H = <?= intval($canvasH) ?>;
     // The screen name tag this Screen was pointed at. Every poll names it.
     //
     // Through HttpReply, not json_encode: a bare json_encode returning false here
