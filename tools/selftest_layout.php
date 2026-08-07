@@ -318,6 +318,84 @@ check(in_array('0', $textValues, true), 'a text block reading "0" survives as "0
 checkSame('{"images":["uploads/a.png"],"ms":3000}', $carousel, 'carousel JSON is stored verbatim');
 
 // ─────────────────────────────────────────────────────────────
+section('The sanitiser itself, one line at a time (decision #49)');
+
+// The check above proves a publish goes through toPlainText(). It was also the only
+// thing standing over the function, and it exercises one of its six lines: seventeen
+// mutations of lib/plain_text.php left fifteen alive, including deleting whole
+// statements. Every line here changes what a customer reads, so each gets a case.
+//
+// Called directly rather than through a publish because that is the honest shape of
+// it: crud.php, AssetLibrary::saveEdit() and LayoutStore all funnel into this one
+// function, and what it does is not any of their business.
+
+// ---- Markup goes; the words it framed stay ------------------------------------
+checkSame('OPEN 7 DAYS', toPlainText('<b>OPEN</b> <i>7 DAYS</i>'),
+          'tags are stripped and what they wrapped is kept');
+checkSame('alert(1)', toPlainText('<script>alert(1)</script>'),
+          'and a script tag is just a tag — this is the belt to textContent\'s braces');
+
+// ---- The line breaks somebody meant to keep -----------------------------------
+// Rewritten to newlines *before* the strip, because strip_tags would take the break
+// away with the tag and run two prices together on the sign.
+checkSame("Wings\n\$8.99", toPlainText('Wings<br>$8.99'), 'a <br> is the line break it looks like');
+checkSame("Wings\n\$8.99", toPlainText('Wings<BR />$8.99'), 'however it is spelled and cased');
+checkSame("Wings\n\$8.99", toPlainText('Wings< br/>$8.99'), 'and however it is spaced');
+checkSame("Half rack\nFull rack", toPlainText('<div>Half rack</div><div>Full rack</div>'),
+          'a closing block element ends a line too');
+checkSame("Ribs\nWings\nFries", toPlainText('<ul><li>Ribs</li><li>Wings</li><li>Fries</li></ul>'),
+          'which is what makes a pasted list arrive as a list');
+checkSame("Specials\nToday only", toPlainText('<h2>Specials</h2><p>Today only</p>'),
+          'headings and paragraphs both count');
+
+// ---- Entities become the characters they stand for ----------------------------
+checkSame("Tom's & Co", toPlainText('Tom&#39;s &amp; Co'),
+          'entities are decoded, so a sign shows the character and not the code for it');
+checkSame('café', toPlainText('caf&eacute;'), 'named ones as well as numeric');
+
+// ---- …and the decode is *last*, which is load-bearing in both directions -------
+// A browser sends a typed "<" back as `&lt;`, and strip_tags eats from a "<" to the
+// end of the string when nothing closes it. Decoding first would therefore delete
+// the rest of the line — on the sign, silently, for a price nobody mistyped.
+checkSame('Wings <10 pieces', toPlainText('Wings &lt;10 pieces'),
+          'an encoded "<" survives as a character, because the decode runs after the strip');
+
+// The cost of that order, stated rather than left to be discovered: markup that
+// arrives encoded decodes into text that *looks* like markup, and is stored that
+// way. It is inert because every renderer draws stored text with textContent
+// (ADR-0002, and viewer.php:427 / builder.php:1487 are where) — never innerHTML.
+// A future renderer that forgets makes this line a stored-XSS hole, so it is
+// written down as the thing that has to stay true.
+checkSame('<script>alert(1)</script>', toPlainText('&lt;script&gt;alert(1)&lt;/script&gt;'),
+          'encoded markup decodes to literal text and is never re-read as markup');
+
+// ---- Tidying, so a paste does not arrive full of holes ------------------------
+checkSame("Sale\nNow on", toPlainText("Sale   \nNow on"), 'trailing spaces on a line go');
+checkSame("Sale\nNow on", toPlainText("Sale\t\nNow on"), 'tabs count as trailing space');
+checkSame("a\n\nb", toPlainText("a\n\n\n\n\nb"), 'a run of blank lines collapses to one');
+checkSame("a\n\nb", toPlainText("a\n\n\nb"), 'three newlines is already a run');
+checkSame("a\n\nb", toPlainText("a\n\nb"), 'and one deliberate blank line is left alone');
+checkSame('OPEN', toPlainText("\n  OPEN  \n"), 'the whole value is trimmed at the ends');
+checkSame('', toPlainText('   '),
+          'so a value that is only whitespace comes back empty — which is what refuses a blank save');
+checkSame('0', toPlainText('0'), 'but "0" is content and survives, as it does everywhere else here');
+
+// ---- All of it at once, which is what a real paste looks like -----------------
+checkSame("Wings & Fries\n\n<10 pieces\n\n\$8.99",
+          toPlainText("<div>Wings &amp; Fries</div>\n\n\n<div>&lt;10 pieces</div><br><b>\$8.99</b>   \n"),
+          'a paste out of a browser arrives as the lines somebody typed');
+
+// ---- Known: a literal "<" typed into the Builder takes the line with it -------
+// Not a rule, a *characterisation*. The Builder reads a text block with innerText,
+// so a typed "<" reaches the server as one, and strip_tags then removes everything
+// from it to the end of the value. "Kids <12 eat free" reaches the sign as "Kids".
+// Nothing here fixes that — the fix is a change to a sanitiser and belongs to
+// whoever decides it — but it is now written down and this check fails if it ever
+// changes, deliberately or otherwise.
+checkSame('Kids', toPlainText('Kids <12 eat free'),
+          'a typed "<" still eats the rest of the line — recorded, not endorsed');
+
+// ─────────────────────────────────────────────────────────────
 section('Hide and delete cannot cross Displays');
 
 $driveT = loadTestDisplay($pdo, $driveT->id());
@@ -2043,6 +2121,37 @@ checkSame(false, $empty->known(), 'a catalogue with nothing to say about this ap
 checkSame(17, count(planStatements(signageSchemaPlan($empty))),
           'so it falls back to trying everything rather than creating what already exists');
 
+// Two things about a catalogue this app does not control, both of which decide
+// whether a statement runs, and neither of which had a check (decision #49).
+//
+// Names first. MySQL reports them however the database declared them, and on a
+// case-preserving host that is whatever the person who typed the CREATE chose. Every
+// name in this file is lower case, so both levels are folded on the way in — the
+// table and the column. Folding only the table would make every column look absent
+// and put the whole plan back on a database that has all of it.
+$mixedCase = SchemaFacts::of(
+    ['Canvas_Elements' => ['Display_ID' => ['type' => 'INT(11)', 'nullable' => false]]],
+    ['Canvas_Elements' => ['Display_ID' => true]],
+    ['Canvas_Elements' => ['Canvas_Elements_IBFK_3' => true]]
+);
+checkSame(true, $mixedCase->hasTable('canvas_elements'), 'a table named in capitals is the same table');
+checkSame(true, $mixedCase->hasColumn('canvas_elements', 'display_id'), 'and a column is the same column');
+checkSame(true, $mixedCase->hasIndex('canvas_elements', 'display_id'), 'the same index');
+checkSame(true, $mixedCase->hasConstraint('canvas_elements', 'canvas_elements_ibfk_3'),
+          'and the same foreign key');
+
+// And IS_NULLABLE, which is the one catalogue value read as a word rather than a
+// name. MySQL says YES; a driver or a host that answers `yes` must not turn a
+// nullable column into one this app believes is already tightened — that is the
+// tighten silently never running again, on the column every scoped query depends on.
+$lowerCase = fakeCatalogue(convergedSchemaShape());
+$lowerCase->exec("UPDATE information_schema.COLUMNS SET IS_NULLABLE = lower(IS_NULLABLE)");
+$lowerFacts = readSchemaFacts($lowerCase);
+checkSame(true, $lowerFacts->columnAllowsNull('displays', 'lock_taken_at'),
+          'a catalogue answering "yes" in lower case still reads as nullable');
+checkSame(false, $lowerFacts->columnAllowsNull('canvas_elements', 'display_id'),
+          'and "no" still reads as tightened');
+
 // ---- One thing missing asks for exactly that thing ---------------------------
 
 $shape = convergedSchemaShape();
@@ -2146,6 +2255,43 @@ check(!planWants($plan, 'ALTER TABLE canvas_elements ADD COLUMN'),
       'a table nothing here creates is not altered when it is missing');
 check(!in_array('backfill_display_id', planSteps($plan), true),
       'nor backfilled');
+
+// "Not altered" is four separate rules, and only three of them agree (decision #49).
+// A plan can ask a table for a column, a MODIFY, an index and a foreign key; the
+// first three are pointless against a table that is not there, and the fourth is
+// still wanted, because the CREATE TABLE this file issues declares its columns and
+// never its foreign keys. Asserted on the facts as well as the plan, because these
+// are the answers every future statement will be gated on.
+$absent = schemaFactsFrom($shape);
+checkSame(false, $absent->needsColumn('canvas_elements', 'text_align'),
+          'a missing table needs no column added');
+checkSame(false, $absent->needsColumnType('canvas_elements', 'type', SCHEMA_ELEMENT_TYPE_ENUM),
+          'nor a column rewritten');
+checkSame(false, $absent->needsIndex('canvas_elements', 'display_id'),
+          'nor an index put on it');
+checkSame(true, $absent->needsConstraint('canvas_elements', 'canvas_elements_ibfk_3'),
+          'but its foreign key is still wanted, because no CREATE TABLE here declares one');
+check(!planWants($plan, 'MODIFY COLUMN'), 'so the plan sends it no MODIFY');
+check(!planWants($plan, 'ADD KEY'),       'and no ADD KEY');
+checkSame(['seed_block_styles', 'seed_legacy_display', 'canvas_elements → displays'],
+          planOrder($plan),
+          'leaving the two steps and the one statement that is not redundant, and nothing else');
+
+// The same rule one level down: a column that is absent from a table that is *there*
+// is added by its own ADD COLUMN, or not at all. MODIFY has nothing to work on, and
+// on MySQL it is an error rather than a no-op.
+$shape = convergedSchemaShape();
+unset($shape['columns']['canvas_elements']['block_subtype']);
+check(!planWants(schemaPlanFor($shape), 'MODIFY COLUMN block_subtype'),
+      'a column that is not there is not MODIFYed into shape');
+
+// The block-style seed is a row count, so no catalogue can decide it — but the
+// catalogue can still say there is no table to count, and then it is skipped. The
+// step would otherwise fail on every request of an install that is mid-deploy.
+$shape = convergedSchemaShape();
+unset($shape['columns']['block_styles']);
+check(!in_array('seed_block_styles', planSteps(schemaPlanFor($shape)), true),
+      'with no block_styles table there is nothing to seed into, so the step is left out');
 
 // ---- The steps, and what a failure now looks like ----------------------------
 
@@ -3033,6 +3179,76 @@ checkSame(true, reportSchemaFailures([
 ]), 'a different failure in the same hour is reported straight away');
 checkSame(2, count($mailer9->sent), 'so the new one is not held behind the old one');
 
+// ---- …and the same set in a different order is the same set (decision #49) ----
+// The key is built by sorting the names and hashing them, which is the whole of
+// what makes "the same failures" mean anything. The plan is ordered, but the set
+// that comes back from it is not stable across a database that fixes one statement
+// and breaks another — and an unsorted key turns that into a second email inside
+// the hour, from the alert whose entire purpose is not to do that.
+$orderDir = newTestStateDir();
+ErrorPolicy::useLogFile($orderDir . '/lbm-error.log');
+$orderMailer = new TestAlertMailer($orderDir, 'Lummi Bay Market');
+$orderMailer->remember(['sky@example.test']);
+ErrorPolicy::useAlerts($orderMailer);
+
+$one = ['why' => 'displays table',      'need' => true, 'error' => 'no CREATE privilege'];
+$two = ['why' => 'grant → account',     'need' => true, 'error' => 'no CREATE privilege'];
+checkSame(true,  reportSchemaFailures([$one, $two]), 'two failures are reported once');
+checkSame(false, reportSchemaFailures([$two, $one]),
+          'and the same two the other way round are the same problem, not a new one');
+checkSame(1, count($orderMailer->sent), 'so an admin gets one email, not one per ordering');
+
+// ---- A message from the database is not given the run of the email ------------
+// `$e->getMessage()` is whatever the driver felt like saying, and on a failed
+// `CREATE TABLE` that can be the whole statement echoed back. The log rotates at
+// 2 MB and the email is read on a phone, so it is cut at 200 characters with an
+// ellipsis to say that it was.
+checkSame(true, reportSchemaFailures([
+    ['why' => 'displays table', 'need' => true, 'error' => str_repeat('x', 500)],
+]), 'a failure with a runaway reason is still reported');
+$longBody = $orderMailer->sent[1]['body'];
+check(strpos($longBody, str_repeat('x', 201)) === false, 'but the reason is cut short');
+check(strpos($longBody, str_repeat('x', 200)) !== false, 'at the 200 characters it keeps');
+checkMentions($longBody, '…', 'and says so rather than looking like the whole of it');
+
+// ---- Ten of them, and a count of the rest -------------------------------------
+// A database with no privileges at all fails every statement in the plan. Listing
+// seventeen of them tells an admin nothing that "seventeen" does not, and the first
+// ten are the ones that ran first.
+$many = [];
+for ($i = 1; $i <= 12; $i++) {
+    $many[] = ['why' => 'change number ' . $i, 'need' => true, 'error' => 'refused'];
+}
+checkSame(true, reportSchemaFailures($many), 'a plan that fails wholesale is reported');
+$manyBody = $orderMailer->sent[2]['body'];
+checkSame(10, substr_count($manyBody, 'change number '), 'ten of them are named');
+checkSame(11, substr_count($manyBody, "\n  * "),
+          'in eleven bullets, because the count of the rest is one of them');
+checkMentions($manyBody, 'and 2 more', 'and the rest are counted rather than listed');
+checkMentions($manyBody, '12 schema updates', 'with the real total in the opening line');
+check(strpos($manyBody, 'change number 12') === false, 'so the twelfth is not in the list');
+
+// One is one, and the sentence has to read like it — this is the alert an admin
+// sees most often, because one refused statement is the common shape of the fault.
+checkSame(true, reportSchemaFailures([
+    ['why' => 'displays.lock_taken_at', 'need' => true, 'error' => 'refused'],
+]), 'a single failure is reported');
+checkMentions($orderMailer->sent[3]['body'], '1 schema update the database says it needs',
+              'and reads as one update, not "1 schema updates"');
+
+// ---- What counts as "the catalogue said so" is the value, not its truthiness ---
+// `need` is three-valued and the report turns on it being exactly `true`. Anything
+// merely truthy got there some other way, and the rule this protects — never report
+// a guess — is only as good as the comparison.
+checkSame(0, count(schemaFailuresWorthReporting([
+    ['why' => 'a need of 1',       'need' => 1],
+    ['why' => 'a need of "true"',  'need' => 'true'],
+    ['why' => 'a need of false',   'need' => false],
+])), 'a need that is merely truthy is not the catalogue having said so');
+
+ErrorPolicy::useLogFile($stateDir9 . '/lbm-error.log');
+ErrorPolicy::useAlerts($mailer9);
+
 // ---- Through the entry point, not just the reporting function -----------------
 // The checks above call reportSchemaFailures() directly, which proves the rule and
 // not the wiring: removing the call from ensureSignageSchema() altogether would
@@ -3104,14 +3320,23 @@ checkSame(1, intval($seeded->query("SELECT COUNT(*) FROM displays")->fetchColumn
 // The seed's other quiet path is a tag collision — two first-ever requests racing,
 // where the loser's insert fails on a Display that is now there. It asks
 // legacyDisplayId() and reports nothing, so that answer is what the branch rests on.
-// The interleaving itself cannot be produced inside one process; this covers the
-// question it asks.
+// This covers the question; the interleaving that asks it is produced further down,
+// under "The deploy-day race".
 $idPdo = newTestDb();
 checkSame(0, legacyDisplayId($idPdo), 'with no Display at all there is nothing to point at');
 makeTestDisplay($idPdo, LEGACY_DISPLAY_TAG, 'Drive-Thru');
 check(legacyDisplayId($idPdo) > 0, 'the drive-thru Display is found by its tag');
 $idPdo->exec("UPDATE displays SET tag = 'renamed-by-an-admin'");
 check(legacyDisplayId($idPdo) > 0, 'and by being the oldest when an admin has renamed it');
+
+// The two answers in that order, not either one (decision #49). A store that added a
+// second sign by hand before this build ran has two Displays, and the unscoped rows
+// belong to the drive-thru one whether or not it happens to be the older row.
+$orderPdo = newTestDb();
+makeTestDisplay($orderPdo, 'lobby', 'Lobby');
+$driveThruId = makeTestDisplay($orderPdo, LEGACY_DISPLAY_TAG, 'Drive-Thru')->id();
+checkSame($driveThruId, legacyDisplayId($orderPdo),
+          'the tag is asked for first, so age only decides when no tag matches');
 
 // A seed that genuinely cannot write is the one an admin needs to hear about.
 $refuses = newTestDb();
@@ -3136,6 +3361,131 @@ $err = 'untouched';
 checkSame(true, runSchemaStep(newTestDb(), 'no_such_step', $err),
           'an unknown step still reports nothing to do');
 checkSame('', $err, 'and leaves no reason');
+
+// ---- What each step writes, and what it must leave alone (decision #49) --------
+// The four steps are the part of convergence that touches rows rather than
+// structure, which makes them the part that can lose somebody's data. Sixty-two
+// mutations of lib/schema.php left nineteen alive and most of them were here: a
+// WHERE clause could be deleted from either backfill in silence, and the seed could
+// be made to create a second Display or to carry the wrong background forward.
+
+// A count that cannot even be taken is not "all six are present". The step runs on
+// an install whose CREATE TABLE has not landed yet, and Brand Standards saves with
+// UPDATE … WHERE block_type = ?, so a missing row is a form that reverts on reload
+// and says nothing — which is exactly what an admin needs told.
+$noStyles = newTestDb();
+$noStyles->exec("DROP TABLE block_styles");
+$err = '';
+checkSame(false, seedBlockStyles($noStyles, $err), 'with no block_styles table the seed fails');
+checkMentions($err, 'could not be read', 'and says it could not even count what is there');
+
+// The pool marker is for rows a *publish* made. The only evidence left of that on a
+// database being upgraded is the `Auto: ` label prefix, so the statement reads it —
+// and a statement that stopped reading it would claim an admin's own uploads, which
+// the Library's Tidy up button then offers to delete.
+$mixPdo = newTestDb();
+$mixPdo->exec("INSERT INTO assets (type,content,label) VALUES ('text','OPEN 7 DAYS','Auto: OPEN 7 DAYS')");
+$mixPdo->exec("INSERT INTO assets (type,content,label) VALUES ('image','uploads/promo.jpg','Summer banner')");
+checkSame(true, backfillPooledMarker($mixPdo), 'the pool backfill runs');
+checkSame(1, intval($mixPdo->query("SELECT auto_pooled FROM assets WHERE label LIKE 'Auto:%'")->fetchColumn()),
+          'and marks what the old pooling left behind');
+checkSame(0, intval($mixPdo->query("SELECT auto_pooled FROM assets WHERE label = 'Summer banner'")->fetchColumn()),
+          'while a row somebody named themselves is left unmarked, so no sweep can take it');
+
+// The display_id backfill hands *unscoped* rows to the drive-thru sign. Without the
+// WHERE it hands over every row on every sign, which is every other Display going
+// blank at once and no way back — the layouts are gone, not moved somewhere findable.
+// Run against a nullable display_id, because that is the only state it ever sees:
+// the plan puts it between the ADD COLUMN and the tighten.
+$midPdo = newTestDb();
+$midPdo->exec("DROP TABLE canvas_elements");
+$midPdo->exec("CREATE TABLE canvas_elements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    display_id INTEGER REFERENCES displays(id) ON DELETE CASCADE,
+    type TEXT NOT NULL DEFAULT 'text')");
+$midDrive = makeTestDisplay($midPdo, LEGACY_DISPLAY_TAG, 'Drive-Thru');
+$midLobby = makeTestDisplay($midPdo, 'lobby', 'Lobby');
+$midPdo->exec("INSERT INTO canvas_elements (display_id) VALUES (" . $midLobby->id() . ")");
+$midPdo->exec("INSERT INTO canvas_elements (display_id) VALUES (NULL)");
+checkSame(true, backfillDisplayId($midPdo), 'the display_id backfill runs');
+checkSame(1, intval($midPdo->query("SELECT COUNT(*) FROM canvas_elements WHERE display_id = "
+                                   . $midDrive->id())->fetchColumn()),
+          'the row that predates Display scoping becomes the drive-thru sign\'s');
+checkSame(1, intval($midPdo->query("SELECT COUNT(*) FROM canvas_elements WHERE display_id = "
+                                   . $midLobby->id())->fetchColumn()),
+          'and a row that already belongs to another sign stays exactly where it was');
+
+// The seed stops at "any Display exists", not at "a Display called drive-thru
+// exists" — because the tag is the admin's to change (ADR-0003), and a second
+// drive-thru appearing behind their back is a sign nobody is looking at, taking the
+// backfill with it. A UNIQUE index would refuse the duplicate; a renamed tag is the
+// case where nothing but this count would.
+$renamed = newTestDb();
+$err = '';
+checkSame(true, seedLegacyDisplay($renamed, $err), 'a first pass creates the drive-thru Display');
+$renamed->exec("UPDATE displays SET tag = 'front-window'");
+checkSame(true, seedLegacyDisplay($renamed, $err), 'and a pass after an admin renamed it does nothing');
+checkSame(1, intval($renamed->query("SELECT COUNT(*) FROM displays")->fetchColumn()),
+          'so the store still has one Display, under the name they gave it');
+checkSame('front-window', $renamed->query("SELECT tag FROM displays")->fetchColumn(),
+          'which is still their name and not this file\'s');
+
+// The background the pre-multi-display layout was drawn on lives in canvas_settings,
+// and this is the one and only place left that reads it. Losing it here means every
+// Screen coming back from a deploy on the default navy instead of the store's own
+// wallpaper — visible from the car park, and not obviously a deploy's fault.
+$bgPdo = newTestDb();
+$bgPdo->exec("CREATE TABLE canvas_settings (id INTEGER PRIMARY KEY AUTOINCREMENT,
+              bg_type TEXT, bg_val TEXT)");
+$bgPdo->exec("INSERT INTO canvas_settings (bg_type,bg_val) VALUES ('image','uploads/wall.jpg')");
+$bgPdo->exec("INSERT INTO canvas_settings (bg_type,bg_val) VALUES ('color','#ff0000')");
+checkSame(true, seedLegacyDisplay($bgPdo), 'the seed runs against a database that has one');
+$bgRow = $bgPdo->query("SELECT bg_type, bg_val FROM displays")->fetch();
+checkSame('image', $bgRow['bg_type'], 'and the Display inherits what the canvas was set to');
+checkSame('uploads/wall.jpg', $bgRow['bg_val'], 'including which image');
+
+// A fresh install has no canvas_settings at all, which is not a failure — it is the
+// defaults, and they are the ones that row used to hold.
+$freshPdo = newTestDb();
+$err = 'untouched';
+checkSame(true, seedLegacyDisplay($freshPdo, $err), 'no canvas_settings is not a problem');
+checkSame('', $err, 'and nothing is reported about it');
+$freshRow = $freshPdo->query("SELECT bg_type, bg_val FROM displays")->fetch();
+checkSame('color', $freshRow['bg_type'], 'the Display gets the default background type');
+checkSame('#1a1a2e', $freshRow['bg_val'], 'and the colour that row always defaulted to');
+
+// A stored value that is there but empty is not a background either.
+$blankBg = newTestDb();
+$blankBg->exec("CREATE TABLE canvas_settings (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bg_type TEXT, bg_val TEXT)");
+$blankBg->exec("INSERT INTO canvas_settings (bg_type,bg_val) VALUES ('color','')");
+checkSame(true, seedLegacyDisplay($blankBg), 'a canvas_settings row with no colour in it seeds');
+checkSame('#1a1a2e', $blankBg->query("SELECT bg_val FROM displays")->fetchColumn(),
+          'and falls back rather than storing an empty background');
+
+// ---- The deploy-day race, produced rather than reasoned about ------------------
+// Six Screens and an admin can hit the first request after a deploy together. Two of
+// them count zero Displays, both insert, and one loses on the UNIQUE tag. That loser
+// must report *success* — the Display exists, which is all the step was for — because
+// a failure here is an email to an admin about two people signing in at once, sent by
+// the alert that exists to be believed.
+//
+// A BEFORE INSERT trigger using RAISE(FAIL) is the interleaving: FAIL aborts the
+// statement without undoing what the trigger program already did, so the row the
+// "other request" wrote survives and this one's insert throws. That is the state the
+// catch block is written for, and nothing else in one process can produce it.
+$racePdo = newTestDb();
+$racePdo->exec("CREATE TRIGGER seed_race BEFORE INSERT ON displays BEGIN
+    INSERT INTO displays (tag,title,canvas_width,canvas_height)
+        VALUES ('" . LEGACY_DISPLAY_TAG . "','Drive-Thru',1920,1080);
+    SELECT RAISE(FAIL, 'UNIQUE constraint failed: displays.tag');
+END");
+$err = 'untouched';
+checkSame(true, seedLegacyDisplay($racePdo, $err),
+          'losing the race to create the drive-thru Display is not a failure');
+checkSame('', $err, 'so nothing is reported about it');
+checkSame(1, intval($racePdo->query("SELECT COUNT(*) FROM displays")->fetchColumn()),
+          'and the Display the other request made is the one that is there');
 
 // ─────────────────────────────────────────────────────────────
 section('A repair nobody asked for is guarded three ways');
@@ -3443,4 +3793,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(892);
+reportChecks(970);

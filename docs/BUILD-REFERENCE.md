@@ -66,7 +66,7 @@ Design rules, applied to every module added by this build:
 | `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
 | `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. `firstInWindow()` and `stateFile()` are public for the same reason `report()` needs them: a repeated *attempt to fix* something needs the same restraint as a repeated report of it, and this module is where the state directory is decided. Depends on nothing: no database, no session, no config. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
-| `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
+| `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. Six statements whose **order** is the substance: breaks are rewritten before the strip, or `strip_tags` takes the line break away with the tag; entities are decoded after it, because `strip_tags` eats from a `<` to the end of a value and decoding first would delete the rest of a price line (§4bb). The cost of that order is that encoded markup lands as literal text, inert only because every renderer draws stored text with `textContent`. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 
 `lib/` is denied to the browser by `lib/.htaccess`. Nothing in `lib/` prints,
@@ -2586,6 +2586,120 @@ Left standing, and deliberately:
 - **Nothing tells the clerk a delete was attempted.** They keep working, unaware. The
   alternative is a notification channel this app does not have.
 
+### 4bb. Two files nothing was really standing over
+
+Decision #49 was measured, not asserted: `lib/plain_text.php` and `lib/schema.php`
+were mutation-tested line by line, and the numbers are why the item existed.
+
+| | before | after |
+|---|---|---|
+| `lib/plain_text.php` | 2 of 17 killed | **17 of 17** |
+| `lib/schema.php` | 43 of 67 killed | **65 of 67** |
+
+Both survivor counts hide the same shape: the checks that existed were about *outcomes
+somebody had thought about*, and the lines nobody had thought about could be deleted in
+silence.
+
+#### The sanitiser had one check on it, and it exercised one line
+
+`toPlainText()` is six statements, and every text block on every sign goes through it —
+`crud.php`, `AssetLibrary::saveEdit()` and `LayoutStore::publish()` all funnel in. The
+only thing standing over it was a publish asserting that `<script>alert(1)</script>Hello`
+stores as `alert(1)Hello`, which kills exactly one mutation: deleting `strip_tags`. The
+other five statements — the two break rewrites, the entity decode, the trailing-space
+trim, the blank-line collapse — could each be removed with the suite still green.
+
+Two of them turned out to be load-bearing in a way nothing said:
+
+- **The breaks are rewritten before the strip.** Delete the `<br>` line and `strip_tags`
+  takes the break away with the tag: two prices run together on the sign, no error
+  anywhere.
+- **The entities are decoded after the strip, and it has to be that way round.** A
+  browser sends a typed `<` back as `&lt;`, and `strip_tags` removes everything from a
+  `<` to the end of the value when nothing closes it. Decode first and `Wings &lt;10
+  pieces` reaches the sign as `Wings`. The check that pins this is the one that would
+  have failed a reviewer's "surely the decode should come first, it's safer" — because
+  it isn't; it loses the line.
+
+The cost of that order is now written down rather than left to be found: markup that
+*arrives* encoded decodes into text that looks like markup and is stored that way, and
+it is inert only because every renderer draws stored text with `textContent`
+(`viewer.php:427`, `builder.php:1487`) and never `innerHTML`. That is ADR-0002, and a
+characterisation check states it, so a future renderer that forgets fails a test rather
+than a sign.
+
+#### What the schema numbers were hiding
+
+43 of 67 sounds healthy, and the 24 that lived were not spread evenly — most were in the
+four **steps**, which are the only part of convergence that touches rows rather than
+structure, and therefore the only part that can lose somebody's data. What survived:
+
+- **Either backfill's `WHERE` clause could be deleted.** Removing `WHERE display_id IS
+  NULL` hands every element of every sign to the drive-thru Display — every other Screen
+  blank at once, layouts gone rather than moved. Removing the `Auto: ` prefix test claims
+  an admin's own uploads as pooled, which is Tidy up then offering to delete them.
+- **The seed could be made to create a second drive-thru Display.** The count guard is
+  "any Display exists", not "one called drive-thru exists", because the tag is the
+  admin's to change (ADR-0003) — and a renamed tag is the one case where nothing but that
+  count stands in the way. A `UNIQUE` index catches the other case, which is why the
+  mutation lived.
+- **The background could stop being carried forward.** `seedLegacyDisplay()` is the last
+  reader of `canvas_settings` anywhere in the repo. Losing it means every Screen coming
+  back from a deploy on the default navy instead of the store's wallpaper.
+- **The report could stop being readable.** No sorted key (the same two failures in the
+  other order becoming a second email inside the hour, from the alert whose whole purpose
+  is not to do that), no 200-character cut on a message the driver chose the length of,
+  no ten-item cap, and `1 schema updates`.
+- **`need` could be tested for truthiness rather than for `true`.** The rule it protects —
+  never report a guess — is only as good as the comparison, and `isset()` and `!empty()`
+  both pass a plan the catalogue never backed.
+- **Both levels of catalogue name-folding, and `IS_NULLABLE`.** MySQL reports names as
+  they were declared, so a case-preserving host makes every column look absent if only
+  the table name is folded. And a driver answering `yes` rather than `YES` reads a
+  nullable `display_id` as already tightened — the tighten then never runs again, on the
+  column every scoped query depends on.
+
+**The deploy-day race is now produced rather than reasoned about.** The comment in the
+self-test said the interleaving could not happen inside one process, and that was true of
+PHP; it is not true of SQLite. A `BEFORE INSERT` trigger using `RAISE(FAIL)` aborts the
+statement *without* undoing what the trigger program already did, so the row the "other
+request" wrote survives and this request's insert throws — which is exactly the state the
+catch block was written for. It must report success: the Display exists, which is all the
+step was for, and a failure there is an email to an admin about two people signing in at
+the same moment.
+
+#### The two that lived, and why they stay
+
+- **`WHERE auto_pooled = 0` in the pool backfill.** Removing it writes the same value to
+  rows that already hold it. Equivalent by outcome; it narrows what is written, not what
+  results.
+- **`flock(LOCK_UN)` and `fclose()` at the end of `withSchemaRepairLock()`.** Removing
+  them changes nothing, because the lock belongs to the open file and PHP releases it when
+  the handle falls out of scope. That mutation surviving *is* the docblock being right —
+  and that property is the reason `flock` was chosen over a stamp file, so both lines stay
+  as the explicit form of something the runtime would do anyway.
+
+One more is worth recording because of *how* it dies: making the repair lock blocking
+(`LOCK_EX` without `LOCK_NB`) is caught by the suite never finishing, since it takes the
+lock and then calls again in the same process. A hang rather than a red line, but not a
+survivor.
+
+Left standing:
+
+- **A literal `<` typed into the Builder still takes the rest of the line with it.** The
+  Builder reads a text block with `innerText`, so a typed `<` reaches the server as one,
+  and `strip_tags` removes everything from it onward: `Kids <12 eat free` reaches the sign
+  as `Kids`. This is a real content loss on a real kind of price sign, and it is now a
+  characterisation check rather than a surprise — fixing it means changing a sanitiser,
+  which is somebody's decision and not a coverage task's to take.
+- **`lib/schema.php`'s statements are still MySQL-only**, which is the half of #49 that
+  #48 owns. Everything above tests the *decisions* and the *steps*; no SQLite fixture can
+  execute an `ALTER TABLE … MODIFY COLUMN`. `tools/rehearse_phase1.php` remains the only
+  thing that can, against a copy of live data.
+- **The mutation runs are not automated.** They were done by hand, one file at a time,
+  and the numbers above are a record of a measurement rather than something a future
+  change re-runs by itself. Decision #50 is where that belongs.
+
 ---
 
 ## 5. Verification
@@ -2612,6 +2726,14 @@ node tools/selftest_builder_undo.js      # and under the fourth: the last thing 
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
                                               # the get_canvas_elements endpoint NAME, and
                                               # server_report.php's expected-column list
+grep -rn "strip_tags\|html_entity_decode" --include=*.php .  # lib/plain_text.php is the sanitiser, and
+                                              # the order of those two calls is load-bearing in both
+                                              # directions (§4bb). The only other hits are label
+                                              # truncation for display — crud.php's asset preview and
+                                              # assets.php's auto-label — and neither decides what is
+                                              # stored. A new hit on a path that WRITES is a second
+                                              # sanitiser with its own opinion about that order; call
+                                              # toPlainText() instead
 grep -rn "information_schema\." --include=*.php lib/  # only lib/schema.php: the three reads
                                               # plus one comment. server_report.php asks
                                               # readSchemaFacts() instead of writing a fourth

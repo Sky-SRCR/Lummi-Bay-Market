@@ -10,6 +10,24 @@
 // Lives in lib/ so the layout store can include it without pulling in a session
 // (see docs/BUILD-REFERENCE.md §1). auth.php includes it too, so every existing
 // caller of toPlainText() keeps working unchanged.
+//
+// The order of the six lines is the whole of it, and two steps of it are
+// load-bearing in a way nothing about them says (§4bb):
+//
+//   * **Breaks are rewritten before the strip**, or strip_tags takes the line break
+//     away with the `<br>` and runs two prices together on the sign.
+//   * **Entities are decoded after the strip, never before.** A browser sends a
+//     typed "<" back as `&lt;`, and strip_tags removes everything from a "<" to the
+//     end of the value when nothing closes it. Decoding first would therefore
+//     delete the rest of the line — on the sign, silently, for a price nobody
+//     mistyped. The cost of that order is that markup which arrives encoded
+//     decodes into text that *looks* like markup and is stored that way. It is
+//     inert because every renderer draws stored text with textContent
+//     (viewer.php:427, builder.php:1487) and never innerHTML, which is ADR-0002 and
+//     is the thing that has to stay true.
+//
+// Both are pinned by checks in tools/selftest_layout.php rather than left to be
+// rediscovered: every line here could be deleted in silence until decision #49.
 
 function toPlainText(string $s): string {
     $s = preg_replace('#<\s*br\s*/?>#i', "\n", $s);

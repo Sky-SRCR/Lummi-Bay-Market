@@ -85,7 +85,7 @@ written down rather than remembered:
 | 45 | The sign itself printed "Carousel — no slides added yet" where a customer could read it. | Draw nothing. | Open | — |
 | 46 | Deployment step 3 had no do-not-overwrite list, so re-uploading reverted live branding and restored `setup.php`. | Write down what to skip. | Open | — |
 | 48 | The test database differs from MySQL in twelve ways, including row locking stubbed out entirely. | Test against real MySQL as well. | Open | — |
-| 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | Part done — `schema.php`'s *decision* is now a pure function with 43 checks (§4o); its statements are still MySQL-only. | §4o |
+| 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | **Done** — measured rather than asserted. `plain_text.php` went from 2 of 17 mutations killed to **17 of 17**; `schema.php` from 43 of 67 to **65 of 67**, the two survivors being equivalent mutants named in §4bb. Most of what lived was in the four convergence *steps* — either backfill's `WHERE` clause could be deleted in silence. What is still untested is `schema.php`'s MySQL-only statements, and that is **#48's**, not this one's. | §4o, §4bb |
 | 50 | About 29 checks in the suite could not fail, and five invariants had no automated check at all. | Replace the hollow ones, and cover the missing rules. | Open — the harness itself was hardened so a suite that stops early now fails, but the 29 have not been swept. | — |
 | 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | Part done — **the live PHP version is still unknown.** Settings → This Server answers it the first time an admin opens it after deploy; until then the 7.1 rule stands. | §4g |
 
@@ -99,7 +99,7 @@ of things that have been published.
 
 ## Where this stands
 
-**28 done, 2 part done, 21 open.**
+**29 done, 1 part done, 21 open.**
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which
