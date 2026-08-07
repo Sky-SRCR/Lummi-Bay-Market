@@ -98,7 +98,9 @@ as soon as any user exists. **Delete `setup.php` from the server after setup.**
 ### 4. Branding (optional)
 
 Store branding is edited under **Admin → Branding**
-(`admin_panel.php?tab=branding`), which regenerates `branding_config.php`.
+(`admin_panel.php?tab=branding`), which regenerates `branding_config.php`. The
+**directory** must be writable by the web user, not just that file: the save
+writes a temporary copy beside it and renames over it.
 
 ## File map
 
@@ -114,6 +116,7 @@ and are thin adapters. **Data access lives in `lib/`**, one module per table:
 | `lib/display_admin.php` | `DisplayAdmin` — create/edit/delete a Display across all three tables; writes no SQL itself |
 | `lib/display_request.php` | Which Display a request means, and whether this account may have it |
 | `lib/plain_text.php` | `toPlainText()` — signage content is plain text (ADR-0002) |
+| `lib/branding.php` | `BrandingConfig` — the eight branding settings and their defaults, in one place. The only writer of `branding_config.php`, and it never writes it in place: a temporary copy is written, checked and `rename`d over, because every page in the app requires that file |
 | `lib/login_attempt.php` | `LoginAttempt` — every sentence a refused sign-in may say, the order the questions are asked in, and the lockout arithmetic behind it (ADR-0008) |
 | `lib/request_scheme.php` | `RequestScheme` — is this request HTTPS, and may the session cookie claim `Secure` (ADR-0009). Also the scheme the viewer address is built from |
 | `tools/selftest_layout.php` | `php tools/selftest_layout.php` — the real modules against an in-memory database. Run before pushing |
@@ -124,10 +127,10 @@ browser. Keep those when deploying.
 
 | File | Role |
 |------|------|
-| `config.php` | Site constants; loads `branding_config.php` |
+| `config.php` | Brings the eight branding constants into being through `lib/branding.php`; the one place that loads `branding_config.php` |
 | `db_connect.php` | PDO `$pdo`; loads private credentials |
 | `auth.php` | Sessions; `requireLogin/requireAdmin/isAdmin`; CSRF + login-lockout helpers |
-| `branding_config.php` | Generated brand theme (`BRAND_*` constants) |
+| `branding_config.php` | Generated brand theme (`BRAND_*`, `SITE_NAME`, mail-from). Written only by `lib/branding.php` |
 | `login.php` / `logout.php` | Auth; account-keyed login lockout |
 | `reset_password.php` | 2-step emailed 6-digit passcode reset (30-min expiry) |
 | `setup.php` | First-run admin creation (delete after setup) |

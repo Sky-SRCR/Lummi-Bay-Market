@@ -54,11 +54,11 @@ Design rules, applied to every module added by this build:
 | Module | Interface, in one line | Hides |
 |--------|------------------------|-------|
 | `schema.php` | `ensureSignageSchema(PDO): void`, plus the three pieces it is made of: `readSchemaFacts(PDO) → SchemaFacts`, `signageSchemaPlan(SchemaFacts) → array`, `runSchemaPlan(PDO, array) → array` | Every idempotent `ALTER`/`CREATE`, the `displays` and `display_permissions` tables, `display_id` + backfill + index + FK, the drive-thru seed, the Brand Standards row seed, the "run at most once per request" latch — and **whether any of it needs to run at all**. The one place in the repo that reads `information_schema`; `ServerReport` asks this rather than writing its own catalogue query. `signageSchemaPlan()` is pure (facts in, ordered work out), which is the only reason this file has any automated coverage: its statements are MySQL-only and the fixture is SQLite. `runSchemaPlan()` returns the entries that failed, each with the database's own reason, and `reportSchemaFailures()` tells an admin — but only about a statement the catalogue said was missing, never about one included as a guess (invariant 20). `SchemaLatch` is the "once per request" latch, as something a test can clear. And the second door: `repairSchemaAfterFailure(PDO, &$why) → bool` is how a caller that has *already failed a query* converges, with the three refusals of invariant 21 in front of it; `schemaErrorSaysTableMissing($sqlstate, $message)` is the only thing outside this file that needs saying about a database error, and `withSchemaRepairLock()` makes convergence installation-wide single-file. |
-| `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents, the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. It decides only whether the error was the kind a repair could fix; whether repairing is *safe right now* belongs to `schema.php` (invariant 21), because that question is about DDL and transactions rather than about the `displays` table. |
+| `displays.php` | `Display` + `Background` + `LockState` value objects, `DisplayStore` | **Every** `displays` statement: tag rules and suggestion, canvas bounds, background intents — including **what a background colour is** (§4x): `Background::color()` cannot build a colour that is not one, so the publish path refuses the request and `applyBackground()` declines to write it, rather than each door carrying its own regex and the one without it carrying none — the publish stamp and record, the edit lock (claim / release / seize, and the idle window that decides held-from-free on read), and self-healing when the table is not there yet. It decides only whether the error was the kind a repair could fix; whether repairing is *safe right now* belongs to `schema.php` (invariant 21), because that question is about DDL and transactions rather than about the `displays` table. |
 | `grants.php` | `GrantStore`, `Actor` | **Every** `display_permissions` statement, and the whole of "may this account have that Display?" — the two axes of ADR-0005 combined in one predicate, `Actor::mayOpen()`, that the seam and the picker both ask. |
 | `display_admin.php` | `DisplayAdmin(PDO, DisplayStore, LayoutStore, GrantStore)` → `DisplayResult` | Administering a Display: what a complete one needs, creating it blank or as a duplicate of one the same shape, renaming, retiring, destroying it with its layout and its grants, and setting the access matrix — each all-or-nothing. Writes no SQL of its own; holds the transaction that spans the three stores. `setAccess()` takes **both** axes of the matrix the form covered — the accounts *and* the Displays — because an unticked box and a cell the form never rendered are the same absence in a POST, and only one of them means "revoke"; and a revoke frees the edit lock on the Display it takes away, by holder, inside the same transaction. |
 | `layout_store.php` | `LayoutStore(PDO, DisplayStore)` | The publish transaction end to end: edit-lock and staleness checks, wipe-and-reinsert scoped to one Display, temp-id mapping, asset auto-save, plain-text stripping, admin/basic section rules, element index, lock-checked hide/delete, `assetUsage()` — which Displays depend on a library entry — and the sweep of the library rows a publish strands, scoped to the ids that Display's own previous layout held. |
-| `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `update` / `delete` / `pool` / `pooledNotIn` / `discardPooled` | **Every** `assets` statement. The decision it holds: `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::snapshot()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
+| `assets.php` | `AssetLibrary(PDO)` — `all` / `forId` / `create` / `update` → `AssetEdit` / `delete` / `pool` / `pooledNotIn` / `discardPooled` / `isAllowedImageRef` | **Every** `assets` statement. The decision it holds: `pool()` no longer de-duplicates, so a published text block's words belong to that block alone — sharing a row meant editing one line changed two signs and deleting it blanked both, permanently, with no undo. The cost is rows left behind, so a pooled row carries a marker and only marked rows are ever swept; a row a person made, or renamed, survives every sweep however it is asked. And **the row says what kind of thing it is** (§4w): `update()` takes no type from its caller, because the two rules an edit must pass — plain text for a text row (ADR-0002), `IMAGE_EXTENSIONS` for an image row — were both switchable by a hidden form field that said the other word. A type is written once, by `create()`, and only ever `text` or `image`; the `carousel`/`table`/`marquee` rows `pool()` writes are stored verbatim, since stripping JSON leaves neither markup nor JSON. `contentIssue()` is the read that goes with all of it: what a row the old rules let through would be refused or changed for today, in words the Library shows on hover — because nothing rewrites those rows, and an admin cannot decide about a state nothing displays. `firstCharacters()` keeps a label from being cut mid-character. One documented read of `assets` lives elsewhere: `LayoutStore::snapshot()`'s LEFT JOIN, read-only and on the path a Screen polls every 30 seconds. |
 | `upload_limits.php` | `UploadLimit::bytes` / `describe` / `describeBytes` / `bodyWasDropped` / `smallestOf` / `toBytes` | How big a file can actually reach this server — the smallest of the app's 50 MB ceiling and PHP's `upload_max_filesize` and `post_max_size`, not the app's opinion. And the silent case: exceeding `post_max_size` is not an error PHP reports, it abandons the body, so a 40 MB video was answered *"Security token mismatch. Please reload the page."* `smallestOf()` takes the ini values as an argument because both settings are PHP_INI_PERDIR and the cases worth testing are unreachable otherwise. Depends on nothing. |
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `verify` / `consume` / `redeem` / `discard`, and `PasswordResetCompletion(PDO, ResetTokenStore, AccountStore)` → `ResetOutcome` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. It is now the composition of two halves that have to fall on opposite sides of a transaction boundary: `verify()` spends the guess and must never be rolled back, `consume()` spends the code and must be. `PasswordResetCompletion` is the use case (invariant 22) — code consumed, password changed, lockout released, or nothing at all — and `ResetOutcome` has three answers rather than two, because "refused" and "the database would not take it" have to look different to the visitor and identical to a stranger probing for usernames. |
@@ -69,6 +69,7 @@ Design rules, applied to every module added by this build:
 | `login_attempt.php` | `LoginAttempt(AccountStore)` — `attempt(username, password, now?)` → `LoginOutcome` | One sign-in, decided: which of six answers it is, and the sentence that goes with each. The rule it exists to make checkable is an **ordering** (ADR-0008, invariant 23) — closed, suspended and locked-out are settled before `password_verify()` runs, so the sentence never varies with the password and a guesser on a suspended account is not told when they have got it right. It also carries ADR-0001's two numbers and the counting they drive, in UTC (§4v): a `locked_until` further out than one window was not written by this code and is not honoured, which is both true of the policy and what stops a row left in the old local-time format from locking somebody out for a shift. **It holds no PDO**: every statement is `AccountStore`'s, which is what stops the file that decides what to say from growing a query that says something else, and leaves the thing under test as the decision rather than a database. `login.php` is the adapter — start a session, or print the sentence. |
 | `request_scheme.php` | `RequestScheme::isSecure(array $server): bool` | Whether the *browser's* leg of a request is HTTPS, asked for exactly one reason: whether the session cookie may carry `Secure`. A flat `true` there is not a hardening on an `http://` deployment, it is a correct password landing back on a blank login form for ever, because the browser discards the cookie and nothing anywhere says so. Believes the forwarded proxy headers, deliberately — refusing them costs a real Cloudflare-fronted deploy its `Secure` flag, while believing a forged one costs only the forger their own sign-in. Says false when the request says nothing. Depends on nothing, reads no superglobal. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
+| `branding.php` | `BrandingConfig` — `apply` / `current` / `save` → `BrandingWrite`, plus `path` / `load` and the pure `render` / `parses` | The generated `branding_config.php`: the eight settings it holds, their defaults, and **how a file the whole app requires is replaced while the app is running** (§4y). Nothing writes the live path but one `rename()`, and it is not reached until the replacement has been rendered, parsed, written to a temporary file beside it and read back byte for byte — so a reader gets the whole old file or the whole new one, and every failure leaves the site on exactly what it had and says so. `save()` takes only the settings a form actually edited and applies them over `current()`, which is what the old eight-positional-argument call could not do: each of the two forms passed the other's values back in from page variables. And the read side: `apply()` is one call for what used to be seven lines repeated in `config.php`, `login.php`, `builder.php` and `help.php`, each spelling out the same defaults and two of them guarding the `require` on a different constant from the other two. `config.php` calls it and `auth.php` requires `config.php`, so the eight names exist by the time anything renders; nothing already defined is ever overridden, which is what `config.php` promises about `db_credentials.php`. Defining constants is a global side effect no other module has — the exception is deliberate, because the names are the interface every template already reads. Depends on nothing — no database, no session, no config, because the page that manages this file is also the page that has to work when it is missing. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 
 `lib/` is denied to the browser by `lib/.htaccess`. Nothing in `lib/` prints,
@@ -365,6 +366,17 @@ through the app again:
     account; and it verifies a CSRF token *before* looking at the account, **softly**,
     because a hard 403 on the front door answers the commonest cause — a browser not
     keeping the session cookie — with the word "security" and no way forward.
+24. **A generated file the app requires is replaced by `rename()`, never written in
+    place.** There is one of these — `branding_config.php`, which `config.php` loads
+    and `auth.php` requires `config.php`, so it is on every page — and
+    `file_put_contents` on it opens the live path with `O_TRUNC`: for the length of the write, every page
+    of the app, sign-in included, requires a file that is empty and then partial. A
+    write that does not finish leaves it that way. So the replacement is built beside
+    it, checked, and moved over it in one atomic step, and nothing else touches the
+    live path; a failure is a save that refused, not a site that is down. The rule is
+    about the *shape* rather than the file: anything generated into a path something
+    else loads — a cache, a compiled template, a second config — belongs behind
+    `BrandingConfig`'s pattern or it is this defect again with a different filename.
 
 ---
 
@@ -2162,6 +2174,309 @@ that is the right trade.
 
 ---
 
+### 4w. The form said what kind of thing it was editing
+
+Decision #37. The Library's edit form posted the row's type back in a hidden field,
+and `crud.php` decided from that field alone what the new content was allowed to be.
+Two rules hung off one request parameter:
+
+```php
+$type    = $_POST['edit_type'] ?? '';
+$content = ($type === 'text') ? toPlainText(...) : trim(...);   // ADR-0002
+if ($type === 'image' && !isAllowedImageRef($content)) { refuse; }
+```
+
+Send the other word and the matching rule is not enforced — it is not bypassed by a
+trick, it is simply not the branch that runs. `edit_type=image` while editing a text
+entry stores markup in a value ADR-0002 says is plain text. `edit_type=text` while
+editing an image entry skips the allow-list, so the entry every sign reads its
+picture from can be pointed at an `.svg` on any host. Both are one edit to one row
+that every Display drawing on it picks up within thirty seconds, with no publish and
+no undo.
+
+**The type was never the caller's to state.** Nothing changes a row's type, no form
+offers to, and the database already knows it. So `update()` takes an id, a label and
+a content candidate, reads the row, and applies the rule for the type it finds. The
+interface has no parameter to get wrong and no branch a caller can pick. That is the
+whole fix; everything below is what fell out of reading the row.
+
+- **A save is not a save when there is no row.** The `UPDATE … WHERE id = ?` it
+  replaced matched nothing and returned `true`, so an entry deleted in one tab and
+  saved in another printed *"Asset updated successfully."* — the §4g pattern exactly,
+  a write that failed quietly and reported success. `update()` returns `AssetEdit`
+  now: `ok`, `missing`, `refused`, `failed`, four outcomes because the page has four
+  things to say and must not work out which by reading a message string.
+- **`!empty($content)` was refusing a real price.** The page's guard against blanking
+  a row — right to exist, since blanking one blanks that line on every sign reading
+  it — is false for a text entry reading exactly `0`. It is `=== ''` inside the
+  module now, which is the same lesson the self-test already carries for
+  `manual_content` and the same falsy-coalesce family as §4g's `?:` on a decode.
+- **A file upload onto a text entry is refused before the file is moved.** The form
+  only ever shows a file picker for an image entry, so a POST carrying one for a text
+  entry is not the form we rendered. It used to be accepted, and the entry's words
+  became `uploads/crud_1712….jpg` — rendered, as words, on every sign using it.
+- **A failed `move_uploaded_file()` said nothing at all**, and fell through to save
+  whatever was in the path field. It reports now.
+- **The allow-list moved to the module and there is one of it.** `IMAGE_EXTENSIONS`
+  is what an upload's extension is checked against, what a path typed into the add
+  form is checked against, and what an image row's content is checked against on
+  every write. Three doors into one table had been carrying their own copy of the
+  same list.
+- **`carousel`, `table` and `marquee` rows are ordinary here, and the old form drew
+  them as images.** Publishing pools a block's content under the *block's* type, so
+  those rows exist — holding JSON. The editor had two branches, text and
+  everything-else-is-an-image, so a carousel entry was rendered with its JSON inside
+  an `<img src>` and offered a file picker to replace it. Now the third case is drawn
+  as what it is, and stored verbatim: stripping markup out of JSON leaves neither.
+  This is also why the rule is "text is plain text" rather than "not-text is an
+  image" — the latter would have made those entries uneditable.
+- **`create()` is the one moment a caller's word for a type is taken**, and it takes
+  it only for the two the add form offers. A row of some third type created there
+  could afterwards only be edited by guessing what it had been.
+
+**Twenty-eight checks, eight mutations, all eight killed** (kill counts 2, 6, 6, 4,
+2, 4, 2, 2). The two worth naming are the two halves of the original defect —
+dropping the plain-text conversion kills 2, dropping the image allow-list kills 6 —
+because those are what a hidden field saying the wrong word actually did, and neither
+was detectable before: no test could send a type at all, since the page was the only
+thing that had one. Two of the checks read `crud.php`'s source rather than running
+it, for the field itself: a hidden input still on the page is one `$_POST` read from
+deciding this again, and the page is not reachable from the fixture.
+
+Left standing, and named rather than skipped:
+
+- **The add form still reads its type from the request**, which is correct — there is
+  no row yet, and the person is choosing. It is pinned to the two values the
+  `<select>` offers, so the range of what a stored type can be is closed at both ends.
+- **Nothing repairs a row a previous version mis-typed** — and that stays true. A
+  text entry that already holds markup, or an image entry already pointing at an
+  `.svg`, is left exactly as it is. Rewriting stored content on read is a write the
+  person did not ask for, on a table with no undo, and it would change what a sign
+  says without anybody pressing anything. What *was* wrong is that the state was
+  invisible: nothing showed it, and the first anybody learned of one was a refusal
+  while editing something else. `AssetLibrary::contentIssue()` answers what is wrong
+  with a row in a few words, the Library marks those rows **check** with the reason
+  on hover and counts them above the table, and the decision to change anything stays
+  a person's. The text test is the exact predicate *"saving this would change it"*
+  rather than a guess at whether the markup was meant, so the warning is never wrong
+  about the thing it warns about — `Halibut < 5 lb` is not accused of anything.
+- **The Library page is admin-only for editing, so this was never a privilege
+  boundary** — an admin can point an image entry at any allowed host either way. What
+  it was is a rule that could be skipped by accident: a stale tab, a resubmitted form,
+  a copied POST. Decision #24 was the same shape on the `displays` side; §4x.
+
+### 4x. One door checked the colour and the other did not
+
+Decision #24, and the same shape as §4w one table over: a rule that lived at a door
+rather than in the module, so the door without it was the one with no rule at all.
+`DisplayAdmin` put every colour it stored through `cleanColor()`; `api.php`'s publish
+path called `Background::color($_POST['bg_val'] ?? '#1a1a2e')`, which took whatever
+arrived. So a publish could write any string into `displays.bg_val`.
+
+**What that is worth, stated accurately.** The decision list describes this as
+pointing every screen at any host, which is the `url()` concatenation the *image*
+branch would allow — and the API cannot reach that branch: an image background comes
+from a validated upload under a server-generated name, or from `keepImage()`, which
+changes no path. The colour branch reaches `canvas.style.backgroundColor = bg_val` in
+both clients, and the CSSOM silently discards an assignment it cannot parse. So the
+real defect is narrower and quieter than the row reads: **an unreadable value sits in
+a column four readers assume is six hex digits, and every one of them fails its own
+way without saying so.** The Viewer and the Builder keep the colour they already had;
+the panel's `strcasecmp` sees a change that is not one; and `<input type="color">`
+rounds what it cannot parse to `#000000`, so the next admin who saves anything on
+that Display publishes black. That last one is decision #41, arriving by this route.
+Recording the correction rather than the row, for the same reason #32 carries one:
+the numbering is the owner's and stays as it is, but nobody should re-derive the
+severity from a sentence that was aimed at a different branch.
+
+**The rule is on `Background`, which is what neither door could bypass.**
+`Background::color()` now returns a colour intent or an `INVALID` one — it cannot
+build a colour that is not a colour — and three things fall out:
+
+- **`LayoutStore::publish()` refuses the whole publish**, before the transaction,
+  because nothing about the Display's state decides this and a doomed request should
+  not queue for the row lock. Refusing the *publish* rather than dropping the
+  background from it is invariant 5: dropping it is a merge, and the admin would be
+  told their publish succeeded while the one change they made was discarded. The new
+  `PublishResult::invalid` is a fourth kind because it is a fourth thing to do about
+  it — a stale stamp says reload, a lock says wait, this says the request itself is
+  wrong and neither will help.
+- **`DisplayStore::applyBackground()` declines to write one**, which is the write
+  side agreeing with the checker for the reason §4t gives: a writer that stores what
+  the checker rejects only needs one caller who forgot to check.
+- **`DisplayAdmin::cleanColor()` asks instead of restating.** It still *coerces* —
+  that is decision #21 and still open, and the tests assert the coercion so the
+  difference between the two doors is deliberate rather than forgotten. What it no
+  longer has is its own regex. A drifted copy would have been the worst of both: the
+  panel accepting a spelling the store then declines to write, and reporting success
+  over a Display that did not change. There is a check for exactly that, because the
+  mutation that restores the second regex kills nothing without it — the two agreeing
+  is invisible until they disagree.
+
+Three-digit `#fff` and named colours are refused on purpose. Every value this app has
+written is the six-digit form, and `bg_val` is compared as text, so a second spelling
+of white would make two rows that mean the same thing look different.
+
+**Twenty-three checks, five mutations, all five killed** (20, 8, 4, 2, 2). Not
+touched: `builder.php`, which cannot produce the refusal — its colour input always
+yields six hex digits, and a reason it never sees does not belong in its fixed list
+of ones it acts on (§4t). The generic branch shows the message and keeps the work on
+screen, which is the right outcome for a client that is not this Builder.
+`BrandStyles::cleanColor()` keeps its own rule as well: a different table, a
+different fallback, and the same coercion question, which is #21's to answer.
+
+### 4y. The file every page requires, rewritten under them
+
+Decision #36, and the only defect in this list whose blast radius is the whole
+application at once. `branding_config.php` is generated PHP — eight `define()` calls
+for the logo path, four nav colours, the site name and the two mail-from fields — and
+four separate files require it: `config.php` for everything signed in, and
+`login.php`, `builder.php` and `help.php` each on their own account. It is the one
+file here whose *contents* the running app edits and whose *syntax* the running app
+depends on.
+
+The Admin Panel wrote it with `file_put_contents($path, $php)`. That opens the live
+path with `O_TRUNC`, so for the length of the write the file is empty, then partial,
+then complete:
+
+- **A reader arriving mid-write** requires a file that stops in the middle of
+  `define('BRAND_ACCENT`. A parse error is a fatal, and a fatal on a required file is
+  a blank page — not on the Admin Panel, on *every* page including `login.php`, for
+  everybody, for as long as the write takes. The window is small. It is also the
+  window during which the person who pressed Save is reloading the page.
+- **A write that does not finish** leaves it there permanently: a full disk, a quota,
+  the host reaping the process. `file_put_contents` returns the byte count it managed
+  and the old code compared that against `false`, so a half-written file was reported
+  as **"Branding saved."** while the site stayed dark. The error message it had for
+  the other case — *"Could not write branding_config.php. Check file permissions."* —
+  could only ever be printed by a request that had already truncated the file it was
+  talking about.
+
+**The fix is the decision as written, with the checks that make it mean something.**
+`BrandingConfig` renders the source, parses it, writes it to `.branding_config.<rand>.tmp`
+in the same directory, reads *that file back* and compares every byte, matches the
+live file's permissions, and moves it over with one `rename()` — atomic within a
+filesystem on POSIX. A reader gets the whole old file or the whole new one. Nothing
+else touches the live path, which is why every refusal here can say, and does say,
+that the site is still running on exactly what it had.
+
+Four details that are not decoration:
+
+- **The read-back replaces a byte count, rather than joining it.** The count a
+  syscall returns is a claim about the bytes; the bytes are what a reader will get.
+  There is deliberately no `strlen()` comparison beside it — a second check that can
+  only agree is a second opinion waiting to disagree, and the same reasoning removed
+  the `is_writable()` guard in front of the write: it answers about the moment
+  before, it is wrong for root and for ACLs, and the attempt itself gives the true
+  answer with nothing at stake.
+- **The parse is the module's promise, not input validation.** Nothing a caller can
+  pass reaches it — `var_export` emits a single-quoted literal, and the self-test
+  counts the `define` calls to prove a site name full of quotes and semicolons cannot
+  add a ninth. Deleting the guard on its own therefore kills no check. What it does
+  is stop a *future* edit to `render()` from taking the site down: the mutation that
+  breaks `render()` **and** removes the guard is the one that makes the live file
+  stop parsing, and it was run. With the guard, a broken renderer is a refused save.
+- **The temporary file is never named `*.php`.** Apache's
+  `AddHandler application/x-httpd-php .php` matches that extension *anywhere* in a
+  filename, so `branding_config.php.1234.tmp` is executed by a common configuration.
+  The leading dot keeps it out of a listing and the root `.htaccess` denies the name
+  outright — that deny rule is checked by the self-test, because the name is now
+  spelled in two files.
+- **`opcache_invalidate()` after the swap**, because `rename` changes the inode and
+  `opcache.validate_timestamps=0` is an ordinary production setting. Without it the
+  admin is told the branding saved and nothing on the site changes. This is the one
+  thing here with no automated check: opcache is off for CLI, so the mutation that
+  removes the call kills nothing. It is here on the argument, not on a test.
+
+**One thing this changes about the deployment, and it is not a small one.** Writing
+in place needed write permission on `branding_config.php`. Swapping needs write
+permission on the **directory** that holds it, because that is where the temporary
+file is created and what `rename()` modifies. On a host where the webroot is owned by
+one account and only that one file was made writable for the web user — an ordinary
+arrangement — branding and settings saves will start failing after this deploy, with
+*"The new settings file could not be written … Check the folder permissions."*, which
+is the right sentence and still a surprise. Check it on the first save after this
+reaches the server; nothing else in the app cares.
+
+**A second defect fell out of the same rewrite.** `writeBrandingConfig()` took all
+eight settings positionally, so each of the two forms passed the other's three or
+five values back in from page variables — the Branding form re-wrote Site & Email,
+and Site & Email re-wrote the colours, every time. It worked only because those
+variables happened to be correct. `save()` now takes just the settings a form edited
+and applies them over `current()`, and nothing else can be written at all: a name
+that is not one of the eight is refused rather than stored in a file every page loads
+and nothing reads.
+
+**And the read side, which is where the eight names were really kept.** Four files —
+`config.php`, `login.php`, `builder.php`, `help.php` — each carried the same seven
+lines: a guarded `require` of the generated file, then five `if (!defined(…)) define(…)`
+fallbacks. Four copies of one list is four things to change and three chances to
+forget, and they had already drifted in two ways worth naming:
+
+- The `require` was guarded on `BRAND_LOGO` in `config.php` and on `BRAND_NAV_BG` in
+  the other three, so a file defining one and not the other loaded on some pages and
+  not others.
+- `config.php` defined `MAIL_FROM`, `MAIL_FROM_NAME` and `SITE_NAME` as a **group**
+  behind a single `if (!defined('MAIL_FROM'))`. A branding file naming one and not
+  the rest left `SITE_NAME` undefined — which in PHP 8 is an `Error`, so a fatal, on
+  every page. Nothing generated such a file, but the whole point of `#36` is that
+  this one is hand-editable and sometimes hand-edited.
+
+All of it is `BrandingConfig::apply()` now, called once from `config.php`, which
+`auth.php` requires at the top of every page. Each name is filled in on its own and
+**nothing already defined is ever overridden**, which is what `config.php` has always
+promised about `db_credentials.php` — a promise the generated file was breaking, since
+a bare `define()` of a name already taken raises a warning and then keeps the first
+value. So `render()` emits `defined(…) || define(…)`: the override works, silently,
+and the file is safe to load after anything else with an opinion about those names.
+
+Defining constants from inside `lib/` is a global side effect nothing else there has.
+That is deliberate rather than an oversight: the names *are* the interface every
+template reads — `<?= htmlspecialchars(BRAND_ACCENT) ?>` sits inside the CSS — and the
+alternative is the four copies coming back. The two checks that keep it that way read
+the page sources: **no `.php` file outside `branding_config.php` may declare one of
+these names, and none may reach for the generated file directly.**
+
+The reload check is the sharp one, and it needs no assertion of its own. Every name is
+already defined when the suite runs, so the section writes a rendered file and
+`include`s it — and this harness turns any unsuppressed diagnostic into a failed
+check. Going back to a bare `define()` produces eight warnings, which is eight
+failures and a check count that no longer matches.
+
+Proving that merge needed a test double. In a self-test run all eight constants sit
+at their defaults, so "kept what was in force" and "reset to the defaults" produce
+identical bytes; `PinnedBrandingConfig` pins them apart. `ShortWriteBrandingConfig`
+is the other one, and the more important: `file_put_contents` cannot be made to run
+out of disk on demand, so `putTemp()` is a `protected` seam and the double hands back
+half a file. What the test asserts around it is not that the save failed — it is that
+the file every page of the app requires is exactly as complete afterwards as it was
+before.
+
+The section also `chdir`s into its throwaway directory and back, which is not
+tidiness. This is the one module whose subject is a *path*, so the mutation that
+makes `path()` answer with a bare filename points every save in the section at the
+deployment's own `branding_config.php` — it rewrote the repo's copy once before the
+`chdir` was there. A relative answer now lands in the throwaway directory with
+everything else, and the check that `path()` is absolute still fails.
+
+**Fifty-seven checks, eighteen mutations, seventeen killed.** For the swap: 8, 5, 1,
+2, 1, 2, 4, 3, 1, 4, 1, 2, 2, and 0 for the opcache call. For the read side: a bare
+`define()` in the generated file kills 9, an `apply()` that overrides kills 14, a page
+declaring one of the names kills 1, and taking the `apply()` out of `config.php` does
+not fail a check — it ends the run, because `SITE_NAME` stops existing and the suite
+dies where the app would. Two hardening opportunities
+were deliberately left: the four `preg_match('/^#[0-9a-fA-F]{6}$/')` copies in
+`admin_panel.php`'s branding form could ask `Background::isValidColor()`, which is
+§4x's argument one table over and is #21's to settle; and `AlertMailer::remember()`
+still rewrites its recipients cache in place. That one stays because the failure is
+not the same shape — `recipients()` reads it line by line and drops anything without
+an `@`, so a torn write costs one email rather than every page in the app.
+
+---
+
+
+---
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -2313,6 +2628,25 @@ grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?assets`?" --include=*.php .
                                               # LayoutStore::snapshot(), read-only and on the path a
                                               # Screen polls every 30 seconds. A second writer here is
                                               # how row sharing came back — invariant 17
+grep -rn "edit_type" --include=*.php .        # prose in crud.php and lib/assets.php naming the field that
+                                              # used to be here, plus the two self-test checks that read
+                                              # crud.php's source for it. No hit may be code: a
+                                              # `'edit_type'` string or a `name="edit_type"` input is the
+                                              # §4w defect back — the row's type stated by the request,
+                                              # and with it which rule an edit has to pass
+grep -rn "isValidColor\|DEFAULT_COLOR" --include=*.php .  # lib/displays.php defines both on Background;
+                                              # lib/layout_store.php quotes the default in the refusal;
+                                              # lib/display_admin.php's cleanColor asks rather than
+                                              # restating. A `preg_match` against a hash and hex digits
+                                              # anywhere else is a second opinion about what a background
+                                              # colour is — and the door holding it will accept values the
+                                              # store then declines to write, saying it saved (§4x).
+                                              # BrandStyles::cleanColor is a different table's rule
+grep -rn "IMAGE_EXTENSIONS\|isAllowedImageRef" --include=*.php .  # lib/assets.php defines both; crud.php
+                                              # asks for the add form and for the upload MIME/extension
+                                              # check. A literal list of image extensions in any other
+                                              # file is a fourth opinion about what an image entry may
+                                              # point at — the three that existed disagreed by omission
 grep -rn "auto_pooled\|Auto: " --include=*.php .  # lib/assets.php owns the marker; schema.php backfills
                                               # it; crud.php renders a badge and warns in the label hint.
                                               # Anything that *decides* whether a row may be deleted
@@ -2325,6 +2659,28 @@ grep -rn "post_max_size\|upload_max_filesize\|MAX_BYTES" --include=*.php .
 grep -rn "php://input" --include=*.php .      # must be empty: UploadLimit::bodyWasDropped() infers the
                                               # post_max_size case from an empty $_POST, which only
                                               # holds while nothing reads the raw body
+grep -rn "branding_config" --include=*.php .  # lib/branding.php owns the name, and after §4y it is
+                                              # the ONLY .php file that spells it — plus tools/ and
+                                              # prose. config.php reaches the file through
+                                              # BrandingConfig::apply(); login.php, builder.php,
+                                              # help.php and admin_panel.php do not reach it at all.
+                                              # A page requiring it directly is four copies of the
+                                              # defaults growing back; a second *writer* is invariant
+                                              # 23 undone, and the file it would half-write is the one
+                                              # every page of the app loads
+grep -rn "define('BRAND_" --include=*.php .   # the generated branding_config.php, one line of prose in
+                                              # lib/branding.php, and the two self-test checks that read
+                                              # the page sources for it. No *page* may appear: a page
+                                              # declaring one of these names has its own opinion about
+                                              # what colour the nav bar is, and it will differ from the
+                                              # Admin Panel's the first time somebody changes one
+grep -rn "file_put_contents" --include=*.php .  # lib/error_policy.php (the log, appended under LOCK_EX,
+                                              # and the state-dir guards), lib/alerts.php (the recipient
+                                              # cache and the rate-limit stamps), lib/branding.php's
+                                              # putTemp — and tools/. Never a page. A generated file
+                                              # something else loads is written to a temporary path and
+                                              # renamed over, never opened with O_TRUNC where a reader
+                                              # can find it half-done (invariant 24, §4y)
 grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
                                               # DISPLAY_ID / waDisplayId() with it (invariant 12), which
                                               # omission silently opts out of. viewer.php is the one
@@ -2364,11 +2720,22 @@ different-shaped Display, including a portrait one.
 
 ## 6. Delivery
 
-One PR per phase, on `claude/app-update-planning-1pjqfr`, restarted from `main`
-after each merge. Every merge reaches the sign by hand, so phase order is
-deployment order and each phase must leave the app coherent on its own.
+One PR per unit of work, cut fresh from `main` each time. Every merge reaches the
+sign by hand, so merge order is deployment order and each PR must leave the app
+coherent on its own.
 
-In the event, Phases 1–5 went out as one PR — `main` had none of them, so there was
-nothing to restart from and no way to review Phase 5's lock without the Displays it
-locks. Phase 6 joined it for the same reason: the docs it corrects describe the code
-in that PR. The rhythm applies from the next phase of work, whatever it is.
+The phases were the unit while there were phases. In the event, Phases 1–5 went out
+as one PR — `main` had none of them, so there was nothing to restart from and no way
+to review Phase 5's lock without the Displays it locks; Phase 6 joined it because the
+docs it corrects describe the code in it. That work is merged. The unit now is **one
+item from `docs/reviewed-decisions.md`**, and there is no standing working branch:
+an earlier version of this section named one, and by the time anybody read it, it was
+six merges behind.
+
+**Two sessions can be working at once.** That has already produced two PRs for the
+same decision, and two branches each claiming `§4u` — a collision git merges without
+a conflict marker, because the two headings are not the same lines. Before opening a
+PR that adds a write-up, and again before merging one that has been open a while, run
+`php tools/check_doc_numbering.php`. It also runs in CI, deliberately even when the
+step before it failed, since a red suite on every branch is what a shared broken base
+looks like and merging is what happens next.

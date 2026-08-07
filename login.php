@@ -9,15 +9,8 @@ if (isLoggedIn()) {
     exit;
 }
 
-// Load store branding (defaults if config not yet set)
-if (!defined('BRAND_NAV_BG') && file_exists(__DIR__ . '/branding_config.php')) {
-    require_once __DIR__ . '/branding_config.php';
-}
-if (!defined('BRAND_LOGO'))       define('BRAND_LOGO',       '');
-if (!defined('BRAND_NAV_BG'))     define('BRAND_NAV_BG',     '#1a252f');
-if (!defined('BRAND_NAV_BORDER')) define('BRAND_NAV_BORDER', '#0d1b24');
-if (!defined('BRAND_ACCENT'))     define('BRAND_ACCENT',     '#3498db');
-if (!defined('BRAND_TEXT'))       define('BRAND_TEXT',       '#ffffff');
+// The BRAND_* constants this page's CSS reads are defined by config.php, which
+// auth.php requires above — one list of eight names and defaults, in lib/branding.php.
 
 $error = '';
 

@@ -29,7 +29,10 @@ $signs   = new DisplayStore($pdo);
 $layouts = new LayoutStore($pdo, $signs);
 
 // ---- File upload validation ----
-$allowedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+// The extension allow-list belongs to the module that owns the table: an image
+// entry's content is checked against it on every write, so a second copy here
+// would be a second opinion about what an image entry may point at.
+$allowedExtensions = AssetLibrary::IMAGE_EXTENSIONS;
 $allowedMimeTypes  = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
 function validateImageFile(array $file, array $allowed_ext, array $allowed_mime): array {
@@ -54,15 +57,11 @@ function ensureUploadsDir(): void {
     if (!is_dir('uploads')) { mkdir('uploads', 0755, true); }
 }
 
-// Validate an image referenced by URL/path (the "image URL" field) against the
-// same extension allow-list as uploads, so SVG and other non-image types can't
-// be inserted by reference — the file-upload path already blocks them.
-function isAllowedImageRef(string $ref, array $allowed_ext): bool {
-    $path = explode('|', $ref)[0];          // drop any |fit suffix (e.g. |contain)
-    $path = strtok($path, '?#');            // drop query string / fragment
-    $ext  = strtolower(pathinfo((string)$path, PATHINFO_EXTENSION));
-    return in_array($ext, $allowed_ext, true);
-}
+// An image referenced by URL/path (the "image URL" field) is checked against the
+// same extension allow-list as uploads, so SVG and other non-image types can't be
+// inserted by reference. That check is `AssetLibrary::isAllowedImageRef()` — it
+// moved into the module when editing stopped being able to skip it, and the add
+// form asks the same question so that both doors into the table use one list.
 
 $message  = '';
 $msgClass = 'success';
@@ -95,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create'])) {
             }
         } else {
             $content = trim($_POST['image_url'] ?? '');
-            if ($content !== '' && !isAllowedImageRef($content, $allowedExtensions)) {
+            if ($content !== '' && !AssetLibrary::isAllowedImageRef($content)) {
                 $message  = 'Only JPG, PNG, GIF and WEBP images are allowed — SVG and other types are blocked.';
                 $msgClass = 'error';
                 $content  = '';
@@ -124,61 +123,81 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_update'])) {
         $message  = 'Only admins can edit assets.';
         $msgClass = 'error';
     } else {
-    $id      = intval($_POST['edit_id'] ?? 0);
-    $type    = $_POST['edit_type']  ?? '';
-    $label   = trim($_POST['edit_label']  ?? '');
-    $content = ($type === 'text')
-        ? toPlainText($_POST['edit_content'] ?? '')   // plain text only
-        : trim($_POST['edit_content'] ?? '');
+    // What kind of entry this is comes from the stored row, never from the form.
+    // The type used to travel back in a hidden field, and it decided both of the
+    // rules below — so `edit_type=image` on a text entry wrote markup where
+    // ADR-0002 requires plain text, and `edit_type=text` on an image entry skipped
+    // the allow-list and pointed every sign reading it at an .svg on any host.
+    // Reading the row also answers the question the old code never asked: whether
+    // the entry is still there at all.
+    $id     = intval($_POST['edit_id'] ?? 0);
+    $label  = trim($_POST['edit_label'] ?? '');
+    $record = $id > 0 ? $library->forId($id) : null;
 
-    if (!empty($_FILES['edit_image_file']['name'])) {
-        $check = validateImageFile($_FILES['edit_image_file'], $allowedExtensions, $allowedMimeTypes);
-        if ($check['ok']) {
-            ensureUploadsDir();
-            $fileName = 'crud_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $check['ext'];
-            if (move_uploaded_file($_FILES['edit_image_file']['tmp_name'], 'uploads/' . $fileName)) {
-                $content = 'uploads/' . $fileName;
+    if ($record === null) {
+        $message  = 'That library entry no longer exists, so there was nothing to save.'
+                  . ' Nothing was changed.';
+        $msgClass = 'error';
+    } else {
+        $storedType = (string)$record['type'];
+        $content    = $_POST['edit_content'] ?? '';
+
+        if (!empty($_FILES['edit_image_file']['name'])) {
+            if ($storedType !== AssetLibrary::TYPE_IMAGE) {
+                // The edit form offers a file picker only for an image entry, so
+                // this is a form that was not the one we rendered. Refused before
+                // the file is moved: a text entry replaced by a path shows the
+                // path, as words, on every sign reading it.
+                $message  = 'That library entry holds ' . $storedType . ', not an image,'
+                          . ' so a file cannot replace its content. Nothing was changed.';
+                $msgClass = 'error';
+            } else {
+                $check = validateImageFile($_FILES['edit_image_file'], $allowedExtensions, $allowedMimeTypes);
+                if (!$check['ok']) {
+                    $message  = $check['msg'];
+                    $msgClass = 'error';
+                } else {
+                    ensureUploadsDir();
+                    $fileName = 'crud_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $check['ext'];
+                    if (move_uploaded_file($_FILES['edit_image_file']['tmp_name'], 'uploads/' . $fileName)) {
+                        $content = 'uploads/' . $fileName;
+                    } else {
+                        // Said nothing before, and fell through to save whatever was
+                        // in the path field — so a failed upload silently kept the
+                        // old image and reported the save as a success.
+                        $message  = 'The uploaded file could not be saved. Nothing was changed.';
+                        $msgClass = 'error';
+                    }
+                }
             }
-        } else {
-            $message  = $check['msg'];
+        }
+
+        // Plain-texting, the emptiness guard and the image allow-list are all
+        // AssetLibrary's now — it is the only thing that knows what kind of row
+        // this is without being told.
+        $result = ($message === '') ? $library->update($id, $label, $content) : null;
+
+        if ($result !== null && !$result->isOk()) {
+            $message  = $result->message();
             $msgClass = 'error';
+        } elseif ($result !== null) {
+            // Editing a library entry changes every sign that draws on it, on the next
+            // 30-second poll, with nobody publishing anything. Advance those Displays'
+            // stamps so a Builder that is open on one is refused rather than quietly
+            // republishing the text that was here a moment ago (ADR-0006).
+            $usage = $layouts->assetUsage($id);
+            foreach ($usage['displays'] as $displayId) {
+                $d = $signs->forId($displayId);
+                if ($d) { $signs->advanceLayoutRevision($d); }
+            }
+
+            $message = $usage['elements']
+                ? 'Asset updated. It is used by ' . $usage['elements'] . ' block'
+                  . ($usage['elements'] === 1 ? '' : 's') . ' on ' . count($usage['displays'])
+                  . ' display' . (count($usage['displays']) === 1 ? '' : 's')
+                  . ', which will show the new content within 30 seconds.'
+                : $result->message();
         }
-    }
-
-    // Block SVG / non-image references entered via the URL field on edit too.
-    if (empty($message) && $type === 'image' && $content !== '' && !isAllowedImageRef($content, $allowedExtensions)) {
-        $message  = 'Only JPG, PNG, GIF and WEBP images are allowed — SVG and other types are blocked.';
-        $msgClass = 'error';
-    }
-
-    // `!empty($content)` guards the write, not just the message: an empty content
-    // field means the form arrived without one, and writing it would blank the row —
-    // which blanks the line on every sign reading from it, with no undo.
-    if (empty($message) && $id > 0 && !empty($content) && !$library->update($id, $label, $content)) {
-        // Reported rather than swallowed. The raw statement this replaced would have
-        // thrown and produced a 500; a module that returns false instead must not
-        // let the page print "Asset updated" over a write that did not happen.
-        $message  = 'That asset could not be updated. Nothing was changed.';
-        $msgClass = 'error';
-    }
-
-    if (empty($message) && $id > 0 && !empty($content)) {
-        // Editing a library entry changes every sign that draws on it, on the next
-        // 30-second poll, with nobody publishing anything. Advance those Displays'
-        // stamps so a Builder that is open on one is refused rather than quietly
-        // republishing the text that was here a moment ago (ADR-0006).
-        $usage = $layouts->assetUsage($id);
-        foreach ($usage['displays'] as $displayId) {
-            $d = $signs->forId($displayId);
-            if ($d) { $signs->advanceLayoutRevision($d); }
-        }
-
-        $message = $usage['elements']
-            ? 'Asset updated. It is used by ' . $usage['elements'] . ' block'
-              . ($usage['elements'] === 1 ? '' : 's') . ' on ' . count($usage['displays'])
-              . ' display' . (count($usage['displays']) === 1 ? '' : 's')
-              . ', which will show the new content within 30 seconds.'
-            : 'Asset updated successfully.';
     }
     } // end isAdmin check
 }
@@ -258,6 +277,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_tidy'])) {
 // READ
 // ============================================================
 $assets = $library->all();
+
+// Rows the rules above would refuse or change if they were saved today. Nothing
+// rewrites them — see AssetLibrary::contentIssue — but an admin cannot decide about
+// a state nothing shows, and until now the first sign of one was a refusal while
+// editing something else.
+$flagged = 0;
+foreach ($assets as $row) {
+    if (AssetLibrary::contentIssue($row) !== null) { $flagged++; }
+}
 
 // How many auto-saved entries could be tidied away, for the button's label. Null
 // references mean the question cannot be answered, so the button is not offered.
@@ -348,6 +376,13 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
         .badge-text  { background: #d6eaf8; color: #1a5276; }
         .badge-image { background: #d5f5e3; color: #1e8449; }
         .badge-auto  { background: #fdebd0; color: #7e5109; }
+        .badge-check { background: #fdecea; color: #c0392b; }
+
+        .check-bar {
+            background:#fdecea; border:1px solid #f5c6c1; border-radius:6px;
+            padding:12px 14px; margin-bottom:16px; font-size:13px; color:#a5372b;
+        }
+        .check-bar p { margin:0; }
 
         .tidy-bar {
             background:#fdf6e3; border:1px solid #f5e0a3; border-radius:6px;
@@ -391,8 +426,10 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
         <form method="POST" action="crud.php" enctype="multipart/form-data">
             <input type="hidden" name="action_update" value="1">
             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+            <!-- No hidden type field: what this entry is comes from the stored row
+                 on the way in and on the way out, so the form cannot claim it is
+                 something else and skip the rule that goes with it. -->
             <input type="hidden" name="edit_id"   value="<?= intval($editAsset['id']) ?>">
-            <input type="hidden" name="edit_type"  value="<?= htmlspecialchars($editAsset['type']) ?>">
 
             <div class="form-group">
                 <label>Type</label>
@@ -410,10 +447,26 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
                 <?php endif; ?>
             </div>
 
-            <?php if ($editAsset['type'] === 'text'): ?>
+            <?php if ($editAsset['type'] === AssetLibrary::TYPE_TEXT): ?>
             <div class="form-group">
                 <label>Text Content</label>
                 <textarea name="edit_content" rows="5"><?= htmlspecialchars($editAsset['content']) ?></textarea>
+            </div>
+            <?php elseif ($editAsset['type'] !== AssetLibrary::TYPE_IMAGE): ?>
+            <!-- Publishing pools a block's content under the *block's* type, so a
+                 carousel, table or marquee entry is ordinary here. Those hold JSON
+                 or a media path; the old form had two branches and drew this one as
+                 an image, which put the JSON in an <img src> and offered to replace
+                 it with a file. Shown as what it is instead, and stored as it
+                 arrives — stripping markup out of JSON leaves neither. -->
+            <div class="form-group">
+                <label>Stored Content (<?= htmlspecialchars(strtoupper($editAsset['type'])) ?>)</label>
+                <textarea name="edit_content" rows="5"><?= htmlspecialchars($editAsset['content']) ?></textarea>
+                <small style="display:block; margin-top:4px; color:#7f8c8d; font-size:11px;">
+                    This entry was saved automatically when a
+                    <?= htmlspecialchars($editAsset['type']) ?> block was published, and holds
+                    that block's own settings. Change it only if you know what it should say.
+                </small>
             </div>
             <?php else: ?>
             <div class="form-group">
@@ -486,6 +539,17 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
     <div class="table-panel">
         <h2>All Saved Assets (<?= count($assets) ?>)</h2>
 
+        <?php if ($flagged > 0): ?>
+        <div class="check-bar">
+            <p><strong><?= intval($flagged) ?></strong>
+               entr<?= $flagged === 1 ? 'y is' : 'ies are' ?> marked <strong>check</strong> below.
+               These were saved before the rules the Library applies today, so they hold
+               something it would now refuse or change. <strong>Nothing has been altered</strong>
+               and no sign has changed — hover the mark to see what is wrong with each, and fix
+               them, or leave them, as you see fit.</p>
+        </div>
+        <?php endif; ?>
+
         <?php if (isAdmin() && $tidyCount === null): ?>
         <div class="tidy-bar">
             <p><strong>Cannot check for unused entries.</strong> The list of blocks
@@ -532,6 +596,11 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
                         <?php if (!empty($row['auto_pooled'])): ?>
                         <span class="badge badge-auto"
                               title="Saved automatically when a sign was published. Renaming it makes it yours, and it will never be tidied away.">auto</span>
+                        <?php endif; ?>
+                        <?php $issue = AssetLibrary::contentIssue($row); ?>
+                        <?php if ($issue !== null): ?>
+                        <span class="badge badge-check"
+                              title="Saved before the Library checked this: <?= htmlspecialchars($issue) ?>. Nothing has been changed.">check</span>
                         <?php endif; ?>
                     </td>
                     <td>

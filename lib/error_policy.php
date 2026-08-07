@@ -365,7 +365,10 @@ class ErrorPolicy
             // same path on every call — so the second entry of a request would be
             // sized against what the file was before the first one was appended, and
             // a request that logs in a loop would never see the file cross the limit
-            // at all. Ask the filesystem again; it is one syscall on the rare path.
+            // at all. The same is true across requests, which is the larger half of
+            // it: every page load is a separate process appending to this one file,
+            // so a cached answer is one this process took before anybody else's entry
+            // landed. Ask the filesystem again; it is one syscall on the rare path.
             clearstatcache(true, $path);
 
             // `is_file` first: statting a path that is not there is a warning, and a
@@ -424,6 +427,10 @@ class ErrorPolicy
                 . 'recorded and no alert can be sent. Give the app a writable "logs" '
                 . 'folder, or set LBM_LOG_DIR in the private credentials file.'];
         } else {
+            // Same reason as the rotation check above: this page has very likely
+            // logged something itself on the way here, and a readout that reports
+            // the size from before its own entry is a readout that is wrong.
+            @clearstatcache(true, $path);
             $size = @filesize($path);
             $when = @filemtime($path);
             $out['Error log'] = [$path,

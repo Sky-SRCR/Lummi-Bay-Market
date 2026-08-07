@@ -382,6 +382,71 @@ $driveT = loadTestDisplay($pdo, $driveT->id());
 checkSame('uploads/bg_1.png', $driveT->backgroundValue(), 'a basic account cannot change the background');
 
 // ─────────────────────────────────────────────────────────────
+section('A colour that is not a colour is not stored');
+
+// Decision #24. The admin panel put every colour through a `#rrggbb` test and the
+// publish endpoint put none of them through anything, so `bg_val` — a column the
+// Viewer, the Builder and the panel's colour picker all assume is six hex digits
+// — could be set to any string at all by a publish.
+checkSame(true,  Background::isValidColor('#1a2b3c'), 'six hex digits behind a hash is a colour');
+checkSame(true,  Background::isValidColor('#AABBCC'), 'in either case');
+checkSame(false, Background::isValidColor('#fff'),    'three digits is not the form this column holds');
+checkSame(false, Background::isValidColor('red'),     'nor is a name a browser would accept');
+checkSame(false, Background::isValidColor('url(//elsewhere.example/x.svg)'), 'nor anything that is not a colour at all');
+checkSame(false, Background::isValidColor(''),        'nor nothing');
+
+checkSame('color', Background::color('#AABBCC')->kind(), 'a readable colour builds a colour intent');
+checkSame('#aabbcc', Background::color('#AABBCC')->value(), 'stored one way, so two spellings cannot look different');
+checkSame(Background::INVALID, Background::color('red')->kind(),
+          'and an unreadable one builds an intent that names no colour');
+checkSame(false, Background::color('red')->isUsable(), 'which is not usable');
+checkSame(true,  Background::unchanged()->isUsable(), 'leaving the background alone always is');
+checkSame(true,  Background::keepImage()->isUsable(), 'so is switching back to the stored image');
+checkSame(true,  Background::image('uploads/bg_1.png')->isUsable(), 'and so is an image path');
+
+// The whole publish is refused, not just the background: dropping the one change
+// the admin made and reporting success is the merge invariant 5 forbids.
+$driveT   = loadTestDisplay($pdo, $driveT->id());
+$before   = $driveT->backgroundValue();
+$stampWas = $driveT->layoutStamp();
+$res = publishAs($layouts, $driveT, layoutWith('junk bg'), $stampWas, true, 1,
+                 Background::color('url(//elsewhere.example/x.svg)'));
+checkSame(false, $res->isOk(), 'a publish carrying an unreadable colour is refused');
+checkSame('invalid', $res->kind(), 'as something no reload and no waiting will fix');
+checkMentions($res->message(), 'still on screen', 'and the editor is told their work is not lost');
+$driveT = loadTestDisplay($pdo, $driveT->id());
+checkSame($before,   $driveT->backgroundValue(), 'the background it would have overwritten is untouched');
+checkSame($stampWas, $driveT->layoutStamp(),     'and nothing was published, so no Builder is invalidated');
+
+// The write side agrees with the checker, so a caller that skipped the check still
+// cannot store one.
+$store->applyBackground($driveT, Background::color('transparent'));
+$driveT = loadTestDisplay($pdo, $driveT->id());
+checkSame($before, $driveT->backgroundValue(),
+          'and the store declines to write one even when asked directly');
+
+// The other door still coerces rather than refusing — decision #21, still open.
+// Asserted rather than assumed, so the difference is deliberate and visible.
+$panelSign = makeTestDisplay($pdo, 'panel-bg', 'Panel Colour');
+$admin     = new DisplayAdmin($pdo, $store, $layouts, new GrantStore($pdo));
+$res = $admin->setBackgroundColor($panelSign, 'nonsense');
+checkSame(true, $res->isOk(), 'the admin panel still accepts a colour it cannot read');
+checkSame(Background::DEFAULT_COLOR, loadTestDisplay($pdo, $panelSign->id())->backgroundValue(),
+          'and falls back to the default, which is #21 and not yet decided against here');
+$admin->setBackgroundColor(loadTestDisplay($pdo, $panelSign->id()), '#ABCDEF');
+checkSame('#abcdef', loadTestDisplay($pdo, $panelSign->id())->backgroundValue(),
+          'a readable one is stored lowercased, by the same rule the publish path uses');
+
+// And this is what "the same rule" is worth. Should this door's idea of a colour
+// ever drift from Background's — a second regex that accepts three-digit hex, say
+// — the panel would accept the value, the store would decline to write it, and the
+// admin would be told it saved. Asking rather than restating is what stops that,
+// and this is the check that notices if it stops being asked.
+$admin->setBackgroundColor(loadTestDisplay($pdo, $panelSign->id()), '#fff');
+checkSame(Background::DEFAULT_COLOR, loadTestDisplay($pdo, $panelSign->id())->backgroundValue(),
+          'a spelling the module refuses is refused here too, not accepted and then quietly dropped');
+
+// ─────────────────────────────────────────────────────────────
 section('The snapshot a Screen renders');
 
 $driveT = loadTestDisplay($pdo, $driveT->id());
@@ -1598,6 +1663,118 @@ checkSame(true, $result->isOk(), 'the publish still succeeds');
 $kept = $noLib->query("SELECT manual_content, asset_id FROM canvas_elements")->fetch();
 checkSame('Sockeye  18.99', $kept['manual_content'], 'and the words stay on the block, where they render');
 checkSame(null, $kept['asset_id'],   'pointing at nothing at all rather than at a row that does not exist');
+
+// ─────────────────────────────────────────────────────────────
+section('A library entry\'s type is read from the row, not from the form');
+
+// The edit form used to post the type back in a hidden field, and that field
+// decided both of the rules an edit has to pass: plain text for a text entry
+// (ADR-0002), the image allow-list for an image entry. Either could be switched
+// off by sending the other word. `update()` takes no type at all now — it reads
+// the row — so the checks below are the rules being unable to be skipped rather
+// than being remembered.
+$pdo     = newTestDb();
+$library = new AssetLibrary($pdo);
+
+$textId = $library->create('text', 'Sockeye  18.99', 'Sockeye price');
+$imgId  = $library->create('image', 'uploads/promo.jpg', 'Summer Promo');
+check($textId > 0, 'an admin adds a text entry');
+check($imgId > 0,  'and an image entry');
+
+// The one moment a caller's word for the type is taken is creation, and it is
+// taken only for the two kinds the add form offers.
+checkSame(0, $library->create('carousel', '{"slides":[]}', 'Forged'),
+          'a type the add form does not offer is refused rather than stored');
+
+// ---- A text entry is plain text however the caller words it -------------------
+$res = $library->update($textId, 'Sockeye price', "<b>Sockeye</b><script>alert(1)</script>\n18.99");
+checkSame(true, $res->isOk(), 'a text entry accepts an edit');
+$stored = $pdo->query("SELECT content FROM assets WHERE id = " . $textId)->fetchColumn();
+check(strpos($stored, '<') === false,
+      'and the markup is stripped on the way in, with no form field able to say otherwise');
+
+// `!empty()` — the page's old guard — is false for a price block reading exactly
+// zero, so the one legitimate falsy value was refused as if the form were empty.
+$res = $library->update($textId, 'Sockeye price', '0');
+checkSame(true, $res->isOk(), 'an entry reading exactly "0" is a real edit, not an empty one');
+checkSame('0', $pdo->query("SELECT content FROM assets WHERE id = " . $textId)->fetchColumn(),
+          'and it is stored as "0"');
+
+$res = $library->update($textId, 'Sockeye price', "   \n  ");
+checkSame(AssetEdit::REFUSED, $res->kind(),
+          'emptying an entry is refused — every block reading it would go blank');
+checkSame('0', $pdo->query("SELECT content FROM assets WHERE id = " . $textId)->fetchColumn(),
+          'and the words that were there are still there');
+
+// ---- An image entry is checked against the allow-list, always -----------------
+checkSame(true, $library->update($imgId, 'Summer Promo', 'uploads/next-week.png')->isOk(),
+          'an image entry accepts an image');
+$res = $library->update($imgId, 'Summer Promo', 'https://elsewhere.example/logo.svg');
+checkSame(AssetEdit::REFUSED, $res->kind(),
+          'and refuses an .svg on another host, which the hidden field could switch off');
+checkSame('uploads/next-week.png', $pdo->query("SELECT content FROM assets WHERE id = " . $imgId)->fetchColumn(),
+          'leaving the image the signs are showing untouched');
+checkMentions($res->message(), 'Nothing was changed', 'and says so');
+
+// ---- No such row is not a successful save -------------------------------------
+// The bare UPDATE this replaced matched nothing and returned true, so deleting an
+// entry in one tab and saving it in another printed "Asset updated successfully".
+$res = $library->update(999999, 'Ghost', 'uploads/ghost.png');
+checkSame(AssetEdit::MISSING, $res->kind(), 'saving an entry that no longer exists is refused');
+checkSame(false, $res->isOk(), 'and is never reported as a save');
+
+// ---- The types the page never created but the table holds ---------------------
+// Publishing pools a block's content under the *block's* type, so a carousel row
+// is ordinary here. Its content is JSON: stripping it leaves neither markup nor
+// JSON, and the image allow-list would refuse it outright.
+$carouselId = $library->pool('carousel', '{"slides":[{"caption":"<b>Fresh</b>"}]}');
+check($carouselId > 0, 'publishing a carousel block pools its settings');
+$res = $library->update($carouselId, 'Deli slides', '{"slides":[{"caption":"<b>Fresh today</b>"}]}');
+checkSame(true, $res->isOk(), 'and that entry can still be edited');
+checkMentions($pdo->query("SELECT content FROM assets WHERE id = " . $carouselId)->fetchColumn(),
+              '<b>Fresh today</b>', 'with its JSON stored exactly as it arrived');
+checkSame('carousel', $pdo->query("SELECT type FROM assets WHERE id = " . $carouselId)->fetchColumn(),
+          'and no edit anywhere changes what kind of entry a row is');
+
+// ---- The allow-list itself ----------------------------------------------------
+checkSame(true,  AssetLibrary::isAllowedImageRef('uploads/a.jpg'),        'a jpg is an image');
+checkSame(true,  AssetLibrary::isAllowedImageRef('uploads/A.PNG'),        'so is a PNG in capitals');
+checkSame(true,  AssetLibrary::isAllowedImageRef('uploads/a.png|contain'), 'the Builder\'s |fit suffix is not part of the name');
+checkSame(true,  AssetLibrary::isAllowedImageRef('uploads/a.png?v=2'),    'nor is a query string');
+checkSame(false, AssetLibrary::isAllowedImageRef('uploads/a.svg?v=.png'), 'and a query string cannot disguise one');
+checkSame(false, AssetLibrary::isAllowedImageRef('uploads/a.svg'),        'an svg is markup a browser runs');
+checkSame(false, AssetLibrary::isAllowedImageRef('uploads/a'),            'something with no extension is not an image');
+checkSame(false, AssetLibrary::isAllowedImageRef(''),                     'and neither is nothing at all');
+
+// ---- What the rules say about the rows that were already here -----------------
+// Nothing rewrites them: changing stored content on read is a write nobody asked
+// for, on a table with no undo. What was wrong is that the state was invisible, so
+// the Library marks them and the decision stays a person's.
+checkSame(null, AssetLibrary::contentIssue(['type' => 'text', 'content' => 'Sockeye  18.99']),
+          'an ordinary text entry has nothing to say about it');
+checkSame(null, AssetLibrary::contentIssue(['type' => 'image', 'content' => 'uploads/promo.jpg']),
+          'nor an ordinary image entry');
+checkSame(null, AssetLibrary::contentIssue(['type' => 'carousel', 'content' => '{"slides":[]}']),
+          'nor a pooled carousel entry, whose JSON is not markup to strip');
+checkMentions(AssetLibrary::contentIssue(['type' => 'image', 'content' => 'uploads/old.svg']),
+              'no longer allows', 'an image entry left pointing at an svg is marked');
+checkMentions(AssetLibrary::contentIssue(['type' => 'text', 'content' => 'Fresh <b>today</b>']),
+              'formatting', 'a text entry holding markup from before ADR-0002 is marked');
+checkMentions(AssetLibrary::contentIssue(['type' => 'text', 'content' => '']),
+              'empty', 'and so is one that is empty, whatever emptied it');
+// The text test is the exact predicate "saving this would change it", so a row that
+// merely reads oddly is not accused of anything.
+checkSame(null, AssetLibrary::contentIssue(['type' => 'text', 'content' => 'Halibut < 5 lb']),
+          'a stray angle bracket that saving would keep is not a mark against a row');
+
+// The field itself must be gone, not merely unread: a hidden input still on the
+// page is one `$_POST` read away from deciding this again. (The name survives in
+// crud.php's prose, which is why these look for the two places it would be code.)
+$crudSource = file_get_contents(__DIR__ . '/../crud.php');
+check(strpos($crudSource, "'edit_type'") === false,
+      'the editor reads no type from the request');
+check(strpos($crudSource, 'name="edit_type"') === false,
+      'and does not send one for it to read');
 
 // ─────────────────────────────────────────────────────────────
 section('A reset code gets five guesses in total, not five per browser');
@@ -2867,11 +3044,14 @@ clearstatcache(true, $logPath);
 checkSame($before, filesize($logPath), 'a suppressed diagnostic is not logged at all');
 
 // A shared host has a disk quota, and this file is appended to by every request
-// forever.
+// forever. The file is grown behind the module's back here on purpose: that is what
+// the *other* requests appending to this same log do, and rotation has to decide on
+// the size the file is rather than the size it was when this process last looked.
 file_put_contents($logPath, str_repeat('x', ErrorPolicy::MAX_LOG_BYTES + 1));
 ErrorPolicy::log('the entry that tipped it over');
 clearstatcache(true, $logPath);
 check(file_exists($logPath . '.1'), 'an oversized log is rotated rather than grown forever');
+clearstatcache();
 check(filesize($logPath) < 1024, 'and the live file starts again');
 
 // Twice in one request. `log()` used to size the file against a stat it had taken
@@ -3490,4 +3670,217 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(914);
+// ─────────────────────────────────────────────────────────────
+section('The branding file is swapped in, never written in place');
+
+// Decision #36. `branding_config.php` is generated PHP that every page in the app
+// requires, so the interesting property is not "the save worked" — it is that the
+// live path only ever holds a complete, loadable file, whatever happens to the
+// write. Everything below runs in a throwaway directory: a self-test that rewrote
+// the deployment's own branding would be changing the thing it is measuring.
+$brandDir = newTestStateDir();
+$brandCfg = new BrandingConfig($brandDir);
+
+// Work from inside that directory for the length of this section. Not tidiness:
+// this is the one module whose subject is a *path*, so the mutation that makes
+// `path()` answer with a bare filename sends every save below into the deployment's
+// own branding_config.php — which is how a mutation run rewrote the repo's copy
+// once. A relative answer now lands in the throwaway directory with everything else.
+$brandCwd = getcwd();
+chdir($brandDir);
+
+checkSame($brandDir . '/branding_config.php', $brandCfg->path(),
+          'the module owns the filename, so no page has to spell it');
+checkSame(8, count(BrandingConfig::DEFAULTS), 'eight settings live in the file');
+checkSame(array_keys(BrandingConfig::DEFAULTS), array_keys($brandCfg->current()),
+          'and current() answers about all eight');
+// The constants are defined in this process by config.php, which is the state a
+// real save happens in: what is in force, not what the defaults say.
+checkSame(SITE_NAME, $brandCfg->current()['SITE_NAME'],
+          'current() reports the value actually in force, not the fallback');
+
+$res = $brandCfg->save(['SITE_NAME' => 'Lummi Bay Market']);
+checkSame(BrandingWrite::OK, $res->kind(), 'a save of one setting succeeds');
+check(is_file($brandCfg->path()), 'and the file is there afterwards');
+
+$written = file_get_contents($brandCfg->path());
+check(BrandingConfig::parses($written), 'what the swap put in place is loadable PHP');
+checkMentions($written, "define('SITE_NAME'", 'and defines the name that was saved');
+checkMentions($written, var_export('Lummi Bay Market', true), 'with the value asked for');
+// The other seven were not in the save and must be exactly what they were. This is
+// the defect the old eight-argument call had: the Site & Email form passed the five
+// branding values back in from page variables, so it rewrote them every time.
+// Pinned, because in this process all eight constants sit at their defaults and a
+// save that kept them and a save that reset them write the same bytes.
+$pinned = BrandingConfig::DEFAULTS;
+$pinned['BRAND_ACCENT'] = '#abcdef';
+$pinned['SITE_NAME']    = 'Before';
+$pinnedCfg = new PinnedBrandingConfig($brandDir, $pinned);
+checkSame(BrandingWrite::OK, $pinnedCfg->save(['SITE_NAME' => 'After'])->kind(),
+          'a save over settings that are not the defaults succeeds');
+$merged = file_get_contents($pinnedCfg->path());
+checkMentions($merged, var_export('After', true), 'the setting asked for is changed');
+checkMentions($merged, var_export('#abcdef', true),
+              'and a save of one setting leaves the seven it never mentioned alone');
+checkSame(BrandingConfig::render(array_merge($pinned, ['SITE_NAME' => 'After'])), $merged,
+          'the file is exactly what is in force with the change applied on top');
+
+// The check above only means anything if a truncated file would have failed it.
+// This is what an interrupted in-place write leaves behind, and it is why the old
+// code could take every page of the app down with one save.
+$cutHere   = strrpos($written, 'define(');
+$truncated = substr($written, 0, $cutHere + 20);
+check(!BrandingConfig::parses($truncated),
+      'and a file cut short mid-statement is not — which is the whole defect');
+
+// Anti-injection. A site name is free text an admin types; it reaches a file the
+// app executes. var_export is the entire defence, so count the calls: an escape
+// that let a value close its own string would show up as a ninth.
+$evil = "'); echo 'pwned'; define('X', '";
+checkSame(BrandingWrite::OK, $brandCfg->save(['SITE_NAME' => $evil])->kind(),
+          'a site name full of quotes and semicolons still saves');
+$written = file_get_contents($brandCfg->path());
+check(BrandingConfig::parses($written), 'and the file it wrote still parses');
+$defineCalls = 0;
+foreach (token_get_all($written) as $token) {
+    if (is_array($token) && $token[0] === T_STRING && $token[1] === 'define') { $defineCalls++; }
+}
+checkSame(8, $defineCalls, 'with exactly eight define() calls — nothing was injected');
+checkMentions($written, var_export($evil, true), 'the value is stored as one escaped literal');
+
+// A backslash is the other half of it: var_export doubles it, and a naive escape
+// that handled quotes but not backslashes would end the literal one character early.
+checkSame(BrandingWrite::OK, $brandCfg->save(['SITE_NAME' => 'Bob\'s \\ Market'])->kind(),
+          'a backslash saves too');
+check(BrandingConfig::parses(file_get_contents($brandCfg->path())),
+      'and does not end the string early');
+
+// A name nothing reads would be written into a file every page loads and would
+// never have any effect, and the admin would be told it saved.
+$before = file_get_contents($brandCfg->path());
+$res    = $brandCfg->save(['NOT_A_SETTING' => 'x']);
+checkSame(BrandingWrite::REFUSED, $res->kind(), 'a setting the file does not hold is refused');
+checkMentions($res->message(), 'NOT_A_SETTING', 'and the refusal names it');
+checkMentions($res->message(), 'Nothing was changed', 'and says nothing was changed');
+checkSame($before, file_get_contents($brandCfg->path()), 'which is true — the file is byte-identical');
+
+// ── The reason this module exists ────────────────────────────
+// A write that comes up short. The old code truncated the live file first, so this
+// left every page of the app requiring half a define() — a parse error, on the sign
+// as well as in the office. Nothing here may touch the live path.
+$shortCfg = new ShortWriteBrandingConfig($brandDir);
+$before   = file_get_contents($brandCfg->path());
+$res      = $shortCfg->save(['SITE_NAME' => 'Half A Name']);
+checkSame(BrandingWrite::FAILED, $res->kind(), 'a short write fails the save');
+checkMentions($res->message(), 'Nothing was changed', 'and says nothing was changed');
+checkMentions($res->message(), 'still using the settings it had', 'and that the site is still standing');
+checkMentions($res->message(), 'disk may be full', 'and names the cause an admin can act on');
+checkSame($before, file_get_contents($brandCfg->path()),
+          'and the live file is byte-for-byte what it was');
+check(BrandingConfig::parses(file_get_contents($brandCfg->path())),
+      'so every page that requires it still loads');
+check(strpos(file_get_contents($brandCfg->path()), 'Half A Name') === false,
+      'and none of the abandoned save is in it');
+checkSame([], glob($brandDir . '/.[!.]*'),
+          'the half-written temporary file was cleaned up, not left in the webroot');
+
+// Where that temporary file was, which is only visible from inside the write.
+checkSame($brandDir, dirname($shortCfg->lastTemp),
+          'the replacement is built beside the file it replaces — rename() is only atomic within one filesystem');
+check(strpos(basename($shortCfg->lastTemp), '.php') === false,
+      'and is never named *.php: AddHandler matches that extension anywhere in a filename');
+check(strpos(basename($shortCfg->lastTemp), '.branding_config.') === 0,
+      'it is named for what it is about to become');
+checkMentions(file_get_contents(__DIR__ . '/../.htaccess'), '^\.branding_config\.',
+              'and the webroot denies that name for the moment it exists');
+
+// The swap must not be a way for this file to quietly change who can read it.
+chmod($brandCfg->path(), 0640);
+clearstatcache(true, $brandCfg->path());
+checkSame(BrandingWrite::OK, $brandCfg->save(['SITE_NAME' => 'Permissions Test'])->kind(),
+          'a save over a file with its own permissions succeeds');
+clearstatcache(true, $brandCfg->path());
+checkSame(0640, fileperms($brandCfg->path()) & 0777,
+          'and the replacement inherits them rather than the umask');
+
+// A folder that cannot be written is the other end of the same promise: fail, say
+// so, create nothing — and say something different, because "the disk is full" and
+// "this folder is not yours to write" are not the same errand.
+$res = (new BrandingConfig($brandDir . '/nowhere'))->save(['SITE_NAME' => 'x']);
+checkSame(BrandingWrite::FAILED, $res->kind(), 'a folder that cannot be written fails the save');
+checkMentions($res->message(), 'Nothing was changed', 'and says nothing was changed');
+checkMentions($res->message(), 'permissions', 'and sends the admin somewhere different from a full disk');
+check(strpos($res->message(), 'disk may be full') === false, 'not to both places at once');
+check(!is_dir($brandDir . '/nowhere'), 'and nothing was created on the way');
+
+// render() is pure, so the bytes are checkable without a disk at all — including
+// the one property two saves of the same values must have.
+$sample = BrandingConfig::render(BrandingConfig::DEFAULTS);
+checkSame($sample, BrandingConfig::render(BrandingConfig::DEFAULTS),
+          'the same values render to the same bytes every time');
+check(strpos($sample, '<?php') === 0, 'the generated file opens as PHP');
+check(substr($sample, -1) === "\n", 'and ends with a newline');
+check(strpos($sample, '?>') === false, 'with no closing tag to leak whitespace before a header');
+check(BrandingConfig::parses($sample), 'and the defaults render to something loadable');
+checkSame(BrandingConfig::render(BrandingConfig::DEFAULTS),
+          BrandingConfig::render(['SITE_NAME' => BrandingConfig::DEFAULTS['SITE_NAME']]),
+          'a value render() is not given falls back to the same default the app uses');
+
+// And the panel writes none of it itself any more. The whole point of the module is
+// that there is one writer; a file_put_contents back in the page is that undone.
+$panelSource = file_get_contents(__DIR__ . '/../admin_panel.php');
+check(strpos($panelSource, 'file_put_contents') === false,
+      'the Admin Panel writes no file of its own');
+check(strpos($panelSource, "define('BRAND_") === false,
+      'and generates none of the file it used to build by hand');
+
+// ── The read side: one list of eight names, not five ─────────
+// `config.php`, `login.php`, `builder.php` and `help.php` each used to spell out the
+// same defaults, and two of them guarded the require on a different constant from
+// the other two. A page carrying its own copy of a default is a page that can
+// disagree with the Admin Panel about what colour the nav bar is.
+// Not a search for the colour itself — `#1a252f` is a perfectly ordinary dark shade
+// and several stylesheets use it for something that is not the nav bar. What must
+// not come back is a page *declaring* one of these names, or reaching for the
+// generated file on its own account.
+$pagesWithTheirOwn = [];
+$pagesLoadingItThemselves = [];
+foreach ((array)glob(__DIR__ . '/../*.php') as $page) {
+    // The generated file declares all eight; that is what it is.
+    if (basename($page) === 'branding_config.php') { continue; }
+    $src = file_get_contents($page);
+    if (strpos($src, "define('BRAND_") !== false)      { $pagesWithTheirOwn[] = basename($page); }
+    if (strpos($src, "/branding_config.php'") !== false) { $pagesLoadingItThemselves[] = basename($page); }
+}
+checkSame([], $pagesWithTheirOwn, 'no page declares a branding constant of its own');
+checkSame([], $pagesLoadingItThemselves, 'and none of them reaches for the file directly');
+checkMentions(file_get_contents(__DIR__ . '/../config.php'), '->apply()',
+              'config.php is the one place the eight names are brought into being');
+
+// Every one of them is defined in this process — config.php did it on the way in —
+// so `apply()` here must be a silent no-op rather than eight warnings and an
+// argument about who was right.
+$siteBefore = SITE_NAME;
+$brandCfg->apply();
+$defined = 0;
+foreach (BrandingConfig::DEFAULTS as $name => $unusedDefault) {
+    if (defined($name)) { $defined++; }
+}
+checkSame(8, $defined, 'apply() leaves all eight names defined');
+checkSame($siteBefore, SITE_NAME, 'and overrides nothing that was already set');
+
+// The same promise for the generated file itself, which is the half that a bare
+// `define()` got wrong: config.php offers db_credentials.php as the way to override
+// any of these, and a `define()` of a name already taken warns and then keeps the
+// first value — the documented override worked while complaining about itself. Any
+// unsuppressed warning is a failed check in this harness, so loading it below is
+// the assertion: eight of them would show up as eight failures.
+$reloadPath = $brandDir . '/reload_test.php';
+file_put_contents($reloadPath, BrandingConfig::render(['SITE_NAME' => 'Something Else']));
+include $reloadPath;
+checkSame($siteBefore, SITE_NAME,
+          'loading the generated file again changes no constant that is already set');
+
+chdir($brandCwd);
+
+reportChecks(1030);

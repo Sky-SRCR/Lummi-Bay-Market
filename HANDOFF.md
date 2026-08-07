@@ -26,22 +26,37 @@ of the system.
 
 ## 2. Git / branch
 
-- **Working branch:** `claude/app-update-planning-1pjqfr` (all work goes here)
-- Push with `git push -u origin claude/app-update-planning-1pjqfr`
-- **PR #3** (`claude/app-update-planning-1pjqfr` → `main`):
-  https://github.com/Sky-SRCR/Lummi-Bay-Market/pull/3 — the whole multi-display
-  build. Open, CI green, not merged.
-- PR #2 (security hardening, login lockout, embeddable viewer, housekeeping) was
-  merged into `main` by hand as `ff361cc`. Start future sessions from `main` once
-  PR #3 lands too.
-- Commit history on this branch (newest first):
-  - `195cb0c` Phase 5: the edit lock and the read-only Builder
-  - `29ed18c` Phase 4: grants and the Display picker
-  - `435cc27` Phase 3: the admin Displays screen
-  - `7765638` Phase 2: canvas dimensions from the Display record
-  - `8eae330` Phase 1: Display-scoped data model and API
-  - `e504857` Add the multi-display roadmap
-  - `31ffc06`, `ff33379`, `94c37ba` — the domain model and the first ADRs
+**Start from `main`.** The phase-by-phase work is finished and merged; the rhythm
+now is one branch and one PR per item from
+[`docs/reviewed-decisions.md`](docs/reviewed-decisions.md), cut fresh from `main`
+each time. There is no standing working branch — an old `HANDOFF` said there was
+(`claude/app-update-planning-1pjqfr`), and following it would have branched off
+something six merges behind.
+
+What has landed, oldest first:
+
+| PR | What | In `main` as |
+|----|------|--------------|
+| #1 | The 22 vendored skills under `.claude/skills/` | `aa9c2af` (squashed — its branch head is not an ancestor) |
+| #2 | Security hardening, login lockout, embeddable viewer, housekeeping | `ff361cc` |
+| #3 | Multi-display, phases 1–6 | `2a5cd84` |
+| #4 | Decision #38, first attempt | **closed unmerged** — superseded by #7, its four unique items carried across in `003f1f1` |
+| #5 | Decision #40, the section banner | `50822b5` |
+| #7 | Decision #38, and the three things that fix left standing | `4961fb8` |
+| #8 | The log's size read from the filesystem, not a cached stat | `5b410c1` |
+
+**Two sessions can be working at once, and twice now they have collided.** Both
+times it was invisible until somebody looked:
+
+- **#4 and #7 were the same decision**, started in parallel from the same `main`.
+  One of them had to be closed and hand-salvaged.
+- **Two branches each took the next free `§4` letter** and produced two `### 4u.`
+  sections. Git merges those without a conflict marker, because they are not the
+  same lines. `php tools/check_doc_numbering.php` exists for this and runs in CI
+  even when the step before it failed; run it before opening a PR that adds a
+  write-up, and before merging one that has been open a while.
+
+Before starting an item, check whether a branch already exists for it.
 
 ## 3. File map (page scripts at repo root; data access in `lib/`)
 
@@ -64,15 +79,16 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/error_policy.php` | The error policy, set in code: errors off, logging on, the three handlers, and the notice a Screen / an endpoint / a person gets when something breaks. `report()` is for a problem the app survived, and throttles the log as well as the email when the problem repeats on its own |
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
+| `lib/branding.php` | `BrandingConfig` / `BrandingWrite` — the **only** writer of `branding_config.php`, which every page of the app requires. Renders it, parses it, writes a temporary copy, reads that back byte for byte, and swaps it in with one `rename()`, so a reader gets the whole old file or the whole new one and a failed save leaves the site on exactly what it had |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **914 checks**. Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **1030 checks**. Run before pushing |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **39 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit), **53 checks** |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data. It also publishes every element type and block subtype the schema allows and reads them back, checks that a deleted Display really cascades, and prints which of the five page-added columns landed |
-| `config.php` | Site constants (`SITE_NAME`, `MAIL_FROM`); loads `branding_config.php` |
+| `config.php` | Brings the eight branding constants (`BRAND_*`, `SITE_NAME`, `MAIL_FROM`, `MAIL_FROM_NAME`) into being through `lib/branding.php`. The one place that loads `branding_config.php` |
 | `db_connect.php` | PDO `$pdo`; loads creds from `../../private/db_credentials.php` |
 | `auth.php` | `session_start` with the cookie attributes `RequestScheme` decides, in both the pre-7.3 and 7.3+ forms; `requireLogin/requireAdmin/isAdmin/currentUser`; `csrfToken()/verifyCsrf()`. It no longer adds the login-lockout columns — those are gated entries in `signageSchemaPlan()` |
-| `branding_config.php` | Generated brand theme (`BRAND_*` constants) |
+| `branding_config.php` | Generated brand theme (`BRAND_*` constants) plus `SITE_NAME` and the two mail-from fields. Written only by `lib/branding.php`, and never in place |
 | `login.php` / `logout.php` | Auth; account-keyed DB login lockout (5 tries / 15-min window, stamped in UTC). Every sentence it can print and every counter it writes are `LoginAttempt`'s, so no message it shows depends on something a stranger must not learn. It runs no DDL and it carries a CSRF token |
 | `.htaccess` | Server config: index/sensitive-file blocks, security headers, PHP hardening, HTTPS redirect. Frames `viewer.php` for external widgets (see §8) |
 | `lib/.htaccess`, `tools/.htaccess` | Make both folders unreachable from a browser. **Deploy them with the folders** |
@@ -139,6 +155,12 @@ anything, they hold every Display by role.
   defining `DB_HOST/DB_NAME/DB_USER/DB_PASS`. Not in repo by design.
 - The live `branding_config.php` still uses the default `SITE_NAME`
   ("Store Display System"), not "Lummi Bay Market".
+- **The webroot directory must be writable by the web user**, not just
+  `branding_config.php` itself. Since §4y that file is replaced by writing a
+  temporary copy beside it and `rename`-ing over it, so the permission that matters
+  moved from the file to the folder. If only the file was made writable, the first
+  save after this deploy fails with *"Check the folder permissions."* and nothing is
+  changed. Confirm it by saving anything on Admin Panel → Branding.
 - `viewer.php` requires **no login**, so any screen on the network can display it.
 - **Every Viewer URL names its Display** (ADR-0003):
   `…/viewer.php?display=drive-thru`. A bare `viewer.php` shows a "no display
