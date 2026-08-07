@@ -117,7 +117,11 @@ reads prices off.
   delimiter and a stylesheet has none — `#fff; } body { … }` survives `Markup::text()`
   intact and is a closed rule and a new one. The store's brand colours go through
   `Brand::navBg()` and its three siblings, which answer `#rrggbb` or the documented
-  default because `Color::read()` decided. No page names a `BRAND_*` constant.
+  default because `Color::read()` decided. No page names a `BRAND_*` constant. The same
+  holds one boundary further in, inside a `style` **attribute**: escaping stops a value
+  ending the attribute and not the declaration, so a stored Brand Standards row is drawn
+  through `BrandStyles::readable()`, never read out of the row. Both say which stored
+  value they could not use — a substitute nobody is told about is #21 again.
 - **A reply's status code comes from its `reason`, never from beside it.**
   `HttpReply` maps the app's own vocabulary of failure onto HTTP once. A code chosen
   at a call site is a second opinion, and it disagrees silently.

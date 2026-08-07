@@ -520,6 +520,17 @@ $canvasPresets = [
     ['1920×540 — Wide strip / ticker',                 1920,  540],
 ];
 $styles = (new BrandStyles($pdo))->all();
+// Read raw, above, because ColorAudit reads the same method and an audit whose source
+// had already been tidied would find nothing. What the form draws goes through
+// BrandStyles::readable(); this is the list of places the two differ, which is what the
+// tab says out loud rather than substituting in silence (#21's whole point).
+$styleBad = [];
+foreach ($styles as $_bsType => $_bsRow) {
+    foreach (BrandStyles::unrenderable($_bsRow) as $_bsBad) {
+        $styleBad[] = ['type' => $_bsType] + $_bsBad;
+    }
+}
+unset($_bsType, $_bsRow, $_bsBad);
 $typeLabels = [
     'section_header' => 'Section Header',
     'item_title'     => 'Item Title',
@@ -1250,6 +1261,33 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             cannot change them. Changes reach every screen within 30 seconds — no publishing
             needed, because a screen reads this typography on each poll.
         </p>
+        <?php if ($styleBad): ?>
+            <!-- Nothing this form can submit produces one of these — BrandStyles
+                 validates every field on the way in. It reaches here from a row edited
+                 outside the app, or written before one of these rules existed. The
+                 table below already shows what renders; without this it would look
+                 like the row, and the next save would store the substitute for good. -->
+            <div style="border-left:4px solid #e67e22; background:#fff8f0; border-radius:4px;
+                        padding:10px 14px; margin-bottom:16px;">
+                <strong style="color:#e67e22; font-size:13px;">Stored values that cannot be used</strong>
+                <ul style="font-size:13px; color:#555; margin:6px 0 0 18px;">
+                    <?php foreach ($styleBad as $bad): ?>
+                        <li><?= Markup::text($typeLabels[$bad['type']] ?? $bad['type']) ?> —
+                            <?= Markup::text($bad['label']) ?> is stored as
+                            <?php /* Color::describe() rather than the value: it shortens,
+                                    quotes, and names the type of anything that is not a
+                                    string. Not colour-specific despite where it lives —
+                                    a second copy for font families would be a second
+                                    opinion about how to quote a value in a sentence. */ ?>
+                            <?= Markup::text(Color::describe($bad['value'])) ?>, so
+                            <?= Markup::text($bad['instead']) ?> is what every sign draws.</li>
+                    <?php endforeach; ?>
+                </ul>
+                <p style="font-size:12px; color:#7f8c8d; margin-top:6px;">
+                    The boxes below show what is being drawn. Saving this form stores it.
+                </p>
+            </div>
+        <?php endif; ?>
         <form method="POST">
             <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
             <table class="bs-table">
@@ -1267,13 +1305,22 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                 </thead>
                 <tbody>
                 <?php foreach ($typeLabels as $t => $label):
-                    $s = $styles[$t] ?? [];
-                    $ff = $s['font_family'] ?? 'Arial';
-                    $fs = $s['font_size']   ?? 16;
-                    $fc = $s['font_color']  ?? '#000000';
-                    $fw = $s['font_weight'] ?? 'normal';
-                    $fi = $s['font_style']  ?? 'normal';
-                    $lh = $s['line_height'] ?? 1.4;
+                    // Through readable(), not out of the row. These six land in a
+                    // `style` attribute below, and escaping stops a value ending the
+                    // attribute but not the declaration inside it: a stored
+                    // `Arial; position: fixed; top: 0` was, after escaping, exactly
+                    // that. The cleaners were only ever reached on the way in, which
+                    // is a promise about rows this app wrote and about no others.
+                    // $stored keeps the row itself, because the notice above the
+                    // table quotes what is actually there (#15, §4ac).
+                    $stored = $styles[$t] ?? [];
+                    $s  = BrandStyles::readable($stored);
+                    $ff = $s['font_family'];
+                    $fs = $s['font_size'];
+                    $fc = $s['font_color'];
+                    $fw = $s['font_weight'];
+                    $fi = $s['font_style'];
+                    $lh = $s['line_height'];
                 ?>
                 <tr id="bs-row-<?= Markup::text($t) ?>">
                     <td><strong><?= Markup::text($label) ?></strong></td>

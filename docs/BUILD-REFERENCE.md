@@ -3172,13 +3172,46 @@ companion check proving that escaping it would **not** have helped, and the audi
 finding end to end. Plus the invariant, and the tool run against a hand-edited config
 to see the sentence it actually prints.
 
-**What this does not cover.** Two more values reach CSS the same way and are not
-colours: `font-family` in the Brand Standards preview, and the `font_color` in that
-same preview, which is a colour but is read raw rather than through `Color::read()`.
-Both are inside a `style` **attribute**, where escaping does stop the value ending the
-attribute — so the worst available is extra declarations on one `<span>` in the Admin
-Panel, not a rule that escapes into the page. Named here rather than left to be
-rediscovered.
+**The same boundary, one level further in.** The Brand Standards preview put six
+stored fields into a `style` **attribute** — `font-family`, `font_color` and four
+more. Escaping stops a value ending the *attribute*; nothing stopped it ending the
+*declaration* inside it, so a stored `Arial; position: fixed; top: 0` was, after
+escaping, exactly that. Smaller than the `<style>` case — the blast radius is extra
+declarations on one `<span>` in the Admin Panel, not a rule that escapes into the
+page — and the same mistake.
+
+`BrandStyles` already had the answer and was only ever asked on the way *in*. Its
+`cleanFamily()` refuses a family whole rather than stripping it down, because
+`Arial;position:fixed` edited into `Arialpositionfixed` would store a font nobody
+asked for and say nothing. What was missing was a way to ask on the way *out*:
+`BrandStyles::readable()` runs a row through the same six cleaners `save()` uses, and
+`unrenderable()` lists the fields where the stored value and the drawn value differ,
+so the tab names them instead of quietly drawing the substitute.
+
+**Writing the "they agree" check found a disagreement**, which is the reason to write
+it: `readable()` was passing `DEFAULTS['font_color']` (`#000000`, the schema column
+default) as `cleanColor()`'s fallback, while `save()` used `cleanColor()`'s own
+(`#ffffff`). The page would have drawn one and a save stored the other. The fix is the
+#21 distinction again, and it is now load-bearing in a second place: **absent** is
+answered by `DEFAULTS`, **unreadable** by the cleaner's own substitute, and they are
+different questions.
+
+`all()` stays raw, deliberately — `ColorAudit` reads it, and an audit whose source had
+already been tidied would report nothing and be believed.
+
+**Coverage.** 25 further checks: every field's clamp, both `<style>`-attribute
+injections with a companion check proving escaping would not have helped, absent-vs-
+unreadable, the numeric fields compared as numbers (a `DECIMAL(4,2)` comes back
+`'1.20'` from MySQL and `1.2` from SQLite, and a difference of engine is not a fault to
+put in front of an admin), a loop asserting reader and writer agree field by field, and
+three cross-file checks on the page itself — because the defect was never in the module,
+it was in a caller trusting a promise the module had only made about values it wrote.
+
+**Verified by injection, four times.** `readable()` handing back the row fails 5;
+`unrenderable()` going quiet fails 6; the page reaching into the row again fails by
+name; and deleting the notice while keeping the loop that computes it fails too — the
+check is on the render, because working out a list and not drawing it is the same page
+with more code in it.
 
 ---
 

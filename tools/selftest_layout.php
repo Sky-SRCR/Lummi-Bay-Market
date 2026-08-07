@@ -4542,6 +4542,112 @@ checkMentions($found[2]['fix'], 'Branding', 'pointing at the tab that rewrites t
 checkSame(ColorAudit::BLOCKS_PUBLISH, $found[0]['kind'], 'and the blocking finding is still first');
 
 // ─────────────────────────────────────────────────────────────
+section('The row a page draws, which is not always the row (#15, third half)');
+
+// BrandStyles cleans on the way in. That is a promise about rows this app wrote and
+// about no others — and the Admin Panel's live preview put six of those fields
+// straight into a `style` attribute. Escaping stops a value ending the *attribute*.
+// Nothing stopped it ending the *declaration* inside it, which is one boundary
+// further in than §4ac's and the same mistake.
+
+$aRaw = ['block_type' => 'price', 'font_family' => 'Arial', 'font_size' => 30,
+         'font_color' => '#e74c3c', 'font_weight' => 'bold', 'font_style' => 'normal',
+         'line_height' => '1.20'];
+
+checkSame([], BrandStyles::unrenderable($aRaw), 'a row the app itself wrote has nothing to report');
+checkSame('#e74c3c', BrandStyles::readable($aRaw)['font_color'], 'and reads back as itself');
+checkSame('Arial',   BrandStyles::readable($aRaw)['font_family'], 'in every field');
+
+// The two the sweep found. Both were escaped, and escaping was the wrong tool for
+// both: what is inside a `style` attribute is CSS, and `;` is its separator.
+$aCss = ['font_family' => 'Arial; position: fixed; top: 0'] + $aRaw;
+checkSame('Arial', BrandStyles::readable($aCss)['font_family'],
+          'a font family carrying a second declaration is refused, not escaped');
+checkSame(true, strpos(Markup::text('Arial; position: fixed; top: 0'), 'position: fixed') !== false,
+          'which matters because escaping leaves that value doing exactly what it said');
+
+$aBadCol = ['font_color' => 'gold'] + $aRaw;
+checkSame('#ffffff', BrandStyles::readable($aBadCol)['font_color'],
+          'a colour keyword the CSSOM would discard reads as the substitute a save would store');
+checkSame('#000000', BrandStyles::readable(['block_type' => 'price'])['font_color'],
+          'while a colour that is simply absent reads as the column default — a different question');
+
+// And the page says so, rather than drawing the substitute and looking deliberate.
+$aSaid = BrandStyles::unrenderable($aBadCol);
+checkSame(1, count($aSaid),                'one field nobody can use is one thing to report');
+checkSame('font_color', $aSaid[0]['field'], 'named by the column it is');
+checkSame('Colour',  $aSaid[0]['label'],    'in the words the form puts above it');
+checkSame('gold',    $aSaid[0]['value'],    'quoting what is actually stored');
+checkSame('#ffffff', $aSaid[0]['instead'],  'and saying what every sign is drawing instead');
+
+checkSame(1, count(BrandStyles::unrenderable($aCss)), 'a font family that cannot be used is reported too');
+
+// Clamped is not the same as unusable, and both have to be said. A size of 0 is
+// invisible on a sign; the clamp is what stops that, and the report is what stops it
+// being silent.
+$aTiny = ['font_size' => 0] + $aRaw;
+checkSame(8, BrandStyles::readable($aTiny)['font_size'], 'a size of zero is clamped to the smallest that shows');
+checkSame('Size', BrandStyles::unrenderable($aTiny)[0]['label'], 'and the clamp is reported, not swallowed');
+
+// The engines disagree about how a DECIMAL(4,2) comes back — MySQL says '1.20' and
+// SQLite says 1.2 — and a difference of engine is not a fault to put in front of an
+// admin. Compared as numbers for exactly that reason.
+checkSame([], BrandStyles::unrenderable(['line_height' => '1.20'] + $aRaw),
+          'a line height stored as 1.20 is not a finding');
+checkSame([], BrandStyles::unrenderable(['line_height' => 1.2] + $aRaw),
+          'and neither is the same one stored as 1.2');
+checkSame([], BrandStyles::unrenderable(['font_size' => '30'] + $aRaw),
+          'nor a size the driver handed back as a string');
+
+// Absent is not wrong: a column added after a row was written has no value here, and
+// the documented default is the right answer with nothing for anybody to go and fix.
+checkSame([], BrandStyles::unrenderable(['block_type' => 'price']),
+          'a row missing every field is not six findings');
+checkSame('Arial', BrandStyles::readable([])['font_family'], 'it reads as the app\'s documented values');
+checkSame(16, BrandStyles::readable([])['font_size'],        'including the size, rather than the clamp');
+
+// The reader and the writer have to agree, or a page draws one thing and the next
+// save stores another — which is worse than either alone, because nothing says so.
+foreach ([['font_family', 'Arial; }'], ['font_color', 'puce'], ['font_size', 900],
+          ['font_weight', 'heavy'], ['font_style', 'oblique'], ['line_height', 40]] as $aPair) {
+    $aRow = [$aPair[0] => $aPair[1]] + $aRaw;
+    $aSaveStore = new BrandStyles(newTestDb());
+    $aSaveStore->save(['price' => $aRow]);
+    $aDrawn = BrandStyles::readable($aRow)[$aPair[0]];
+    $aKept  = $aSaveStore->all()['price'][$aPair[0]];
+    // Numerically for the two numeric columns, by the same rule unrenderable() uses:
+    // readable() answers what CSS takes — a float — and the column answers what a
+    // DECIMAL(4,2) round-trips to, which is '5.00' on MySQL and 5 on SQLite. The
+    // property is that they are the same value, not that they are spelled alike.
+    $aAgree = in_array($aPair[0], ['font_size', 'line_height'], true)
+            ? (floatval($aDrawn) === floatval($aKept))
+            : ($aDrawn . '' === $aKept . '');
+    checkSame(true, $aAgree,
+              'what the form draws for ' . $aPair[0] . ' is what a save would store');
+}
+
+// And `all()` stays raw, because ColorAudit reads it. A source that had already been
+// tidied would report nothing and would be believed.
+$aRawPdo = newTestDb();
+$aRawPdo->prepare("UPDATE block_styles SET font_color = 'gold' WHERE block_type = 'price'")->execute();
+checkSame('gold', (new BrandStyles($aRawPdo))->all()['price']['font_color'],
+          'all() hands back what is stored, not what renders');
+
+// And the page that draws them uses the reader, not the row. Cross-file, because the
+// defect was never in this module — it was in a caller trusting a promise the module
+// had only made about values it wrote itself.
+checkMentions($panel, 'BrandStyles::readable($stored)',
+              'the Brand Standards preview draws the row through the reader');
+checkSame(0, preg_match('/\$\w+\[.font_family.\]\s*\?\?/', $panel),
+          'and no longer reaches into the row for a field with a default beside it');
+checkMentions($panel, 'BrandStyles::unrenderable(',
+              'and works out which stored values it could not use');
+// Computing that list and not drawing it is the same page as before with more code in
+// it, so the check is on the render rather than on the loop above it.
+checkMentions($panel, 'if ($styleBad):',
+              'and puts them on the tab, which is the whole point of working them out');
+
+// ─────────────────────────────────────────────────────────────
 // Everything above this line runs on both engines. What follows can only be asked
 // of a real MySQL database, and is skipped entirely on the SQLite default — which
 // is why reportChecks() below is given two numbers.
@@ -4686,4 +4792,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Two numbers because the MySQL run adds a section the SQLite one cannot ask for.
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
-reportChecks(testIsMysql() ? 1271 : 1248);
+reportChecks(testIsMysql() ? 1303 : 1280);
