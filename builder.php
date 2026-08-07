@@ -1211,7 +1211,7 @@ function loadLayout() {
                 } else {
                     canvas.style.backgroundImage = "url('"+s.bg_val+"')";
                 }
-                IS_ADMIN && toggleBgInputs();
+                toggleBgInputs();   // a no-op unless this page has the controls
             }
 
             var elements = data.elements || [];
@@ -1234,25 +1234,33 @@ function loadLayout() {
 // ============================================================
 // BACKGROUND (admin)
 // ============================================================
-// The background controls are an admin's, and a read-only Builder has none of them
-// in the page at all — hence READ_ONLY as well as IS_ADMIN. loadLayout() calls in
-// here for both, so these are the guards that keep a read-only admin's page from
-// reaching for a control that was never rendered.
+// The background controls are an admin's, and only while the page can edit: the
+// markup emits them on `$isAdmin && !$readOnly` and on nothing else. These three
+// used to say that back in JavaScript — `if (!IS_ADMIN || READ_ONLY) return` — and
+// two of them are called by loadLayout(), so that copy of the rule ran on every
+// page load. It was right, and being right is not the point: the same shape one
+// storey up is what threw on every canvas click for a read-only basic account.
+// So each one asks for its control and gives up if it is not there. The markup
+// decides who gets a background picker; nothing here needs to know.
 function toggleBgInputs() {
-    if (!IS_ADMIN || READ_ONLY) return;
-    var t = document.getElementById('bg-type').value;
-    document.getElementById('bg-color').style.display = t==='color' ? 'inline-block' : 'none';
-    document.getElementById('bg-file').style.display  = t==='image' ? 'inline-block' : 'none';
+    var type  = document.getElementById('bg-type');
+    var color = document.getElementById('bg-color');
+    var file  = document.getElementById('bg-file');
+    if (!type || !color || !file) return;
+    color.style.display = type.value==='color' ? 'inline-block' : 'none';
+    file.style.display  = type.value==='image' ? 'inline-block' : 'none';
 }
 function applyBg() {
-    if (!IS_ADMIN || READ_ONLY) return;
+    var color = document.getElementById('bg-color');
+    if (!color) return;
     var canvas = document.getElementById('builder-canvas');
-    canvas.style.backgroundColor = document.getElementById('bg-color').value;
+    canvas.style.backgroundColor = color.value;
     canvas.style.backgroundImage = 'none';
 }
 function applyBgFile() {
-    if (!IS_ADMIN || READ_ONLY) return;
-    var f = document.getElementById('bg-file').files[0];
+    var input = document.getElementById('bg-file');
+    if (!input) return;
+    var f = input.files[0];
     if (!f) return;
     var r = new FileReader();
     r.onload = function(e){ document.getElementById('builder-canvas').style.backgroundImage = "url('"+e.target.result+"')"; };

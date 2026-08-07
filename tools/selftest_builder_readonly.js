@@ -282,6 +282,39 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     });
     await survives('the asset library loads with no dropdown to put it in', () => loadAssets());
 
+    // The other half of that page load, and the one with a control in it. loadLayout()
+    // calls toggleBgInputs() and, for a colour background, applyBg() — both of which
+    // reach for the background picker, which is an admin's and only while the page can
+    // edit. They used to be guarded by restating that rule in JavaScript; they now ask
+    // whether the control is there. Nothing exercised either until this, so the seam
+    // was converted and then left unheld — which is how the first one broke.
+    // `status: 'success'` matters — without it loadLayout() takes its early return and
+    // never reaches the background at all, which is a test that passes while running
+    // none of the code it names. And the promise is returned rather than dropped: a
+    // throw inside a `.then` is an unhandled rejection, not something survives() can
+    // see, so dropping it would swallow exactly the failure being tested for.
+    function layoutReplying(display) {
+        global.fetch = () => Promise.resolve({
+            json: () => Promise.resolve({ status: 'success', display: display, elements: [],
+                                          block_styles: {}, layout_stamp: 'stamp' })
+        });
+        return loadLayout().then(settle);
+    }
+    await survives('a layout with a colour background loads with no picker to set',
+                   () => layoutReplying({ bg_type: 'color', bg_val: '#123456' }));
+    await survives('and one with an image background does too',
+                   () => layoutReplying({ bg_type: 'image', bg_val: 'bg.png' }));
+    await survives('and choosing a background file finds no file input to read',
+                   () => applyBgFile());
+
+    // The rest of DOMContentLoaded. Both of these are safe by inspection — they
+    // touch only ids the page always emits — but inspection is what this suite
+    // exists to stop relying on, and they are the two calls the banner reveal sits
+    // in front of: a throw up there costs the zoom fit and the lock watch, and a
+    // read-only page with no lock watch never learns it has lost the sign at all.
+    await survives('the zoom fit measures a frame with no controls around it', () => zoomToFit());
+    await survives('and the lock watch starts, which is how this page hears anything', () => setupLockWatch());
+
     section('And what can no longer be reached');
 
     // Not reachable from the page — nothing on a read-only page can select a
@@ -289,6 +322,21 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     // markup and these are the functions a future control would call.
     const block = stubEl('b');
     block.dataset.type = 'text';
+
+    // Why the ~90 unguarded derefs inside the inspector and the two modals are
+    // allowed to stay unguarded. Every one sits behind `if (!activeBlock) return`,
+    // and on this page activeBlock is permanently null — so they are unreachable
+    // rather than safe. §4j calls that a property of today's call graph and not a
+    // rule, which is fair, and these two checks are what make it a rule: the only
+    // assignment that can make activeBlock non-null refuses on a read-only page,
+    // and there is still only one such assignment. A second one appearing is the
+    // change that would quietly put all ~90 back in reach.
+    await survives('selecting a block is refused rather than half-done', () => selectBlock(block));
+    check(activeBlock === null, 'so activeBlock stays null and the inspector derefs stay unreachable');
+    const assigns = js.match(/activeBlock\s*=(?!=)\s*[A-Za-z_$][\w$]*/g) || [];
+    check(assigns.filter(function (a) { return !/=\s*null$/.test(a); }).length === 1,
+          'and activeBlock still has exactly one assignment that can make it non-null');
+
     await survives('showing an inspector that is not there does nothing', () => showInspector(block));
     await survives('multi-select does not reach for it either',           () => toggleMultiSel(stubEl('b2')));
     multiSel.length = 0;   // undo the block the line above pushed in
@@ -362,7 +410,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 30;
+    const expected = 38;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

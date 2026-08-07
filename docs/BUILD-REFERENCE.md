@@ -901,6 +901,24 @@ than around it:
 - **`uploadSlideImage()` gets an explicit `READ_ONLY` guard**, because it is the
   one handler that never needed a selected block, and "its modal is not in the
   page" is the argument this section exists to stop relying on.
+- **The background controls were the last place the rule was written twice.**
+  `toggleBgInputs()`, `applyBg()` and `applyBgFile()` guarded with
+  `if (!IS_ADMIN || READ_ONLY) return` against markup emitted on
+  `$isAdmin && !$readOnly`, and `loadLayout()` calls the first two on every page
+  load. That copy was correct in all four role/lock combinations — each was
+  checked — and correctness is not what was wrong with it: it is the same shape,
+  one storey down, as the banner test that threw. All three now ask for their
+  control and give up if it is not there, and the `IS_ADMIN &&` at the call site
+  went with them.
+- **What is *not* guarded, and why.** Roughly ninety derefs inside the inspector
+  and the two modals stay unguarded. Every one sits behind `if (!activeBlock)
+  return`, and `activeBlock` cannot be set here: `selectBlock()` is the only
+  assignment that can make it non-null and it returns on `READ_ONLY`. That is the
+  call-graph property this section warned about rather than a rule — so it is now
+  a rule. The suite asserts both halves: that `selectBlock()` refuses and leaves
+  `activeBlock` null, and that there is still exactly **one** assignment able to
+  make it non-null, since a second one appearing is the change that would put all
+  ninety back in reach.
 
 What did *not* change: `CSRF_TOKEN` still ships, because a read-only admin can take
 the lock over and that POST needs it, and the server-side refusals are untouched.
@@ -912,10 +930,24 @@ rather than merely done: it strips the PHP, evaluates `builder.php`'s own inline
 JavaScript with `READ_ONLY = true`, and stubs a DOM holding **only** the ids that
 page emits, so any lookup of a removed control throws and a throw is a failure. It
 also walks the file's `<?php if (!$readOnly):` blocks to assert the four regions
-really are inside one. Thirty checks, verified against five mutations: shipping
-the inspector again fails 3, dropping `deselectAll`'s guard fails 1, restoring the
-role-only test in `setSectionBanner()` fails 2, restoring it in
-`showSectionBanner()` fails 1, and dropping `loadAssets`'s guard fails 1.
+really are inside one. Thirty-eight checks, and it now runs the page load itself —
+`loadLayout()` for both background types, then the zoom fit and the lock watch —
+rather than only the click paths. That matters more than coverage arithmetic: the
+three background seams above were converted and then left unheld, and the first
+mutation run proved it by changing them back with the suite still green.
+
+Verified against nine mutations: shipping the inspector again fails 3, dropping
+`deselectAll`'s guard fails 1, restoring the role-only test in
+`setSectionBanner()` fails 2 and in `showSectionBanner()` fails 1, dropping
+`loadAssets`'s guard fails 1, dropping the null guard in `applyBg()` fails 1, in
+`toggleBgInputs()` fails 2 and in `applyBgFile()` fails 1, letting `selectBlock()`
+run on a read-only page fails 1, adding a second `activeBlock` assignment fails 1,
+and pointing `zoomToFit()` at a control that is not there fails 1.
+
+One deliberate non-failure: restoring `IS_ADMIN &&` in front of the
+`toggleBgInputs()` call leaves the suite green, and should. That call was safe
+before and after — short-circuiting is not a bug — so it was tidied rather than
+fixed, and a check that failed on it would be pinning a preference.
 
 **That stub DOM is now checked against the page rather than trusted.** The list of
 ids it answers to was hand-written, and it was the one part of this suite nothing
