@@ -104,10 +104,96 @@ check(emittedOnlyWhenEditable('<div id="table-modal-overlay">'),    'so is the t
 // can happen to somebody who is only watching. A read-only page has the access bar
 // and the banner above it, and nothing else the lock uses.
 const PRESENT = new Set([
-    'lock-banner', 'lock-access-bar', 'lock-access-text', 'lock-holder',
+    'lock-banner', 'lock-access-bar', 'lock-access-text',
     'control-bar', 'zoom-readout', 'editor-frame', 'canvas-sizer', 'builder-canvas',
     'toast', 'resize-label', 'display-off-banner', 'top-nav'
 ]);
+
+// ---- ...and the list above is checked against the page, not trusted ----------
+
+// PRESENT is the whole basis of this suite, and it is the one part of it nothing
+// was checking. A name listed here resolves to a stub; a name missing from it
+// resolves to null, exactly as the browser would. So a name in this list that the
+// page does not actually emit is worse than useless — it hands back an element
+// where a browser hands back null, and the null-deref this file exists to catch
+// becomes invisible to it.
+//
+// That had already happened: `lock-holder` sat in this list and never was an id at
+// all. It is LOCK_HOLDER, a variable. Harmless, because nothing looked it up — but
+// it got there because a hand-written mirror of the markup had nothing holding it
+// to the markup, and the next such entry need not be harmless.
+
+/**
+ * Where each id sits in the file's PHP conditionals — first occurrence wins.
+ *
+ * Script blocks are stripped first, so an id in a JavaScript template string is not
+ * mistaken for one the page emits. Safe to strip: no `<?php if:` opens or closes
+ * inside a script block, so the conditional stack is untouched by their removal.
+ */
+function emitConditions() {
+    const markup = php.replace(/<script\b(?![^>]*\bsrc=)[^>]*>[\s\S]*?<\/script>/gi, '');
+    const stack = [], seen = Object.create(null);
+    const re = /<\?php\s+(if\s*\((.*?)\)\s*:|else\s*:|elseif\s*\((.*?)\)\s*:|endif;)\s*\?>|id="([a-zA-Z0-9_-]+)"/g;
+    let m;
+    while ((m = re.exec(markup))) {
+        if (m[4])                           { if (!(m[4] in seen)) { seen[m[4]] = stack.slice(); } }
+        else if (m[1].startsWith('if'))     { stack.push(m[2].trim()); }
+        else if (m[1].startsWith('elseif')) { if (stack.length) { stack[stack.length - 1] = '__unknown'; } }
+        else if (m[1].startsWith('else'))   { if (stack.length) { stack[stack.length - 1] = '!(' + stack[stack.length - 1] + ')'; } }
+        else if (m[1].startsWith('endif'))  { stack.pop(); }
+    }
+    return seen;
+}
+
+/**
+ * Can the markup emit this node at all for a basic account on a read-only page?
+ *
+ * `$readOnly` and `$isAdmin` are the two this suite fixes. Anything else in a
+ * condition — `!$display->isActive()` is the real case — is a runtime fact it has
+ * no opinion about, so it is tried both ways and a single "yes" is enough. The
+ * question being asked is whether the page *can* emit the node, not whether it
+ * always does: only a node it can never emit makes a PRESENT entry a lie.
+ */
+function canEmitForReadOnlyBasic(conds) {
+    let e = conds.map(function (c) { return '(' + c + ')'; }).join(' && ') || 'true';
+    e = e.replace(/\$readOnly/g, 'true').replace(/\$isAdmin/g, 'false');
+
+    let n = 0;
+    e = e.replace(/\$[A-Za-z_][A-Za-z0-9_]*(?:->[A-Za-z_][A-Za-z0-9_]*\([^)]*\))?|__unknown/g,
+                  function () { return 'U' + (n++) + '_'; });
+    if (n > 8) { return true; }                     // too many to enumerate; do not fail on it
+
+    for (let mask = 0; mask < (1 << n); mask++) {
+        let candidate = e;
+        for (let i = 0; i < n; i++) {
+            candidate = candidate.split('U' + i + '_').join((mask & (1 << i)) ? 'true' : 'false');
+        }
+        try { if (eval(candidate)) { return true; } }   // eslint-disable-line no-eval
+        catch (err) { return true; }                    // unparseable: assume it can appear
+    }
+    return false;
+}
+
+section('The stub DOM is what the page emits, not a wish list');
+
+const EMITS = emitConditions();
+const liars = [];
+PRESENT.forEach(function (id) {
+    if (!(id in EMITS)) {
+        liars.push(id + ' — never an id in builder.php');
+    } else if (!canEmitForReadOnlyBasic(EMITS[id])) {
+        liars.push(id + ' — emitted only when ' + EMITS[id].join(' && '));
+    }
+});
+check(liars.length === 0,
+      'every id the stub answers to is one this page really emits'
+      + (liars.length ? ' — ' + liars.join('; ') : ''));
+
+// The control, and the reason the check above is not hollow: a walker that judged
+// everything present would pass it while proving nothing. #inspector is the node
+// this whole file was written about, and it must come back absent.
+check(!canEmitForReadOnlyBasic(EMITS['inspector'] || []),
+      'and the walker can still tell an editable-only node from an emitted one');
 
 function stubEl(id) {
     return {
@@ -276,7 +362,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 28;
+    const expected = 30;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

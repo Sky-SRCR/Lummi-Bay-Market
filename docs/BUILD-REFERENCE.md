@@ -912,10 +912,32 @@ rather than merely done: it strips the PHP, evaluates `builder.php`'s own inline
 JavaScript with `READ_ONLY = true`, and stubs a DOM holding **only** the ids that
 page emits, so any lookup of a removed control throws and a throw is a failure. It
 also walks the file's `<?php if (!$readOnly):` blocks to assert the four regions
-really are inside one. Twenty-eight checks, verified against five mutations:
-shipping the inspector again fails 3, dropping `deselectAll`'s guard fails 1,
-restoring the role-only test in `setSectionBanner()` fails 2, restoring it in
+really are inside one. Thirty checks, verified against five mutations: shipping
+the inspector again fails 3, dropping `deselectAll`'s guard fails 1, restoring the
+role-only test in `setSectionBanner()` fails 2, restoring it in
 `showSectionBanner()` fails 1, and dropping `loadAssets`'s guard fails 1.
+
+**That stub DOM is now checked against the page rather than trusted.** The list of
+ids it answers to was hand-written, and it was the one part of this suite nothing
+held to the file — which matters more than it sounds, because the failure is
+silent and inverted: a name listed there hands back an element where a browser
+hands back null, so the very null-deref this suite exists to catch stops being
+visible to it. It had already drifted. `lock-holder` was in the list and was never
+an id at all — it is `LOCK_HOLDER`, a JavaScript variable. Nothing looked it up, so
+nothing broke; but nothing was stopping the next entry either.
+
+So the same conditional walk that proves the four regions are editable-only now
+also asks, for every id in that list, whether the markup can emit it at all when
+`$readOnly` is true and `$isAdmin` is false. Conditions it cannot decide —
+`!$display->isActive()` is the real one — are tried both ways and a single "yes" is
+enough, because the question is whether the page *can* emit the node, not whether
+it always does. Two checks, and the second is a control: it asserts the walker
+still judges `#inspector` absent, so a walker that had degenerated into answering
+"present" to everything fails rather than passing while proving nothing. Verified
+against four mutations: restoring `lock-holder` fails 1, adding `inspector` fails 2
+(the list check, and then `showInspector()` really does throw — which is the hazard
+demonstrating itself), adding `bg-type` fails 1, and making the walker always
+answer "present" fails 1.
 
 ### 4k. Two things this repo believed without ever looking
 
