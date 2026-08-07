@@ -133,10 +133,20 @@ anything, they hold every Display by role.
 
 ## 5. Deployment facts a new session should know
 
+- **An upload is not a deploy: [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) lists what
+  to leave alone.** The repo and the server hold different files. `branding_config.php`
+  is generated on the server and the repo's copy is a stale default; `setup.php` was
+  deleted from the server and re-uploading restores the first-admin form; `uploads/` and
+  the log folder exist only on the server and are in no backup. Uploading the tree over
+  the top reverts the first, restores the second, and — with a mirroring client — deletes
+  the third, all silently. That file also has the four checks to run afterwards. It
+  applies to **every** upload, not just the multi-display one.
 - `db_connect.php` expects `../../private/db_credentials.php` (outside webroot)
   defining `DB_HOST/DB_NAME/DB_USER/DB_PASS`. Not in repo by design.
 - The live `branding_config.php` still uses the default `SITE_NAME`
-  ("Store Display System"), not "Lummi Bay Market".
+  ("Store Display System"), not "Lummi Bay Market". Which is also why overwriting it
+  costs almost nothing *today* — the list above is what keeps that true once somebody
+  has used the Branding page.
 - `viewer.php` requires **no login**, so any screen on the network can display it.
 - **Every Viewer URL names its Display** (ADR-0003):
   `…/viewer.php?display=drive-thru`. A bare `viewer.php` shows a "no display
@@ -290,9 +300,11 @@ staleness check, no version history), 0007 (one editor per Display).
 - **Deploy it.** The only open item of substance. `docs/roadmap-multi-display.md`
   ends with a 22-step *"Before this reaches the sign"* checklist, in order, for one
   visit: back up, rehearse on a copy, upload (including `lib/` and `tools/` with
-  their `.htaccess`), sign in once to converge the schema, check the sign at its new
-  URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
-  account, two browsers, and one unavoidable 15-minute wait.
+  their `.htaccess`, and *not* including what
+  [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) lists), sign in once to converge the
+  schema, check the sign at its new URL, then re-point the TV and the SmartSign2Go
+  widget. Steps 15–21 need a second account, two browsers, and one unavoidable
+  15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
   `php -l`, 826 self-test checks against SQLite, 80 node checks over `builder.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`

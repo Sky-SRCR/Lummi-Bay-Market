@@ -100,6 +100,15 @@ as soon as any user exists. **Delete `setup.php` from the server after setup.**
 Store branding is edited under **Admin → Branding**
 (`admin_panel.php?tab=branding`), which regenerates `branding_config.php`.
 
+### 5. Updating an install that already exists
+
+Read [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) first. Both of the steps above
+leave the server holding files the repo cannot supply: `setup.php` is *gone* from the
+server and `branding_config.php` was rewritten there, so uploading the tree over the
+top restores the first-admin form and reverts the branding — including the address
+reset codes and alerts are sent from. `uploads/` and the log folder exist only on the
+server. That file lists what to skip and what to check afterwards.
+
 ## File map
 
 Page scripts live at the repo root (flat, relative includes — keep them there)
