@@ -36,6 +36,7 @@
 
 require_once __DIR__ . '/upload_limits.php';
 require_once __DIR__ . '/schema.php';
+require_once __DIR__ . '/request_scheme.php';
 
 class ServerReport
 {
@@ -49,9 +50,19 @@ class ServerReport
     private $pdo;
     private $facts = null;
 
-    public function __construct(PDO $pdo)
+    /**
+     * The request being reported on. Taken as a parameter, defaulting to the real
+     * one, because the session cookie's `Secure` flag is now a property of the
+     * request rather than of the machine — and a report that can only describe the
+     * request it happens to be running inside cannot be checked against the other
+     * one.
+     */
+    private $server;
+
+    public function __construct(PDO $pdo, array $server = null)
     {
-        $this->pdo = $pdo;
+        $this->pdo    = $pdo;
+        $this->server = ($server === null) ? $_SERVER : $server;
     }
 
     /**
@@ -96,8 +107,7 @@ class ServerReport
             . ', SameSite ' . (isset($cookie['samesite']) && $cookie['samesite'] !== ''
                                  ? $cookie['samesite']
                                  : $this->sameSiteFromPath($cookie)),
-            (!empty($cookie['httponly']) && !empty($cookie['secure'])) ? ''
-                : 'One of the protections on the sign-in cookie did not apply.'];
+            $this->cookieNote($cookie)];
 
         // The effective number, not the three ini values it comes from: the
         // arithmetic belongs to lib/upload_limits.php, which is also what the
@@ -129,6 +139,7 @@ class ServerReport
             ['users',           'failed_attempts', 'Login lockout cannot count failures.'],
             ['users',           'last_failed_at',  'Login lockout cannot age failures out.'],
             ['users',           'locked_until',    'Login lockout cannot hold anyone out.'],
+            ['users',           'closed_at',       'No account can be closed. A departing employee can only be suspended, and their id can still come back into service.'],
             ['password_resets', 'attempts',        'A reset code gets unlimited guesses.'],
             ['assets',          'auto_pooled',     'The Library tidy-up falls back to the "Auto: " label prefix.'],
             ['displays',        'lock_taken_at',   'A read-only Builder cannot say since when.'],
@@ -206,6 +217,34 @@ class ServerReport
     private function yesNo($ok)
     {
         return $ok ? 'yes' : 'NO';
+    }
+
+    /**
+     * What to say about the sign-in cookie, if anything.
+     *
+     * `Secure` off is not a fault by itself, and reporting it as one is how a
+     * true row gets ignored: on a page reached over plain HTTP the flag is off
+     * *because* setting it would throw the cookie away and turn sign-in into a
+     * blank form nobody could get past (lib/request_scheme.php). The note that
+     * belongs there is the one that says how to get the protection — reach the
+     * site over https — rather than one that reads like a broken installation.
+     */
+    private function cookieNote(array $cookie)
+    {
+        if (empty($cookie['httponly'])) {
+            return 'HttpOnly did not apply, so a script on the page could read the sign-in cookie.';
+        }
+        if (!RequestScheme::isSecure($this->server)) {
+            return 'You opened this page over plain HTTP, so the cookie is deliberately not '
+                 . 'marked Secure — marking it on a plain-HTTP request hands the browser a '
+                 . 'cookie it throws away, and sign-in becomes a blank form with no error in '
+                 . 'it. Reach the site over https:// and this row reads Secure yes.';
+        }
+        if (empty($cookie['secure'])) {
+            return 'This page came over HTTPS and the cookie is not marked Secure, so it can '
+                 . 'be sent again over a plain-HTTP link to this site.';
+        }
+        return '';
     }
 
     /**

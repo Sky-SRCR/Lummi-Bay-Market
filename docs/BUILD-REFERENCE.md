@@ -62,10 +62,12 @@ Design rules, applied to every module added by this build:
 | `upload_limits.php` | `UploadLimit::bytes` / `describe` / `describeBytes` / `bodyWasDropped` / `smallestOf` / `toBytes` | How big a file can actually reach this server — the smallest of the app's 50 MB ceiling and PHP's `upload_max_filesize` and `post_max_size`, not the app's opinion. And the silent case: exceeding `post_max_size` is not an error PHP reports, it abandons the body, so a 40 MB video was answered *"Security token mismatch. Please reload the page."* `smallestOf()` takes the ini values as an argument because both settings are PHP_INI_PERDIR and the cases worth testing are unreachable otherwise. Depends on nothing. |
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `verify` / `consume` / `redeem` / `discard`, and `PasswordResetCompletion(PDO, ResetTokenStore, AccountStore)` → `ResetOutcome` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. It is now the composition of two halves that have to fall on opposite sides of a transaction boundary: `verify()` spends the guess and must never be rolled back, `consume()` spends the code and must be. `PasswordResetCompletion` is the use case (invariant 22) — code consumed, password changed, lockout released, or nothing at all — and `ResetOutcome` has three answers rather than two, because "refused" and "the database would not take it" have to look different to the visitor and identical to a stranger probing for usernames. |
-| `accounts.php` | `AccountStore`, `AccountAdmin` — `close()` / `edit()` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. And `edit()`, the other three-table change: the role, the active flag and the email in one write, then the grants a **promotion** makes meaningless (an admin holds every Display by role, so the rows would sit there displayed nowhere and removable by nothing) and the locks a **demotion** puts out of reach (no grants left, so the account cannot even release what it is holding). Not a gatekeeper for all of `users`: creating an account and setting somebody's password from the panel are still written there, and sign-in by `login.php`. What lives here is closure and the reads that depend on it, so the five files with an opinion about a user row cannot disagree about what a closed one means — plus the three `users` writes that have to happen inside somebody else's transaction, `setPassword()`, `clearLoginLockout()` and `updateProfile()`, because a page cannot hold a transaction over SQL it writes itself. Those three are the only methods in the class that let an exception out, deliberately: everything else answers a question, and a question is better answered "no" than not at all, but these are halves of a change that must not half-happen. `clearLoginLockout()` answers true when the three ADR-0001 columns are absent, for the same reason `isClosed()` answers false: a database without them has never locked anybody out. |
-| `server_report.php` | `ServerReport(PDO)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. |
+| `accounts.php` | `AccountStore`, `AccountAdmin` — `close()` / `edit()` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. And `edit()`, the other three-table change: the role, the active flag and the email in one write, then the grants a **promotion** makes meaningless (an admin holds every Display by role, so the rows would sit there displayed nowhere and removable by nothing) and the locks a **demotion** puts out of reach (no grants left, so the account cannot even release what it is holding). Not a gatekeeper for all of `users`: creating an account and setting somebody's password from the panel are still written there. What lives here is closure and the reads that depend on it, so the files with an opinion about a user row cannot disagree about what a closed one means — plus the three `users` writes that have to happen inside somebody else's transaction, `setPassword()`, `clearLoginLockout()` and `updateProfile()`, because a page cannot hold a transaction over SQL it writes itself — plus sign-in's two, `findForSignIn()` and `registerFailedLogin()`, which `login.php` used to issue itself and which had to move before `LoginAttempt` could be a module with no database in it. Those three are the only methods in the class that let an exception out, deliberately: everything else answers a question, and a question is better answered "no" than not at all, but these are halves of a change that must not half-happen. `clearLoginLockout()` answers true when the three ADR-0001 columns are absent, for the same reason `isClosed()` answers false: a database without them has never locked anybody out. It adds no schema of its own: `closed_at` used to arrive from an `ensureSchema()` here that the admin panel called on every load, and is a gated plan entry as of §4v — which makes the *order* on that page load-bearing, since the store caches whether the column exists and is built after convergence, not before. |
+| `server_report.php` | `ServerReport(PDO, server?)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. It takes the request as an argument because the session cookie's `Secure` flag is now decided per request (§4u), and a report that could only describe the request it is running inside could not be checked against the other one. |
 | `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. `firstInWindow()` and `stateFile()` are public for the same reason `report()` needs them: a repeated *attempt to fix* something needs the same restraint as a repeated report of it, and this module is where the state directory is decided. Depends on nothing: no database, no session, no config. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
+| `login_attempt.php` | `LoginAttempt(AccountStore)` — `attempt(username, password, now?)` → `LoginOutcome` | One sign-in, decided: which of six answers it is, and the sentence that goes with each. The rule it exists to make checkable is an **ordering** (ADR-0008, invariant 23) — closed, suspended and locked-out are settled before `password_verify()` runs, so the sentence never varies with the password and a guesser on a suspended account is not told when they have got it right. It also carries ADR-0001's two numbers and the counting they drive, in UTC (§4v): a `locked_until` further out than one window was not written by this code and is not honoured, which is both true of the policy and what stops a row left in the old local-time format from locking somebody out for a shift. **It holds no PDO**: every statement is `AccountStore`'s, which is what stops the file that decides what to say from growing a query that says something else, and leaves the thing under test as the decision rather than a database. `login.php` is the adapter — start a session, or print the sentence. |
+| `request_scheme.php` | `RequestScheme::isSecure(array $server): bool` | Whether the *browser's* leg of a request is HTTPS, asked for exactly one reason: whether the session cookie may carry `Secure`. A flat `true` there is not a hardening on an `http://` deployment, it is a correct password landing back on a blank login form for ever, because the browser discards the cookie and nothing anywhere says so. Believes the forwarded proxy headers, deliberately — refusing them costs a real Cloudflare-fronted deploy its `Secure` flag, while believing a forged one costs only the forger their own sign-in. Says false when the request says nothing. Depends on nothing, reads no superglobal. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 
@@ -340,6 +342,29 @@ through the app again:
     one can fail after the first has landed, and the message printed then is decided
     by which line threw rather than by what is now true. With no undo anywhere,
     somebody acting on that message is the whole problem.
+23. **The front door answers every question it can before it reads the password, and
+    never hands the browser a cookie the browser will throw away.** Two halves of one
+    page, and both defects were invisible in what the screen said. **The ordering:**
+    closed, suspended and locked-out are properties of the *account*, so `LoginAttempt`
+    settles all three before `password_verify()` runs — otherwise the sentence a person
+    reads is a function of the password, and a guesser working a suspended account is told
+    when they have got it right (ADR-0008). Closed is asked before suspended because
+    closing clears `is_active` as well; both are asked before the lockout because "wait 15
+    minutes" has to be advice that comes true. Those accounts also write no failed attempt,
+    because a counter that moves for one password and not another is the same oracle in
+    another form. Anything added to this path answers before the password or it is the
+    defect again, and it will look like tidying. **The cookie:** `Secure` is set from
+    `RequestScheme::isSecure()`, per request, never flat — a browser discards a `Secure`
+    cookie that arrived over plain HTTP, so on an `http://` deployment the flat version was
+    a correct password landing back on a blank login form for ever, with nothing logged and
+    nothing to read. A protection that cannot apply is not applied; it is reported instead,
+    on Settings → This Server, in words that say which case it is. **And two things the
+    page must not do:** it runs no DDL — the three lockout columns are gated plan entries
+    like everything else, because `ensureLockoutColumns()` firing three `ALTER`s per POST
+    made the login form the one piece of DDL in the app a bot could reach without an
+    account; and it verifies a CSRF token *before* looking at the account, **softly**,
+    because a hard 403 on the front door answers the commonest cause — a browser not
+    keeping the session cookie — with the word "security" and no way forward.
 
 ---
 
@@ -1920,6 +1945,221 @@ Left standing, and named rather than skipped:
   than by name. A future state that shuts an account out *without* clearing `is_active`
   would strand locks again, and the fix would belong in `LockState`.
 
+### 4u. Two ways the front door lied
+
+Both of these are on `login.php`, both are one line long in the diff, and neither is
+visible in the words on the screen. That is what they have in common: the sentence a
+person reads was right in every case, and the defect was in *when* it was chosen and
+*whether it could ever arrive*.
+
+**The password oracle.** The page decided in this order — locked out, wrong password,
+closed, suspended, in — with three of those branches below `password_verify()`. So a
+guesser working through passwords on a suspended account got "Incorrect username or
+password" for every wrong one and a *different sentence* for the right one. The app
+announced the correct password on exactly the accounts where a password was supposed to
+have stopped being worth anything, and it announced it to the one party who wanted to
+know. Passwords are reused; a guess confirmed against a retired clerk's account is a
+guess to take to their email.
+
+The fix is an ordering, not a wording: **every question that does not depend on the
+password is answered before the password is read**. Closed, suspended and locked-out are
+properties of the account, so they are settled first and the sentence they produce is
+then the same whatever was typed. The order *within* that group is decided too — closed
+before suspended, because closing clears `is_active` and the other way round sends a
+retired employee to ask a manager for the one thing this app will not do; both before
+locked out, because "wait 15 minutes" has to be advice that comes true. ADR-0008 carries
+the alternatives, including the obvious one — a single generic sentence for everything —
+and why it was rejected: it leaves a closed account with no true information anywhere in
+the app, and the reset page silently does nothing for them.
+
+The cost is stated rather than hidden: someone who knows a username can now learn it is
+suspended or closed without knowing the password. ADR-0001 already accepted a weaker
+version of that trade, and what this leaks names accounts nobody can sign in to under any
+password.
+
+It also had a **side channel that a message rule alone would not have closed**. A
+suspended account used to accrue failed attempts, so with four failures already banked, a
+fifth guess that locked the account and a fifth that did not would have told the guesser
+the same thing the sentence no longer does. Closed and suspended accounts now write
+nothing at all — there is nothing to protect on an account that cannot be signed in to.
+
+**The invisible sign-in loop.** `auth.php` set `Secure` on the session cookie
+unconditionally. A browser silently discards a `Secure` cookie that arrives over plain
+HTTP, and PHP silently sets it anyway — so on any deployment reached over `http://`, and
+`.htaccess` forcing HTTPS is a *configuration* rather than a guarantee, sign-in did this:
+the password verified, the session was written, the redirect went to `builder.php`, the
+cookie was thrown away in transit, `builder.php` found no session, and the browser landed
+back on a clean, blank login form. A correct password, any number of times, with no error
+anywhere — nothing in a log, nothing to search for, and nothing the person could change
+that would help. The one class of failure this app cannot afford is the one where the
+thing that is wrong is invisible, and this is that failure on the page everything else is
+behind.
+
+`lib/request_scheme.php` answers one question — is the *browser's* leg of this request
+HTTPS — and the cookie flag follows it. Two things about it are deliberate:
+
+- **The forwarded headers are believed**, which is the opposite of the usual advice, and
+  the reasoning runs backwards from the usual case. Refusing them breaks a real
+  deployment: behind Cloudflare or any TLS-terminating front end the request reaches PHP
+  as plain HTTP, and a browser that *is* on HTTPS would be handed a cookie without the
+  flag it could have had. Believing a forged one costs the forger their own sign-in and
+  nobody else's, because these attributes are set on the response to the request that
+  carried the header — a per-request header cannot mark another person's cookie.
+- **An array that says nothing answers false.** The safe direction here is the one where
+  sign-in works and the cookie is unprotected, not the one where the cookie is perfect and
+  nobody can get in.
+
+And the one screen that would otherwise call the fix a fault had to be taught the
+difference. **Settings → This Server** used to print "One of the protections on the
+sign-in cookie did not apply" for any missing flag; on a plain-HTTP host that is now the
+correct configuration being reported as broken, which is how a true row gets ignored. It
+now says which case it is looking at and, for the plain-HTTP one, what to do about it —
+reach the site over https and the row reads yes.
+
+**Where the decision went.** `login.php` used to hold the ordering, a `SELECT`, a
+fallback `SELECT`, and two lockout `UPDATE`s. The statements moved to `AccountStore`
+(`findForSignIn`, `registerFailedLogin` — which is the function name auth.php's comments
+had been claiming existed for some time), and the decision moved to `LoginAttempt`, which
+**holds no PDO at all**. That is not tidiness: it is what makes "the refusal is decided
+before the password is read" a property that can be checked rather than one that is meant,
+because a file with no database handle cannot grow a query that quietly says something
+else. The page is left with the two things a page does — start a session, or print a
+sentence.
+
+**Fifty-seven checks**, and eleven deliberate mutations, all eleven killed (kill counts
+10, 8, 2, 4, 18, 2, 2, 6, 6, 2, 7). Four worth naming:
+
+- Restoring the original order — every state check back below `password_verify()` — kills
+  ten. The checks that catch it assert that the message is the **same** for a right and a
+  wrong password, not what the message says, so the sentences stay free to be reworded and
+  the ordering does not.
+- Asking suspended before closed kills eight. It is the mutation that looks like
+  alphabetical tidying and is the one place the order carries a meaning.
+- Letting a suspended account accrue failures again — the side channel rather than the
+  sentence — kills four, none of them a message check.
+- Reading the *last* hop of `X-Forwarded-Proto` instead of the first kills two. The list
+  describes legs behind the front door; only the first one is the leg the browser judges.
+
+Three things were left standing when the two halves above landed — the lockout's clock,
+the DDL the login page was firing, and the missing CSRF token. All three are done, in
+§4v, which is where the reasoning for each of them is.
+
+### 4v. The three §4u left standing
+
+Not a tidy-up. Each of these is the same shape as the two in §4u: something the page does
+that nobody can see it doing, and that only shows up as a person unable to sign in.
+
+**The lockout kept local time.** `date()` on the way in, a bare `strtotime()` on the way
+out. Self-consistent, and wrong for the reason the edit lock was wrong before §4t: local
+wall-clock is not monotonic. The autumn fall-back replays an hour, so a stamp written in
+the second pass sorts below one written in the first, and `strtotime()` resolves the
+repeated hour to its first occurrence — fifteen minutes of brute-force protection going
+quietly missing, once a year, on the night nobody is looking. Both stamps are UTC now,
+the way `claimLock` has been since §4t.
+
+The reason this was left standing the first time was the migration, and it is worth being
+exact about it rather than repeating the shape of the worry. **Every `locked_until` on the
+live database is in the old format**, and what happens when one is read as UTC depends on
+which side of UTC the server sits:
+
+- On UTC — which is what PHP falls back to when `date.timezone` is unset, and §4k says the
+  live value is still unknown — nothing happens at all. Old rows and new rows are the same
+  string.
+- **West** of UTC, which is where the store is, an old stamp reads seven or eight hours
+  *earlier*, so any lockout in force at the moment of the deploy is released. Bounded and
+  self-correcting: `locked_until` is never more than fifteen minutes ahead in the first
+  place, so every affected row is gone within fifteen minutes of the deploy, and the
+  failure counter beside it is untouched.
+- **East** of UTC an old stamp reads *later*, and that is the direction that matters: a
+  fifteen-minute lockout lasting the rest of the shift, on the one page there is no way
+  around.
+
+So the read carries a rule: **a `locked_until` further out than one window is not a
+lockout this code wrote, and is not honoured.** ADR-0001 says a lockout is one window long,
+so that is a true statement about the policy as well as a migration guard. It ignores
+rather than truncating, because "no later than one window from now" re-anchors on every
+request and therefore never arrives. And ignoring costs almost nothing: `failed_attempts`
+is left alone, so the one guess it hands back counts as the sixth and locks the account
+straight again, with a stamp in the format this code can read. The hole a legacy row opens
+is one guess wide and it closes itself.
+
+**The login page was running DDL.** `ensureLockoutColumns()` fired three unconditional
+`ALTER TABLE users` statements on every sign-in POST — before the password was checked,
+before anything knew whether the username existed. That made it the only piece of DDL in
+the app reachable **with no account at all**, and the traffic that reaches it most is
+precisely what ADR-0001 was written about: a credential-stuffing bot, issuing three no-op
+table alterations and taking three metadata locks on `users` per guess. Item #8 removed
+exactly this pattern everywhere else in the app a year of requests at a time; this one
+survived because ADR-0001 had put it there on purpose, for a reason (keep migrations off
+the public viewer poll) that gating satisfies just as well.
+
+They are three ordinary entries in `signageSchemaPlan()` now, with three ordinary gates,
+which means they run on an authenticated page or not at all. The consequence is stated in
+the code rather than discovered later: on a database where the columns have never landed,
+the **first** sign-in happens without a lockout — the state `findForSignIn()` was already
+written to answer for — and it lasts until the first authenticated page load, which is the
+Builder that same sign-in lands on. `ensureLockoutColumns()` is gone; nothing pre-auth
+converges anything any more.
+
+**The front door had no CSRF token.** Login CSRF is the one people wave away because "the
+attacker already knows the password" — but the password they know is *their own*. It signs
+a visitor into the attacker's account, silently, and everything that person then does —
+every price they type, every publish — happens in an account somebody else can read. On an
+app whose whole job is what a customer reads off a sign, that is a defacement channel with
+a login form in front of it. Every other POST in this app was covered.
+
+It refuses **softly**, and that is the whole design of it rather than a nicety.
+`verifyCsrf()` ends the request with a 403 and the word "security", and the commonest cause
+of a missing token on *this* page by a distance is a browser that is not keeping the
+session cookie — which has no token to send and never will. A hard failure there is §4u's
+invisible sign-in loop all over again with something frightening written on it. So the page
+keeps the username, says what is actually likely to be wrong ("this browser is not keeping
+cookies for this site, which sign-in needs"), and lets them try again. The gate is also
+ahead of the account lookup, so a request with no token cannot be used to run a stranger's
+failed-attempt counter up to the lockout.
+
+**Twenty-one checks**, and eight deliberate mutations, all eight killed (kill counts 4, 6,
+6, 19, 20, 2, 2, 2). Two worth naming:
+
+- Leaving the three lockout columns out of the plan kills nineteen — most of them the
+  existing convergence checks, because `convergedSchemaShape()` now lists them and a
+  converged database that is still issued DDL is the thing invariant 19 is.
+- Reading the stamps as local time again kills four, and *only* because the checks set the
+  process timezone to the store's own first. On a server that happens to be on UTC the
+  mutation is invisible, which is exactly how the defect survived this long.
+
+The four checks covering the CSRF token read `login.php`'s **source**, and that is a
+weaker instrument than everything else in the suite — it shows the lines are there, not
+that the page behaves. The behaviour they gate, `csrfOk()`, is checked properly; what
+cannot be reached from a CLI suite is a page that prints HTML and opens a real database.
+Named rather than dressed up.
+
+**And the last one, since it was the same defect.** `AccountStore::ensureSchema()` was an
+ungated `ALTER TABLE users ADD COLUMN closed_at` on every admin-panel load — much smaller
+than the login one (authenticated, one statement, a page nobody hammers) and the same
+shape, so it is a gated plan entry now too and the method is gone. Two consequences worth
+writing down rather than discovering:
+
+- **The order on `admin_panel.php` is load-bearing.** `AccountStore` caches "is `closed_at`
+  there" on first ask and never re-asks, and `ensureSchema()` used to clear that cache
+  after altering. The page converges on line 29 and builds the store on line 50, so the
+  cached answer is taken after the column has had its chance. A store built *above*
+  `ensureSignageSchema()` would answer no for the whole request and quietly hide every
+  closed account from the panel that just created the column.
+- **`ServerReport` now names `closed_at` too**, which it never did — the one report in the
+  app whose job is to say whether a runtime-added column landed was silent about this one.
+  Its consequence line is the real one: no account can be *closed*, only suspended, and an
+  id can still come back into service under a different person (invariant 14).
+
+That leaves `ResetTokenStore::ensureSchema()` as the only convergence still running off an
+unauthenticated page, and it stays there **deliberately** rather than by omission. The
+difference is that the lockout and closure columns are optional — the app has a defined
+behaviour without them — and the reset-token *table* is not: no table, no password reset.
+Moving it behind authentication would mean the one person who cannot sign in is the one
+person who cannot repair the thing that would let them, on an installation where nobody had
+opened the admin panel yet. It is one `CREATE TABLE IF NOT EXISTS` plus its column, and
+that is the right trade.
+
 ---
 
 ## 5. Verification
@@ -1981,14 +2221,29 @@ grep -rn "SET password_hash" --include=*.php . # exactly two: lib/accounts.php (
                                               # nothing to be atomic with. A third means a page is
                                               # changing a password beside another write again — the
                                               # defect invariant 22 exists for
-grep -rn "ensureLockoutColumns\|clearLockout" --include=*.php .  # auth.php defines both; login.php calls
-                                              # them. reset_password.php must NOT appear: it stopped
-                                              # running the three ALTERs when the clear learned to cope
-                                              # without the columns (§4r), and a hit there is that DDL
-                                              # back on a public page, mid-reset
+grep -rn "ensureLockoutColumns\|clearLockout" --include=*.php .  # must be empty of *calls*: both helpers
+                                              # are gone. The three lockout ALTERs are gated plan entries
+                                              # (§4v) and the clear goes straight to AccountStore. A hit
+                                              # outside a comment is pre-auth DDL back on the login page —
+                                              # the one piece of it a bot could reach
+grep -rn "csrf_token" login.php               # twice: the hidden input the form emits, and csrfOk()
+                                              # reading it. The gate must sit ABOVE `new LoginAttempt`,
+                                              # or a request with no token can still run somebody's
+                                              # failed-attempt counter up to the lockout (§4v)
+grep -rEn "\bdate\('Y-m-d" --include=*.php lib/  # must be empty — the word boundary matters, or every
+                                              # gmdate() matches too. Every *stored* moment in lib/ is UTC,
+                                              # written with gmdate() and read back with a ' UTC' suffix.
+                                              # Local wall-clock is not monotonic: the autumn fall-back
+                                              # replays an hour, and both the edit lock (§4t) and the login
+                                              # lockout (§4v) compare stored moments as absolute. Plain
+                                              # date() is fine for *printing* one — `\bdate(` alone finds
+                                              # the three that do, and all three are words for a person
 grep -rn "closed_at" --include=*.php .        # lib/accounts.php, schema.sql's DDL, the fixture,
-                                              # and ONE render in admin_panel.php that prints the
-                                              # date. A hit that *decides* something is a second
+                                              # lib/schema.php's ALTER (§4v — it used to be an ungated
+                                              # one on every admin-panel load), lib/server_report.php
+                                              # naming it as a column that should exist, and ONE render
+                                              # in admin_panel.php that prints the date. Everything else
+                                              # is a comment. A hit that *decides* something is a second
                                               # opinion about what closed means — ask
                                               # AccountStore::isClosed() instead
 grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?displays`?" --include=*.php .  # lib/displays.php + schema.php's ALTERs
@@ -2023,11 +2278,13 @@ grep -rn "flashMessage\|takeFlashMessage" --include=*.php .  # auth.php defines 
                                               # them for the grant matrix's post/redirect/get. A `flashMessage`
                                               # with no `header('Location'` after it leaves a sentence nobody
                                               # will ever be shown
-grep -rEn "UPDATE users SET" --include=*.php . # lib/accounts.php (four: closed_at, password_hash, role/
-                                              # is_active/email, the lockout clear), login.php's two failure
-                                              # counters, admin_panel.php:168 where an admin sets a password
-                                              # in one write, plus tools/. A fifth in a *page* means a `users`
-                                              # write beside another write again — invariant 22
+grep -rEn "UPDATE users SET" --include=*.php . # lib/accounts.php (five: closed_at, password_hash, role/
+                                              # is_active/email, the lockout clear, and the failure counter
+                                              # a refused sign-in writes), admin_panel.php:168 where an admin
+                                              # sets a password in one write, plus tools/. **No page may
+                                              # appear here but that one**: login.php's two lockout UPDATEs
+                                              # moved into the store in §4u, and a `users` write in a page
+                                              # beside another write is invariant 22 again
 grep -rn "lock_holder_id\|lock_activity_at\|lock_taken_at" --include=*.php .  # SQL against them only in
                                               # lib/displays.php. lib/schema.php and lib/server_report.php
                                               # name them as *catalogue entries* — a column this database

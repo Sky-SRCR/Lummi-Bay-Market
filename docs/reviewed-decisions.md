@@ -75,7 +75,7 @@ written down rather than remembered:
 | 35 | A publish that collided with another died as a PHP timeout before it could reach its own clean message. | Give up on the collision sooner, and report it properly. | Open | — |
 | 36 | The branding file was written in place with no locking, so a short write took the whole app down. | Write a temporary file, then swap it in. | Open | — |
 | 37 | The asset editor read the file type from a hidden form field instead of the stored record. | Read it from the record. | Open | — |
-| 38 | Two login problems: a secure-cookie setting causes an invisible sign-in loop on plain HTTP, and the suspended-account message tells a guesser the password was right. | Fix both. | Open | — |
+| 38 | Two login problems: a secure-cookie setting causes an invisible sign-in loop on plain HTTP, and the suspended-account message tells a guesser the password was right. | Fix both. | **Done** | §4u, §4v |
 | 39 | Double-clicking Publish produced a success message and a stale-sign warning together. | Ignore the second while the first is still running. | Open | — |
 | 40 | A basic account with the sign open read-only threw an error on every canvas click. | Guard the lookup. | **Done** — the click-path lookup was settled by #3; the same banner's second lookup, the one at page load, was guarded to match. | §4j |
 | 41 | An unreadable stored colour round-tripped through the colour picker and published back as black. | Validate on the way in and on the way out. | Open | — |

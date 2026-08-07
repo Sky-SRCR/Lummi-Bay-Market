@@ -42,11 +42,12 @@ $grantStore   = new GrantStore($pdo);
 $displayAdmin = new DisplayAdmin($pdo, $displayStore, $layoutStore, $grantStore);
 
 // Accounts are closed, never deleted, so an id number can never come back into
-// service under a different person (lib/accounts.php). The column that records it
-// converges here for the same reason as everything above. AccountAdmin holds the
+// service under a different person (lib/accounts.php). `closed_at` used to be added
+// by an `AccountStore::ensureSchema()` call on this line — one ungated ALTER per
+// page load; it is in the plan `ensureSignageSchema()` ran above, which is why the
+// store is built after that call rather than before. AccountAdmin holds the
 // transaction that surrenders their grants and their edit lock in the same breath.
 $accountStore = new AccountStore($pdo);
-$accountStore->ensureSchema();
 $accountAdmin = new AccountAdmin($pdo, $accountStore, $grantStore, $displayStore);
 
 // The one moment an alert can learn who to write to. When the database is

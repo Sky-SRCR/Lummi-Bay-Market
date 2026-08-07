@@ -27,12 +27,21 @@
 --     ALTER that "does nothing" is not free. A statement it said was needed and
 --     which is then refused is logged and emailed to the admins (§4p), so a
 --     column that never landed is no longer silent.
---   * ensureLockoutColumns() in auth.php, on the first login or password reset —
---     failed_attempts, last_failed_at, locked_until. Those stay in the pre-auth
---     path by design; see docs/adr/0001-account-keyed-login-lockout.md.
+--     The three login-lockout columns — failed_attempts, last_failed_at,
+--     locked_until — are part of that plan as of BUILD-REFERENCE section 4v. They
+--     used to be three unconditional ALTERs fired from the login page on every
+--     sign-in POST, which made them the one piece of DDL in the app reachable with
+--     no account at all; see docs/adr/0001-account-keyed-login-lockout.md.
+--     closed_at is in that plan too, as of the same section. It used to be one
+--     ungated ALTER per admin-panel load from AccountStore::ensureSchema().
+--   * ResetTokenStore::ensureSchema() in lib/password_resets.php, from the
+--     password-reset page — the password_resets table and its `attempts` column.
+--     The one convergence still running unauthenticated, and deliberately: the
+--     table is not optional the way a lockout counter is, and the person who needs
+--     it is by definition the person who cannot sign in.
 --
--- So the order of authority is: lib/schema.php and auth.php decide what the live
--- database becomes, and this file has to agree with them. If the two ever
+-- So the order of authority is: lib/schema.php and lib/accounts.php decide what the
+-- live database becomes, and this file has to agree with them. If the two ever
 -- disagree, they are both wrong until someone reconciles them — start with
 -- `php tools/rehearse_phase1.php`, which reports what a real MySQL database
 -- actually ended up with.
@@ -52,12 +61,12 @@ CREATE TABLE IF NOT EXISTS users (
     is_active       TINYINT(1)   NOT NULL DEFAULT 1,
     created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    -- Login lockout — added at runtime by auth.php on the live server
+    -- Login lockout — added at runtime by signageSchemaPlan() on the live server
     -- (see the header note above).
     failed_attempts INT(11)      NOT NULL DEFAULT 0,
     last_failed_at  DATETIME     NULL DEFAULT NULL,
     locked_until    DATETIME     NULL DEFAULT NULL,
-    -- Account closure — added at runtime by lib/accounts.php via the admin panel.
+    -- Account closure — added at runtime by signageSchemaPlan().
     -- An account is never deleted: the row stays so its id can never be handed to
     -- somebody else, which is what would let a stale grant, a held edit lock or a
     -- publish record silently change whose they are. Distinct from is_active on

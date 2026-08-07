@@ -22,6 +22,8 @@ require_once __DIR__ . '/../lib/display_admin.php';
 require_once __DIR__ . '/../lib/password_resets.php';
 require_once __DIR__ . '/../lib/server_report.php';
 require_once __DIR__ . '/../lib/accounts.php';
+require_once __DIR__ . '/../lib/login_attempt.php';
+require_once __DIR__ . '/../lib/request_scheme.php';
 require_once __DIR__ . '/../lib/error_policy.php';   // pulls in lib/alerts.php
 require_once __DIR__ . '/../lib/assets.php';
 require_once __DIR__ . '/../lib/upload_limits.php';
@@ -112,11 +114,11 @@ function newTestDb()
     // is_active mirrors the live column: the session sync reads it on every
     // authenticated request, so a fixture without it cannot test that a
     // deactivated account's open tab stops working.
-    // The three lockout columns are here because auth.php adds them to the live
-    // table at runtime, so a fixture without them is not shaped like the live
-    // schema — and the server report's whole job is to notice a column that never
-    // applied. A fixture that is missing one by accident would make that report
-    // look broken while it was working correctly.
+    // The three lockout columns and closed_at are here because convergence adds
+    // them to the live table at runtime, so a fixture without them is not shaped
+    // like the live schema — and the server report's whole job is to notice a column
+    // that never applied. A fixture that is missing one by accident would make that
+    // report look broken while it was working correctly.
     // password_hash is here because a password reset writes it, and a fixture
     // without it cannot tell a reset that changed the password from one that only
     // said it had.
@@ -168,8 +170,8 @@ function newTestDb()
 
     // The reset-token table, minus the AUTO_INCREMENT spelling. `attempts` is
     // the guess budget the self-test cares about; it is created here rather than
-    // added by ensureSchema() so the tests exercise the shape a converged live
-    // database actually has.
+    // added by ResetTokenStore::ensureSchema() so the tests exercise the shape a
+    // converged live database actually has.
     $pdo->exec("CREATE TABLE password_resets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -272,7 +274,18 @@ function convergedSchemaShape()
             'displays' => ['id' => $col('int(11)'), 'lock_taken_at' => $col('datetime', true)],
             'display_permissions' => ['id' => $col('int(11)')],
             'block_styles'        => ['block_type' => $col('varchar(50)')],
-            'users'               => ['id' => $col('int(11)')],
+            // The three ADR-0001 lockout columns are part of a converged shape as
+            // of the day they became gated plan entries rather than three ALTERs
+            // fired from the pre-auth login page. A shape without them would make
+            // the "a converged database is issued no DDL" check pass for the wrong
+            // reason — by never asking.
+            'users'               => [
+                'id'              => $col('int(11)'),
+                'failed_attempts' => $col('int(11)'),
+                'last_failed_at'  => $col('datetime', true),
+                'locked_until'    => $col('datetime', true),
+                'closed_at'       => $col('datetime', true),
+            ],
         ],
         'indexes' => [
             'canvas_elements' => ['PRIMARY' => true, 'display_id' => true],
