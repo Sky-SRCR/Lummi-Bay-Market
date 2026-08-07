@@ -234,8 +234,42 @@ check(isset($cache['Pragma']) && $cache['Pragma'] === 'no-cache',
 check(isset($cache['Expires']) && $cache['Expires'] === '0',
       'in both of the ways it understands');
 
-// Whether the headers actually reach a browser is not observable from the CLI — the
-// §5 grep is what keeps the one call site honest. What *is* observable here, because
+// Whether the headers actually reach a browser is not observable from the CLI. What
+// *is* checkable is the thing that went wrong once: an entry point that reaches
+// neither call site and therefore states no caching rule at all. The rule is emitted
+// from `auth.php` and from `db_connect.php`, and every page must include at least one
+// — `logout.php` and `setup_branding.php` open no database, and `viewer.php` opens no
+// session, so neither file covers the app by itself. A grep only helps somebody who
+// remembers to run it; a page added later fails this instead.
+$appRoot = dirname(__DIR__);
+// Both halves have to be checked, and the first attempt at this checked only the
+// second: that every page includes one of the two files proves nothing if the call
+// has been lifted out of them. Deleting it from either file must fail something.
+foreach (['auth.php', 'db_connect.php'] as $emitter) {
+    // strpos rather than checkMentions: the haystack is a whole file, and a failure
+    // that prints 250 lines of it buries the sentence saying what went wrong.
+    check(strpos((string)file_get_contents($appRoot . '/' . $emitter), 'HttpCache::neverStore()') !== false,
+          $emitter . ' is one of the two places the caching rule is stated');
+}
+// The four the root .htaccess denies to the browser outright, plus the two generated
+// constant files. None of them is an entry point, so none of them answers anything.
+$notEntryPoints = ['auth.php', 'db_connect.php', 'config.php', 'branding_config.php'];
+$uncovered = [];
+foreach ((array)glob($appRoot . '/*.php') as $page) {
+    $name = basename($page);
+    if (in_array($name, $notEntryPoints, true)) { continue; }
+    $src = (string)file_get_contents($page);
+    if (strpos($src, "require_once 'auth.php'") === false
+     && strpos($src, "require_once 'db_connect.php'") === false
+     && strpos($src, "/db_connect.php'") === false) {
+        $uncovered[] = $name;
+    }
+}
+check($uncovered === [],
+      'every entry point states a caching rule' . ($uncovered ? ' — ' . implode(', ', $uncovered) . ' state none' : ''));
+check(count(glob($appRoot . '/*.php')) > 10, 'and there were entry points to check in the first place');
+
+// What *is* observable about the emission itself, because
 // this suite has been printing since its first section, is the refusal: setting a
 // header after output raises "Cannot modify header information", and a warning
 // printed by the thing that exists to keep PHP's output off the page is the defect
@@ -3240,4 +3274,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(853);
+reportChecks(857);

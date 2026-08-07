@@ -1,5 +1,17 @@
 <?php
 // Session authentication helpers — include at the top of every protected page.
+
+// The caching rule, second of its two call sites. `db_connect.php` has the other,
+// and between them they cover every entry point — but neither covers it alone, and
+// the gap was not theoretical: `logout.php` and `setup_branding.php` include this
+// file and never open a database, so they were answering a redirect with no caching
+// rule at all. A cached redirect is worse than a cached page, because what a
+// redirect mostly *is* is a side effect: serving `logout.php` from a cache lands
+// somebody on the login screen with their session still alive, on a back-office
+// computer several people share. `viewer.php` is why this cannot simply move here —
+// it opens no session at all, by design.
+require_once __DIR__ . '/lib/http_cache.php';
+HttpCache::neverStore();
 // AUTH_NO_SESSION lets the one public entry point — api.php's get_layout, polled
 // every 30 seconds by every Screen — include this file for its helpers without
 // opening a session it never reads. A framed Screen returns no cookie, so each

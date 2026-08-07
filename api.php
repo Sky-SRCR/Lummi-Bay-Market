@@ -243,6 +243,11 @@ function backgroundFromPost(bool $isAdmin): Background {
  */
 function lockPayload(?Display $display, Actor $actor): array {
     if (!$display) {
+        // A Display that was there when the request resolved and is not there now —
+        // deleted by an admin in the seconds between. "Display not found" answering
+        // 200 is decision #28's own sentence, so it takes its code from the same
+        // mapping every other missing sign does rather than from a literal here.
+        http_response_code(DisplayResolution::statusForKind(DisplayResolution::UNKNOWN));
         return ['status' => 'error', 'reason' => 'unknown', 'message' => 'Display not found'];
     }
     $lock  = $display->lockState();

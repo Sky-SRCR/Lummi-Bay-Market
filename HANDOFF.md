@@ -60,11 +60,11 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/display_request.php` | Which Display a request means, whether the actor may have it, and the notice **and status code** that go with each refusal. Both the Builder and every API write resolve through here |
 | `lib/plain_text.php` | `toPlainText()` — signage content is plain text (ADR-0002) |
 | `lib/error_policy.php` | The error policy, set in code: errors off, logging on, the three handlers, and the notice a Screen / an endpoint / a person gets when something breaks. `report()` is for a problem the app survived, and throttles the log as well as the email when the problem repeats on its own |
-| `lib/http_cache.php` | `HttpCache` — the caching rule for every reply this app gives: none of them may be stored. One call, from `db_connect.php`, so a page added later cannot forget it. `uploads/` is served by Apache and deliberately untouched |
+| `lib/http_cache.php` | `HttpCache` — the caching rule for every reply this app gives: none of them may be stored. Called from `auth.php` and `db_connect.php`, between them covering every entry point, so a page added later cannot forget it. `uploads/` is served by Apache and deliberately untouched |
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **853 checks**. Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **857 checks**. Run before pushing |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **27 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit), **53 checks** |
 | `tools/selftest_viewer.js` | `node tools/selftest_viewer.js` — `viewer.php`'s poll against a stubbed DOM and fetch, through every way an answer can arrive: readable, refused, unreadable-with-a-status, and never arriving. **32 checks**. Run it whenever `viewer.php` is touched |
@@ -164,8 +164,10 @@ anything, they hold every Display by role.
   Nobody has audited the Cloudflare dashboard itself — page rules, Always Online and
   custom error pages are all configured there, not here.
 - **Nothing this app serves is cached**, on any path — `Cache-Control: no-store` plus
-  the two HTTP/1.0 headers, set in PHP from `db_connect.php` so they travel with the
-  deploy rather than depending on `mod_headers`. `uploads/` is the deliberate
+  the two HTTP/1.0 headers, set in PHP from `auth.php` and `db_connect.php` so they
+  travel with the deploy rather than depending on `mod_headers`. Both, because every
+  page includes one or the other and neither is universal alone — `viewer.php` opens no
+  session, and `logout.php` and `setup_branding.php` open no database. `uploads/` is the deliberate
   exception: Apache serves it, those filenames never change content, and a sign should
   not re-fetch a 40 MB video every time it reloads. If a sign ever shows stale prices
   again, the cache to suspect is upstream of the app — the widget or the network — not
@@ -322,13 +324,34 @@ staleness check, no version history), 0007 (one editor per Display).
   URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
   account, two browsers, and one unavoidable 15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 853 self-test checks against SQLite, 112 node checks over `builder.php`'s and `viewer.php`'s
+  `php -l`, 857 self-test checks against SQLite, 112 node checks over `builder.php`'s and `viewer.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare
   `viewer.php` URL shows the notice instead of the sign. Same visit, or closed hours.
 - CSRF end-to-end sanity check worth doing live: sign in → edit an asset → publish;
   all succeed, while a stale or forged POST gets "Security token mismatch."
+- **Found while finishing #28, not part of it, and not on the 51-item list.** Both are
+  worth a decision from the owner rather than being fixed on the way past:
+  - **`builder.php`'s layout read has no `.catch()`.** `loadLayout()` there does
+    `.then(r => r.json())` with nothing after it, so a reply that will not parse — the
+    case the Viewer was just taught to handle — is an unhandled rejection: an empty
+    canvas, no message, no explanation. It is *not* the disaster it looks like, and the
+    reason is worth knowing: `LAYOUT_STAMP` starts as `''` and is only ever set from a
+    successful read, and a publish carrying no stamp is refused (ADR-0006), so
+    publishing that empty canvas cannot wipe the sign. Verified — the self-test's "a
+    publish with no stamp is refused". So this is a confusing dead end for an admin,
+    not data loss.
+  - **19 refusals in `api.php` still answer `200 OK`** — every "Admins only.", the four
+    upload failures, "Missing element_id.", "Unknown action.", and the brand-styles
+    "nothing was saved". Deliberately left (see §4u): each is read by a script that
+    shows the message to the person who caused it, and none is polled by anything. It
+    is the same *class* as #28 without being the same defect, and if any endpoint ever
+    gets a watcher its code should come from whatever decides its refusal.
+- **#27 is next door to all of this and still open.** `DisplayRequest::locate()` casts
+  the `display` parameter with `(string)`, so `?display[]=x` raises an "Array to string
+  conversion" warning and becomes the tag `"Array"`. It sits three lines from code this
+  work touched and was deliberately not fixed — one item at a time.
 
 Everything from the previous session is resolved and merged: the account-keyed
 login lockout (ADR-0001), the security-hardening pass (stored XSS → plain-text
