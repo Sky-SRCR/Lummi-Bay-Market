@@ -66,7 +66,7 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
 | `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **857 checks**. Run before pushing |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **27 checks** |
-| `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit), **53 checks** |
+| `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end — plus what it does when it loses the display mid-edit, and when either of the two opening reads fails, **72 checks** |
 | `tools/selftest_viewer.js` | `node tools/selftest_viewer.js` — `viewer.php`'s poll against a stubbed DOM and fetch, through every way an answer can arrive: readable, refused, unreadable-with-a-status, and never arriving. **32 checks**. Run it whenever `viewer.php` is touched |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data. It also publishes every element type and block subtype the schema allows and reads them back, checks that a deleted Display really cascades, and prints which of the five page-added columns landed |
 | `config.php` | Site constants (`SITE_NAME`, `MAIL_FROM`); loads `branding_config.php` |
@@ -324,7 +324,7 @@ staleness check, no version history), 0007 (one editor per Display).
   URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
   account, two browsers, and one unavoidable 15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 857 self-test checks against SQLite, 112 node checks over `builder.php`'s and `viewer.php`'s
+  `php -l`, 857 self-test checks against SQLite, 131 node checks over `builder.php`'s and `viewer.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare
@@ -333,15 +333,16 @@ staleness check, no version history), 0007 (one editor per Display).
   all succeed, while a stale or forged POST gets "Security token mismatch."
 - **Found while finishing #28, not part of it, and not on the 51-item list.** Both are
   worth a decision from the owner rather than being fixed on the way past:
-  - **`builder.php`'s layout read has no `.catch()`.** `loadLayout()` there does
-    `.then(r => r.json())` with nothing after it, so a reply that will not parse — the
-    case the Viewer was just taught to handle — is an unhandled rejection: an empty
-    canvas, no message, no explanation. It is *not* the disaster it looks like, and the
-    reason is worth knowing: `LAYOUT_STAMP` starts as `''` and is only ever set from a
-    successful read, and a publish carrying no stamp is refused (ADR-0006), so
-    publishing that empty canvas cannot wipe the sign. Verified — the self-test's "a
-    publish with no stamp is refused". So this is a confusing dead end for an admin,
-    not data loss.
+  - ~~**`builder.php`'s layout read has no `.catch()`.**~~ **Fixed** — and the first
+    description of it here was wrong, which is worth keeping rather than quietly
+    deleting. There *was* a handler: `Promise.all([loadAssets(), loadLayout()])` carried
+    one `.catch()` for both reads, so it was never an unhandled rejection. The real
+    defect was that one sentence — *"Failed to load layout."* — covered two unrelated
+    failures, and was therefore false half the time it appeared: the asset library
+    failing does not mean the layout did not load. Each read now reports itself, and the
+    layout's message says the thing that matters (this canvas is not the sign, nothing
+    has been saved, reload) instead of just naming the file that broke. 19 checks in
+    `selftest_builder_uploads.js`; restoring the shared handler kills 17.
   - **19 refusals in `api.php` still answer `200 OK`** — every "Admins only.", the four
     upload failures, "Missing element_id.", "Unknown action.", and the brand-styles
     "nothing was saved". Deliberately left (see §4u): each is read by a script that

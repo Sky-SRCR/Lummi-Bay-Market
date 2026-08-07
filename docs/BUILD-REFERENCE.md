@@ -2072,7 +2072,9 @@ node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a D
                                          # that has only what a read-only page emits
 node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an
                                          # admin who can edit — driving a stubbed
-                                         # XMLHttpRequest through every way an upload ends
+                                         # XMLHttpRequest through every way an upload ends,
+                                         # and a stubbed fetch through every way the two
+                                         # opening reads fail
 node tools/selftest_viewer.js            # viewer.php's own poll, against a stubbed DOM and
                                          # fetch, through every way an answer can arrive:
                                          # readable, refused, unreadable-with-a-status,
@@ -2246,7 +2248,10 @@ it. `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only 
 emits, which is the only automated way to catch a lookup reaching for a control the
 lock took away. `selftest_builder_uploads.js` takes the opposite premise — an admin
 who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the only
-way to see a missing `.catch()`: the file parses perfectly without one.
+way to see a missing `.catch()`: the file parses perfectly without one. It also covers
+the page's two opening reads, where the defect was subtler than a missing handler — one
+handler serving two unrelated failures, so the sentence it printed was false half the
+time it appeared.
 `selftest_viewer.js` covers the page with the least supervision of any of them — a TV
 in a shop — and asks the question a parse cannot: given an answer, does the sign end
 up showing the right thing? Its cases are the four an endpoint can produce, and the

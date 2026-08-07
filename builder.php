@@ -1094,9 +1094,15 @@ var blockStyles    = {};     // brand standards cache
 // INIT
 // ============================================================
 document.addEventListener('DOMContentLoaded', function() {
-    Promise.all([loadAssets(), loadLayout()]).catch(function() {
-        showToast('Failed to load layout.', true);
-    });
+    // Two independent reads, each reporting its own failure. One shared handler said
+    // "Failed to load layout." for either, which is a false sentence half the time it
+    // appeared — the asset library failing does not mean the layout did not load, and
+    // the two matter very differently. A missing library is an empty dropdown; a
+    // missing layout means the canvas on screen is not this sign, which is worth
+    // saying out loud. Each read now says what actually went wrong, in
+    // loadLayout()/loadAssets(), and neither can reject here.
+    loadAssets();
+    loadLayout();
     setupCanvas();
     if (!IS_ADMIN && !READ_ONLY) {
         document.getElementById('section-banner').style.display = 'block';
@@ -1162,6 +1168,13 @@ function loadAssets() {
             list.forEach(function(a) {
                 sel.innerHTML += '<option value="'+a.id+'">['+a.type.toUpperCase()+'] '+escHtml(a.label||a.content.substr(0,20))+'</option>';
             });
+        })
+        // Its own failure, named as itself. This is the lesser of the two opening
+        // reads — nothing on the canvas depends on it — so it says what is
+        // unavailable and stops there, rather than borrowing the layout's sentence.
+        .catch(function() {
+            showToast('The asset library did not load. Reload the page if you need to link '
+                    + 'a block to a library entry.', true);
         });
 }
 
@@ -1225,6 +1238,23 @@ function loadLayout() {
             });
 
             setupInteract();
+        })
+        // A reply that never arrived, or arrived and could not be read. Both leave an
+        // empty canvas, which is the dangerous part: an empty canvas looks exactly
+        // like a sign with nothing on it, so somebody can start building on top of a
+        // layout that never loaded. Publishing that cannot overwrite the sign —
+        // LAYOUT_STAMP is still '' and a publish with no stamp is refused (ADR-0006),
+        // which the self-test pins — but being refused after twenty minutes of work is
+        // not the same as being told now.
+        //
+        // One sentence for both cases on purpose. The branch above has the server's
+        // own words when there are any; here there are none, and "the connection
+        // dropped" would be a guess — the reply may well have arrived from something
+        // answering for the endpoint. What to do is the same either way, and that is
+        // what the message is for.
+        .catch(function() {
+            showToast('That display\'s layout did not load, so what is on this canvas is not '
+                    + 'the sign. Nothing has been saved. Reload the page before editing.', true);
         });
 }
 

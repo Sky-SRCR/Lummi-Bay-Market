@@ -163,6 +163,25 @@ const isErr    = () => document.getElementById('toast').className === 'err';
 const showing  = () => document.getElementById('upload-status').style.display === 'block';
 const progress = () => document.getElementById('upload-status').querySelector('.up-label').textContent;
 
+/** Run something that must not throw. Awaited, so a rejected fetch chain counts. */
+async function survives(label, fn) {
+    checks++;
+    try {
+        await fn();
+        console.log('  ok   ' + label);
+    } catch (e) {
+        fails.push(label + ' \u2014 ' + e);
+        console.log('  FAIL ' + label + ' \u2014 ' + e);
+    }
+}
+
+/**
+ * Let a stubbed fetch chain finish. The page's readers do not return their promises
+ * to anything that waits, so draining the microtask queue is how a `.catch()` two
+ * links down is reached.
+ */
+async function settle() { for (let i = 0; i < 20; i++) { await Promise.resolve(); } }
+
 function reset() {
     document.getElementById('toast').textContent = '';
     document.getElementById('toast').className   = '';
@@ -416,15 +435,68 @@ beatRefusedWith('', 'Something went wrong.');
 checkSame('none', document.getElementById('lock-access-bar').style.display,
           'and so is a failure with no reason at all, which is what a dropped beat looks like');
 
-// ---- Total ------------------------------------------------------------------
+// The async tail: everything below drives a promise chain, so it needs a scope that
+// can await. The report goes last, inside it, or it would print before these ran.
+(async function () {
 
-// The expected total, for the same reason the other two suites carry one: without
-// it, deleting half this file still reports a clean run.
-const expected = 53;
-if (checks !== expected) {
-    fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
-}
+    section('The two opening reads, when they fail');
 
-console.log('\n' + checks + ' checks, ' + fails.length + ' failed');
-fails.forEach(function (f) { console.log('  FAILED: ' + f); });
-process.exit(fails.length ? 1 : 0);
+    // Also not an upload, and here for the same reason as the section below it: a reply
+    // the page received and did nothing useful with. Both reads used to share one
+    // handler that said "Failed to load layout." whichever of them failed — false half
+    // the time it appeared, and silent about the part that matters when it was true.
+    //
+    // The layout read is the one with teeth. Its failure leaves an empty canvas, and an
+    // empty canvas looks exactly like a sign with nothing on it, so somebody can start
+    // building on a layout that never loaded. That cannot overwrite the sign — the stamp
+    // is still empty and a stampless publish is refused — but the message has to say so
+    // now rather than at the publish.
+
+    // Every way the read can fail: never arrived, arrived unreadable, arrived with an
+    // error status and an unreadable body. All three end in the same place.
+    const readFailures = {
+        'never arrived':            () => Promise.reject(new Error('offline')),
+        'arrived unreadable':       () => Promise.resolve({ ok: true,  status: 200, json: () => Promise.reject(new Error('bad json')) }),
+        'refused and unreadable':   () => Promise.resolve({ ok: false, status: 503, json: () => Promise.reject(new Error('bad json')) })
+    };
+
+    for (const how of Object.keys(readFailures)) {
+        reset();
+        global.fetch = readFailures[how];
+        await survives('a layout read that ' + how + ' does not throw', () => loadLayout());
+        await settle();
+        check(isErr(), 'and says so as an error — ' + how);
+        check(/not the sign/.test(toast()),
+              'naming the one thing that matters: this canvas is not the sign — ' + how);
+        check(/Nothing has been saved/.test(toast()), 'and that nothing was saved — ' + how);
+        check(/[Rr]eload/.test(toast()),              'and what to do about it — ' + how);
+    }
+
+    // The stamp is what makes the reassurance true. It starts empty and only a
+    // successful read fills it, so a publish after a failed read is refused server-side
+    // (ADR-0006) — selftest_layout.php's "a publish with no stamp is refused".
+    check(LAYOUT_STAMP === '', 'and the layout stamp is still empty, which is what makes a publish refuse');
+
+    // The library is the lesser read, and must not borrow the layout's sentence: saying
+    // the canvas is not the sign when the canvas is fine is the old defect inverted.
+    reset();
+    global.fetch = () => Promise.reject(new Error('offline'));
+    await survives('an asset library read that fails does not throw', () => loadAssets());
+    await settle();
+    check(isErr() && /asset library/.test(toast()), 'and names itself rather than the layout');
+    check(!/not the sign/.test(toast()), 'and does not claim the canvas is wrong when only the library is');
+
+    // ---- Total ------------------------------------------------------------------
+
+    // The expected total, for the same reason the other two suites carry one: without
+    // it, deleting half this file still reports a clean run.
+    const expected = 72;
+    if (checks !== expected) {
+        fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
+    }
+
+    console.log('\n' + checks + ' checks, ' + fails.length + ' failed');
+    fails.forEach(function (f) { console.log('  FAILED: ' + f); });
+    process.exit(fails.length ? 1 : 0);
+
+})();
