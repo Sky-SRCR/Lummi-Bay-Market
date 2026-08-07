@@ -201,6 +201,10 @@ through the app again:
    only a non-admin holder's lock, because a retired Display stays an admin's to work
    on). Renaming a tag is deliberately *not* one of them: it changes the address, not
    who may edit, so the holder keeps the lock and their page is asked to reload.
+   The role half is enforced in `LayoutStore::publish()` as well as at the door: a
+   `basic` publish replaces the content inside this Display's sections and may **return**
+   a root-level block by its `db_id`, but may not invent one. Root level means
+   `section_id NULL`, which is layout, and layout is an admin's to place (§4w).
    **And a lock is never honoured for a holder who cannot sign in.** Freeing at the
    moment of the change only ever covers the paths somebody enumerated;
    `LockState::isHeld()` returning false for an inactive holder covers the rest, and is
@@ -1909,18 +1913,16 @@ proves is the *refusal*, not MySQL's behaviour behind it. That is the right way 
 the refusal is the thing that has to hold on both engines, and a test that depended on
 the coercion could only ever run where the bug was.
 
-Left standing, and named rather than skipped:
+Left standing at the time, and closed since:
 
-- **A `basic` account can still publish content at the top level** — a `text` block with
-  no `parent_temp_id`, which lands with `section_id NULL` and is therefore layout, in a
-  role that is not supposed to place layout. The Builder cannot produce one
-  (`createBlock()` refuses without a targeted section, and nothing reparents on drag),
-  so this needs a hand-made POST. It was left alone because both plausible fixes are
-  worse than the hole: refusing the publish breaks every Display that legitimately
-  carries admin-made root content, and *preserving* root rows across a basic publish
-  turns that account's delete of a root block into a silent no-op that reports success.
-  Closing it properly means the payload distinguishing "this block is unchanged" from
-  "I made this", which the publish protocol currently cannot say.
+- **A `basic` account could still publish content at the top level** — a `text` block
+  with no `parent_temp_id`, which lands with `section_id NULL` and is therefore layout,
+  in a role that is not supposed to place layout. Neither obvious fix was worth taking:
+  refusing every root block breaks any Display legitimately carrying admin-made root
+  content, and *preserving* root rows across a basic publish turns that account's delete
+  of one into a silent no-op that reports success. What it needed was the payload
+  distinguishing "this block is unchanged" from "I made this" — which is what §4w now
+  makes it say.
 
 ### 4v. A coerced value is a sign saying something nobody published
 
@@ -2011,15 +2013,63 @@ Left standing, and named rather than skipped:
   temp-id belongs throws on `$tempMap[$el['temp_id']]`. The `catch (Throwable)` net makes
   that safe — nothing is written, nothing is lost — but the sentence says "Publish
   failed" for a payload that was never storable. #31 is the decision that owns `temp_id`.
-- **A `parent_temp_id` or `db_id` that resolves to nothing** still lands the block at
-  root level rather than refusing. That is the documented behaviour a single-Display
-  publish always had, and it is the residual §4u names.
 - **Lengths are counted in bytes.** `strlen()`, where MySQL counts characters, so a
   multibyte value between the two limits is refused although the column would hold it.
-  Conservative in the direction that refuses, and these six fields are hex colours, CSS
-  keywords and upload paths — ASCII in practice.
-- **Pooled content goes on to `assets`**, whose own column widths this pass does not
-  check. That table belongs to `AssetLibrary` (§4n), and nothing here may reach past it.
+  Deliberate: it errs toward refusing rather than truncating, these six fields are hex
+  colours, CSS keywords and upload paths, and `mb_strlen` is not assumed present on the
+  live host — `lib/assets.php:325` carries a fallback for exactly that reason, and #51
+  has not yet established the live PHP build.
+
+Not a residual, checked rather than assumed: **pooled content** goes on to
+`assets.content`, which is `TEXT` — the same 64 KB as `canvas_elements.manual_content`,
+so content cannot overflow the library's column without overflowing the block's first.
+`assets.label` is `VARCHAR(255)` and `AssetLibrary` truncates it itself, with the
+mbstring fallback above. Nothing here reaches past that module.
+
+### 4w. Content a basic account did not invent
+
+The residual §4u named. A publish from a `basic` account replaces the content inside
+this Display's sections; a block whose `parent_temp_id` resolves to none of them lands
+at root level instead — `section_id NULL`, which is layout, placed by a role that does
+not place layout (ADR-0005). The type allowlist closed the forged-`type` route into
+that; a plain `text` block with no parent still walked in.
+
+The fix is the payload saying which root blocks it is *returning*. Content now carries
+`db_id` the way sections always have — `block.dataset.dbId`, empty for a block
+`createBlock()` just made and the row id for one that came out of the database — and a
+basic publish accepts a root block only when that id is a root row this Display has
+right now. Anything else at root is a block being invented, and the publish is refused
+whole. Returning the same id twice is refused too: one stored row cannot be two blocks
+on a canvas.
+
+Four things about the shape of it:
+
+- **Sending nothing for a root row still deletes it.** That is the half the "preserve
+  every root row" alternative would have broken, and it would have broken it silently —
+  a delete that reports success and changes nothing is worse than a refusal.
+- **A returned root row keeps its id.** Publishing replaces content wholesale, so
+  without this every id in the Builder's hand goes stale the moment a publish succeeds,
+  and the very next publish from that tab is refused for returning a root block that no
+  longer exists by id. `insertContent()` takes the set of proven ids and re-inserts
+  those rows under the id they had; an explicit `id` of `NULL` is how both engines say
+  "assign one", so it is the same statement for every other block.
+- **It is decided inside the transaction**, unlike §4u's and §4v's refusals. Those read
+  the payload alone; this one reads rows another publish can change, so it belongs under
+  the same row lock as the staleness check. Nothing has been written when it refuses —
+  the deletes come after.
+- **`sectionIdFor()` is one function, called twice.** The check and the insert have to
+  agree about what "root level" means; a check that resolved a parent the insert did not
+  would refuse a block that was about to be parented correctly, and the reverse would
+  let one through.
+
+A forged `db_id` naming *another* Display's section is now refused rather than accepted.
+It used to publish, with the block landing at root on the publisher's own Display —
+scoping held, which is what that test was written to prove, but a basic account had
+placed layout. Both halves are the same refusal now.
+
+**Fifteen checks.** Six of them publish rather than refuse — an admin placing root
+content, a basic account returning it, the same tab publishing twice without reloading,
+and a basic publish that leaves the root block out and really does delete it.
 
 ---
 
