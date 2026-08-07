@@ -67,6 +67,7 @@ it is the standing contract, with the invariants and where later work attaches.
 | `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **853 checks**. Run before pushing |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **27 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit), **53 checks** |
+| `tools/selftest_viewer.js` | `node tools/selftest_viewer.js` — `viewer.php`'s poll against a stubbed DOM and fetch, through every way an answer can arrive: readable, refused, unreadable-with-a-status, and never arriving. **32 checks**. Run it whenever `viewer.php` is touched |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data. It also publishes every element type and block subtype the schema allows and reads them back, checks that a deleted Display really cascades, and prints which of the five page-added columns landed |
 | `config.php` | Site constants (`SITE_NAME`, `MAIL_FROM`); loads `branding_config.php` |
 | `db_connect.php` | PDO `$pdo`; loads creds from `../../private/db_credentials.php` |
@@ -151,6 +152,17 @@ anything, they hold every Display by role.
   has moved under it is `409`. `api.php?action=get_layout` answers the same codes for
   the same reasons. Point a check at each sign's Viewer URL and expect 200 — a `503`
   means somebody retired that Display, a `404` means the tag no longer exists.
+- **There is a CDN in front of the live site, and nothing here had said so.**
+  `srcresort.com` answers with `server: cloudflare`. It matters for three things and
+  is worth knowing before diagnosing anything that looks like a stale sign. First,
+  `.php` comes back `cf-cache-status: DYNAMIC` — not cached today, which is
+  Cloudflare's default and one page rule away from changing. Second, Cloudflare
+  caches a `404` for three minutes by default even with no cache headers, and the
+  live Viewer currently sends none, which is decision #28's defect with a name on
+  it. Third, it passes this origin's non-2xx bodies through unchanged (checked
+  against a path the origin 404s, twice), so the Viewer's notice survives the trip.
+  Nobody has audited the Cloudflare dashboard itself — page rules, Always Online and
+  custom error pages are all configured there, not here.
 - **Nothing this app serves is cached**, on any path — `Cache-Control: no-store` plus
   the two HTTP/1.0 headers, set in PHP from `db_connect.php` so they travel with the
   deploy rather than depending on `mod_headers`. `uploads/` is the deliberate
@@ -310,7 +322,7 @@ staleness check, no version history), 0007 (one editor per Display).
   URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
   account, two browsers, and one unavoidable 15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 853 self-test checks against SQLite, 80 node checks over `builder.php`'s
+  `php -l`, 853 self-test checks against SQLite, 112 node checks over `builder.php`'s and `viewer.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare

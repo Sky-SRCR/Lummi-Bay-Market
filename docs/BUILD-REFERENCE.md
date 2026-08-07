@@ -1948,8 +1948,66 @@ counts 12, 1, 1, 2, 1, 1, 1, 2, 1, 1, 1, 2, 2). Four worth naming:
   The suite has been printing since its first section, which makes the refusal the
   observable branch and the emission the one the §5 grep covers.
 
+**Amendment: what the framed Screen actually does with a non-2xx.** The first version
+of this section shipped with an open question — `viewer.php` is embedded in a
+SmartSign2Go widget, and a widget or a CDN that treats a non-2xx as "content
+unavailable" would replace the very notice ADR-0003 exists to put in front of a
+customer. That was worth answering rather than finding out on the sign, and the answer
+changed one thing in the code.
+
+What was established:
+
+- **It is an iframe.** The `.htaccess` block for `viewer.php` unsets
+  `X-Frame-Options` and sets `frame-ancestors *`; neither header does anything except
+  to a frame. A browser renders the body of a framed 404 or 503 the same as a 200 —
+  the historical exception, error-page substitution for bodies under 512 bytes, was
+  IE-only, and these notices are 723–732 bytes.
+- **There is a CDN in front of the live site, which nothing in this repo had recorded.**
+  `srcresort.com` answers with `server: cloudflare`. Asked twice for a path the origin
+  404s, it returned the origin's own body unchanged, `cf-cache-status: DYNAMIC` both
+  times — so this zone passes a non-2xx through and is not caching `.php` today. It
+  also confirmed the defect: the live Viewer sends no `Cache-Control` at all, in front
+  of a cache that stores a 404 for three minutes by default.
+- **A non-2xx on that URL was never new.** `ErrorPolicy::emit()` has answered `500`
+  with the kiosk notice on the Screen path since §4m, which is what a Viewer does when
+  the database will not open. Whatever the widget does with a status line, it has been
+  doing it to the failure that matters most for longer than #28 has existed.
+
+So the codes stay on `viewer.php`. But the probe found a real gap on the *poll*, and it
+was one this decision had created. `loadLayout()` used `r.json()`, which rejects on a
+body that will not parse — landing in the `.catch()` branch, whose job is "we never
+reached the server" and which therefore leaves the sign exactly as it is. Anything that
+answered *for* the endpoint with a page of its own — a CDN error page, a captive
+portal, the host's own 500 — would have left a retired Display showing last week's
+prices, every 30 seconds, forever, while §4b promises it flips to the notice within one
+poll. The status line survives that substitution when the payload does not, so the
+Viewer now reads the body as text, parses it itself, and splits the two cases:
+
+- an answer that arrived and **cannot be read**, with a non-2xx: believe the status
+  line, show the notice, keep re-checking. The server answered, whoever composed the
+  reply, and it was not a working sign.
+- an answer that arrived and cannot be read with a **2xx**: a truncated success. Leave
+  the sign up and drop the latch so the next good answer redraws it. Blanking a working
+  sign over one garbled reply is the §4g failure mode from the other direction.
+- an answer that **never arrived**: unchanged — the sign stays exactly as it is.
+- the status line never *overrides* a body it could read. An intermediary that rewrote
+  a 503 to a 200 must not be able to put a dead Display back on the air, so
+  `data.status` still decides whenever there is a `data`.
+
+That turned the codes from decoration into a second, independent statement of the same
+fact — which is the argument for having them on a page nobody reads. It also needed the
+page's first test suite: `tools/selftest_viewer.js`, **32 checks**, four mutations, all
+four killed. Restoring the `r.json()` chain kills eight; treating an unreadable 2xx like
+an unreadable 5xx kills one; letting the status line override a readable body kills
+three.
+
 Left standing, and named rather than skipped:
 
+- **Cloudflare's own configuration is not ours and was not audited.** Origin 5xx
+  pass-through is the default and replacing it is an Enterprise-tier option, so a
+  `503` from `get_layout` reaching the Screen intact is very likely but not
+  guaranteed. If it is ever intercepted, the Viewer now shows its notice from the
+  status line rather than the body — which is exactly the case that was built for.
 - **`uploads/` stays cacheable, on purpose.** Images and videos are served by Apache
   and never reach PHP, so this rule does not touch them — which is the wanted answer:
   every filename there carries a `uniqid()`, so the bytes behind a path never change,
@@ -1982,6 +2040,11 @@ node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a D
 node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an
                                          # admin who can edit — driving a stubbed
                                          # XMLHttpRequest through every way an upload ends
+node tools/selftest_viewer.js            # viewer.php's own poll, against a stubbed DOM and
+                                         # fetch, through every way an answer can arrive:
+                                         # readable, refused, unreadable-with-a-status,
+                                         # and never arriving at all. The last two are
+                                         # different branches on purpose (§4u)
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
                                               # the get_canvas_elements endpoint NAME, and
                                               # server_report.php's expected-column list
@@ -2140,12 +2203,17 @@ grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request namin
 
 `php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it.
 Anything touching that file needs reading, not linting. `node --check` over the
-extracted `<script>` body proves it parses; the two node suites go further and *run*
+extracted `<script>` body proves it parses; the three node suites go further and *run*
 it. `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only page
 emits, which is the only automated way to catch a lookup reaching for a control the
 lock took away. `selftest_builder_uploads.js` takes the opposite premise — an admin
 who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the only
 way to see a missing `.catch()`: the file parses perfectly without one.
+`selftest_viewer.js` covers the page with the least supervision of any of them — a TV
+in a shop — and asks the question a parse cannot: given an answer, does the sign end
+up showing the right thing? Its cases are the four an endpoint can produce, and the
+two that look alike are the point: an unreadable reply that *arrived* is a refusal to
+act on, and one that never arrived is a sign to leave alone.
 
 `schema.sql` has no automated check at all — nothing reads it, so a column missing
 from it fails silently on a future rebuild and nowhere else. Diff it against

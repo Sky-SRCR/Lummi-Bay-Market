@@ -316,13 +316,47 @@ $canvasH = $display->canvasHeight();
         // lock) would silently end all further polling.
         var _watchdog = setTimeout(function() { _loading = false; }, 20000);
         fetch('api.php?action=get_layout&display=' + encodeURIComponent(DISPLAY_TAG))
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
+            // Read the body as text and parse it here, rather than letting r.json()
+            // do both. The difference is what survives an unreadable reply: r.json()
+            // rejects, which sent an unparseable answer down the .catch() below —
+            // the branch for "we never reached the server" — and that branch
+            // deliberately leaves the sign exactly as it is. So anything that
+            // answered *for* the endpoint with something other than JSON left last
+            // week's prices on a sign that should have been showing a notice, and
+            // kept doing it every 30 seconds forever with nothing said anywhere.
+            //
+            // Keeping the status line is what makes that recoverable, and it is why
+            // the codes in api.php are worth having on a page nobody reads: they are
+            // a second, independent statement of the same fact, and they arrive even
+            // when the payload does not.
+            .then(function(r) {
+                return r.text().then(function(text) {
+                    var parsed = null;
+                    try { parsed = JSON.parse(text); } catch (e) { parsed = null; }
+                    return { ok: r.ok, data: parsed };
+                });
+            })
+            .then(function(reply) {
                 clearTimeout(_watchdog);
                 _loading = false;
 
-                if (!data || data.status !== 'success') {
-                    showNotice(data && data.message);
+                var data = reply.data;
+
+                if (!data) {
+                    // Something answered and we could not read it. A non-2xx says
+                    // that answer was never a working sign, whoever composed it, so
+                    // believe the status line and show the notice — on the same 30
+                    // second re-check, so a sign comes back on its own once the
+                    // thing in the middle stops answering for us. A 2xx we cannot
+                    // parse is a truncated success: leave the sign up and re-render
+                    // from scratch when the next poll lands.
+                    if (!reply.ok) { showNotice('This sign is temporarily unavailable.'); }
+                    else { _layoutHash = ''; }
+                    return;
+                }
+
+                if (data.status !== 'success') {
+                    showNotice(data.message);
                     return;
                 }
 

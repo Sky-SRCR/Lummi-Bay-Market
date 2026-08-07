@@ -352,6 +352,20 @@ In order, on the one visit:
     with the red banner (that is `get_editor_layout` doing its job). Then delete it —
     a mistyped tag must refuse, the right tag must delete it and its elements, and
     the drive-thru must still be intact after both.
+
+    **While that test Display is off, look at it through the widget, not just the
+    browser.** This is the one thing no test here can answer (§4u). A retired Display
+    now answers `503` and a deleted one `404`, both carrying the notice in the body,
+    and everything checkable says a framed page renders that body normally — it is an
+    iframe, the bodies are over 700 bytes, Cloudflare passes this origin's non-2xx
+    through, and `viewer.php` has answered `500` on the Screen path since the error
+    policy landed. What is left is the widget's own opinion. Point the SmartSign2Go
+    embed at the retired Display for a moment: you want the grey **"This display is
+    turned off"**, not the widget's own "content unavailable". If it is the latter,
+    the fix is one line — drop the `http_response_code()` call from `viewer.php`'s
+    notice branch and leave the codes on `api.php`, where the Screen's own poll reads
+    them and no widget is involved. The sign is what matters; the status line is a
+    convenience for whoever monitors it.
 14. **Prove the picker.** While more than one Display exists, a bare `builder.php`
     lists them to choose from — and as an admin it lists every Display, retired ones
     included.
