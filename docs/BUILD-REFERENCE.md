@@ -2065,6 +2065,16 @@ Four details that are not decoration:
   thing here with no automated check: opcache is off for CLI, so the mutation that
   removes the call kills nothing. It is here on the argument, not on a test.
 
+**One thing this changes about the deployment, and it is not a small one.** Writing
+in place needed write permission on `branding_config.php`. Swapping needs write
+permission on the **directory** that holds it, because that is where the temporary
+file is created and what `rename()` modifies. On a host where the webroot is owned by
+one account and only that one file was made writable for the web user — an ordinary
+arrangement — branding and settings saves will start failing after this deploy, with
+*"The new settings file could not be written … Check the folder permissions."*, which
+is the right sentence and still a surprise. Check it on the first save after this
+reaches the server; nothing else in the app cares.
+
 **A second defect fell out of the same rewrite.** `writeBrandingConfig()` took all
 eight settings positionally, so each of the two forms passed the other's three or
 five values back in from page variables — the Branding form re-wrote Site & Email,

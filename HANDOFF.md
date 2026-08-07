@@ -138,6 +138,12 @@ anything, they hold every Display by role.
   defining `DB_HOST/DB_NAME/DB_USER/DB_PASS`. Not in repo by design.
 - The live `branding_config.php` still uses the default `SITE_NAME`
   ("Store Display System"), not "Lummi Bay Market".
+- **The webroot directory must be writable by the web user**, not just
+  `branding_config.php` itself. Since §4w that file is replaced by writing a
+  temporary copy beside it and `rename`-ing over it, so the permission that matters
+  moved from the file to the folder. If only the file was made writable, the first
+  save after this deploy fails with *"Check the folder permissions."* and nothing is
+  changed. Confirm it by saving anything on Admin Panel → Branding.
 - `viewer.php` requires **no login**, so any screen on the network can display it.
 - **Every Viewer URL names its Display** (ADR-0003):
   `…/viewer.php?display=drive-thru`. A bare `viewer.php` shows a "no display
