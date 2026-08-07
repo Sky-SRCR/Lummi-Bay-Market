@@ -181,6 +181,14 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     await survives('targeting a section is a no-op rather than a throw',             () => setTargetSection(stubEl('s')));
     await survives('the align bar update finds nothing to update',                   () => updateAlignBar());
 
+    // Revealing the section banner runs at init, not on a click, and it is the
+    // other half of the same lookup: this page has no banner to reveal. It is
+    // worth its own check because a throw here is more expensive than a throw on
+    // a click — the two calls after it in DOMContentLoaded are the zoom fit and
+    // setupLockWatch(), so a read-only page that threw would also never notice
+    // it had lost the sign.
+    await survives('revealing the section banner finds no banner to reveal', () => showSectionBanner());
+
     // Runs on every page load, read-only or not: the library is still needed to
     // render a block that points at an entry, even with no dropdown to fill.
     global.fetch = () => Promise.resolve({
@@ -268,7 +276,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 27;
+    const expected = 28;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

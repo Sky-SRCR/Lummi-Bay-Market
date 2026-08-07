@@ -886,7 +886,18 @@ than around it:
   role, but `#section-banner` is emitted only when the account is basic *and* the
   page can edit — so a read-only basic clerk got an uncaught `TypeError` on every
   click in the canvas area. The lookup now goes through `setSectionBanner()`, which
-  is null-safe and needs no role test at all.
+  is null-safe and needs no role test at all. **This is decision #40**, closed here
+  rather than separately, the way #43 was closed by #20.
+- **The same banner had a second lookup, and it was the more expensive one.** The
+  reveal at `DOMContentLoaded` spelled the emit condition out again in JavaScript
+  — `if (!IS_ADMIN && !READ_ONLY)` against markup emitted on `!$isAdmin && !$readOnly`.
+  Two copies of one rule that happened to agree, which is the shape of the defect
+  above and not a fix for it. It now goes through `showSectionBanner()` and carries
+  no role test either, so the markup is the only thing that decides. Worth doing
+  even though the copies did agree: the two calls after it in that handler are the
+  zoom fit and `setupLockWatch()`, so had the rule ever drifted, a basic clerk
+  would have lost not just the banner but the watch that is how a read-only page
+  learns it has lost the sign at all.
 - **`uploadSlideImage()` gets an explicit `READ_ONLY` guard**, because it is the
   one handler that never needed a selected block, and "its modal is not in the
   page" is the argument this section exists to stop relying on.
@@ -901,9 +912,10 @@ rather than merely done: it strips the PHP, evaluates `builder.php`'s own inline
 JavaScript with `READ_ONLY = true`, and stubs a DOM holding **only** the ids that
 page emits, so any lookup of a removed control throws and a throw is a failure. It
 also walks the file's `<?php if (!$readOnly):` blocks to assert the four regions
-really are inside one. Sixteen checks, verified against four mutations: shipping
-the inspector again fails 3, dropping `deselectAll`'s guard fails 1, restoring the
-role-only banner test fails 2, and dropping `loadAssets`'s guard fails 1.
+really are inside one. Twenty-eight checks, verified against five mutations:
+shipping the inspector again fails 3, dropping `deselectAll`'s guard fails 1,
+restoring the role-only test in `setSectionBanner()` fails 2, restoring it in
+`showSectionBanner()` fails 1, and dropping `loadAssets`'s guard fails 1.
 
 ### 4k. Two things this repo believed without ever looking
 
