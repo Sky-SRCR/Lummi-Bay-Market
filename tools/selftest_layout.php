@@ -2707,6 +2707,11 @@ checkSame(true, ErrorPolicy::handleError(E_NOTICE, 'a notice', '', 0),
 
 // The app is full of deliberate `@` calls — this very module's filesystem writes,
 // schemaTry, the reset email. Logging them would bury the real entries.
+// Both sizes are read with the stat cache cleared. Without the first one this
+// compared a number `log()` had cached before its own last append against a fresh
+// reading — a difference of one whole entry, and a check that failed on PHP 8.2
+// and passed on 8.4 for reasons that had nothing to do with logging.
+clearstatcache();
 $before = filesize($logPath);
 $was    = error_reporting(0);
 ErrorPolicy::handleError(E_WARNING, 'a deliberately suppressed call', '', 0);
@@ -2715,10 +2720,13 @@ clearstatcache();
 checkSame($before, filesize($logPath), 'a suppressed diagnostic is not logged at all');
 
 // A shared host has a disk quota, and this file is appended to by every request
-// forever.
+// forever. The file is grown behind the module's back here on purpose: that is what
+// the *other* requests appending to this same log do, and rotation has to decide on
+// the size the file is rather than the size it was when this process last looked.
 file_put_contents($logPath, str_repeat('x', ErrorPolicy::MAX_LOG_BYTES + 1));
 ErrorPolicy::log('the entry that tipped it over');
 check(file_exists($logPath . '.1'), 'an oversized log is rotated rather than grown forever');
+clearstatcache();
 check(filesize($logPath) < 1024, 'and the live file starts again');
 
 // ─────────────────────────────────────────────────────────────

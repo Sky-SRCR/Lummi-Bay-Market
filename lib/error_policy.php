@@ -361,9 +361,19 @@ class ErrorPolicy
             $path = self::logFile();
             if ($path === '') { return false; }
 
+            // The size PHP remembers is not the size of the file. `filesize()` is
+            // served from the stat cache, and this log's other writers are *other
+            // requests* — every page load is a separate process appending to it —
+            // so a cached answer is one this process took before anybody else's
+            // entry landed. It is also stale within one request: the previous call
+            // to this method statted the file and then appended to it. Deciding
+            // whether to rotate on that number is deciding on the size the log used
+            // to be, which is how it grows past the cap it has.
+            //
             // `is_file` first: statting a path that is not there is a warning, and a
             // warning raised inside the thing that writes warnings down is a loop
             // waiting for somebody to remove one `@`.
+            @clearstatcache(true, $path);
             if (@is_file($path) && @filesize($path) > self::MAX_LOG_BYTES) {
                 // One generation kept. Two would need a policy for the third.
                 @rename($path, $path . '.1');
@@ -417,6 +427,10 @@ class ErrorPolicy
                 . 'recorded and no alert can be sent. Give the app a writable "logs" '
                 . 'folder, or set LBM_LOG_DIR in the private credentials file.'];
         } else {
+            // Same reason as the rotation check above: this page has very likely
+            // logged something itself on the way here, and a readout that reports
+            // the size from before its own entry is a readout that is wrong.
+            @clearstatcache(true, $path);
             $size = @filesize($path);
             $when = @filemtime($path);
             $out['Error log'] = [$path,

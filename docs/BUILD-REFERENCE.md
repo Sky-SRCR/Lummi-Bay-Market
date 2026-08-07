@@ -2099,6 +2099,35 @@ still rewrites its recipients cache in place. That one stays because the failure
 not the same shape — `recipients()` reads it line by line and drops anything without
 an `@`, so a torn write costs one email rather than every page in the app.
 
+### 4x. The log rotated on the size it used to be
+
+Not from the decision list — from CI, which had been red for two commits before
+anybody looked. Two checks in the error-log section failed on the runner and passed
+on every machine the code was written on, which is the shape of bug that survives
+longest.
+
+`filesize()` is served from PHP's stat cache. `ErrorPolicy::log()` statted the file,
+decided against rotating, and appended — so the *next* call read the size from before
+the previous entry. Worse, the other writers of this log are **other requests**:
+every page load is a separate process appending to the same file, so a cached answer
+is one this process took before anybody else's entry landed. The log grows past the
+cap it has, on a shared host with a quota, which is the one thing `MAX_LOG_BYTES`
+exists to prevent. `clearstatcache(true, $path)` before the check, and again before
+the size `status()` prints, so the Settings readout is not reporting the file as it
+was before this very request logged something.
+
+The suite had a second, smaller version of the same mistake: it read `filesize()` for
+its "before" without clearing the cache and against a "after" that did, so it was
+comparing two different moments and calling the difference a log entry.
+
+**What is worth keeping from this is not the fix.** It is that PHP 8.4 invalidates
+the stat cache on a write from the same process and PHP 8.2 does not, so the bug was
+invisible everywhere except the runner — and the runner is pinned to 8.2 against a
+7.1 target, which decision #51 has open as a *defect*. It caught this one by being
+wrong in a useful direction. It will not catch the next one that way. Nothing here
+is a substitute for `tools/rehearse_phase1.php` on the real version, which is what
+#51 actually asks for.
+
 ---
 
 ## 5. Verification
