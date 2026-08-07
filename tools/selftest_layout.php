@@ -742,6 +742,100 @@ foreach (elementsOf($pdo, $sign->id()) as $row) {
 checkSame(0, $rootRows, 'and the root block is gone — a delete, not a no-op that says success');
 
 // ─────────────────────────────────────────────────────────────
+section('One address, one section');
+
+// #31. temp_id, parent_temp_id and db_id are how a payload points at itself, and for
+// the length of one publish they are PHP array keys. Two sections answering to one
+// address does not fail — the map is built by assignment, so the second silently took
+// the first's place, and every block aimed at the first was inserted into the second.
+
+$sign = loadTestDisplay($pdo, $sign->id());
+$res = publishAs($layouts, $sign, [
+    ['type' => 'section', 'temp_id' => 's1', 'x_pos' => 0,   'width' => 300, 'height' => 300],
+    ['type' => 'section', 'temp_id' => 's1', 'x_pos' => 400, 'width' => 300, 'height' => 300],
+    ['type' => 'text', 'parent_temp_id' => 's1', 'manual_content' => 'Which section?'],
+], $sign->layoutStamp(), true, 1);
+checkSame('rejected', $res->kind(), 'two sections sharing a temporary id is refused');
+checkMentions($res->message(), 'sharing one temporary id', 'and the refusal says which trap it hit');
+checkMentions($res->message(), 'Reload the display', 'and what to do about it');
+
+// '5' and 5 are one array key, so they are one section — a payload that looks like it
+// names two would have gone through the same overwrite.
+$sign = loadTestDisplay($pdo, $sign->id());
+$before = count(elementsOf($pdo, $sign->id()));
+$res = publishAs($layouts, $sign, [
+    ['type' => 'section', 'temp_id' => '5', 'width' => 300, 'height' => 300],
+    ['type' => 'section', 'temp_id' => 5,   'width' => 300, 'height' => 300],
+], $sign->layoutStamp(), true, 1);
+checkSame('rejected', $res->kind(), 'and so are the string and the number of the same id');
+checkSame($before, count(elementsOf($pdo, $sign->id())), 'a refused publish deleted nothing');
+
+// The other address. A basic publish resolves a section by db_id, so two canvas
+// sections claiming one stored row pour both their contents into it.
+$sign = loadTestDisplay($pdo, $sign->id());
+$res = publishAs($layouts, $sign, [
+    ['type' => 'section', 'temp_id' => 's1', 'db_id' => $sectionId],
+    ['type' => 'section', 'temp_id' => 's2', 'db_id' => $sectionId],
+    ['type' => 'text', 'parent_temp_id' => 's2', 'manual_content' => 'Merged'],
+], $sign->layoutStamp(), false, 2);
+checkSame('rejected', $res->kind(), 'two sections claiming one stored section is refused too');
+checkMentions($res->message(), 'same stored section', 'and told apart from the temporary id');
+
+// Shape. An array subscript throws, so this used to be 'failed' — a fault, when it is
+// a payload being refused, and the two say different things about whose problem it is.
+$sign = loadTestDisplay($pdo, $sign->id());
+$res = publishAs($layouts, $sign, [
+    ['type' => 'section', 'temp_id' => ['an', 'array'], 'width' => 300, 'height' => 300],
+], $sign->layoutStamp(), true, 1);
+checkSame('rejected', $res->kind(), 'an array where a temporary id belongs is a refusal, not a fault');
+checkMentions($res->message(), 'not a name this app can use', 'and says so in those terms');
+
+// The shapes that do not throw are the worse half: PHP folds true, 1.5 and 1.9 all
+// onto the key 1, so sections that look distinct share one address.
+foreach ([true, 1.5, 2.5] as $shape) {
+    $sign = loadTestDisplay($pdo, $sign->id());
+    $res = publishAs($layouts, $sign, [
+        ['type' => 'section', 'temp_id' => $shape, 'width' => 300, 'height' => 300],
+    ], $sign->layoutStamp(), true, 1);
+    checkSame('rejected', $res->kind(), 'a temporary id of ' . gettype($shape)
+              . ' is refused before it can fold onto a whole-number key');
+}
+
+// parent_temp_id is the same field read from the other end, and db_id has to be a
+// row number — intval(['x']) is 1, which is a real section on some Display.
+$sign = loadTestDisplay($pdo, $sign->id());
+$res = publishAs($layouts, $sign, [
+    ['type' => 'section', 'temp_id' => 's1', 'width' => 300, 'height' => 300],
+    ['type' => 'text', 'parent_temp_id' => 1.5, 'manual_content' => 'x'],
+], $sign->layoutStamp(), true, 1);
+checkSame('rejected', $res->kind(), 'a parent_temp_id of the same shape is refused as well');
+
+$sign = loadTestDisplay($pdo, $sign->id());
+$res = publishAs($layouts, $sign, [
+    ['type' => 'section', 'temp_id' => 's1', 'db_id' => ['x'], 'width' => 300, 'height' => 300],
+], $sign->layoutStamp(), true, 1);
+checkSame('rejected', $res->kind(), 'and a db_id that is not a row number');
+
+// An allowlist that refuses real work is worse than the defect it fixes. What the
+// Builder actually sends — one temp_id per section, one db_id per section, blocks
+// pointing at either — still publishes.
+$sign = loadTestDisplay($pdo, $sign->id());
+$res = publishAs($layouts, $sign, [
+    ['type' => 'section', 'temp_id' => 'tmp-a1b2c3', 'x_pos' => 0,   'width' => 300, 'height' => 300],
+    ['type' => 'section', 'temp_id' => 'tmp-d4e5f6', 'x_pos' => 400, 'width' => 300, 'height' => 300],
+    ['type' => 'text', 'parent_temp_id' => 'tmp-a1b2c3', 'manual_content' => 'Left'],
+    ['type' => 'text', 'parent_temp_id' => 'tmp-d4e5f6', 'manual_content' => 'Right'],
+], $sign->layoutStamp(), true, 1);
+check($res->isOk(), 'two sections with two ids, each holding its own block, publishes');
+
+$byParent = [];
+foreach (elementsOf($pdo, $sign->id()) as $row) {
+    if ($row['type'] === 'section') { continue; }
+    $byParent[intval($row['section_id'])] = $row['manual_content'];
+}
+checkSame(2, count($byParent), 'and the two blocks are in two different sections');
+
+// ─────────────────────────────────────────────────────────────
 section('Hide and delete cannot cross Displays');
 
 $driveT = loadTestDisplay($pdo, $driveT->id());
@@ -1324,8 +1418,8 @@ section('A hostile publish payload is a refusal, never an escaping error');
 // and the Builder reported "Network error." for a rejected publish.
 //
 // It is caught before the transaction now (#30) and so answers 'rejected' rather
-// than 'failed'. The Throwable safety net underneath it is still the thing being
-// tested here, and the temp_id check below still reaches it.
+// than 'failed'. The array temp_id below it used to be what still reached the net;
+// #31 refuses that before the transaction too, so the net gets its own check.
 $victim = $store->forId($victim->id());
 $res = $layouts->publish($victim, new PublishRequest(
     [['type' => 'text', 'manual_content' => ['not' => 'a string'], 'temp_id' => 't1']],
@@ -1335,13 +1429,19 @@ checkSame('rejected', $res->kind(), 'manual_content as an object is refused, nev
 checkSame(2, count(elementsOf($pdo, $victim->id())), 'and the layout it would have replaced survives');
 checkSame(false, $pdo->inTransaction(), 'with no transaction left open behind it');
 
+// Something that throws where no pre-transaction pass can see it coming: an asset_id
+// shaped exactly like a real one, pointing at a library row that does not exist. The
+// foreign key refuses it from inside the transaction, after both DELETEs have run —
+// which is the case the Throwable net exists for, and the case that has to roll back.
 $victim = $store->forId($victim->id());
 $res = $layouts->publish($victim, new PublishRequest(
-    [['type' => 'section', 'temp_id' => ['an', 'array']]],
+    [['type' => 'section', 'temp_id' => 's1'],
+     ['type' => 'image', 'parent_temp_id' => 's1', 'asset_id' => 987654]],
     Background::unchanged(), 1, true, $victim->layoutStamp()
 ));
-checkSame('failed', $res->kind(), 'an array where a temp_id belongs is refused the same way');
-checkSame(2, count(elementsOf($pdo, $victim->id())), 'and again nothing was lost');
+checkSame('failed', $res->kind(), 'a failure the payload checks cannot foresee is a failed result');
+checkSame(2, count(elementsOf($pdo, $victim->id())), 'and the layout the DELETEs had already taken is rolled back');
+checkSame(false, $pdo->inTransaction(), 'with nothing left open behind that either');
 
 // ─────────────────────────────────────────────────────────────
 section('The edit lock covers every element write, not just publishing');
@@ -3581,4 +3681,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(906);
+reportChecks(923);

@@ -68,7 +68,7 @@ written down rather than remembered:
 | 28 | Missing, unknown and switched-off signs all answered "200 OK", and nothing anywhere set caching rules. | Real error codes, and stop caching. | Open | — |
 | 29 | Publish accepted any block type, so a basic account could insert top-level content. | Accept only known types and refuse the rest. | **Done** — the ENUM was doing none of the work it looked like it was doing: `type: "1"` stored a *section*. Its one residual, a basic account placing root-level content, is closed in §4w. | §4u, §4w |
 | 30 | Wrong-shaped and absurd values were coerced and written rather than refused. | Refuse the publish. | **Done** — five silent rewrites between `intval()` and a MySQL outside strict mode, all of them reporting success. Line height is left to #32, which clamps instead. Of the residuals raised on review, the root-content one is closed in §4w and one is left standing in §4v. | §4v, §4w |
-| 31 | Two blocks sharing a temporary id silently reparented one of them into the wrong section. | Refuse the publish. | Open | — |
+| 31 | Two blocks sharing a temporary id silently reparented one of them into the wrong section. | Refuse the publish. | **Done** — nothing stores a temporary id, so no column was ever going to refuse one; for the length of a publish it is a PHP array key, and the map was built by assignment. `db_id` is the same address through the other field and is checked with it. The wrong-shaped `temp_id` §4v deferred is closed here too. | §4x |
 | 32 | Line height was stored with a thousands separator, so some values could not be read back. *(First framed as a prices problem. It never touched prices — no sign has ever shown a stray comma.)* | Clamp it to 0.5–5 and store it plain. | Open | — |
 | 33 | An account with no signs assigned could still write the shared asset library and upload files. | Nothing until it has a sign. | Open | — |
 | 34 | A file bigger than the server's real limit was reported as a security problem. | Detect it and say so plainly. | **Done** | §4n |
@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**24 done, 2 part done, 25 open.**
+**25 done, 2 part done, 24 open.**
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

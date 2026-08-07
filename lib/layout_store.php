@@ -248,6 +248,26 @@ class LayoutStore
     /** `manual_content` is TEXT. Truncation there cuts a carousel's JSON mid-string. */
     const MANUAL_CONTENT_MAX = 65535;
 
+    /**
+     * The three fields a payload addresses itself by. None is stored: `temp_id` is how
+     * a section names itself for the length of one publish, `parent_temp_id` is how a
+     * block points at it, and `db_id` is how either says "the row I came from". They
+     * share a rule (§4x) because they share a failure — an address two things answer to
+     * puts content somewhere nobody chose, and reports success.
+     */
+    const ADDRESS_FIELDS = ['temp_id', 'parent_temp_id', 'db_id'];
+
+    /**
+     * The tail of every payload refusal, in one place so the three of them agree.
+     *
+     * Reloading is the right advice for all of it: the Builder mints a fresh `temp_id`
+     * per section on render and re-reads every `db_id`, so a reload is what fixes a
+     * tangled payload — and the layout on the sign is untouched, which is what makes
+     * reloading safe to tell somebody to do.
+     */
+    const RELOAD_ADVICE = 'Nothing was saved. Reload the display and try again — '
+                        . 'if it keeps happening, tell an admin.';
+
     private $pdo;
     private $displays;
 
@@ -566,10 +586,11 @@ class LayoutStore
      * no undo behind any of them — the refusal is the whole safety net:
      *
      *   · the layout contains something this app cannot store — a block of an
-     *     unknown type, or a value no column will hold as it was sent. Checked first
-     *     and outside the transaction, because it needs no database at all and
-     *     because the two below describe a moment: a payload that was never storable
-     *     is not going to become storable by being asked again under a row lock.
+     *     unknown type, a value no column will hold as it was sent, or an address two
+     *     things answer to. Checked first and outside the transaction, because it
+     *     needs no database at all and because the two below describe a moment: a
+     *     payload that was never storable is not going to become storable by being
+     *     asked again under a row lock.
      *
      *   · somebody else holds the edit lock (ADR-0007). The lock says no at the
      *     door, but a lock can move while a tab sits open, so it is checked again
@@ -593,9 +614,16 @@ class LayoutStore
         if ($unstorable !== null) {
             return PublishResult::rejected(
                 'That layout contains ' . $unstorable . ', which this app cannot store. '
-                . 'Nothing was saved. Reload the display and try again — if it keeps '
-                . 'happening, tell an admin.'
+                . self::RELOAD_ADVICE
             );
+        }
+
+        // Second, and in this order: the pass below reads `type` to know which
+        // elements become sections, and reads `$el` as an array. Both are things the
+        // pass above has just finished establishing.
+        $tangled = self::unusableAddressIn($request->elements());
+        if ($tangled !== null) {
+            return PublishResult::rejected($tangled);
         }
 
         try {
@@ -779,7 +807,8 @@ class LayoutStore
      *     as well and a refusal there would strand the rows that bug already wrote.
      *   · **Whether a colour is a colour, or a path exists** (#24, #41). This asks
      *     only shape and size — the two things the column silently changes.
-     *   · **`temp_id` / `parent_temp_id`.** Their defect is collision, not shape (#31).
+     *   · **The three address fields.** Nothing stores them, so no column can refuse
+     *     them; `unusableAddressIn()` below asks their own question (#31, §4x).
      */
     private static function unstorableValueIn(array $el)
     {
@@ -864,6 +893,87 @@ class LayoutStore
     }
 
     /**
+     * The refusal for an address this layout cannot be read by — else null.
+     *
+     * None of the three is a column. `temp_id` is how a section names itself for the
+     * length of one publish, `parent_temp_id` is how a block points at it, and `db_id`
+     * is how either says which row it came from. For that one request they are PHP
+     * array keys, and that is where all of this comes from.
+     *
+     *   · **Two sections declaring one `temp_id`.** The map is built by assignment, so
+     *     the second overwrote the first — and every block that pointed at the *first*
+     *     section was inserted into the second, on a canvas where both were still
+     *     drawn. Silently, and reported as published. That is #31.
+     *   · **Two sections declaring one `db_id`.** The same harm through the other
+     *     address: a basic publish resolves a section by `db_id`, so two canvas
+     *     sections claiming one stored row pour both their contents into it.
+     *   · **An address that is not a name.** An array subscript is a TypeError, so a
+     *     wrong-shaped `temp_id` reported "Publish failed" — true, but this is a
+     *     payload being refused, not a fault, and the two say different things about
+     *     whose problem it is. The shapes that *don't* throw are worse: PHP folds
+     *     `true`, `1.5` and `1.9` all onto the key `1`, so three sections that look
+     *     distinct share one address — the first defect by a quieter road.
+     *
+     * Both ids are compared as strings because that is how a PHP array compares them:
+     * `$map['5']` and `$map[5]` are one key, so `'5'` and `5` are one section here too.
+     *
+     * Only sections are checked for collision, because only sections go in the map —
+     * a content block's `temp_id` is read by nothing, and refusing a payload for it
+     * would be refusing a layout that was about to publish correctly. Shape is asked of
+     * every element, because a stated address that this app cannot use is not something
+     * any element should be sending.
+     */
+    private static function unusableAddressIn(array $elements)
+    {
+        foreach ($elements as $el) {
+            foreach (self::ADDRESS_FIELDS as $field) {
+                // `!empty()` is the question both map sites ask, so absent, null, ''
+                // and 0 all mean "no address stated" here too, and are not judged.
+                if (empty($el[$field])) { continue; }
+
+                $value = $el[$field];
+                $usable = $field === 'db_id'
+                    ? (is_numeric($value) && $value + 0 == intval($value) && intval($value) >= 1)
+                    : (is_string($value) || is_int($value));
+
+                if (!$usable) {
+                    return 'That layout has a block whose ' . $field . ' is not a name this '
+                         . 'app can use (' . self::describeValue($value) . '). '
+                         . self::RELOAD_ADVICE;
+                }
+            }
+        }
+
+        $seenTemp = [];
+        $seenDb   = [];
+        foreach ($elements as $el) {
+            if (($el['type'] ?? '') !== 'section') { continue; }
+
+            if (!empty($el['temp_id'])) {
+                $tempId = (string)$el['temp_id'];
+                if (isset($seenTemp[$tempId])) {
+                    return 'That layout has two sections sharing one temporary id ('
+                         . self::describeValue($tempId) . '), so there is no telling which '
+                         . 'of them a block belongs in. ' . self::RELOAD_ADVICE;
+                }
+                $seenTemp[$tempId] = true;
+            }
+
+            if (!empty($el['db_id'])) {
+                $dbId = (string)intval($el['db_id']);
+                if (isset($seenDb[$dbId])) {
+                    return 'That layout has two sections claiming to be the same stored '
+                         . 'section (' . self::describeValue($dbId) . '), so their content '
+                         . 'would end up in one of them. ' . self::RELOAD_ADVICE;
+                }
+                $seenDb[$dbId] = true;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * A submitted value, short enough and plain enough to put in a sentence.
      *
      * Quoting what arrived is worth it — "unknown type (Section)" tells whoever is
@@ -895,7 +1005,9 @@ class LayoutStore
         $this->pdo->prepare("DELETE FROM canvas_elements WHERE display_id = ?")
                   ->execute([$display->id()]);
 
-        // Sections are inserted first so their real IDs can parent the content.
+        // Sections are inserted first so their real IDs can parent the content. Two
+        // sections cannot share a `temp_id` by the time this runs — this assignment
+        // used to be where the second one's id quietly replaced the first's (§4x).
         $tempMap = [];
         foreach ($elements as $el) {
             if (($el['type'] ?? '') !== 'section') { continue; }
@@ -914,7 +1026,9 @@ class LayoutStore
      *
      * The temp-id map is built from the section IDs the Builder reports (`db_id`),
      * checked against the sections this Display actually has. Without that check
-     * a forged `db_id` would parent content into another Display's section.
+     * a forged `db_id` would parent content into another Display's section. Both ids
+     * arrive already proven distinct and shaped like addresses (§4x), so neither
+     * assignment below can be the one that overwrites the other.
      *
      * A block whose parent does not resolve lands at root level — `section_id NULL`,
      * which is *layout*, and placing layout is not something this role does

@@ -166,6 +166,12 @@ through the app again:
    `intval('abc')` is 0 and MySQL clamps, truncates and rounds the rest without a word
    outside strict mode — so the alternative to refusing is not an error message, it is
    a sign quietly showing something other than what was published (§4v).
+   And it refuses an *address* two things answer to. `temp_id`, `parent_temp_id` and
+   `db_id` are how a payload points at itself; none is stored, so no column will ever
+   refuse one, and for the length of a publish they are PHP array keys. Two sections
+   declaring one `temp_id` did not fail — the map is built by assignment, so the second
+   took the first's place and every block aimed at the first landed in the second
+   (§4x).
 6. **Text-block content is plain text** (ADR-0002). `toPlainText()` on save for
    `type = 'text'` only; render with `textContent`. Never `innerHTML`, never
    strip carousel/table/marquee JSON or media paths.
@@ -2073,6 +2079,68 @@ and a basic publish that leaves the root block out and really does delete it.
 
 ---
 
+### 4x. One address, one section
+
+Decision #31. A payload points at itself with three fields — `temp_id`, how a section
+names itself for the length of one publish; `parent_temp_id`, how a block points at
+that; and `db_id`, how either says which row it came from. None of the three is a
+column. Nothing stores them and they are gone the moment the publish lands, which is
+exactly why nothing was checking them: every other refusal in §4u and §4v exists
+because a column would have taken the value and quietly changed it, and there is no
+column here to appeal to.
+
+What there is instead is a PHP array. For the length of one publish these are array
+keys, and the whole defect follows from that.
+
+- **Two sections declaring one `temp_id`.** `$tempMap[$el['temp_id']] = lastInsertId()`
+  is an assignment, so the second section overwrote the first — and then every block
+  whose `parent_temp_id` named that id was inserted into the *second* section, on a
+  canvas where both were still drawn. No error, no warning, a success message, and a
+  sign with one empty half. That is the sentence the ticket is written in.
+- **Two sections declaring one `db_id`.** The same harm through the other address. A
+  basic publish resolves a section by `db_id` rather than by inserting one, so two
+  canvas sections claiming one stored row pour both their contents into it.
+- **An address that is not a name.** An array subscript is a `TypeError`, so a
+  wrong-shaped `temp_id` came back as "Publish failed. Nothing was saved." — true, but
+  it is a payload being refused, not a fault, and the two say different things about
+  whose problem it is and whether trying again could help. That was the residual left
+  open when §4v shipped, on the grounds that #31 owned the field; it is closed here
+  rather than in a second pass over the same value. The shapes that *don't* throw are
+  the worse half: PHP folds `true`, `1.5` and `1.9` all onto the key `1`, so three
+  sections that look distinct share one address — the first defect by a quieter road.
+
+Three things about the shape of it:
+
+- **Both ids compare as strings**, because that is how a PHP array compares them:
+  `$map['5']` and `$map[5]` are one key, so `'5'` and `5` are one section here too.
+- **Collision is asked of sections only.** Only sections go in the map; a content
+  block's `temp_id` is read by nothing, and refusing a payload for it would be refusing
+  a layout that was about to publish correctly. Shape is asked of every element,
+  because a stated address this app cannot use is not something any element should be
+  sending.
+- **It runs after §4u's and §4v's pass, not with it.** This one reads `type` to know
+  which elements become sections, and reads each entry as an array — both of them
+  things the pass before it has just finished establishing.
+
+`db_id` gains a shape rule on the way past, which closes a small hole §4w left:
+`intval(['x'])` is `1`, so an array where a row number belongs resolved to section or
+root row 1. Scoped to one Display either way, so the reach was never another sign's —
+but it is the same "silently the wrong section" sentence, and the fix is one line in a
+rule that had to exist anyway.
+
+**Seventeen checks**, one of them a publish rather than a refusal: two sections with
+two ids, each holding its own block, landing in two different sections — because an
+allowlist that refuses real work is worse than the defect it fixes.
+
+One check elsewhere changed hands. The array `temp_id` was what still reached the
+`Throwable` net in `publish()` after §4v moved everything else in front of the
+transaction, and #31 moves that in front too. The net now has its own case: an
+`asset_id` shaped exactly like a real one, pointing at a library row that does not
+exist. The foreign key refuses it from inside the transaction, *after* both `DELETE`s
+have run — which is the case the net exists for, and the one that has to roll back.
+
+---
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -2197,6 +2265,14 @@ grep -rn "NUMBER_RANGE\|TEXT_LIMITS\|COORD_LIMIT\|FLAG_FIELDS\|MANUAL_CONTENT_MA
                                               # TEXT_LIMITS to the VARCHAR widths in schema.sql. A
                                               # limit stated twice is a value refused in one place
                                               # and truncated in the other (§4v)
+grep -rn "temp_id" --include=*.php .          # who *reads* one is the question, and only
+                                              # lib/layout_store.php does: ADDRESS_FIELDS, the two map
+                                              # builders, and sectionIdFor(). The other hits all write
+                                              # one — builder.php mints and posts them, tools/ builds
+                                              # payloads — and a writer is fine. Nothing stores the
+                                              # field, so no column will ever refuse it; a fourth
+                                              # reader is a fourth idea of what a section's address
+                                              # is, and two of those disagree silently (§4x)
 grep -rEn "WHERE +`?id`? *= *'?1'?" --include=*.php .  # must be empty — whitespace and quotes included
 grep -rn "1920\|1080" --include=*.php .        # admin size presets, the seed, tools/, and prose
 grep -rn "viewer.php\"\|viewer.php'" --include=*.php .  # every link must carry ?display=
