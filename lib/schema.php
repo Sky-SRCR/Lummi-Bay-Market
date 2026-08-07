@@ -533,6 +533,15 @@ function signageSchemaPlan(SchemaFacts $facts)
     $sql($facts->needsColumn('users', 'locked_until'), 'users.locked_until',
          "ALTER TABLE users ADD COLUMN locked_until DATETIME NULL");
 
+    // The column that makes an account number permanent (invariant 14). It arrived
+    // the same ungated way as the three above — `AccountStore::ensureSchema()`, one
+    // `ALTER` on every admin-panel load — which is milder than the login one was
+    // (authenticated, one statement, a page nobody hammers) and is the same defect.
+    // The panel converges before it builds an `AccountStore`, so the store's cached
+    // "is the column there" answer is taken after this has run, not before.
+    $sql($facts->needsColumn('users', 'closed_at'), 'users.closed_at',
+         "ALTER TABLE users ADD COLUMN closed_at DATETIME NULL DEFAULT NULL");
+
     // ---- canvas_elements: columns added since the original install ----------
     // Carried over verbatim from the inline ALTERs that used to sit at the top of
     // api.php, so behaviour on an out-of-date database is unchanged.

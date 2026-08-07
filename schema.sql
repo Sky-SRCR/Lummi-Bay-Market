@@ -32,8 +32,13 @@
 --     used to be three unconditional ALTERs fired from the login page on every
 --     sign-in POST, which made them the one piece of DDL in the app reachable with
 --     no account at all; see docs/adr/0001-account-keyed-login-lockout.md.
---   * AccountStore::ensureSchema() in lib/accounts.php, from the admin panel —
---     closed_at. Still ungated, and still on the list.
+--     closed_at is in that plan too, as of the same section. It used to be one
+--     ungated ALTER per admin-panel load from AccountStore::ensureSchema().
+--   * ResetTokenStore::ensureSchema() in lib/password_resets.php, from the
+--     password-reset page — the password_resets table and its `attempts` column.
+--     The one convergence still running unauthenticated, and deliberately: the
+--     table is not optional the way a lockout counter is, and the person who needs
+--     it is by definition the person who cannot sign in.
 --
 -- So the order of authority is: lib/schema.php and lib/accounts.php decide what the
 -- live database becomes, and this file has to agree with them. If the two ever
@@ -61,7 +66,7 @@ CREATE TABLE IF NOT EXISTS users (
     failed_attempts INT(11)      NOT NULL DEFAULT 0,
     last_failed_at  DATETIME     NULL DEFAULT NULL,
     locked_until    DATETIME     NULL DEFAULT NULL,
-    -- Account closure — added at runtime by lib/accounts.php via the admin panel.
+    -- Account closure — added at runtime by signageSchemaPlan().
     -- An account is never deleted: the row stays so its id can never be handed to
     -- somebody else, which is what would let a stale grant, a held edit lock or a
     -- publish record silently change whose they are. Distinct from is_active on

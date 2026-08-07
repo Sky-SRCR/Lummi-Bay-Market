@@ -1889,7 +1889,7 @@ $server = new ServerReport($sPdo);
 
 check($server->isConverged(), 'a fully converged database reports as converged');
 $columns = $server->convergence();
-checkSame(7, count($columns), 'and every runtime-added column is accounted for');
+checkSame(8, count($columns), 'and every runtime-added column is accounted for');
 foreach ($columns as $col) {
     check($col['ok'], 'present: ' . $col['table'] . '.' . $col['column']);
     checkSame('', $col['note'], 'with nothing to warn about for ' . $col['column']);
@@ -1969,7 +1969,7 @@ checkSame(['seed_block_styles', 'seed_legacy_display'], planSteps($converged),
 // The fallback has to be the old behaviour exactly, or a host whose catalogue
 // cannot be read would quietly stop converging.
 $blind = signageSchemaPlan(SchemaFacts::unknown());
-checkSame(20, count(planStatements($blind)),
+checkSame(21, count(planStatements($blind)),
           'a database whose catalogue cannot be read is issued every statement, as before');
 checkSame(4, count(planSteps($blind)), 'and every step');
 checkSame(false, SchemaFacts::unknown()->known(), 'and it says so rather than answering false');
@@ -2013,7 +2013,7 @@ check(planWants($plan, 'MODIFY COLUMN display_id INT(11) NOT NULL'),
 // that has them all.
 $empty = readSchemaFacts(fakeCatalogue(['columns' => [], 'indexes' => [], 'constraints' => []]));
 checkSame(false, $empty->known(), 'a catalogue with nothing to say about this app is unknown, not empty');
-checkSame(20, count(planStatements(signageSchemaPlan($empty))),
+checkSame(21, count(planStatements(signageSchemaPlan($empty))),
           'so it falls back to trying everything rather than creating what already exists');
 
 // ---- One thing missing asks for exactly that thing ---------------------------
@@ -2038,6 +2038,17 @@ unset($shape['columns']['users']['locked_until']);
 $plan = schemaPlanFor($shape);
 checkSame(1, count(planStatements($plan)), 'and a database missing only one of them is issued only that one');
 check(planWants($plan, 'ALTER TABLE users ADD COLUMN locked_until'), 'namely the one it is missing');
+
+// closed_at, which arrived the same ungated way until recently — one ALTER on every
+// admin-panel load, from AccountStore::ensureSchema(). Milder than the login one
+// (authenticated, one statement) and the same defect.
+$shape = convergedSchemaShape();
+unset($shape['columns']['users']['closed_at']);
+$plan = schemaPlanFor($shape);
+checkSame(1, count(planStatements($plan)), 'a database that cannot record a closed account is issued one statement');
+check(planWants($plan, 'ALTER TABLE users ADD COLUMN closed_at'), 'and it is the one that adds the column');
+check(!planWants($plan, 'ALTER TABLE users ADD COLUMN failed_attempts'),
+      'and nothing else on users, because the rest of them are already there');
 
 // Each carries `need => true`, which is what decides whether a failure is worth
 // emailing an admin about (invariant 20). A column that genuinely could not be
@@ -2951,7 +2962,7 @@ foreach ($blindPlan as $entry) {
     if ($entry['need'] === null) { $guessed[] = $entry['why']; }
     if ($entry['need'] === true) { $certain[] = $entry['why']; }
 }
-checkSame(22, count($guessed), 'with no catalogue, every statement in the plan is a guess');
+checkSame(23, count($guessed), 'with no catalogue, every statement in the plan is a guess');
 checkSame(['seed_block_styles', 'seed_legacy_display'], $certain,
           'and the only certainties are the two steps that ask the rows, not the catalogue');
 $statementNeeds = [];
@@ -3445,4 +3456,4 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
-reportChecks(904);
+reportChecks(909);

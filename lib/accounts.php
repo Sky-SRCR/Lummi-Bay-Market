@@ -87,22 +87,12 @@ class AccountStore
         $this->pdo = $pdo;
     }
 
-    /**
-     * Add `closed_at` to a database that predates it.
-     *
-     * Called from the authenticated admin panel, like the rest of convergence, and
-     * from nowhere on the public path (invariant 7). Idempotent and silent, per
-     * the pattern in lib/schema.php.
-     */
-    public function ensureSchema()
-    {
-        try {
-            $this->pdo->exec("ALTER TABLE users ADD COLUMN closed_at DATETIME NULL DEFAULT NULL");
-            $this->hasColumn = null;
-        } catch (Throwable $e) {
-            // Already applied, or cannot be. Either way every reader here copes.
-        }
-    }
+    // `closed_at` used to be added here, by an `ensureSchema()` the admin panel
+    // called on every load: one ungated `ALTER TABLE users` per page view, the last
+    // of the schema statements in this app that ran whatever the database already
+    // said. It is a gated entry in `signageSchemaPlan()` now, like everything else,
+    // and the panel converges before it builds one of these — so the cached answer
+    // below is taken after the column has had its chance to arrive, not before.
 
     /**
      * Is this account closed?

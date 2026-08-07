@@ -139,6 +139,7 @@ class ServerReport
             ['users',           'failed_attempts', 'Login lockout cannot count failures.'],
             ['users',           'last_failed_at',  'Login lockout cannot age failures out.'],
             ['users',           'locked_until',    'Login lockout cannot hold anyone out.'],
+            ['users',           'closed_at',       'No account can be closed. A departing employee can only be suspended, and their id can still come back into service.'],
             ['password_resets', 'attempts',        'A reset code gets unlimited guesses.'],
             ['assets',          'auto_pooled',     'The Library tidy-up falls back to the "Auto: " label prefix.'],
             ['displays',        'lock_taken_at',   'A read-only Builder cannot say since when.'],

@@ -114,11 +114,11 @@ function newTestDb()
     // is_active mirrors the live column: the session sync reads it on every
     // authenticated request, so a fixture without it cannot test that a
     // deactivated account's open tab stops working.
-    // The three lockout columns are here because auth.php adds them to the live
-    // table at runtime, so a fixture without them is not shaped like the live
-    // schema — and the server report's whole job is to notice a column that never
-    // applied. A fixture that is missing one by accident would make that report
-    // look broken while it was working correctly.
+    // The three lockout columns and closed_at are here because convergence adds
+    // them to the live table at runtime, so a fixture without them is not shaped
+    // like the live schema — and the server report's whole job is to notice a column
+    // that never applied. A fixture that is missing one by accident would make that
+    // report look broken while it was working correctly.
     // password_hash is here because a password reset writes it, and a fixture
     // without it cannot tell a reset that changed the password from one that only
     // said it had.
@@ -170,8 +170,8 @@ function newTestDb()
 
     // The reset-token table, minus the AUTO_INCREMENT spelling. `attempts` is
     // the guess budget the self-test cares about; it is created here rather than
-    // added by ensureSchema() so the tests exercise the shape a converged live
-    // database actually has.
+    // added by ResetTokenStore::ensureSchema() so the tests exercise the shape a
+    // converged live database actually has.
     $pdo->exec("CREATE TABLE password_resets (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -284,6 +284,7 @@ function convergedSchemaShape()
                 'failed_attempts' => $col('int(11)'),
                 'last_failed_at'  => $col('datetime', true),
                 'locked_until'    => $col('datetime', true),
+                'closed_at'       => $col('datetime', true),
             ],
         ],
         'indexes' => [
