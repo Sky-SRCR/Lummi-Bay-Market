@@ -93,7 +93,7 @@ it is the standing contract, with the invariants and where later work attaches.
 | `.htaccess` | Server config: index/sensitive-file blocks, security headers, PHP hardening, HTTPS redirect. Frames `viewer.php` for external widgets (see §8) |
 | `lib/.htaccess`, `tools/.htaccess` | Make both folders unreachable from a browser. **Deploy them with the folders** |
 | `reset_password.php` | 2-step emailed 6-digit passcode reset (30-min expiry) |
-| `setup.php` | First-run admin creation; self-disables once a user exists. **Delete on server after setup** |
+| `setup.php` | First-run admin creation; self-disables once a user exists and then **deletes itself** — at the end of a successful setup, or on the first request that finds it disabled. It reads the answer back from disk, so it never claims to have gone while it is still being served |
 | `setup_branding.php` | Redirect shim → `admin_panel.php?tab=branding` |
 | `builder.php` | ~3050-line canvas editor for one Display, mostly inline JS. The heart of the app. Also the read-only mode and the lock heartbeat |
 | `admin_panel.php` | Six tabs: User Management, **Displays** (+ the grant matrix), Display Branding, Site Branding, Settings, Work Area |
@@ -151,10 +151,20 @@ anything, they hold every Display by role.
 
 ## 5. Deployment facts a new session should know
 
+- **An upload is not a deploy: [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) lists what
+  to leave alone.** The repo and the server hold different files. `branding_config.php`
+  is generated on the server and the repo's copy is a stale default; `setup.php` was
+  deleted from the server and re-uploading restores the first-admin form; `uploads/` and
+  the log folder exist only on the server and are in no backup. Uploading the tree over
+  the top reverts the first, restores the second, and — with a mirroring client — deletes
+  the third, all silently. That file also has the five checks to run afterwards. It
+  applies to **every** upload, not just the multi-display one.
 - `db_connect.php` expects `../../private/db_credentials.php` (outside webroot)
   defining `DB_HOST/DB_NAME/DB_USER/DB_PASS`. Not in repo by design.
 - The live `branding_config.php` still uses the default `SITE_NAME`
-  ("Store Display System"), not "Lummi Bay Market".
+  ("Store Display System"), not "Lummi Bay Market". Which is also why overwriting it
+  costs almost nothing *today* — the list above is what keeps that true once somebody
+  has used the Branding page.
 - **The webroot directory must be writable by the web user**, not just
   `branding_config.php` itself. Since §4y that file is replaced by writing a
   temporary copy beside it and `rename`-ing over it, so the permission that matters
@@ -314,9 +324,11 @@ staleness check, no version history), 0007 (one editor per Display).
 - **Deploy it.** The only open item of substance. `docs/roadmap-multi-display.md`
   ends with a 22-step *"Before this reaches the sign"* checklist, in order, for one
   visit: back up, rehearse on a copy, upload (including `lib/` and `tools/` with
-  their `.htaccess`), sign in once to converge the schema, check the sign at its new
-  URL, then re-point the TV and the SmartSign2Go widget. Steps 15–21 need a second
-  account, two browsers, and one unavoidable 15-minute wait.
+  their `.htaccess`, and *not* including what
+  [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) lists), sign in once to converge the
+  schema, check the sign at its new URL, then re-point the TV and the SmartSign2Go
+  widget. Steps 15–21 need a second account, two browsers, and one unavoidable
+  15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
   `php -l`, 914 self-test checks against SQLite, 92 node checks over `builder.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`

@@ -92,8 +92,14 @@ transaction, never runs twice at once, and will not retry for five minutes.
 
 ### 3. First-run admin
 
-Visit `setup.php` once to create the first admin account. It **self-disables**
-as soon as any user exists. **Delete `setup.php` from the server after setup.**
+Visit `setup.php` once to create the first admin account. It **self-disables** as soon
+as any user exists, and then **deletes itself** — at the end of a successful setup, or
+on the first request that finds it already disabled. Nothing to remember afterwards.
+
+If the page says it *could not* delete itself, the server did not allow the write:
+delete `setup.php` by hand. It never reports success without checking the file is
+really gone, because while it is still being served a restore to an empty database
+turns it back into a public admin-creation form.
 
 ### 4. Branding (optional)
 
@@ -101,6 +107,15 @@ Store branding is edited under **Admin → Branding**
 (`admin_panel.php?tab=branding`), which regenerates `branding_config.php`. The
 **directory** must be writable by the web user, not just that file: the save
 writes a temporary copy beside it and renames over it.
+
+### 5. Updating an install that already exists
+
+Read [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) first. Both of the steps above
+leave the server holding files the repo cannot supply: `setup.php` is *gone* from the
+server and `branding_config.php` was rewritten there, so uploading the tree over the
+top restores the first-admin form and reverts the branding — including the address
+reset codes and alerts are sent from. `uploads/` and the log folder exist only on the
+server. That file lists what to skip and what to check afterwards.
 
 ## File map
 
@@ -133,7 +148,7 @@ browser. Keep those when deploying.
 | `branding_config.php` | Generated brand theme (`BRAND_*`, `SITE_NAME`, mail-from). Written only by `lib/branding.php` |
 | `login.php` / `logout.php` | Auth; account-keyed login lockout |
 | `reset_password.php` | 2-step emailed 6-digit passcode reset (30-min expiry) |
-| `setup.php` | First-run admin creation (delete after setup) |
+| `setup.php` | First-run admin creation; self-disables and then deletes itself once an admin exists |
 | `builder.php` | Drag-and-drop canvas editor for one Display — the heart of the app |
 | `admin_panel.php` | Displays, grants, user management, brand standards, work area |
 | `crud.php` | Asset library (text/image/video assets), shared by every Display |

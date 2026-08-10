@@ -822,6 +822,10 @@ Known and not fixed, so nobody assumes otherwise:
 - ~~**A lock stranded by deactivating a Display, deactivating an account, or renaming a
   tag**~~ **Fixed** — see §4t. Three more doors into the room §4s closed one door of,
   plus the reading rule that covers the doors nobody has found yet.
+- ~~**Deployment step 3 has no do-not-overwrite list**~~ **Fixed** — see §4z and
+  `docs/DEPLOY-SKIP.md`. The only finding in the audit whose whole surface is outside
+  the code: every fact was already in this repo, in a file the person doing the upload
+  was not reading.
 
 ### 4h. The tag addresses a Display; it does not identify one
 
@@ -2477,6 +2481,141 @@ an `@`, so a torn write costs one email rather than every page in the app.
 
 ---
 
+### 4z. The deploy step that undid the two things it could not see
+
+Step 3 of *"Before this reaches the sign"* said **upload the files**, and named only
+what must go *up* — `lib/` and `tools/` with their `.htaccess`. Nothing said what must
+not. Every fact needed was already in this repo: `README` §3 said delete `setup.php`
+from the server, HANDOFF §5 says `branding_config.php` is generated there. **The
+information existed and the step that needed it did not carry it** — which is the
+defect, not a missing fact. A checklist read with one hand on an FTP client does not
+send anybody to a third file.
+
+So a re-upload restored the first-admin form and reverted the branding, and both are
+invisible: the app comes up looking exactly right.
+
+**The cost is not where it looks.** Reverting the nav colours is obvious and
+cosmetic. `branding_config.php` also holds `MAIL_FROM`, which the repo's copy does not
+define at all, so `config.php` falls back to `noreply@yourdomain.com` — a domain this
+host does not own. That address is the `From:` on password-reset codes
+(`reset_password.php`) and on every schema and error alert (`lib/alerts.php`). Both
+then get dropped as spam, so the first symptom is somebody unable to reset a password
+weeks later, and **the alert that would have explained it is silenced by the same
+line**. `setup.php` is the same shape: it self-disables while it can count users, so
+restoring it looks harmless — until the app is ever pointed at an empty or freshly
+restored database, when it is a public *make yourself an admin* form again, and
+nothing in `.htaccess` blocks it.
+
+**Naming only those two would have been the same defect.** They are the two that bit;
+the list is the class. [`docs/DEPLOY-SKIP.md`](DEPLOY-SKIP.md) is in four groups
+because the *kind* of mistake differs and so does the recovery: never overwrite
+(the server's copy is the authority — `branding_config.php`); never upload (`setup.php`,
+`.git/`, the `.md` files); never delete (`uploads/`, the log folder, the credentials
+file — these are in **no** backup); and one *diff it first* — the root `.htaccess`
+must go up, but a hand-raised `upload_max_filesize` lives only on the live copy and
+reverts silently.
+
+The worst of them cannot be caused by an upload at all. `uploads/` is git-ignored, so
+no overwrite can touch it — only a client set to *mirror* rather than *merge*, which
+deletes every photograph and video on every sign, from a folder nothing backs up. That
+is why the instruction is a mode ("file-by-file, or folder overwrite") and not a file
+list: no list can protect a folder whose absence from the repo is the point.
+
+**Nothing here is testable, so it is guarded three other ways.** No assertion in this
+repo can see the server's filesystem, and a list that only a person can follow rots
+the moment the code moves. So:
+
+- **An `.htaccess` backstop for the one class where forgetting is silently
+  exploitable.** Root `.htaccess` now denies `.md` alongside `.sql`. Uploading
+  `HANDOFF.md` would publish the live database name, the credentials path and the log
+  locations to anyone who guessed the URL; every other skipped file is either already
+  denied (`schema.sql`, `lib/`, `tools/`) or harmless. The rule is belt-and-braces — it
+  is not a reason to upload docs. It also **reverses the instinct on one file**: the
+  backstop lives in the root `.htaccess`, so that file must be *overwritten* on every
+  deploy, and group D's "look at the live one first" means read-then-replace, never
+  read-instead-of-replace. A list that pointed two ways on the file every page depends
+  on would be this same defect in miniature, so the precedence is written down.
+- **Four checks afterwards, on screens the app already has.** Settings → This Server
+  answers A and D (the site name, the upload limit); Settings → Errors and Alerts
+  answers C (*"Nowhere to write"* means the log folder was deleted, and until it is
+  fixed nothing that goes wrong is recorded); `setup.php` must 404; the brand logo
+  still rendering is the cheapest proof `uploads/` survived. Each check maps to a
+  group, so a failure names the mistake.
+- **A grep, so the list cannot go stale in silence.** `file_put_contents` at the repo
+  root is exactly one hit — `admin_panel.php`'s branding writer. That is the whole
+  membership test for group A: a repo-tracked file the running app rewrites. A second
+  root-level hit is a second file an upload would revert, and it belongs on the list
+  in the same commit.
+
+**Then the live server was asked, and the framing was wrong.** The audit said a
+re-upload *restored* `setup.php`. It answered **200** — *"Setup is complete. This page
+is disabled."* — so it had never been deleted, and the rule about not re-uploading it
+had nothing to be a rule about yet. The rest of group B is the opposite: `HANDOFF.md`,
+`README.md`, `CLAUDE.md`, `docs/` and `.git/config` all answer 404, so the `.md` deny
+guards a hypothesis rather than a live exposure. `schema.sql` answering 403 is the
+useful one — it proves the live `.htaccess` is roughly the repo's and that
+`FilesMatch` + `Order allow,deny` parse on this host, which is what makes the new
+block low-risk on a server with no staging. That table is recorded in DEPLOY-SKIP.md
+with its date, because a list written from the repo's beliefs about a server is how
+this defect happened the first time.
+
+**And one entry earned its way off the list by deleting itself.** `setup.php` was
+removed from the live server by hand, which closed the finding but not the class: the
+next upload would put it back, and "delete this afterwards" is a job nobody is
+assigned — the reason it survived the original install by months. So it now calls
+`removeSelf()` at both moments it becomes dead weight: after a successful admin
+`INSERT`, and on the first request that finds it already disabled. A rule a person has
+to follow became a file that leaves on its own, which is the shape every other fix in
+this section wanted and could not have.
+
+Three details are the whole design:
+
+- **It reads the answer back from the filesystem**, not from `unlink()`. "Still there"
+  is the only outcome that needs acting on, and a write that fails while printing
+  success is the defect this document has spent twenty sections unpicking — the page
+  would have claimed to be gone while still serving an admin-creation form.
+- **A forbidden delete is expected, not alerted on.** Some hosts will refuse it. An
+  `ErrorPolicy::report()` here would email an admin every hour forever and be triggered
+  by any passing bot, so the page says *"It could not delete itself"* and that sentence
+  is the thing to act on. This is invariant 20's rule applied to decline a caller
+  rather than to add one.
+- **It goes only when it can tell it is finished.** An unreachable database or a
+  missing `users` table throws before either branch, and the file correctly stays.
+
+`removeSelf()` has **no automated check**, and the reason is worth stating rather than
+hiding: it is a page script that runs on include and needs a live database, so
+`selftest_layout.php` cannot reach it, and extracting it into `lib/` would mean a
+module whose entire job is deleting one named file — `lib/` is for data access. It was
+verified by running its exact body twice instead: once against a real file, which
+unlinked itself mid-execution, continued running, and reported `true`; once against a
+target `unlink()` cannot remove, which reported `false` rather than claiming success.
+That second run is the one that matters, and it is the case a passing test would most
+easily have faked.
+
+Left standing, and named rather than skipped:
+
+- **Uploading `setup.php` still opens a window.** Self-deletion needs a request, so
+  between the upload and the first hit the file is intact — and that is exactly when a
+  restore to an empty database would find a working form. The do-not-upload rule is not
+  retired by the mechanism, only backstopped by it. Post-upload check 3 now *repairs*
+  what it looks for, but only if somebody runs it.
+- **Two claims in the list are inferences, and say so.** Whether anything backs up
+  `uploads/` (nothing in this repo does, and checklist step 1 backs up the database
+  only) and whether anybody ever hand-raised `upload_max_filesize` in the live
+  `.htaccess`. Both are one sentence from somebody with FTP; both are marked unverified
+  rather than asserted, because the severity of group C and the existence of group D
+  rest on them.
+- **Nothing verifies the deploy actually followed the list.** The five checks catch
+  three of the four groups after the fact; a mirroring client's deletion of `uploads/`
+  is caught by check 4 and by then it has happened. A `.deployignore` would only help
+  if the upload went through a tool that reads one, and it does not — this is
+  phpMyAdmin and an FTP client.
+- **The list is written for this host.** It names `srcresort.com/lbm/`, the
+  `../../private/` layout and the drive-thru sign. Moving the app makes it prose to
+  re-derive, not prose to trust.
+
+---
+
 ## 5. Verification
 
 No CI, no test suite, no PHP runtime on the target — verification is deliberate
@@ -2681,6 +2820,15 @@ grep -rn "file_put_contents" --include=*.php .  # lib/error_policy.php (the log,
                                               # something else loads is written to a temporary path and
                                               # renamed over, never opened with O_TRUNC where a reader
                                               # can find it half-done (invariant 24, §4y)
+grep -rn "file_put_contents" --include=*.php . | grep -v "^./lib/\|^./tools/"
+                                              # exactly one hit: admin_panel.php's branding writer. That
+                                              # is the membership test for group A of
+                                              # docs/DEPLOY-SKIP.md — a repo-tracked file the running app
+                                              # rewrites, so uploading the repo's copy reverts live state.
+                                              # A second root-level hit is a second file an upload would
+                                              # revert: add it to that list in the same commit. The lib/
+                                              # writers are excluded on purpose — they all write into the
+                                              # state directory, which is not in the repo (§4z)
 grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
                                               # DISPLAY_ID / waDisplayId() with it (invariant 12), which
                                               # omission silently opts out of. viewer.php is the one

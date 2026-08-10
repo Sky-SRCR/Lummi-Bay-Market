@@ -25,6 +25,15 @@
       Deny from all
   </FilesMatch>
 
+  # The repo's own documentation has no business on the server, and
+  # docs/DEPLOY-SKIP.md says not to upload it. This is the backstop for the
+  # upload that forgets: HANDOFF.md names the live database, the credentials
+  # path and where the error log goes, and nothing else here denies .md.
+  <FilesMatch "\.md$">
+      Order allow,deny
+      Deny from all
+  </FilesMatch>
+
   # Protect .htaccess itself
   <Files ".htaccess">
       Order allow,deny

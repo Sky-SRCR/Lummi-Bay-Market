@@ -313,7 +313,27 @@ In order, on the one visit:
    to two throwaway Displays, and removes them again. Expect "Rehearsal clean."
 3. **Upload the files**, including the new `lib/` and `tools/` folders *with* their
    `.htaccess` files — those are what keep the modules and the rehearsal script
-   unreachable from a browser.
+   unreachable from a browser. **What must not go up with them** is the half this
+   step never said, and the full list with the reasons is
+   [`DEPLOY-SKIP.md`](DEPLOY-SKIP.md) — read it here, not afterwards, because none
+   of these announces itself:
+   - **Do not overwrite `branding_config.php`.** The server generates it from the
+     Branding page. The repo's copy is the pre-branding default, and it reverts the
+     store's name and the address password-reset codes and alerts are sent *from*.
+   - **Do not upload `setup.php`**, or `.git/`, or the `.md` files. `setup.php` was
+     deleted from the server after setup and re-uploading puts the first-admin form
+     back.
+   - **Do not mirror or sync-with-delete.** File-by-file, or folder overwrite. A
+     mirroring client deletes `uploads/` — every image and video on every sign, in
+     no backup, with no undo.
+   - And **read the live root `.htaccess` before replacing it — then replace it.** It
+     must go up (the security headers and the `viewer.php` framing exception are in
+     it); the reason to read it first is that a hand-raised `upload_max_filesize`
+     lives only there and reverts silently. Carry any hand-edit forward.
+
+   `setup.php` is already gone from the server, and it now deletes itself if it ever
+   comes back — but only when something requests it, so uploading it still opens a
+   window. See the *Known live state* section of `DEPLOY-SKIP.md`.
 4. **Sign in once as an admin.** That first authenticated request is what runs the
    schema convergence: it creates `displays`, seeds the drive-thru Display from
    `canvas_settings`, and backfills `display_id`. (If the sign's poll gets there

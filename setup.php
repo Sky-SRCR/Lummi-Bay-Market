@@ -1,20 +1,52 @@
 <?php
 // ============================================================
 // FIRST-TIME SETUP – Create the initial admin account.
-// This page only works when ZERO users exist in the database.
-// DELETE or rename this file once your first admin is created.
+// This page only works when ZERO users exist in the database,
+// and deletes itself as soon as that stops being true.
 // ============================================================
 require_once 'db_connect.php';
 require_once 'config.php';
 
-// If any user already exists, lock this page down
+/**
+ * Delete this file, and answer whether it is really gone.
+ *
+ * "Delete setup.php afterwards" is a job nobody is assigned, so it does not get
+ * done: this file sat on the live server for months, printing that instruction to
+ * anyone who asked for it. It is harmless while `users` has a row in it, and a
+ * public "make yourself an admin" form the moment the app is pointed at an empty or
+ * freshly restored database — which happens by accident rather than on purpose.
+ *
+ * So it removes itself, at both moments it becomes dead weight: at the end of a
+ * successful setup, and otherwise on the first request that finds it already
+ * disabled. Deleting the file the running request came from is safe here — the
+ * script is compiled before this line and the inode outlives the unlink — and the
+ * next request 404s in Apache without reaching PHP.
+ *
+ * The answer is read back from the filesystem rather than taken from unlink(),
+ * because "it is still there" is the only outcome that needs acting on, and a
+ * write that fails while reporting success is the defect this codebase has spent
+ * its whole history unpicking. A host that forbids it is a condition to *expect*
+ * and not to alert on — an alert would reach an admin every hour forever, and be
+ * triggered by any passing bot. The page says so instead.
+ */
+function removeSelf(): bool {
+    @unlink(__FILE__);
+    clearstatcache(true, __FILE__);
+    return !file_exists(__FILE__);
+}
+
+// If any user already exists, this page can do nothing — so it goes.
 $count = $pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
 if ($count > 0) {
-    die('Setup is complete. This page is disabled. Please delete setup.php from your server.');
+    die(removeSelf()
+        ? 'Setup is complete. This page has deleted itself and will not answer again.'
+        : 'Setup is complete. This page is disabled. It could not delete itself — '
+          . 'please delete setup.php from your server.');
 }
 
 $error   = '';
 $success = '';
+$removed = false;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
@@ -34,7 +66,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $hash = password_hash($password, PASSWORD_DEFAULT);
         $stmt = $pdo->prepare("INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, 'admin')");
         $stmt->execute([$username, $email, $hash]);
-        $success = 'Admin account created! You can now sign in. Please delete setup.php from your server.';
+        // The account exists, so this page's work is done. Only now is it safe to go.
+        $removed = removeSelf();
+        $success = 'Admin account created! You can now sign in.'
+                 . ($removed
+                     ? ' This setup page has deleted itself.'
+                     : ' Please delete setup.php from your server — it could not delete itself.');
     }
 }
 ?>
@@ -81,7 +118,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </form>
     <?php endif; ?>
 
-    <div class="warn">&#9888; Delete <strong>setup.php</strong> from your server after creating your first admin account.</div>
+    <?php if (!$removed): ?>
+    <div class="warn">&#9888; This page deletes itself once the first admin account exists. If it is
+    still here after that, the server did not allow it — delete <strong>setup.php</strong> by hand.</div>
+    <?php endif; ?>
 </div>
 </body>
 </html>
