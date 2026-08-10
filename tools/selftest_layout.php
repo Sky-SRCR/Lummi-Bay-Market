@@ -214,6 +214,26 @@ function layoutWith($text, $tempId = 's1')
 }
 
 /**
+ * The same layout as a *basic* account's Builder would really send it.
+ *
+ * The difference is one field and it is the whole of ADR-0005 on this path: a clerk
+ * does not create sections, so the section in their payload is one that already
+ * exists and carries its `db_id`. Without it the parent temp-id resolves to nothing,
+ * the block lands at root level, and the publish is refused for placing layout —
+ * correctly. `layoutWith()` is the admin shape and stays that way.
+ */
+function basicLayoutFor(PDO $pdo, Display $display, $text)
+{
+    $sectionId = 0;
+    foreach (elementsOf($pdo, $display->id()) as $row) {
+        if ($row['type'] === 'section' && !$sectionId) { $sectionId = intval($row['id']); }
+    }
+    $layout = layoutWith($text);
+    $layout[0]['db_id'] = $sectionId;
+    return $layout;
+}
+
+/**
  * One publish, as one visit to the Builder: publish, then leave.
  *
  * The leaving matters. A publish keeps the publisher's edit lock alive (ADR-0007),
@@ -329,15 +349,20 @@ $forged = [
     ['type' => 'text', 'parent_temp_id' => 's1', 'manual_content' => 'Injected'],
 ];
 $res = publishAs($layouts, $driveT, $forged, $driveT->layoutStamp(), false, 2);
-check($res->isOk(), 'the forged publish is accepted as a publish');
+// This used to be *accepted*, with the block landing at root level on the publisher's
+// own Display. Scoping held — which is all that check ever proved — but a basic account
+// had placed layout. Both halves are one refusal now: the forged id resolves to no
+// section *of this Display*, so the content it claims a parent for is content outside
+// every section, which this role may not add.
+checkSame('invalid', $res->kind(), 'a forged db_id naming another Display\'s section is refused');
+checkMentions($res->message(), 'not inside any section', 'and says why in terms of what was sent');
 
 checkSame($lobbyBefore, count(elementsOf($pdo, $lobby->id())), 'lobby gained nothing from the forged publish');
 $injected = null;
 foreach (elementsOf($pdo, $driveT->id()) as $row) {
     if ($row['manual_content'] === 'Injected') { $injected = $row; }
 }
-check($injected !== null, 'the injected block landed on the publisher\'s own Display');
-checkSame(null, $injected['section_id'], 'and was not parented into the other Display\'s section');
+checkSame(null, $injected, 'and the publisher\'s own Display gained nothing either');
 
 // ─────────────────────────────────────────────────────────────
 section('Content sanitising');
@@ -363,6 +388,108 @@ foreach ($byContent as $row) {
 check(in_array('alert(1)Hello', $textValues, true), 'markup is stripped from text (ADR-0002)');
 check(in_array('0', $textValues, true), 'a text block reading "0" survives as "0"');
 checkSame('{"images":["uploads/a.png"],"ms":3000}', $carousel, 'carousel JSON is stored verbatim');
+
+// ─────────────────────────────────────────────────────────────
+section('A basic publish may return root content, never invent it');
+
+// The residual §4ab named and deferred, saying it needed a payload change rather than
+// a check. A `text` block with no parent_temp_id lands with section_id NULL, which is
+// layout — and placing layout is not what this role does (ADR-0005). The type
+// allowlist closed the forged-`type` route in; a plain text block with no parent still
+// walked through. The payload now says which root blocks it is *returning*: content
+// carries db_id the way sections always have.
+
+// Two more Displays on the same fixture — the sections after this one still expect
+// drive-thru and lobby as they left them.
+$sign  = makeTestDisplay($pdo, 'butcher', 'Butcher Counter');
+$other = makeTestDisplay($pdo, 'bakery', 'Bakery');
+
+// An admin lays down a section and one block outside it — the logo-on-the-canvas case
+// that makes refusing every root block the wrong fix.
+$withRoot = [
+    ['type' => 'section', 'temp_id' => 's1', 'x_pos' => 10, 'y_pos' => 20, 'width' => 600, 'height' => 380],
+    ['type' => 'text', 'parent_temp_id' => 's1', 'manual_content' => 'Inside', 'width' => 160, 'height' => 60],
+    ['type' => 'image', 'manual_content' => 'uploads/logo.png', 'width' => 200, 'height' => 80],
+];
+$res = publishAs($layouts, $sign, $withRoot, $sign->layoutStamp(), true, 1);
+check($res->isOk(), 'an admin may place content outside every section');
+
+$rootId = 0;
+$sectionId = 0;
+foreach (elementsOf($pdo, $sign->id()) as $row) {
+    if ($row['type'] === 'section') { $sectionId = intval($row['id']); }
+    if ($row['type'] === 'image' && $row['section_id'] === null) { $rootId = intval($row['id']); }
+}
+check($rootId > 0, 'and it is stored at root level, as layout');
+
+/** What a basic account's Builder sends: real ids on the section and on root blocks. */
+function basicWithRoot($sectionId, $rootId, $extra = [])
+{
+    return [
+        ['type' => 'section', 'temp_id' => 's1', 'db_id' => $sectionId],
+        ['type' => 'text', 'parent_temp_id' => 's1', 'manual_content' => 'Clerk price'],
+        array_merge(['type' => 'image', 'db_id' => $rootId ?: null,
+                     'manual_content' => 'uploads/logo.png'], $extra),
+    ];
+}
+
+$sign = loadTestDisplay($pdo, $sign->id());
+$res = publishAs($layouts, $sign, basicWithRoot($sectionId, $rootId), $sign->layoutStamp(), false, 2);
+check($res->isOk(), 'a basic account may send that root block back');
+$stillThere = 0;
+foreach (elementsOf($pdo, $sign->id()) as $row) {
+    if ($row['section_id'] === null && $row['type'] === 'image') { $stillThere = intval($row['id']); }
+}
+checkSame($rootId, $stillThere, 'and it keeps the id it had, so the next publish can name it too');
+
+// Which is the point of keeping it: publishing twice from one tab, without reloading,
+// is ordinary work — and would be refused if every id went stale on success.
+$sign = loadTestDisplay($pdo, $sign->id());
+$res = publishAs($layouts, $sign, basicWithRoot($sectionId, $rootId), $sign->layoutStamp(), false, 2);
+check($res->isOk(), 'so the same tab can publish again without reloading');
+
+// The hole itself.
+$sign = loadTestDisplay($pdo, $sign->id());
+$invented = [
+    ['type' => 'section', 'temp_id' => 's1', 'db_id' => $sectionId],
+    ['type' => 'text', 'manual_content' => 'Invented at root'],
+];
+$before = count(elementsOf($pdo, $sign->id()));
+$beforeStamp = $sign->layoutStamp();
+$res = publishAs($layouts, $sign, $invented, $beforeStamp, false, 2);
+checkSame('invalid', $res->kind(), 'a root block this account invented is refused');
+checkMentions($res->message(), 'not inside any section', 'and the refusal says what is wrong with it');
+checkMentions($res->message(), 'admin', 'and who can do it instead');
+$sign = loadTestDisplay($pdo, $sign->id());
+checkSame($before, count(elementsOf($pdo, $sign->id())), 'the refusal deleted nothing');
+checkSame($beforeStamp, $sign->layoutStamp(), 'and did not advance the stamp');
+
+// One row cannot be two blocks: returning the same id twice is inventing one of them.
+$twice   = basicWithRoot($sectionId, $rootId);
+$twice[] = ['type' => 'image', 'db_id' => $rootId, 'manual_content' => 'uploads/logo.png'];
+$res = publishAs($layouts, $sign, $twice, $sign->layoutStamp(), false, 2);
+checkSame('invalid', $res->kind(), 'and the same root id returned twice is refused');
+
+// A root id belonging to another Display is not this Display's to return.
+$sign = loadTestDisplay($pdo, $sign->id());
+$res = publishAs($layouts, $other, [
+    ['type' => 'image', 'db_id' => $rootId, 'manual_content' => 'uploads/logo.png'],
+], loadTestDisplay($pdo, $other->id())->layoutStamp(), false, 2);
+checkSame('invalid', $res->kind(), 'a root id from another Display is refused');
+
+// Deleting still deletes. The alternative fix — preserve every root row a basic
+// publish does not mention — would have made this a silent no-op reporting success.
+$sign = loadTestDisplay($pdo, $sign->id());
+$res = publishAs($layouts, $sign, [
+    ['type' => 'section', 'temp_id' => 's1', 'db_id' => $sectionId],
+    ['type' => 'text', 'parent_temp_id' => 's1', 'manual_content' => 'Only this'],
+], $sign->layoutStamp(), false, 2);
+check($res->isOk(), 'a basic publish that leaves the root block out is accepted');
+$rootRows = 0;
+foreach (elementsOf($pdo, $sign->id()) as $row) {
+    if ($row['section_id'] === null && $row['type'] !== 'section') { $rootRows++; }
+}
+checkSame(0, $rootRows, 'and the root block is gone — a delete, not a no-op that says success');
 
 // ─────────────────────────────────────────────────────────────
 section('Hide and delete cannot cross Displays');
@@ -423,7 +550,7 @@ check($res->isOk(), 'admin publishes with no new image file');
 $driveT = loadTestDisplay($pdo, $driveT->id());
 checkSame('uploads/bg_1.png', $driveT->backgroundValue(), 'the existing image path is preserved');
 
-$res = publishAs($layouts, $driveT, layoutWith('bg4'), $driveT->layoutStamp(), false, 2, Background::color('#ffffff'));
+$res = publishAs($layouts, $driveT, basicLayoutFor($pdo, $driveT, 'bg4'), $driveT->layoutStamp(), false, 2, Background::color('#ffffff'));
 check($res->isOk(), 'a basic account publishes');
 $driveT = loadTestDisplay($pdo, $driveT->id());
 checkSame('uploads/bg_1.png', $driveT->backgroundValue(), 'a basic account cannot change the background');
@@ -863,9 +990,15 @@ checkSame(DisplayResolution::FORBIDDEN, $forged->kind(), 'a forged publish namin
 checkSame($before, count(elementsOf($pdo, $deli->id())), 'and that Display is untouched');
 
 // A grant is permission to publish, too (ADR-0005): one that cannot reach a Screen
-// would be no permission at all.
+// would be no permission at all. An admin lays the section down first, because a
+// clerk fills sections rather than creating them — which is the same rule the refusal
+// below enforces, seen from the working side.
 $lobby = loadTestDisplay($pdo, $lobby->id());
-$res = publishAs($layouts, $lobby, layoutWith('Granted publish'), $lobby->layoutStamp(), false, 2);
+$res = publishAs($layouts, $lobby, layoutWith('Admin section'), $lobby->layoutStamp(), true, 1);
+check($res->isOk(), 'an admin publishes the section a clerk will fill');
+
+$lobby = loadTestDisplay($pdo, $lobby->id());
+$res = publishAs($layouts, $lobby, basicLayoutFor($pdo, $lobby, 'Granted publish'), $lobby->layoutStamp(), false, 2);
 check($res->isOk(), 'and a granted basic account may publish to it');
 
 // The entry rule, generalised: the one Display *this account* may open. A clerk
@@ -4678,8 +4811,13 @@ checkSame('#2c3e50', $bStore->forId($bSign->id())->backgroundValue(), 'and is st
 // do with backgrounds — and the check would pass while proving something else.
 $bStore->releaseLock($bStore->forId($bSign->id()), 1);
 $bSign = $bStore->forId($bSign->id());
+// basicLayoutFor(), not goodLayout(): a clerk's payload fills a section that already
+// exists rather than declaring one, and a root-level block from this role is now
+// refused. Using the admin shape here would fail for that reason and look like a
+// background problem.
 check($bLayouts->publish($bSign, new PublishRequest(
-        goodLayout(), Background::unchanged(), 2, false, $bSign->layoutStamp()))->isOk(),
+        basicLayoutFor($bPdo, $bSign, 'Sockeye 18.99'),
+        Background::unchanged(), 2, false, $bSign->layoutStamp()))->isOk(),
       "a basic account's publish is not held up by a background it cannot change");
 
 // ─────────────────────────────────────────────────────────────
@@ -5558,4 +5696,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // did (#21 closed while it was open, so three checks that asserted the coercion now
 // assert the refusal). The MySQL figure is the SQLite one plus the 23 checks in the
 // engine-only section below, which is the same difference it has always been.
-reportChecks(testIsMysql() ? 1516 : 1493);
+reportChecks(testIsMysql() ? 1531 : 1508);

@@ -682,7 +682,14 @@ class LayoutStore
                 $this->displays->applyBackground($display, $request->background());
                 $this->replaceWholeLayout($display, $request->elements());
             } else {
-                $this->replaceContentOnly($display, $request->elements());
+                // The one refusal that needs the database to decide, so it cannot be
+                // made in the pre-transaction pass with the others. Nothing has been
+                // written when it refuses — its own deletes come after its check.
+                $refusal = $this->replaceContentOnly($display, $request->elements());
+                if ($refusal !== null) {
+                    $this->abandon();
+                    return PublishResult::invalid($refusal);
+                }
             }
 
             // Publishing a text block copies its text into the library and points
@@ -805,10 +812,30 @@ class LayoutStore
 
     /**
      * Basic-account publish: sections stay untouched, their content is replaced.
+     * Returns a refusal to hand back to the person, or null when it published.
      *
      * The temp-id map is built from the section IDs the Builder reports (`db_id`),
      * checked against the sections this Display actually has. Without that check
      * a forged `db_id` would parent content into another Display's section.
+     *
+     * A block whose parent does not resolve lands at root level — `section_id NULL`,
+     * which is *layout*, and placing layout is not something this role does
+     * (ADR-0005). That was the hole §4ab named and deferred, saying it needed a
+     * payload change rather than a check. It did, and this is that change: content
+     * carries `db_id` the way sections always have, so a root id this Display already
+     * has is content being **sent back**, and anything else at root is content being
+     * **invented**. The refusal is whole rather than partial, because dropping the
+     * offending block is a merge and the person would be told they published while
+     * the thing they added was silently thrown away (invariant 5).
+     *
+     * Sending nothing for a root row still deletes it. That is the half the
+     * "preserve every root row" alternative breaks, and breaks silently — a delete
+     * that reports success and changes nothing is worse than a refusal.
+     *
+     * Checked here rather than in the pre-transaction pass on purpose: unlike a type
+     * or a number, the answer depends on rows another publish can change, so it
+     * belongs under the same row lock as the staleness check. Nothing has been
+     * written when it refuses — the deletes come after.
      */
     private function replaceContentOnly(Display $display, array $elements)
     {
@@ -817,8 +844,15 @@ class LayoutStore
         $stmt->execute([$display->id()]);
         foreach ($stmt->fetchAll() as $row) { $ownSections[intval($row['id'])] = true; }
 
-        $this->pdo->prepare("DELETE FROM canvas_elements WHERE display_id = ? AND type != 'section'")
-                  ->execute([$display->id()]);
+        // Read before anything is deleted: the root-level content this Display holds
+        // right now is exactly the set a publish from this role may send back.
+        $ownRootContent = [];
+        $stmt = $this->pdo->prepare(
+            "SELECT id FROM canvas_elements
+              WHERE display_id = ? AND type != 'section' AND section_id IS NULL"
+        );
+        $stmt->execute([$display->id()]);
+        foreach ($stmt->fetchAll() as $row) { $ownRootContent[intval($row['id'])] = true; }
 
         $tempMap = [];
         foreach ($elements as $el) {
@@ -831,7 +865,46 @@ class LayoutStore
             }
         }
 
-        $this->insertContent($display, $elements, $tempMap);
+        $returned = [];
+        foreach ($elements as $el) {
+            $type = isset($el['type']) ? $el['type'] : 'text';
+            if ($type === 'section') { continue; }
+            if (self::sectionIdFor($el, $tempMap) !== null) { continue; }
+
+            $dbId = !empty($el['db_id']) ? intval($el['db_id']) : 0;
+            // Twice is invented too: one stored row cannot be two blocks on a canvas,
+            // and letting the second through would be this role duplicating layout.
+            if (!isset($ownRootContent[$dbId]) || isset($returned[$dbId])) {
+                return 'That layout has a ' . $type . ' block that is not inside any section. '
+                     . 'Only an admin can place one there. Nothing was saved — reload the '
+                     . 'display, put it inside a section, and publish again.';
+            }
+            $returned[$dbId] = true;
+        }
+
+        $this->pdo->prepare("DELETE FROM canvas_elements WHERE display_id = ? AND type != 'section'")
+                  ->execute([$display->id()]);
+
+        // The returned root rows go back under the ids they had, so the tab that has
+        // just published can publish again without reloading. Deleted and re-inserted
+        // rather than updated: one code path writes an element, and it is insertContent.
+        $this->insertContent($display, $elements, $tempMap, $returned);
+        return null;
+    }
+
+    /**
+     * The real section id this element belongs under, or null for root level.
+     *
+     * One copy, because the basic-publish check above and the insert below have to
+     * agree about what "root level" means — a check that resolved a parent the insert
+     * did not would refuse a block that was going to be parented correctly, and the
+     * reverse would let one through.
+     */
+    private static function sectionIdFor(array $el, array $tempMap)
+    {
+        $parentTmp = isset($el['parent_temp_id']) ? $el['parent_temp_id'] : null;
+        if (!$parentTmp) { return null; }
+        return isset($tempMap[$parentTmp]) ? $tempMap[$parentTmp] : null;
     }
 
     private function insertSection(Display $display, array $el)
@@ -859,17 +932,27 @@ class LayoutStore
      *
      * A block whose parent temp-id does not resolve lands at root level, which is
      * the behaviour a single-Display publish always had. It cannot leak across
-     * Displays: the map only ever holds this Display's section IDs.
+     * Displays: the map only ever holds this Display's section IDs. For an admin that
+     * is placing layout, which is theirs to place; for a basic account
+     * `replaceContentOnly()` has already refused any root block it could not prove was
+     * being sent back rather than invented.
+     *
+     * `$keepIds` is that proven set, and those rows are re-inserted under the id they
+     * had. Publishing replaces content wholesale, so without this every id in the
+     * Builder's hand would be stale the moment a publish succeeded — and the very next
+     * publish from that tab would be refused for returning a root block that, by id, no
+     * longer exists. An explicit `id` of null is how both engines say "assign one", so
+     * this is the same statement for every other block.
      */
-    private function insertContent(Display $display, array $elements, array $tempMap)
+    private function insertContent(Display $display, array $elements, array $tempMap, array $keepIds = [])
     {
         $insert = $this->pdo->prepare(
             "INSERT INTO canvas_elements
-             (display_id, section_id, type, block_subtype, x_pos, y_pos, width, height,
+             (id, display_id, section_id, type, block_subtype, x_pos, y_pos, width, height,
               manual_content, asset_id,
               font_family, font_size, font_color, font_weight, font_style, line_height,
               text_align, locked, sort_order, z_index, hidden)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         );
 
         $order = 0;
@@ -883,7 +966,7 @@ class LayoutStore
             // than resolved, for the reasons on requireUsableTempId().
             $parentTmp = $el['parent_temp_id'] ?? null;
             if ($parentTmp) { self::requireUsableTempId($parentTmp); }
-            $sectionId = $parentTmp ? ($tempMap[$parentTmp] ?? null) : null;
+            $sectionId = self::sectionIdFor($el, $tempMap);
             $assetId   = !empty($el['asset_id']) ? intval($el['asset_id']) : null;
             $manual    = $el['manual_content'] ?? '';
 
@@ -908,7 +991,15 @@ class LayoutStore
             // exactly "0" into an empty block, since "0" is falsy in PHP.
             $manualToStore = ($manual === null || $manual === '') ? null : $manual;
 
+            // Only ever a root block, and only one `replaceContentOnly()` proved. An
+            // admin publish passes no `$keepIds` at all, so its rows are assigned fresh
+            // ids exactly as before.
+            $keepId = ($sectionId === null && !empty($el['db_id'])
+                       && isset($keepIds[intval($el['db_id'])]))
+                ? intval($el['db_id']) : null;
+
             $insert->execute([
+                $keepId,
                 $display->id(),
                 $sectionId,
                 $type,

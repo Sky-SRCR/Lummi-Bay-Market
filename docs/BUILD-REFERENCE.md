@@ -3229,20 +3229,13 @@ so nothing ever runs it.
 
 **Left standing, and named rather than skipped:**
 
-- **A `basic` account can still publish content at root level.** ADR-0005 says they
-  work inside sections, and refusing an unresolvable parent would enforce it — but
-  a Display with admin-made root-level content would then refuse that clerk's every
-  publish, because their Builder resubmits what it loaded. Distinguishing
-  "resubmitted existing root content" from "new root content" is not something the
-  payload supports. Considered and left; it needs a payload change, not a check.
-  **Still open, and an implementation exists.** A branch closed without merging made
-  exactly that payload change — content carrying `db_id` the way sections always have,
-  a basic publish accepting a root block only when that id is a root row the Display
-  has now, and the publish refused whole otherwise. It settles both things that make
-  the naive version wrong: sending nothing for a root row still deletes it, and a
-  returned root row keeps its id so the Builder's ids do not go stale on every publish.
-  Reversing the decision recorded here is the owner's call; see "Branches closed
-  without merging" in `docs/reviewed-decisions.md` for the commit.
+- ~~**A `basic` account can still publish content at root level.**~~ **Closed by §4aj.**
+  ADR-0005 says they work inside sections, and refusing an unresolvable parent would
+  enforce it — but a Display with admin-made root-level content would then refuse that
+  clerk's every publish, because their Builder resubmits what it loaded. Distinguishing
+  "resubmitted existing root content" from "new root content" was not something the
+  payload supported, so this was left with the reason stated: it needed a payload
+  change, not a check. The payload change is what §4aj does.
 - ~~**Colour *semantics* are not validated on the publish path**, only shape and
   length.~~ **Closed by §4ac.** `font_color` was checked as a string within 50 bytes
   and no further, because "an unreadable stored colour" is #41 and "the panel
@@ -4125,6 +4118,79 @@ it was in a caller trusting a promise the module had only made about values it w
 name; and deleting the notice while keeping the loop that computes it fails too — the
 check is on the render, because working out a list and not drawing it is the same page
 with more code in it.
+
+---
+
+### 4aj. A basic publish may return root content, never invent it
+
+The residual §4ab named and deferred, closed with the payload change it said the fix
+needed. Ported from a branch retired as superseded — see "Branches closed without
+merging" in [`docs/reviewed-decisions.md`](reviewed-decisions.md), which is also where
+the finding that *every* superseded branch held something is written down.
+
+ADR-0005 splits reach from power: a grant says *which* Displays, the role says *how
+much*. A `basic` account fills sections; an admin places them. A block whose
+`parent_temp_id` resolves to none of this Display's sections lands with `section_id
+NULL`, and that is layout — so the role that may not place layout could place it, by
+sending a block with no parent at all. §4ab's type allowlist closed the forged-`type`
+route in. A plain `text` block with no parent still walked through.
+
+**Why it was deferred rather than fixed then, and why that reasoning was right.** The
+obvious fix — refuse any block whose parent does not resolve — breaks the honest case.
+An admin puts the store's logo on the canvas outside every section; the clerk's Builder
+loads that layout and resubmits it, logo included, because a publish sends what is on
+screen. Refuse the unresolvable parent and that clerk can never publish again, on the
+Display they are employed to keep current, for a block they did not add and cannot see
+the problem with. The payload could not tell "the root block that was already here"
+from "a root block I just made", so no check on it could be written.
+
+**What changed is the payload, in one field.** Content now carries `db_id`, the way
+sections always have — empty for a block `createBlock()` just made, the row id for one
+that came out of the database. A basic publish then accepts a root block only when that
+id is a root row this Display has *right now*, and refuses the publish whole otherwise.
+Sections were already doing exactly this to stop a forged `db_id` parenting content into
+another Display's section; content had simply never been asked.
+
+Four things fall out of that, and each is a check:
+
+- **Returning the same id twice is inventing one of them.** One stored row cannot be two
+  blocks on a canvas, and letting the second through is this role duplicating layout.
+- **A root id from another Display is refused.** Same shape as the section case, and it
+  subsumes a test that used to pass for the wrong reason: a forged section `db_id` was
+  *accepted*, with the block landing at root on the publisher's own Display. Scoping
+  held, which is all that check proved — but a basic account had placed layout. One
+  refusal covers both halves now.
+- **Sending nothing for a root row still deletes it.** This is the half the rejected
+  alternative — preserve every root row the payload does not mention — would have
+  broken, and broken silently: a delete that reports success and changes nothing. There
+  is no undo here, so a write that lies about what it did is worse than a refusal.
+- **A returned root row keeps its id.** Publishing replaces content wholesale, so
+  without this every id in the Builder's hand goes stale the moment a publish succeeds,
+  and the very next publish from that same tab is refused for returning a root block
+  that no longer exists by id. Publishing twice without reloading is ordinary work.
+  `insertContent()` takes the proven ids and re-inserts those rows under the id they
+  had; an explicit `id` of `NULL` is how both engines say "assign one", so it is the
+  same statement for every other block, and an admin publish passes no ids at all.
+
+**Decided inside the transaction, unlike §4ab's other refusals.** A type or a number is
+a property of the payload and is settled before `beginTransaction()`. This one depends
+on rows another publish can change, so it belongs under the same row lock as the
+staleness check — otherwise two clerks publishing at once could each be told their root
+block was fine. Nothing is written when it refuses: the check runs before its own
+`DELETE`, and the stamp does not move.
+
+`sectionIdFor()` exists so the check and the insert cannot disagree about what "root
+level" means. One resolving a parent the other did not would refuse a block that was
+about to be parented correctly, or admit one that was not — and it would look like two
+correct functions.
+
+**Fifteen checks**, including the admin's root block being placed and kept, the clerk
+sending it back and it keeping its id, publishing twice from one tab, the invented
+block refused with nothing deleted and the stamp unmoved, the doubled id, the other
+Display's id, and the leave-it-out delete really deleting. Three existing checks changed
+their payloads rather than their assertions: `basicLayoutFor()` gives a clerk's layout a
+real section `db_id`, which is what a clerk's Builder actually sends, and the admin
+shape `layoutWith()` stays as it was.
 
 ---
 

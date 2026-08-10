@@ -1425,6 +1425,11 @@ function renderBlock(el, parent, isNew) {
 
     block.dataset.type    = el.type;
     block.dataset.subtype = el.block_subtype || 'free';
+    // Empty for a block createBlock() just made, and the row id for one that came out
+    // of the database. That difference is the whole of how a publish tells "I am
+    // sending back the root block that was already here" from "I invented one", which
+    // is what a basic account may not do (ADR-0005). Sections have carried it all along.
+    block.dataset.dbId    = el.id         || '';
     block.dataset.assetId = el.asset_id   || '';
     block.dataset.sectionBg = '';
     block.dataset.locked  = el.locked     ? '1' : '0';
@@ -2453,6 +2458,7 @@ function publishCanvas() {
         elements.push({
             type:           type,
             block_subtype:  subtype,
+            db_id:          block.dataset.dbId || null,
             parent_temp_id: sectionEl ? sectionEl.dataset.tempId : null,
             x_pos:          Math.round(parseFloat(block.getAttribute('data-x'))||0),
             y_pos:          Math.round(parseFloat(block.getAttribute('data-y'))||0),

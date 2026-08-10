@@ -248,13 +248,14 @@ at either way.
 | `claude/start-38-ysumzb` | `4822e11` | #38, both halves — a competing implementation of what `claude/issue-38-7uky0k` landed. Same two defects found, same conclusions, different modules: `LoginGate` where `main` has `LoginAttempt`, and its own `RequestScheme`, ADR-0008 and ADR-0009. `main`'s line is the pick because the work built on top of it is not on this branch — the soft CSRF check, the removal of the three `ALTER`s a bot could reach without an account, and roughly six hundred more self-test checks. Its ADR-0008 is `main`'s ADR-0008 under a different title, which is worth knowing: three branches have now claimed that number. See below for the one thing it found that `main` did not. |
 | `claude/app-db-domain-testing-h0ulyg` | `1526023` | **It was right about the floor, and the floor it argued for is now the rule.** Recorded here as closed for raising it to 8.2 on a decision rather than a measurement — its own message says so plainly — and that reasoning was rejected while the version was unverified. The owner then supplied the version and the same conclusion followed, so the disagreement was about evidence, not about the answer. Still closed rather than merged: what it did *around* the floor is not wanted. It uses `session_set_cookie_params()`'s array form alone, which below 7.3 sets nothing at all and silently drops `HttpOnly`, `Secure` and `SameSite` — `auth.php` guards that call by version instead — and it deletes `.htaccess`'s `mod_php7` hardening blocks, which is a separate decision that was not being made. Its `phpVersionNote()` design, "make a wrong floor say so", is the one on `main`. It is also the branch whose reading surfaced the both-floors-at-once contradiction. |
 
-**Three things were on those branches and are not on `main`.** None is a competing
-answer to something already solved, so none was covered by picking. That every one of
-the four branches turned out to hold something is the finding worth carrying forward:
-"its items are already closed" was true each time and was never the same question as
-"it has nothing `main` lacks".
+**Three things were on those branches and were not on `main`. All three have now been
+ported.** None was a competing answer to something already solved, so none was covered
+by picking. That every one of the four branches turned out to hold something is the
+finding worth carrying forward: "its items are already closed" was true each time and
+was never the same question as "it has nothing `main` lacks". If a superseded branch is
+ever closed again, read it first — this is four for four.
 
-- **A sign-in refusal still arrives a bcrypt early.** ADR-0008 closed the *message*
+- ~~**A sign-in refusal still arrives a bcrypt early.**~~ **Ported.** ADR-0008 closed the *message*
   oracle: a suspended account is refused in the same words whether or not the password
   was right. `LoginAttempt` does that by returning before `password_verify()` — so the
   refusal comes back measurably sooner than a wrong password on a live account does, and
@@ -265,22 +266,23 @@ the four branches turned out to hold something is the finding worth carrying for
   decided against fixing it — so unlike the item below this is a gap rather than a
   reversal. Not the unknown-username case, which both treat as existence (ADR-0001).
 
-- **A `basic` account can still publish content at root level** — the residual §4ab
-  names and defers, saying it "needs a payload change, not a check". `open-issues-count`
-  made that payload change (`d39f3f9`): content carries `db_id` the way sections always
-  have, and a basic publish accepts a root block only when that id is a root row the
-  Display has right now, refusing the whole publish otherwise. It handles the two cases
-  that make the naive version wrong — sending nothing for a root row must still delete
-  it, and a returned root row keeps its id so the Builder's ids do not go stale on every
-  publish. It is a real fix to a real ADR-0005 hole, and it is the one place where a
-  closed branch is ahead of `main`. Left for a decision rather than ported quietly,
-  because §4ab decided the other way on the record and reversing that is the owner's
-  call, not a merge conflict resolution.
-- **The Builder's two opening reads share one failure message** — `builder.php` still
-  wraps `loadAssets()` and `loadLayout()` in a single `Promise.all(...).catch()` that
-  says "Failed to load layout." for either. `issue-28`'s `a3ccaee` splits them, on the
-  ground that the sentence is false half the time it appears: the asset library failing
-  means an empty dropdown, while the layout failing means the canvas on screen is not
-  this sign and must not be published over. There was never a missing `.catch()` here,
-  so no suite caught it; the fix comes with 19 checks in
-  `tools/selftest_builder_uploads.js`.
+- ~~**A `basic` account can still publish content at root level**~~ — **Ported, and
+  written up as §4aj.** The residual §4ab named and deferred, saying it "needs a payload
+  change, not a check". `open-issues-count` made that payload change (`d39f3f9`):
+  content carries `db_id` the way sections always have, and a basic publish accepts a
+  root block only when that id is a root row the Display has right now, refusing the
+  whole publish otherwise. It handles both cases that make the naive version wrong —
+  sending nothing for a root row still deletes it, and a returned root row keeps its id
+  so the Builder's ids do not go stale on every publish. This one reversed a decision
+  §4ab had recorded, so it was the owner's call rather than a merge resolution, and it
+  was taken. Fifteen checks; three existing ones had their payloads corrected to what a
+  clerk's Builder actually sends, without changing what they assert.
+- ~~**The Builder's two opening reads share one failure message**~~ — **Ported.**
+  `builder.php` wrapped `loadAssets()` and `loadLayout()` in a single
+  `Promise.all(...).catch()` that said "Failed to load layout." for either. `issue-28`'s
+  `a3ccaee` splits them, on the ground that the sentence is false half the time it
+  appears: the asset library failing means an empty dropdown, while the layout failing
+  means the canvas on screen is not this sign and must not be published over. There was
+  never a missing `.catch()`, so no suite caught it and no grep would have; fourteen
+  checks in `tools/selftest_builder_uploads.js` drive the real chains, and restoring the
+  shared handler kills the section outright.
