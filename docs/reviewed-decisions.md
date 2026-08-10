@@ -245,10 +245,25 @@ at either way.
 |--------|-----|-------------------|
 | `claude/issue-28-l1comq` | `dd1a099` | #26/#28/#27/#45, all landed via the sweep. It split the reply into `lib/http_cache.php` beside the status code; `lib/http_reply.php` owns all three of status, caching and body instead, for the reason stated under #26 above — the caching half is what stops the status-code half making a mistyped tag *stickier*, so the two do not belong in separate modules. |
 | `claude/open-issues-count-hub0pv` | `4214f2b` | #29–#32 in four commits where the sweep did it in one. Read closely because of that; see below. The sweep's `lib/layout_rules.php` was kept — it is a pure module, so every shape can be put through it in a test, where this branch's rules are private statics inside `LayoutStore` reachable only by attempting a publish (§4o's reason). It also reports every problem in a payload rather than the first. |
+| `claude/start-38-ysumzb` | `4822e11` | #38, both halves — a competing implementation of what `claude/issue-38-7uky0k` landed. Same two defects found, same conclusions, different modules: `LoginGate` where `main` has `LoginAttempt`, and its own `RequestScheme`, ADR-0008 and ADR-0009. `main`'s line is the pick because the work built on top of it is not on this branch — the soft CSRF check, the removal of the three `ALTER`s a bot could reach without an account, and roughly six hundred more self-test checks. Its ADR-0008 is `main`'s ADR-0008 under a different title, which is worth knowing: three branches have now claimed that number. See below for the one thing it found that `main` did not. |
 | `claude/app-db-domain-testing-h0ulyg` | `1526023` | **It was right about the floor, and the floor it argued for is now the rule.** Recorded here as closed for raising it to 8.2 on a decision rather than a measurement — its own message says so plainly — and that reasoning was rejected while the version was unverified. The owner then supplied the version and the same conclusion followed, so the disagreement was about evidence, not about the answer. Still closed rather than merged: what it did *around* the floor is not wanted. It uses `session_set_cookie_params()`'s array form alone, which below 7.3 sets nothing at all and silently drops `HttpOnly`, `Secure` and `SameSite` — `auth.php` guards that call by version instead — and it deletes `.htaccess`'s `mod_php7` hardening blocks, which is a separate decision that was not being made. Its `phpVersionNote()` design, "make a wrong floor say so", is the one on `main`. It is also the branch whose reading surfaced the both-floors-at-once contradiction. |
 
-**Two things were on those branches and are not on `main`.** Neither is a competing
-answer to something already solved, so neither was covered by picking:
+**Three things were on those branches and are not on `main`.** None is a competing
+answer to something already solved, so none was covered by picking. That every one of
+the four branches turned out to hold something is the finding worth carrying forward:
+"its items are already closed" was true each time and was never the same question as
+"it has nothing `main` lacks".
+
+- **A sign-in refusal still arrives a bcrypt early.** ADR-0008 closed the *message*
+  oracle: a suspended account is refused in the same words whether or not the password
+  was right. `LoginAttempt` does that by returning before `password_verify()` — so the
+  refusal comes back measurably sooner than a wrong password on a live account does, and
+  the timing now says what the wording no longer does. `start-38`'s `LoginGate` takes
+  the password check as a callable specifically so it can spend it for **any account
+  that exists**, and says why in the docblock: not to replace a message oracle with a
+  timing one. Same defect as ADR-0008 in a different channel, and nothing on the record
+  decided against fixing it — so unlike the item below this is a gap rather than a
+  reversal. Not the unknown-username case, which both treat as existence (ADR-0001).
 
 - **A `basic` account can still publish content at root level** — the residual §4ab
   names and defers, saying it "needs a payload change, not a check". `open-issues-count`
