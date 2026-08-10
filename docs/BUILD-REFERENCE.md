@@ -2656,10 +2656,11 @@ Left standing, and named rather than skipped:
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
 #48 and #51 CI runs everything below except the two things that need a browser or
-a copy of live data. PHP 8.2, which is the live server's version (confirmed, not
-assumed — the 7.1 figure #51 was written against was a guess made while nobody
-could check), against two engines: SQLite and a real MySQL 5.7 service. Run it
-locally before every push anyway; the loop is faster than a push.
+a copy of live data. It runs on PHP 8.2, against two engines: SQLite and a real
+MySQL 5.7 service. That 8.2 is a **test target, not a measurement of the host** —
+the live version is still unverified (§4aa, §4k), and the rule the repo obeys is
+7.1-compatible syntax for that reason. Run it locally before every push anyway;
+the loop is faster than a push.
 
 ```
 php -l <every touched .php>              # syntax; also in CI, on 8.2
@@ -3065,9 +3066,12 @@ both are fixed even though neither is reachable on 8.x:
 - The error log never rotating, because the size was read from a stat cache PHP 8
   invalidates and earlier versions do not.
 
-The second one leaves a check that cannot fail on 8.2, which is the shape #50 is
+The second one leaves a check that cannot fail on PHP 8, which is the shape #50 is
 about. It is kept and labelled as such rather than deleted, because what it records
-is worth more than the line — but it is not coverage and is not counted as any.
+is worth more than the line — but it is not coverage and is not counted as any. Note
+that "not reachable" here is a statement about 8.x and not about the shop: while the
+live version is unverified, both of these remain live possibilities on the host, which
+is the second reason they were fixed rather than noted.
 
 **What still is not covered**, printed by `tools/check_invariants.php` on every run
 so it cannot be mistaken for full coverage: five §5 greps that no pattern can
@@ -3200,6 +3204,14 @@ so nothing ever runs it.
   publish, because their Builder resubmits what it loaded. Distinguishing
   "resubmitted existing root content" from "new root content" is not something the
   payload supports. Considered and left; it needs a payload change, not a check.
+  **Still open, and an implementation exists.** A branch closed without merging made
+  exactly that payload change — content carrying `db_id` the way sections always have,
+  a basic publish accepting a root block only when that id is a root row the Display
+  has now, and the publish refused whole otherwise. It settles both things that make
+  the naive version wrong: sending nothing for a root row still deletes it, and a
+  returned root row keeps its id so the Builder's ids do not go stale on every publish.
+  Reversing the decision recorded here is the owner's call; see "Branches closed
+  without merging" in `docs/reviewed-decisions.md` for the commit.
 - ~~**Colour *semantics* are not validated on the publish path**, only shape and
   length.~~ **Closed by §4ac.** `font_color` was checked as a string within 50 bytes
   and no further, because "an unreadable stored colour" is #41 and "the panel
@@ -3844,10 +3856,12 @@ it, `ENT_COMPAT | ENT_HTML401` — `"` escaped, `'` left alone. From it,
 ```
 
 was safe or an injection depending on which PHP the host was running, and nothing in
-the source recorded which was meant. This app is on 8.2, so the strict behaviour is
-what it gets today — and the 7.1-era fallbacks in `auth.php` and `.htaccess` are kept
-deliberately for a host that moves (§5), which makes "the default is fine now" exactly
-the assumption not to leave lying around.
+the source recorded which was meant. Which PHP this app is on is unverified (#51,
+§4k), so *which* of those two behaviours it gets today is unknown — and the 7.1-era
+fallbacks in `auth.php` and `.htaccess` are kept deliberately for that reason as well
+as for a host that moves (§5), which makes "the default is fine now" exactly the
+assumption not to leave lying around. Naming both flags is what removes the question
+rather than answering it.
 
 The quieter half is worse and has nothing to do with attacks. Without
 `ENT_SUBSTITUTE`, one byte of invalid UTF-8 makes `htmlspecialchars()` return **the

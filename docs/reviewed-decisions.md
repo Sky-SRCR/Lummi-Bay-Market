@@ -91,7 +91,7 @@ written down rather than remembered:
 
 ## Where this stands
 
-**44 done, 1 part done (#49), 5 open** — counted off the Status column above, which
+**43 done, 2 part done (#49, #51), 5 open** — counted off the Status column above, which
 is 50 rows because there is no #47. The 51st item is the unnumbered policy named at
 the top; it has no row and therefore no status, and two branches counting the same
 table have each quietly folded it into a different total. It is counted here as
@@ -100,9 +100,16 @@ across from either side: both branches had been adding to it independently, and
 both totals were right about their own half and wrong about the whole.
 
 #48 and #51 were taken together because they are the same subject — what the tests
-run against, and whether anybody runs them. Both are Done; the version question
-inside #51 was answered rather than worked around, and the answer was that the
-premise was wrong.
+run against, and whether anybody runs them. #48 is Done. **#51 is Part done**: the
+half about *running* things is closed, and the version half was briefly recorded as
+answered and then withdrawn — the evidence was a screen that ships with the
+undeployed build, so it cannot have reported anything (§4k, and the row above). The
+7.1 rule stands. That withdrawal was itself incomplete for one merge: the four
+top-level docs were put back while `lib/server_report.php`, `auth.php`,
+`lib/markup.php`, `lib/layout_store.php`, `admin_panel.php` and §5 still stated 8.2 as
+fact — so the repo asserted both floors at once, and `ServerReport::ASSUMED_PHP` was
+the one an admin would have read off a screen. Settled in one pass; the constant is a
+floor of `7.1` again and `phpVersionNote()`'s bands are floor-relative.
 
 **#24, #25, #29, #30, #31, #32 and #35** were then taken as one batch, for the same
 reason: they are all one subject, which is that the publish path coerced every value
@@ -195,3 +202,46 @@ escaped value is now strict, which is not the same as every value being escaped.
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which
 one comes next is a judgement about the store, not about the code.
+
+## Branches closed without merging
+
+Several branches were cut from the same base and solved overlapping items in parallel.
+Where two of them solved the same thing, one implementation was picked rather than
+both merged — merging two answers to one question is how a codebase ends up holding
+four opinions about what a colour is, which is #21. What was **not** on the branch that
+won is recorded here, because a closed branch is not a decision anybody can re-read.
+
+The tip commit is given for each so the work is recoverable: `git show <sha>`, or
+`git log <sha>` for the whole branch. Each is also tagged `retired/<name>`, which is
+what actually keeps it reachable — deleting a branch leaves its commits danglable, so
+a bare sha in a document is a promise that expires. `git fetch --tags` then
+`git log retired/open-issues-count`.
+
+| Branch | Tip | Why it was closed |
+|--------|-----|-------------------|
+| `claude/issue-28-l1comq` | `dd1a099` | #26/#28/#27/#45, all landed via the sweep. It split the reply into `lib/http_cache.php` beside the status code; `lib/http_reply.php` owns all three of status, caching and body instead, for the reason stated under #26 above — the caching half is what stops the status-code half making a mistyped tag *stickier*, so the two do not belong in separate modules. |
+| `claude/open-issues-count-hub0pv` | `4214f2b` | #29–#32 in four commits where the sweep did it in one. Read closely because of that; see below. The sweep's `lib/layout_rules.php` was kept — it is a pure module, so every shape can be put through it in a test, where this branch's rules are private statics inside `LayoutStore` reachable only by attempting a publish (§4o's reason). It also reports every problem in a payload rather than the first. |
+| `claude/app-db-domain-testing-h0ulyg` | `1526023` | It raised the syntax rule to a declared floor of 8.2. Honest about it — its own message says "This is a decision, not a measurement" — but the decision went the wrong way for this app: below the floor is a parse error, and a parse error on a Screen is a blank sign nobody reads a stack trace off. The floor stays at 7.1 while the version is unverified, which costs nothing. It is also the branch that surfaced the contradiction fixed above. |
+
+**Two things were on those branches and are not on `main`.** Neither is a competing
+answer to something already solved, so neither was covered by picking:
+
+- **A `basic` account can still publish content at root level** — the residual §4ab
+  names and defers, saying it "needs a payload change, not a check". `open-issues-count`
+  made that payload change (`d39f3f9`): content carries `db_id` the way sections always
+  have, and a basic publish accepts a root block only when that id is a root row the
+  Display has right now, refusing the whole publish otherwise. It handles the two cases
+  that make the naive version wrong — sending nothing for a root row must still delete
+  it, and a returned root row keeps its id so the Builder's ids do not go stale on every
+  publish. It is a real fix to a real ADR-0005 hole, and it is the one place where a
+  closed branch is ahead of `main`. Left for a decision rather than ported quietly,
+  because §4ab decided the other way on the record and reversing that is the owner's
+  call, not a merge conflict resolution.
+- **The Builder's two opening reads share one failure message** — `builder.php` still
+  wraps `loadAssets()` and `loadLayout()` in a single `Promise.all(...).catch()` that
+  says "Failed to load layout." for either. `issue-28`'s `a3ccaee` splits them, on the
+  ground that the sentence is false half the time it appears: the asset library failing
+  means an empty dropdown, while the layout failing means the canvas on screen is not
+  this sign and must not be published over. There was never a missing `.catch()` here,
+  so no suite caught it; the fix comes with 19 checks in
+  `tools/selftest_builder_uploads.js`.

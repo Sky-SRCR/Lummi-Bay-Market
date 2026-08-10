@@ -10,9 +10,11 @@
 // it is `ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML401`, which escapes both. So an
 // attribute written as `value='{{ htmlspecialchars($x) }}'` is either safe or an
 // injection depending on which PHP the host is running, and nothing in the source
-// says which was meant. This app is on 8.2 and the 7.1-era fallbacks are kept on
-// purpose for a host that moves (BUILD-REFERENCE §5) — so "the default is fine
-// now" is exactly the assumption not to leave lying around.
+// says which was meant. Which PHP this app is on is unverified (#51), and the repo
+// is written 7.1-compatible for that reason (BUILD-REFERENCE §5) — so "the default is
+// fine now" is exactly the assumption not to leave lying around. Both flags are named
+// here so the behaviour is the same on either side of 8.1 and does not depend on
+// answering that question first.
 //
 // The second half of the default is quieter and worse. Without `ENT_SUBSTITUTE`,
 // one byte of invalid UTF-8 makes `htmlspecialchars()` return **the empty string**

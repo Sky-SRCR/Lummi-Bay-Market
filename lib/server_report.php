@@ -2,15 +2,24 @@
 // ============================================================
 // SERVER REPORT — what is this machine, and did the schema converge?
 // ============================================================
-// This project was written to a PHP version nobody had ever checked. The rule in
-// CLAUDE.md used to read "PHP 7.1-compatible syntax, the live server's version is
+// This project is written to a PHP version nobody has ever checked. The rule in
+// CLAUDE.md reads "PHP 7.1-compatible syntax, the live server's version is
 // unverified", it shaped every file in the repo, and the one real violation it ever
 // caught was not a syntax feature at all but a library signature that changed in 7.3
 // (auth.php's session cookie parameters). A rule that costs this much should not
-// rest on a guess, and there is no shell on the live host: the only place the
-// answer could appear was a page an admin can open. This one. It answered **8.2**,
-// the rule now says 8.2, and this card is what keeps that true — a host upgrade or
-// a move to a different account becomes visible here and nowhere else.
+// rest on a guess, and there is no shell on the live host: the only place the answer
+// could appear is a page an admin can open. This one.
+//
+// **It has not answered yet.** A branch recorded 8.2 here and raised the rule to
+// match; that was withdrawn at the merge, because this card ships with the
+// multi-display build and #46's probe found that build undeployed — `lib/` answers
+// 404 live — so this screen cannot have been the thing that reported it, and
+// Cloudflare hides the version from the response headers too (§4k). The rule
+// therefore still says 7.1 and costs nothing: no file uses a later construct, and
+// every one lints clean on 7.1 as well as 8.4. What this card is for is the moment
+// the build *is* deployed, when it becomes the only place the real version appears —
+// and a host upgrade or a move to a different account becomes visible here and
+// nowhere else.
 //
 // The second half is the same problem wearing different clothes. Invariant 10 says
 // the live database is behind the repo and every schema change is an idempotent
@@ -43,11 +52,17 @@ require_once __DIR__ . '/request_scheme.php';
 class ServerReport
 {
     /**
-     * The PHP this code is written to run on. Not a check that the server is
-     * modern — a check that the rule the repo has been obeying still matches the
-     * machine it was obeyed for.
+     * The oldest PHP this code is written to run on. Not a check that the server is
+     * modern — a check that the rule the repo has been obeying can still be obeyed
+     * on the machine it is obeyed for.
+     *
+     * A floor, not a measurement. While the live version is unverified this is the
+     * conservative half of the guess: too low merely forgoes syntax the repo could
+     * have used, where too high is a parse error, and a parse error on a Screen is a
+     * blank sign rather than anything anybody reads. Raising it is a decision that
+     * needs the version in hand — see the note above and §4k.
      */
-    const ASSUMED_PHP = '8.2';
+    const ASSUMED_PHP = '7.1';
 
     private $pdo;
     private $facts = null;
@@ -126,36 +141,47 @@ class ServerReport
     /**
      * What this server's PHP version means, given the rule the repo obeys.
      *
-     * The check now points the opposite way to the one it started as. While the
-     * live version was a guess, ASSUMED_PHP was the *oldest* PHP this might have
-     * to run on, so a newer server was merely wasteful — the repo was avoiding
-     * features it could have used. #51 answered the question: the rule states the
-     * version the code is written to use, and an *older* server is the failure.
+     * ASSUMED_PHP is a floor: the repo writes 7.1-compatible syntax, so a *newer*
+     * server has nothing wrong with it and is told nothing. That is not the same as
+     * the note being dead — two bands below it can each fire, and each names
+     * something that is actually true on the host rather than commentary:
      *
-     * Not moot just because a parse error would take the page with it. PHP parses
-     * per file, so an 8.2-only construct in a file this path never includes leaves
-     * this card rendering and able to say so — which is the whole point of the
-     * warning, since no file uses one today and the first that does would be found
-     * by a blank sign otherwise.
+     * - Below 7.3 the version is load-bearing in code, not just in the rule.
+     *   `session_set_cookie_params()`'s array form does not exist there, so
+     *   `auth.php` branches to the string form; the note says which one is in use,
+     *   because that is the branch an admin would otherwise have to read the source
+     *   to know about. Settings → This Server reads the three flags back off the
+     *   live cookie separately, which is the check that it worked.
+     * - Below the floor itself the code may genuinely not parse. Not moot just
+     *   because a parse error would take the page with it: PHP parses per file, so a
+     *   construct in a file this path never includes leaves this card rendering and
+     *   able to say so — which is the whole point, since the first file to break
+     *   would otherwise be found by a blank sign.
+     *
+     * Deliberately says nothing when the server is merely newer than the floor. A
+     * note there would be the routine commentary that trains an admin to skip the
+     * row, and skipping it is how the two real bands get missed. That is also what
+     * keeps this from being a check that cannot fail (#50): it is silent on the
+     * common case on purpose, not for want of anything to test.
      *
      * Takes the version id rather than reading PHP_VERSION_ID, for the reason
-     * `UploadLimit::smallestOf()` takes its ini values: three of the four cases
-     * are unreachable on whatever machine happens to run the test.
+     * `UploadLimit::smallestOf()` takes its ini values: two of the three cases are
+     * unreachable on whatever machine happens to run the test.
      */
     public static function phpVersionNote($versionId)
     {
-        if ($versionId >= 80200) {
+        if ($versionId >= 70300) {
             return '';
         }
-        if ($versionId >= 70300) {
-            return 'Older than the ' . self::ASSUMED_PHP . ' this code is written for. '
-                 . 'The sign-in cookie is still hardened by the modern call, but syntax '
-                 . 'this repo is now allowed to use may not parse here. Tell the '
-                 . 'developer before the next deploy.';
+        if ($versionId >= 70100) {
+            return 'Below 7.3, so the pre-7.3 session cookie form is the one in use — '
+                 . 'the sign-in cookie is hardened by that branch rather than the modern '
+                 . 'call. Check the Session cookie row below reports all three flags.';
         }
-        return 'Far older than the ' . self::ASSUMED_PHP . ' this code is written for, '
-             . 'and below 7.3, so the pre-7.3 session cookie form is the one in use. '
-             . 'Tell the developer before the next deploy.';
+        return 'Older than the ' . self::ASSUMED_PHP . ' this code is written for, and '
+             . 'below 7.3, so the pre-7.3 session cookie form is the one in use. Syntax '
+             . 'this repo does use may not parse here at all. Tell the developer before '
+             . 'the next deploy.';
     }
 
     /**

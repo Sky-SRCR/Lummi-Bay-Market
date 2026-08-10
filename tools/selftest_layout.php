@@ -2327,29 +2327,37 @@ foreach ($runtime as $fact) {
 }
 check($allStrings, 'every fact is a printable pair, so the panel cannot be handed an object');
 
-// The PHP-version note now points the opposite way to the one it started as. While
-// the live version was a guess, ASSUMED_PHP was the *oldest* PHP this might have to
-// run on and anything newer was merely wasteful; #51 answered it, so the rule states
-// what the code is written to use and an *older* server is the failure. Three bands,
-// and this machine is only ever one of them — which is why phpVersionNote() takes
-// the version id rather than reading PHP_VERSION_ID.
-checkSame('', ServerReport::phpVersionNote(80200),
-          'a server on the version the rule names has nothing to say about it');
+// ASSUMED_PHP is a floor, not a measurement: the repo writes 7.1-compatible syntax
+// while the live version is unverified (§4k), so a *newer* server is told nothing and
+// the two bands below the floor each name something true on the host. Three bands,
+// and this machine is only ever one of them — which is why phpVersionNote() takes the
+// version id rather than reading PHP_VERSION_ID.
+checkSame('7.1', ServerReport::ASSUMED_PHP,
+          'the floor is the version the repo is written to, not the one CI pins');
+checkSame('', ServerReport::phpVersionNote(70300),
+          'a server on the oldest version the cookie call needs says nothing');
 checkSame('', ServerReport::phpVersionNote(80400),
-          'and neither does a newer one — being ahead of the rule is not a problem');
-$behind = ServerReport::phpVersionNote(80100);
-check($behind !== '', 'a server behind the rule does say so');
-checkMentions($behind, ServerReport::ASSUMED_PHP,
-              'and names the version the code is written for');
-check(strpos($behind, 'still hardened') !== false,
-      'and says the sign-in cookie is unaffected, because above 7.3 it is');
-$ancient = ServerReport::phpVersionNote(70100);
-checkMentions($ancient, '7.3',
-              'below 7.3 the note reaches for the one thing that actually breaks');
-check(strpos($ancient, 'pre-7.3 session cookie form') !== false,
+          'and neither does a much newer one — being ahead of the floor is not a problem');
+checkSame('', ServerReport::phpVersionNote(80200),
+          'including the version CI pins, which is a test target and not a claim');
+$cookieBand = ServerReport::phpVersionNote(70200);
+check($cookieBand !== '', 'a server below 7.3 does say so, because auth.php branches there');
+check(strpos($cookieBand, 'pre-7.3 session cookie form') !== false,
       'and names which cookie form is in use, which is what auth.php branches on');
-check($behind !== $ancient,
-      'the two failing bands do not print the same sentence — what to do next differs');
+check(strpos($cookieBand, 'Session cookie') !== false,
+      'and points at the row that reads the three flags back off the live cookie');
+// Above the floor, so this band must not claim the code will fail to parse.
+check(strpos($cookieBand, 'may not parse') === false,
+      'and does not warn about syntax, because 7.2 is still above the floor');
+$belowFloor = ServerReport::phpVersionNote(70000);
+checkMentions($belowFloor, ServerReport::ASSUMED_PHP,
+              'below the floor the note names the version the code is written for');
+check(strpos($belowFloor, 'may not parse') !== false,
+      'and says the code may not parse at all, which is a blank sign on a Screen');
+check(strpos($belowFloor, 'pre-7.3 session cookie form') !== false,
+      'and still names the cookie form, since below the floor is also below 7.3');
+check($cookieBand !== $belowFloor,
+      'the two speaking bands do not print the same sentence — what to do next differs');
 
 // ─────────────────────────────────────────────────────────────
 section('Convergence asks the catalogue before it alters anything');
@@ -5520,4 +5528,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // did (#21 closed while it was open, so three checks that asserted the coercion now
 // assert the refusal). The MySQL figure is the SQLite one plus the 23 checks in the
 // engine-only section below, which is the same difference it has always been.
-reportChecks(testIsMysql() ? 1507 : 1484);
+reportChecks(testIsMysql() ? 1511 : 1488);

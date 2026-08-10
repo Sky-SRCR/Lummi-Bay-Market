@@ -20,13 +20,14 @@ name: PHP lint and self-test
 # things only a person could be relied on to do. All of them run here now, against
 # both database engines.
 #
-# Running the suite on 7.1 while the target was still unknown did find two ways the
-# code misbehaves below PHP 8 — an array where a temp_id belongs is accepted rather
-# than refused, and the error log never rotates. Neither was ever reachable on 8.2.
-# Both are fixed anyway, because both fixes say in code what the language was doing
-# by accident, but neither was a live defect and 7.1 is not tested here: pinning CI
-# to a version the store does not run would constrain every future change for
-# nothing.
+# Running the suite on 7.1 did find two ways the code misbehaves below PHP 8 — an
+# array where a temp_id belongs is accepted rather than refused, and the error log
+# never rotates. Neither is reachable on 8.x, so neither is reachable in this job.
+# Both are fixed anyway, and while the host's version is unobserved neither can be
+# called "not a live defect" either. 7.1 is still not pinned here: a second matrix
+# leg testing a version nobody has seen the store run would constrain every future
+# change on the strength of the same guess, in the other direction. The rule is
+# carried by `php -l` passing on both, and by review.
 
 on:
   push:
