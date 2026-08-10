@@ -177,6 +177,25 @@ $rules = [
                   . 'on one byte of bad UTF-8 (#15)',
     ],
     [
+        'name'   => 'one module sanitises signage text',
+        'regex'  => '/strip_tags\s*\(|html_entity_decode\s*\(/',
+        'in'     => '',
+        // lib/plain_text.php is the sanitiser, and the *order* of those two calls is
+        // load-bearing in both directions (§4am): the strip before the decode, or a
+        // price line loses everything after a "<". The two other app hits are label
+        // truncation for display — crud.php's 40-character asset preview and
+        // assets.php's auto-label — and neither decides what is stored, which is why
+        // they are listed rather than converted. A new hit on a path that WRITES is a
+        // second sanitiser with its own opinion about that order; call toPlainText().
+        // The self-test's html_entity_decode() calls undo an escape to assert it
+        // happened, which is the opposite direction and the only place it belongs.
+        'expect' => ['crud.php', 'lib/assets.php', 'lib/plain_text.php',
+                     'tools/selftest_layout.php'],
+        'why'    => 'strip_tags() is not a parser: it deletes from a "<" to the end of a value '
+                  . 'when nothing closes it, so a second caller is a second chance to lose a '
+                  . 'price line silently (#49, §4am)',
+    ],
+    [
         'name'   => 'one path to the credentials that live outside the webroot',
         'regex'  => '/db_credentials/',
         'in'     => '',
