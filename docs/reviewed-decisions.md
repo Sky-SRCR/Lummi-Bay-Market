@@ -212,10 +212,25 @@ four opinions about what a colour is, which is #21. What was **not** on the bran
 won is recorded here, because a closed branch is not a decision anybody can re-read.
 
 The tip commit is given for each so the work is recoverable: `git show <sha>`, or
-`git log <sha>` for the whole branch. Each is also tagged `retired/<name>`, which is
-what actually keeps it reachable — deleting a branch leaves its commits danglable, so
-a bare sha in a document is a promise that expires. `git fetch --tags` then
-`git log retired/open-issues-count`.
+`git log <sha>` for the whole branch. Each is also reachable as `origin/retired/<name>`,
+which is the ref that is meant to outlive the `claude/` one — deleting the last ref to
+a commit leaves it danglable, so a bare sha in a document is a promise that expires.
+
+**The `claude/` branches are still there.** Retiring them was meant to be a rename, and
+only the first half of it could be done from the session that wrote this: these
+credentials may create `refs/heads/*` but not delete a ref, and not create
+`refs/tags/*` at all. So each of the three currently exists twice, which is worse than
+either intended state. Finishing it is one command with rights this session lacks:
+
+```
+git push origin --delete claude/issue-28-l1comq \
+                         claude/open-issues-count-hub0pv \
+                         claude/app-db-domain-testing-h0ulyg
+```
+
+A tag would say "not a line of development" more clearly than a branch does. Convert
+the three `retired/*` refs if you have the rights; the shas above are what they point
+at either way.
 
 | Branch | Tip | Why it was closed |
 |--------|-----|-------------------|
