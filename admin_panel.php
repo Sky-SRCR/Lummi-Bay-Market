@@ -108,6 +108,11 @@ $curSite    = $brand['SITE_NAME'];
 $curMail    = $brand['MAIL_FROM'];
 $curMailN   = $brand['MAIL_FROM_NAME'];
 
+// Through undoStepsSetting(), not the raw constant: config.php is the one place
+// that decides what a stored undo depth means, and the Builder reads it the same
+// way — so this form cannot offer a number the editor would not act on.
+$curUndo    = undoStepsSetting();
+
 // ============================================================
 // USER MANAGEMENT ACTIONS
 // ============================================================
@@ -434,13 +439,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $siteName = trim($_POST['site_name'] ?? '') ?: $curSite;
         $mailFrom = filter_var(trim($_POST['mail_from'] ?? ''), FILTER_VALIDATE_EMAIL) ?: $curMail;
         $mailName = trim($_POST['mail_name'] ?? '') ?: $curMailN;
+        // 0 is a real answer here — it switches Undo off — so this one cannot use the
+        // `?:` the three above use, which would read 0 as "not filled in" and quietly
+        // keep the old depth. A field that was never on the form at all is the
+        // different case, and keeps what is stored: this form says what it covered.
+        $undoSteps = isset($_POST['undo_steps'])
+            ? max(0, min(UNDO_STEPS_MAX, intval($_POST['undo_steps'])))
+            : $curUndo;
         $res = $branding->save([
             'SITE_NAME'      => $siteName,
             'MAIL_FROM'      => $mailFrom,
             'MAIL_FROM_NAME' => $mailName,
+            'UNDO_STEPS'     => (string)$undoSteps,
         ]);
         if ($res->isOk()) {
             $curSite = $siteName; $curMail = $mailFrom; $curMailN = $mailName;
+            $curUndo = $undoSteps;
             $msg = 'Settings saved.';
         } else {
             $msg = $res->message(); $msgType = 'error';
@@ -1522,6 +1536,27 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                            placeholder="Display System" style="width:100%;">
                 </div>
             </div>
+        </div>
+
+        <div class="card">
+            <h2>Builder Undo</h2>
+            <p style="font-size:13px; color:#7f8c8d; margin-bottom:14px;">
+                How many steps back the <strong>Undo</strong> button in the Builder can go. A step is
+                one finished change — a block moved, a block deleted, a piece of text edited and
+                clicked away from. Undo works on the canvas in front of you, before you publish;
+                it cannot take back a publish, and it is gone when the page is reloaded or closed.
+                Set it to <code>0</code> to remove the button and the Ctrl+Z shortcut entirely.
+            </p>
+            <div class="form-group" style="max-width:220px;">
+                <label>Steps</label>
+                <input type="number" name="undo_steps" min="0" max="<?= UNDO_STEPS_MAX ?>" step="1"
+                       value="<?= intval($curUndo) ?>" style="width:100%;">
+            </div>
+            <p style="font-size:12px; color:#7f8c8d; margin-top:6px;">
+                0 to <?= UNDO_STEPS_MAX ?>. Each step holds a copy of the whole canvas in the editor's
+                browser tab, so a large number on a busy sign is that tab's memory — nothing is
+                stored on the server.
+            </p>
         </div>
 
         <button type="submit" name="action_save_settings" class="btn btn-green">Save Settings</button>

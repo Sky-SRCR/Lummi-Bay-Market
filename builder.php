@@ -166,11 +166,18 @@ $_SESSION['last_display'] = $display->tag();
 // offering the choice to someone holding one grant would be a link to a dead end.
 $switchable = count($actor->openable($displayStore->all()));
 
-// The BRAND_* constants this page's CSS reads are defined by config.php, which
-// auth.php requires above — one list of eight names and defaults, in lib/branding.php.
+// The nine generated constants this page reads are defined by config.php, which
+// auth.php requires above — one list of names and defaults, in lib/branding.php.
 // The four that are colours are then read back through Brand::, not escaped: they
 // land in the <style> block below, where there is no delimiter for an entity to
 // neutralise and a value that is not a colour is CSS.
+
+// How far back Undo may go on this page (ADR-0010), from the admin Settings page by
+// way of config.php. Zero on a read-only Builder as well as when the setting says
+// zero: a page that may not change anything has nothing to take back, and this is
+// the one number the button, the shortcut and the snapshots all read — so switching
+// it off switches off all three rather than two of them.
+$undoSteps = $readOnly ? 0 : undoStepsSetting();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -202,6 +209,11 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
    stops the second click happening at all; the guard in publishCanvas() is what
    catches the one that happens anyway. */
 .btn.publish-btn:disabled { opacity: .55; cursor: progress; }
+
+/* Undo with an empty stack. Faded and not-allowed rather than hidden: a button
+   that comes and goes is a button nobody learns the position of, and "there is
+   nothing to undo" is worth saying by being visibly unavailable. */
+#undo-btn:disabled { opacity: .45; cursor: not-allowed; }
 
 /* Which sign am I editing? Never left to be inferred from the canvas shape. */
 #top-nav .display-badge { margin-left: 18px; display: flex; align-items: center; gap: 7px;
@@ -650,6 +662,11 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <button class="btn gray" onclick="nudgeZoom(1)" title="Zoom in">+</button>
     <span id="zoom-readout" style="font-size:11px; color:#bdc3c7; min-width:34px; text-align:right;">100%</span>
 
+    <?php if ($undoSteps > 0): ?>
+    <button id="undo-btn" class="btn gray" style="margin-left:12px;" onclick="undoStep()" disabled
+            title="Undo the last change (Ctrl+Z)">&#8630; Undo</button>
+    <?php endif; ?>
+
     <?php if (!$readOnly): ?>
     <button id="publish-btn" class="btn publish-btn" style="margin-left:12px;" onclick="publishCanvas()">&#10003; Publish</button>
     <?php endif; ?>
@@ -781,10 +798,15 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                 onclick="clearSectionBg()">Remove Background</button>
     </div>
 
-    <!-- Font controls (admin only, free text) -->
+    <!-- Font controls (admin only, free text)
+         The oninput controls below carry an onchange="commitUndoStep()" alongside
+         them, and updateStyle() itself records nothing. That split is the whole of
+         why dragging the colour swatch is one undo step rather than one per shade
+         it passed through on the way: oninput is the block changing, onchange is
+         the browser saying the person has finished choosing. See ADR-0010. -->
     <div id="insp-font" class="insp-section" style="display:none;">
         <label>Font</label>
-        <select id="font-family" onchange="updateStyle('fontFamily',this.value)">
+        <select id="font-family" onchange="updateStyle('fontFamily',this.value); commitUndoStep()">
             <option>Arial</option><option>Georgia</option><option>Verdana</option>
             <option>Tahoma</option><option value="'Trebuchet MS',sans-serif">Trebuchet MS</option>
             <option value="'Times New Roman',serif">Times New Roman</option>
@@ -795,19 +817,19 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
             <div>
                 <label>Size (px)</label>
                 <input type="number" id="font-size" min="8" max="300"
-                       oninput="updateStyle('fontSize',this.value+'px')">
+                       oninput="updateStyle('fontSize',this.value+'px')" onchange="commitUndoStep()">
             </div>
             <div>
                 <label>Line Height</label>
                 <input type="number" id="line-height" min="0.8" max="4" step="0.1"
-                       oninput="updateStyle('lineHeight',this.value)">
+                       oninput="updateStyle('lineHeight',this.value)" onchange="commitUndoStep()">
             </div>
         </div>
         <div class="insp-row" style="margin-top:6px;">
             <div>
                 <label>Color</label>
                 <input type="color" id="font-color" style="width:100%;"
-                       oninput="updateStyle('color',this.value)">
+                       oninput="updateStyle('color',this.value)" onchange="commitUndoStep()">
             </div>
             <!-- Shown only for a stored colour the browser could not read (#41). A
                  colour input has no way to display one — it falls back to black and
@@ -818,7 +840,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
             </div>
             <div>
                 <label>Weight</label>
-                <select id="font-weight" onchange="updateStyle('fontWeight',this.value)">
+                <select id="font-weight" onchange="updateStyle('fontWeight',this.value); commitUndoStep()">
                     <option value="normal">Normal</option>
                     <option value="bold">Bold</option>
                 </select>
@@ -861,7 +883,8 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
             <div>
                 <label>Interval (sec)</label>
                 <input type="number" id="carousel-interval" min="1" max="60" value="5"
-                       style="width:70px;" oninput="updateCarouselInterval(this.value)">
+                       style="width:70px;" oninput="updateCarouselInterval(this.value)"
+                       onchange="commitUndoStep()">
             </div>
             <div>
                 <label>&nbsp;</label>
@@ -884,18 +907,20 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <label>Marquee Text</label>
         <textarea id="marquee-text" rows="3"
                   style="width:100%;padding:6px;background:#2c3e50;color:#fff;border:1px solid #4a6278;border-radius:3px;font-size:13px;resize:vertical;"
-                  oninput="updateMarqueeText(this.value)"></textarea>
+                  oninput="updateMarqueeText(this.value)" onchange="commitUndoStep()"></textarea>
         <label style="margin-top:6px;">Scroll Speed</label>
         <input type="range" id="marquee-speed" min="10" max="300" value="80"
-               style="width:100%;margin-top:4px;" oninput="updateMarqueeSpeed(this.value)">
+               style="width:100%;margin-top:4px;" oninput="updateMarqueeSpeed(this.value)"
+               onchange="commitUndoStep()">
         <div id="marquee-speed-label" style="font-size:11px;color:#bdc3c7;margin-top:2px;">80 px/sec</div>
         <label style="margin-top:6px;">Text Style</label>
         <div style="display:flex;gap:6px;align-items:center;margin-top:4px;">
             <input type="color" id="marquee-color" value="#ffffff"
-                   style="width:36px;height:30px;flex-shrink:0;" oninput="updateMarqueeStyle()">
+                   style="width:36px;height:30px;flex-shrink:0;" oninput="updateMarqueeStyle()"
+                   onchange="commitUndoStep()">
             <input type="number" id="marquee-size" value="28" min="10" max="120" placeholder="px"
-                   style="width:60px;" oninput="updateMarqueeStyle()">
-            <select id="marquee-weight" style="flex:1;" onchange="updateMarqueeStyle()">
+                   style="width:60px;" oninput="updateMarqueeStyle()" onchange="commitUndoStep()">
+            <select id="marquee-weight" style="flex:1;" onchange="updateMarqueeStyle(); commitUndoStep()">
                 <option value="normal">Normal</option>
                 <option value="bold" selected>Bold</option>
             </select>
@@ -903,9 +928,10 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <label style="margin-top:6px;">Background Color</label>
         <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
             <input type="color" id="marquee-bg" value="#c0392b"
-                   style="width:60px;height:30px;" oninput="updateMarqueeStyle()">
+                   style="width:60px;height:30px;" oninput="updateMarqueeStyle()"
+                   onchange="commitUndoStep()">
             <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#bdc3c7;cursor:pointer;">
-                <input type="checkbox" id="marquee-bg-transparent" onchange="updateMarqueeStyle()">
+                <input type="checkbox" id="marquee-bg-transparent" onchange="updateMarqueeStyle(); commitUndoStep()">
                 Transparent
             </label>
         </div>
@@ -1053,6 +1079,12 @@ var LOCK_WARN_SECONDS  = <?= LockState::WARN_AFTER_SECONDS ?>;
 // server checks the same number again; this only saves the wait.
 var UPLOAD_MAX_BYTES = <?= intval(UploadLimit::bytes()) ?>;
 var UPLOAD_MAX_LABEL = <?= HttpReply::jsValue(UploadLimit::describe()) ?>;
+
+// How many steps back Undo may go, from the admin Settings page (ADR-0010). Zero
+// means the whole feature is off — no button in the page, no Ctrl+Z, and no
+// snapshots taken at all, which is what makes zero a real off switch rather than
+// a hidden button with the machinery still running behind it.
+var UNDO_LIMIT = <?= intval($undoSteps) ?>;
 
 // Editor zoom. The canvas is CSS-scaled, so interact.js deltas — which arrive in
 // screen pixels — are divided by ZOOM before becoming canvas coordinates. Miss one
@@ -1282,6 +1314,12 @@ function loadLayout() {
             });
 
             setupInteract();
+
+            // The history starts here and not a moment earlier. Before this the
+            // canvas is empty, and a baseline of "empty" would make the first Undo
+            // clear the sign — which is exactly the kind of thing an undo button is
+            // supposed to protect people from.
+            resetUndoHistory();
         })
         // The one that matters, and it says the part that matters rather than naming
         // the function that broke: this canvas is not the sign, so do not edit it.
@@ -1349,6 +1387,7 @@ function createSection() {
         type:'section', temp_id: tmpId(), db_id: null,
         x_pos: center.x, y_pos: center.y, width: def.w, height: def.h, section_bg: null, locked: 0, z_index: 1
     });
+    commitUndoStep();
 }
 
 function renderSection(el) {
@@ -1404,6 +1443,9 @@ function renderSection(el) {
     });
     addResizeHandles(s);
     document.getElementById('builder-canvas').appendChild(s);
+    // Handed back for restoreCanvas(), which keeps sections by temp id so a child
+    // block can be appended to the one it belongs to without a DOM lookup.
+    return s;
 }
 
 // ============================================================
@@ -1449,6 +1491,7 @@ function createBlock(type, subtype) {
         font_weight: 'normal', font_style: 'normal', line_height: 1.4
     };
     renderBlock(el, parent, true);
+    commitUndoStep();
 }
 
 function renderBlock(el, parent, isNew) {
@@ -1507,6 +1550,12 @@ function renderBlock(el, parent, isNew) {
             inner.style.pointerEvents = 'none';
             inner.style.userSelect = '';
             inner.style.webkitUserSelect = '';
+            // Where a text edit becomes a step. Not on input: typing a price would
+            // otherwise fill the whole history with one character each, and the
+            // first Undo would give back a "3" from "3.99". Ctrl+Z while the caret
+            // is still in here is the browser's own, character by character
+            // (handleBuilderKeydown).
+            commitUndoStep();
         });
         // Typing breaks the link to the library entry, exactly as uploadBlockImage,
         // uploadBlockVideo and changeImageFit already do for their own content.
@@ -1593,6 +1642,7 @@ function renderBlock(el, parent, isNew) {
 
     addResizeHandles(block);
     parent.appendChild(block);
+    return block;   // see renderSection()
 }
 
 // ============================================================
@@ -1956,6 +2006,9 @@ function alignBlocks(direction) {
         document.getElementById('insp-x').value = Math.round(parseFloat(activeBlock.getAttribute('data-x')) || 0);
         document.getElementById('insp-y').value = Math.round(parseFloat(activeBlock.getAttribute('data-y')) || 0);
     }
+    // One step for the whole group, however many blocks moved — and none at all
+    // when they were already aligned, which commitUndoStep() decides by measuring.
+    commitUndoStep();
 }
 
 // ============================================================
@@ -1970,6 +2023,8 @@ function _setZIndex(val) {
     activeBlock.style.zIndex   = val;
     activeBlock.dataset.zIndex = val;
     document.getElementById('insp-zindex-val').textContent = val;
+    // The one place all four layer buttons pass through.
+    commitUndoStep();
 }
 function _siblingZValues() {
     if (!activeBlock) return [];
@@ -2025,6 +2080,7 @@ function toggleHidden(hidden) {
     if (!activeBlock) return;
     activeBlock.dataset.hidden = hidden ? '1' : '0';
     applyHiddenLook(activeBlock);
+    commitUndoStep();
 }
 
 function toggleLock(locked) {
@@ -2041,6 +2097,7 @@ function toggleLock(locked) {
         var li = activeBlock.querySelector('.lock-icon');
         if (li) li.remove();
     }
+    commitUndoStep();
 }
 
 function appendLockIcon(el) {
@@ -2098,23 +2155,57 @@ function setupCanvas() {
         if (!e.shiftKey) { deselectAll(); clearMultiSel(); }
         clearTargetSection();
     });
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Shift') _shiftDown = true;
-        if (e.key === 'Delete' && !READ_ONLY) {
-            var ae = document.activeElement;
-            if (ae && (ae.classList.contains('text-inner') || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')) return;
-            if (activeBlock) {
-                var msg = activeBlock.dataset.type === 'section'
-                    ? 'Delete this section and ALL blocks inside it?'
-                    : 'Delete this block?';
-                if (confirm(msg)) {
-                    activeBlock.remove();
-                    deselectAll();
-                }
+    document.addEventListener('keydown', handleBuilderKeydown);
+    document.addEventListener('keyup',   function(e) { if (e.key === 'Shift') _shiftDown = false; });
+}
+
+/**
+ * Whether the keyboard is currently somebody's typing rather than a shortcut.
+ *
+ * Both keys below need the same answer and used to have only one of them: Delete
+ * inside a text block deletes a character, and Ctrl+Z inside one takes back a
+ * character. Neither should reach the canvas.
+ */
+function keyboardIsInAField() {
+    var ae = document.activeElement;
+    if (!ae) { return false; }
+    return (ae.classList && ae.classList.contains('text-inner'))
+        || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT';
+}
+
+/**
+ * A named function rather than an inline listener, because a keyboard shortcut
+ * that silently stops working is invisible until somebody presses it on the shop
+ * floor — and a listener handed straight to addEventListener cannot be run by the
+ * self-test that would have caught it.
+ */
+function handleBuilderKeydown(e) {
+    if (e.key === 'Shift') _shiftDown = true;
+
+    // Ctrl+Z / ⌘Z. Inside a text block or a form field the browser's own undo is
+    // the right one: it works a character at a time, which is what somebody
+    // half-way through typing a price expects. Once they click away, the whole
+    // edit is one step and this takes it back (ADR-0010).
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'z' || e.key === 'Z')) {
+        if (READ_ONLY || UNDO_LIMIT < 1 || keyboardIsInAField()) { return; }
+        if (e.preventDefault) { e.preventDefault(); }
+        undoStep();
+        return;
+    }
+
+    if (e.key === 'Delete' && !READ_ONLY) {
+        if (keyboardIsInAField()) { return; }
+        if (activeBlock) {
+            var msg = activeBlock.dataset.type === 'section'
+                ? 'Delete this section and ALL blocks inside it?'
+                : 'Delete this block?';
+            if (confirm(msg)) {
+                activeBlock.remove();
+                deselectAll();
+                commitUndoStep();
             }
         }
-    });
-    document.addEventListener('keyup',   function(e) { if (e.key === 'Shift') _shiftDown = false; });
+    }
 }
 
 // ============================================================
@@ -2161,6 +2252,7 @@ function changeSectionBgFit(fit) {
     if (!IS_ADMIN || !activeBlock || activeBlock.dataset.type !== 'section') return;
     activeBlock.dataset.bgFit = fit;
     applySectionBgFit(activeBlock, fit);
+    commitUndoStep();
 }
 
 function uploadSectionBg(input) {
@@ -2178,6 +2270,10 @@ function uploadSectionBg(input) {
         applySectionBgFit(target, fit);
         var preview = document.getElementById('section-bg-preview');
         if (preview) preview.textContent = path;
+        // At the end of the callback, not the end of uploadSectionBg: the file was
+        // still on its way up when that returned, and a step recorded then would
+        // have held a canvas the upload had not reached yet.
+        commitUndoStep();
     });
 }
 
@@ -2189,6 +2285,7 @@ function clearSectionBg() {
     document.getElementById('section-bg-preview').textContent = 'No background set';
     var fitSel = document.getElementById('section-bg-fit');
     if (fitSel) fitSel.value = 'cover';
+    commitUndoStep();
 }
 
 // ============================================================
@@ -2372,6 +2469,7 @@ function uploadBlockImage(input) {
         target.dataset.assetId    = '';
         var link = document.getElementById('asset-link');
         if (link) link.value = '';
+        commitUndoStep();
         showToast('Image uploaded. Publish to put it on the sign.');
     });
 }
@@ -2390,6 +2488,7 @@ function uploadBlockVideo(input) {
         target.dataset.assetId    = '';
         var link = document.getElementById('asset-link');
         if (link) link.value = '';
+        commitUndoStep();
         showToast('Video uploaded. Publish to put it on the sign.');
     });
 }
@@ -2400,21 +2499,25 @@ function uploadBlockVideo(input) {
 function linkAsset(assetId) {
     if (!activeBlock) return;
     activeBlock.dataset.assetId = assetId;
-    if (!assetId) return;
-    var match = assetsCache.find(function(a){ return a.id == assetId; });
-    if (!match) return;
-    if (activeBlock.dataset.type === 'text') {
-        activeBlock.querySelector('.text-inner').textContent = match.content;
-    } else if (activeBlock.dataset.type === 'image') {
-        activeBlock.querySelector('img').src = match.content;
-        activeBlock.dataset.imgSrc = match.content;
-    } else if (activeBlock.dataset.type === 'video') {
-        var vid = activeBlock.querySelector('video');
-        vid.innerHTML = '';
-        vid.poster = '';   // as above: a linked asset is a file
-        var src = document.createElement('source');
-        src.src = match.content; vid.appendChild(src); vid.load();
+    // Written as one exit rather than three early returns so the step below is
+    // recorded on all of them. Choosing "— None —" unlinks the block, and an
+    // unlink is as much a change as a link.
+    var match = assetId ? assetsCache.find(function(a){ return a.id == assetId; }) : null;
+    if (match) {
+        if (activeBlock.dataset.type === 'text') {
+            activeBlock.querySelector('.text-inner').textContent = match.content;
+        } else if (activeBlock.dataset.type === 'image') {
+            activeBlock.querySelector('img').src = match.content;
+            activeBlock.dataset.imgSrc = match.content;
+        } else if (activeBlock.dataset.type === 'video') {
+            var vid = activeBlock.querySelector('video');
+            vid.innerHTML = '';
+            vid.poster = '';   // as above: a linked asset is a file
+            var src = document.createElement('source');
+            src.src = match.content; vid.appendChild(src); vid.load();
+        }
     }
+    commitUndoStep();
 }
 
 // ============================================================
@@ -2428,7 +2531,312 @@ function deleteSelected() {
         }
         activeBlock.remove();
         deselectAll();
+        commitUndoStep();
     }
+}
+
+// ============================================================
+// SERIALIZING THE CANVAS
+// ============================================================
+// One description of what is on the canvas, and two things that read it: Publish
+// sends it to the server, Undo keeps a few of them in this tab. It was a pair of
+// loops inside publishCanvas() until Undo needed the same answer — and a second
+// copy would have been two ideas of what a block is, drifting apart one block type
+// at a time, with the sign showing whichever one publish happened to hold.
+//
+// The shape is the publish payload, because that is the one with a server on the
+// other end of it. A snapshot adds two `snap_` fields of its own; the server never
+// sees them.
+
+/**
+ * What a block is currently showing, and whether publishing it should pool that
+ * content into the asset library.
+ *
+ * Publish asks only for a block that is *not* linked to a library entry — a linked
+ * one sends its asset id and no content at all. A snapshot asks in both cases,
+ * because putting the block back on the screen needs the content either way.
+ */
+function blockContent(block) {
+    var type = block.dataset.type;
+    if (type === 'text') {
+        var inner = block.querySelector('.text-inner');
+        // Plain text only — innerText yields visible text with line breaks, and
+        // the server strips any markup on save as well (ADR-0002).
+        return { content: inner ? inner.innerText : '', pool: true };
+    }
+    if (type === 'carousel') { return { content: block.dataset.carouselData || '{}', pool: false }; }
+    if (type === 'table')    { return { content: block.dataset.tableData    || '{}', pool: false }; }
+    if (type === 'marquee')  { return { content: block.dataset.marqueeData  || '{}', pool: false }; }
+    if (type === 'image') {
+        var src = block.dataset.manualPath || block.dataset.imgSrc || '';
+        var fit = block.dataset.imgFit || 'fill';
+        return { content: fit !== 'fill' ? src + '|' + fit : src, pool: !!block.dataset.manualPath };
+    }
+    var vsrc = block.dataset.manualPath || (block.querySelector('video source') || {}).src || '';
+    return { content: vsrc, pool: !!block.dataset.manualPath };
+}
+
+/** One section, as publish sends it. */
+function serializeSection(s) {
+    var path = s.dataset.sectionBg || '';
+    var fit  = s.dataset.bgFit     || 'cover';
+    return {
+        type:       'section',
+        temp_id:    s.dataset.tempId,
+        db_id:      s.dataset.dbId || null,
+        x_pos:      Math.round(parseFloat(s.getAttribute('data-x')) || 0),
+        y_pos:      Math.round(parseFloat(s.getAttribute('data-y')) || 0),
+        width:      Math.round(s.offsetWidth),
+        height:     Math.round(s.offsetHeight),
+        section_bg: path ? (path + '|' + fit) : null,
+        locked:     s.dataset.locked === '1' ? 1 : 0,
+        sort_order: 0,
+        z_index:    Math.max(1, parseInt(s.dataset.zIndex) || 1),
+        hidden:     s.dataset.hidden === '1' ? 1 : 0,
+    };
+}
+
+/** One non-section block, as publish sends it. */
+function serializeBlock(block, sortOrder) {
+    var assetId   = block.dataset.assetId || '';
+    var sectionEl = block.closest('.section-block');
+    var own       = assetId ? { content: '', pool: false } : blockContent(block);
+    return {
+        type:            block.dataset.type,
+        block_subtype:   block.dataset.subtype || 'free',
+        db_id:           block.dataset.dbId || null,
+        parent_temp_id:  sectionEl ? sectionEl.dataset.tempId : null,
+        x_pos:           Math.round(parseFloat(block.getAttribute('data-x')) || 0),
+        y_pos:           Math.round(parseFloat(block.getAttribute('data-y')) || 0),
+        width:           Math.round(block.offsetWidth),
+        height:          Math.round(block.offsetHeight),
+        asset_id:        assetId,
+        manual_content:  own.content,
+        save_to_db_pool: own.pool,
+        font_family:     block.style.fontFamily  || 'Arial',
+        font_size:       parseInt(block.style.fontSize) || 16,
+        // The stored value wins while it is still unreadable (#41), so a publish
+        // cannot quietly replace a colour nobody could read with black. It clears the
+        // moment somebody picks a colour — see updateStyle(). A block that simply
+        // never had a colour still publishes '#000000', exactly as before.
+        font_color:      block.dataset.colorUnread || readHex(block.style.color) || '#000000',
+        font_weight:     block.style.fontWeight  || 'normal',
+        font_style:      block.style.fontStyle   || 'normal',
+        line_height:     parseFloat(block.style.lineHeight) || 1.4,
+        text_align:      block.dataset.textAlign || block.style.textAlign || '',
+        locked:          block.dataset.locked === '1' ? 1 : 0,
+        sort_order:      sortOrder,
+        z_index:         Math.max(1, parseInt(block.dataset.zIndex) || 1),
+        hidden:          block.dataset.hidden === '1' ? 1 : 0,
+    };
+}
+
+/** Everything on the canvas, sections first — the order publish has always sent. */
+function serializeCanvas() {
+    var canvas   = document.getElementById('builder-canvas');
+    var elements = [];
+    canvas.querySelectorAll(':scope > .section-block').forEach(function(s) {
+        elements.push(serializeSection(s));
+    });
+    canvas.querySelectorAll('.editable-block:not(.section-block)').forEach(function(block, i) {
+        elements.push(serializeBlock(block, i));
+    });
+    return elements;
+}
+
+// ============================================================
+// UNDO — the last few steps, in this tab, before publishing
+// ============================================================
+// The only undo in this app, and deliberately the small one: it takes back changes
+// to the canvas in front of you, in this tab, before they are published. It cannot
+// take back a publish — that still overwrites, and the safety net there is still
+// the layout stamp refusing a stale one (ADR-0006). Reload the page and the history
+// is gone, because the canvas has been re-read from the server and the steps no
+// longer describe anything that happened.
+//
+// How a step gets decided, which is the whole of the design:
+//
+//   · Every change is measured, not announced. commitUndoStep() snapshots the
+//     canvas and compares it against the last committed one; identical means no
+//     step. So a control that was operated and changed nothing costs nothing — and,
+//     more to the point, a change nobody remembered to report is folded into the
+//     next step rather than lost, because the baseline is still the older canvas.
+//   · A control the person is operating commits when the browser says the edit is
+//     finished — `onchange`, never `oninput`. That is what makes dragging a colour
+//     picker one step instead of forty, and a piece of text one step instead of one
+//     per keystroke.
+//   · A change the code makes by itself — create, delete, a finished drag, an
+//     upload that landed, a modal saved — commits at the end of the function that
+//     made it.
+//
+// What it does not cover, on purpose: the canvas background. An uploaded background
+// lives in a file input that no snapshot can put back, and an undo that restored
+// the colour but not the picture would be worse than one that says plainly it
+// leaves the background alone. ADR-0010 has the rest.
+
+var undoStack     = [];     // snapshots, oldest first; the last is the next Undo
+var undoBaseline  = null;   // the canvas as of the last committed step
+var undoRestoring = false;  // a restore changes the canvas; that is not a new step
+
+/** Whether this page keeps a history at all. */
+function undoAvailable() { return UNDO_LIMIT > 0 && !READ_ONLY; }
+
+/**
+ * Start counting from what is on the canvas now, holding nothing.
+ *
+ * Called once the layout has loaded. Before that the canvas is empty, and a
+ * baseline of "empty" would make the first Undo delete the whole sign.
+ */
+function resetUndoHistory() {
+    undoStack    = [];
+    undoBaseline = undoAvailable() ? snapshotCanvas() : null;
+    updateUndoButton();
+}
+
+/**
+ * The canvas as a string, in document order.
+ *
+ * Document order rather than publish's sections-then-blocks: a restore appends as
+ * it goes, and a child block can only be appended once its section is on the
+ * canvas. It also has to be stable — two snapshots of an unchanged canvas must be
+ * the same string, or every commit would look like a change.
+ */
+function snapshotCanvas() {
+    var canvas = document.getElementById('builder-canvas');
+    var out    = [];
+    var order  = 0;
+    canvas.querySelectorAll('.editable-block').forEach(function(node) {
+        if (node.classList.contains('section-block')) {
+            out.push(serializeSection(node));
+            return;
+        }
+        var el = serializeBlock(node, order++);
+        // The two things publish is entitled to leave out and a restore is not:
+        // what the block is showing even when a library entry is supplying it, and
+        // where its own uploaded file is.
+        el.snap_content     = blockContent(node).content;
+        el.snap_manual_path = node.dataset.manualPath || '';
+        out.push(el);
+    });
+    return JSON.stringify(out);
+}
+
+/**
+ * Put the canvas back to a snapshot. Everything on it is replaced.
+ *
+ * The rebuild goes through renderSection() and renderBlock() — the same two
+ * functions loadLayout() uses — so there is one idea of how an element becomes a
+ * node, and a block type added later is restorable the day it is added.
+ */
+function restoreCanvas(json) {
+    var elements;
+    try { elements = JSON.parse(json); } catch (e) { return false; }
+    var canvas = document.getElementById('builder-canvas');
+
+    // Raised first, before anything below can change the canvas. deselectAll()
+    // blurs the text block that had focus, and a blur is where a text edit becomes
+    // a step — so without this line an Undo could record a step on its way to
+    // taking one back, and then pop the wrong one off the stack.
+    undoRestoring = true;
+
+    // Nothing may still be holding a node that is about to be removed. Through the
+    // same three functions a click on empty canvas goes through, rather than by
+    // assigning null over the top of them: they also put the inspector away, take
+    // the align bar down and reset the banner that tells a basic account where
+    // blocks will land.
+    deselectAll();
+    clearMultiSel();
+    clearTargetSection();
+
+    canvas.querySelectorAll(':scope > .editable-block').forEach(function(node) { node.remove(); });
+
+    // Sections are kept by temp id as they are rendered, so a child finds its own
+    // section without a lookup through the DOM — a section created in this session
+    // has no database id to be looked up by.
+    var sections = {};
+    elements.forEach(function(el) {
+        if (el.type === 'section') {
+            el.id = el.db_id;           // renderSection reads the database id as `id`
+            sections[el.temp_id] = renderSection(el);
+            return;
+        }
+        var parent = el.parent_temp_id ? sections[el.parent_temp_id] : canvas;
+        if (!parent) { return; }        // its section is not in this snapshot; nor is it
+        el.id             = el.db_id;   // as above: renderBlock reads it as `id`
+        el.db_content     = el.snap_content;
+        el.manual_content = el.snap_content;
+        var node = renderBlock(el, parent);
+        // Assigned either way. renderBlock sets manualPath from the content for a
+        // video, and leaving that in place would tell publish to pool a file the
+        // block does not own.
+        node.dataset.manualPath = el.snap_manual_path || '';
+    });
+    undoRestoring = false;
+
+    // No setupInteract() here, and that is not an omission. interact.js binds by
+    // CSS selector, not by node: '.section-block' and '.child-block' were
+    // registered once when the layout first loaded, and they match whatever is on
+    // the canvas at the moment somebody presses the mouse down. It is the same
+    // reason createSection() does not call it either — a section added by hand is
+    // draggable the instant it exists. A call here would be a line no test could
+    // ever fail on, which is decision #50's complaint.
+    return true;
+}
+
+/**
+ * Record a step, if there is one to record. Safe to call after anything.
+ *
+ * Returns whether a step was actually kept, which is what the self-test asserts
+ * on: a commit that quietly records nothing and a commit that was never called
+ * look identical from outside.
+ */
+function commitUndoStep() {
+    if (!undoAvailable() || undoRestoring) { return false; }
+    var now = snapshotCanvas();
+    if (now === undoBaseline) { return false; }
+    if (undoBaseline !== null) {
+        undoStack.push(undoBaseline);
+        // Oldest first out. The limit is a number of steps, not of bytes, so this
+        // is the only thing keeping a long afternoon's editing out of memory.
+        while (undoStack.length > UNDO_LIMIT) { undoStack.shift(); }
+    }
+    undoBaseline = now;
+    updateUndoButton();
+    return true;
+}
+
+/** Take back the last step. */
+function undoStep() {
+    if (READ_ONLY || UNDO_LIMIT < 1) { return; }
+    if (undoStack.length === 0) { showToast('Nothing left to undo.'); return; }
+    if (!restoreCanvas(undoStack[undoStack.length - 1])) {
+        showToast('That step could not be undone. Nothing on the canvas was changed.', true);
+        return;
+    }
+    undoStack.pop();
+    // Read back rather than assume. If a restore ever fell short of the snapshot it
+    // was given, the next step should record the difference rather than bury it.
+    undoBaseline = snapshotCanvas();
+    updateUndoButton();
+    showToast(undoStack.length
+        ? 'Undone. ' + undoStack.length + ' step' + (undoStack.length === 1 ? '' : 's') + ' further back.'
+        : 'Undone. That was the last step held.');
+}
+
+/**
+ * Say how much history there is.
+ *
+ * Guarded like every other lookup in this file: the button is absent from a
+ * read-only page and from one where the setting is 0, and every path above still
+ * runs — as far as doing nothing, which is the whole of what they should do there.
+ */
+function updateUndoButton() {
+    var btn = document.getElementById('undo-btn');
+    if (!btn) { return; }
+    btn.disabled = undoStack.length === 0;
+    btn.title    = undoStack.length
+        ? 'Undo the last change (Ctrl+Z) — ' + undoStack.length + ' held'
+        : 'Nothing to undo yet';
 }
 
 // ============================================================
@@ -2497,94 +2905,7 @@ function publishCanvas() {
         return;
     }
 
-    var canvas   = document.getElementById('builder-canvas');
-    var elements = [];
-
-    // Collect sections (admin only publishes section data)
-    canvas.querySelectorAll(':scope > .section-block').forEach(function(s) {
-        var _sbPath = s.dataset.sectionBg || '';
-        var _sbFit  = s.dataset.bgFit     || 'cover';
-        elements.push({
-            type:       'section',
-            temp_id:    s.dataset.tempId,
-            db_id:      s.dataset.dbId  || null,
-            x_pos:      Math.round(parseFloat(s.getAttribute('data-x'))||0),
-            y_pos:      Math.round(parseFloat(s.getAttribute('data-y'))||0),
-            width:      Math.round(s.offsetWidth),
-            height:     Math.round(s.offsetHeight),
-            section_bg: _sbPath ? (_sbPath + '|' + _sbFit) : null,
-            locked:     s.dataset.locked === '1' ? 1 : 0,
-            sort_order: 0,
-            z_index:    Math.max(1, parseInt(s.dataset.zIndex) || 1),
-            hidden:     s.dataset.hidden === '1' ? 1 : 0,
-        });
-    });
-
-    // Collect all non-section blocks
-    canvas.querySelectorAll('.editable-block:not(.section-block)').forEach(function(block, i) {
-        var type    = block.dataset.type;
-        var subtype = block.dataset.subtype || 'free';
-        var assetId = block.dataset.assetId || '';
-        var sectionEl = block.closest('.section-block');
-        var manual  = '';
-        var savePool = false;
-
-        if (!assetId) {
-            if (type === 'text') {
-                var _inner = block.querySelector('.text-inner');
-                // Plain text only — innerText yields visible text with line
-                // breaks; the server strips any markup on save as well.
-                manual   = _inner ? _inner.innerText : '';
-                savePool = true;
-            } else if (type === 'carousel') {
-                manual   = block.dataset.carouselData || '{}';
-                savePool = false;
-            } else if (type === 'table') {
-                manual   = block.dataset.tableData || '{}';
-                savePool = false;
-            } else if (type === 'marquee') {
-                manual   = block.dataset.marqueeData || '{}';
-                savePool = false;
-            } else if (type === 'image') {
-                var _src = block.dataset.manualPath || block.dataset.imgSrc || '';
-                var _fit = block.dataset.imgFit || 'fill';
-                manual   = _fit !== 'fill' ? _src + '|' + _fit : _src;
-                savePool = !!block.dataset.manualPath;
-            } else {
-                manual   = block.dataset.manualPath || (block.querySelector('video source') || {}).src || '';
-                savePool = !!block.dataset.manualPath;
-            }
-        }
-
-        elements.push({
-            type:           type,
-            block_subtype:  subtype,
-            db_id:          block.dataset.dbId || null,
-            parent_temp_id: sectionEl ? sectionEl.dataset.tempId : null,
-            x_pos:          Math.round(parseFloat(block.getAttribute('data-x'))||0),
-            y_pos:          Math.round(parseFloat(block.getAttribute('data-y'))||0),
-            width:          Math.round(block.offsetWidth),
-            height:         Math.round(block.offsetHeight),
-            asset_id:       assetId,
-            manual_content: manual,
-            save_to_db_pool: savePool,
-            font_family:    block.style.fontFamily  || 'Arial',
-            font_size:      parseInt(block.style.fontSize) || 16,
-            // The stored value wins while it is still unreadable (#41), so a publish
-            // cannot quietly replace a colour nobody could read with black. It clears
-            // the moment somebody picks a colour — see updateStyle(). A block that
-            // simply never had a colour still publishes '#000000', exactly as before.
-            font_color:     block.dataset.colorUnread || readHex(block.style.color) || '#000000',
-            font_weight:    block.style.fontWeight  || 'normal',
-            font_style:     block.style.fontStyle   || 'normal',
-            line_height:    parseFloat(block.style.lineHeight) || 1.4,
-            text_align:     block.dataset.textAlign || block.style.textAlign || '',
-            locked:         block.dataset.locked === '1' ? 1 : 0,
-            sort_order:     i,
-            z_index:        Math.max(1, parseInt(block.dataset.zIndex) || 1),
-            hidden:         block.dataset.hidden === '1' ? 1 : 0,
-        });
-    });
+    var elements = serializeCanvas();
 
     var fd = new FormData();
     fd.append('layout_data', JSON.stringify(elements));
@@ -3008,21 +3329,23 @@ function setupInteract() {
         // depended on how far you had zoomed out. handleResize enforces BLOCK_MIN
         // after the divide instead, which is invariant 26.
         interact('.section-block').draggable({
-            listeners: { start: function(e) { if (_shiftDown) e.interaction.stop(); }, move: handleMove },
+            listeners: { start: function(e) { if (_shiftDown) e.interaction.stop(); },
+                         move: handleMove, end: endDragStep },
             modifiers: [interact.modifiers.restrictRect({restriction: canvas})],
             ignoreFrom: '.child-block',  // let child blocks handle their own drag
         }).resizable({
             edges: EDGES,
-            listeners: { move: handleResize, end: hideResizeLabel },
+            listeners: { move: handleResize, end: endResizeStep },
         });
 
         // Root blocks: drag + resize, constrained to canvas
         interact('.root-block').draggable({
-            listeners: { start: function(e) { if (_shiftDown) e.interaction.stop(); }, move: handleMove },
+            listeners: { start: function(e) { if (_shiftDown) e.interaction.stop(); },
+                         move: handleMove, end: endDragStep },
             modifiers: [interact.modifiers.restrictRect({restriction: canvas})]
         }).resizable({
             edges: EDGES,
-            listeners: { move: handleResize, end: hideResizeLabel },
+            listeners: { move: handleResize, end: endResizeStep },
         });
     }
 
@@ -3033,14 +3356,32 @@ function setupInteract() {
             move: function(event) {
                 if (event.target.dataset.locked === '1') return;
                 handleMove(event);
-            }
+            },
+            end: endDragStep
         },
         modifiers: [interact.modifiers.restrictRect({restriction: 'parent', endOnly: false})]
     }).resizable({
         edges: EDGES,
-        listeners: { move: handleResize, end: hideResizeLabel },
+        listeners: { move: handleResize, end: endResizeStep },
         modifiers: [interact.modifiers.restrictRect({restriction: 'parent'})]
     });
+}
+
+/**
+ * A drag is over. One step for the whole thing, not one per pointer event.
+ *
+ * handleMove fires continuously — a nudge across a section is dozens of calls —
+ * so the step is taken here, where interact.js says the pointer has been let go.
+ * A drag that ended where it started records nothing: commitUndoStep() compares.
+ */
+function endDragStep() {
+    commitUndoStep();
+}
+
+/** The same, for a resize — and the resize readout goes away with it. */
+function endResizeStep() {
+    hideResizeLabel();
+    commitUndoStep();
 }
 
 function handleMove(event) {
@@ -3132,6 +3473,7 @@ function applyDim(which, val) {
         activeBlock.style.height = val + 'px';
         document.getElementById('insp-h').value = val;
     }
+    commitUndoStep();
 }
 
 function applyPos(which, val) {
@@ -3151,6 +3493,7 @@ function applyPos(which, val) {
     activeBlock.setAttribute('data-y', y);
     document.getElementById('insp-x').value = Math.round(x);
     document.getElementById('insp-y').value = Math.round(y);
+    commitUndoStep();
 }
 
 function applyImageFit(block, fit) {
@@ -3186,6 +3529,7 @@ function changeImageFit(fit) {
     }
     activeBlock.dataset.imgFit = fit;
     applyImageFit(activeBlock, fit);
+    commitUndoStep();
 }
 
 function tmpId() { return 'tmp-' + Math.random().toString(36).substr(2,9); }
@@ -3488,6 +3832,10 @@ function saveCarouselSlides() {
     document.getElementById('carousel-slide-count').textContent =
         sl + ' slide' + (sl !== 1 ? 's' : '') + ' — click Edit Slides to manage';
     closeCarouselModal();
+    // One step for the whole modal. Everything inside it — adding a slide, deleting
+    // a field, restoring it — is a draft until Save, and undoing them one at a time
+    // would mean re-opening the modal to see what changed.
+    commitUndoStep();
     showToast('Slides saved. Remember to Publish.');
 }
 
@@ -3664,6 +4012,7 @@ function saveTable() {
         td.headers.length + ' col' + (td.headers.length !== 1 ? 's' : '') +
         ', ' + td.rows.length + ' row' + (td.rows.length !== 1 ? 's' : '');
     closeTableModal();
+    commitUndoStep();   // one step for the whole modal, as with the slide editor
     showToast('Table saved. Remember to Publish.');
 }
 
@@ -3747,6 +4096,7 @@ function applyTextAlign(align) {
         var btn = document.getElementById('ta-' + a);
         if (btn) btn.style.background = (a === align) ? '#3498db' : '';
     });
+    commitUndoStep();
 }
 
 // ============================================================
@@ -3776,6 +4126,7 @@ function alignToParent(direction) {
         document.getElementById('insp-x').value = Math.round(parseFloat(activeBlock.getAttribute('data-x')) || 0);
         document.getElementById('insp-y').value = Math.round(parseFloat(activeBlock.getAttribute('data-y')) || 0);
     }
+    commitUndoStep();
 }
 </script>
 <div id="resize-label"></div>

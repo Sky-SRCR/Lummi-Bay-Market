@@ -437,8 +437,10 @@ if (!$badInScript) {
 //                 default because Color::read() decided (§4ai). The one case in this
 //                 app where escaping would have been the wrong tool: they land in a
 //                 <style> block, which has no delimiter to escape.
-//   a number      a class constant whose declaration in lib/ is a numeric literal.
-//                 Resolved here, not assumed: `Foo::BAR = 'x <b>'` does not pass.
+//   a number      a constant whose declaration is a numeric literal — a class constant
+//                 declared in lib/, or a define() in config.php, which is where this
+//                 app declares a non-database setting. Resolved here, not assumed:
+//                 `Foo::BAR = 'x <b>'` does not pass, and neither does a BRAND_* name.
 //
 // A ternary is safe when both of its branches are, and a concatenation when every
 // piece of it is. The condition of a ternary is not echoed, so it is not examined —
@@ -464,6 +466,39 @@ $SAFE_CALLS  = ['count', 'intval', 'intdiv', 'floatval', 'number_format',
                 'urlencode', 'rawurlencode', 'date'];
 $SAFE_STATIC = ['Markup::text', 'Markup::jsInAttr', 'HttpReply::jsValue',
                 'Brand::navBg', 'Brand::navBorder', 'Brand::accent', 'Brand::text'];
+
+/**
+ * Every `define('NAME', <number>);` in config.php, as 'NAME'.
+ *
+ * config.php is where this app declares a non-database setting, and it is the one
+ * file whose whole job is declaring them — which is what makes the scan narrow
+ * enough to be a rule rather than a search. A `define()` anywhere else does not
+ * qualify a name, for the same reason a class constant has to be declared in lib/:
+ * the classifier resolves the declaration instead of trusting the shape of the use.
+ */
+function numericGlobalConstants($root)
+{
+    $found = [];
+    $file = $root . '/config.php';
+    if (!@is_file($file)) { return $found; }
+    $ts = array_values(array_filter(token_get_all(file_get_contents($file)),
+        function ($t) { return !is_array($t) || ($t[0] !== T_WHITESPACE && $t[0] !== T_COMMENT
+                                                 && $t[0] !== T_DOC_COMMENT); }));
+    for ($i = 0; $i < count($ts); $i++) {
+        // `define ( 'NAME' , <number> )` and nothing else — an expression for either
+        // argument is a second opinion about PHP, and there are none of those here.
+        if (is_array($ts[$i]) && $ts[$i][0] === T_STRING && strtolower($ts[$i][1]) === 'define'
+            && isset($ts[$i + 5]) && $ts[$i + 1] === '('
+            && is_array($ts[$i + 2]) && $ts[$i + 2][0] === T_CONSTANT_ENCAPSED_STRING
+            && $ts[$i + 3] === ','
+            && is_array($ts[$i + 4])
+            && ($ts[$i + 4][0] === T_LNUMBER || $ts[$i + 4][0] === T_DNUMBER)
+            && $ts[$i + 5] === ')') {
+            $found[trim($ts[$i + 2][1], "'\"")] = true;
+        }
+    }
+    return $found;
+}
 
 /** Every `const NAME = <number>;` declared in lib/, as 'Class::NAME'. */
 function numericClassConstants($root)
@@ -591,6 +626,15 @@ function echoIsAccountedFor(array $ts, array $safeCalls, array $safeStatic, arra
         return isset($numericConsts[$ts[0][1] . '::' . $ts[2][1]]);
     }
 
+    // ---- a global constant whose define() in config.php is a number ----
+    // Same shape and the same reason as the case above: what makes it safe is that
+    // the declaration is a numeric literal, and that is resolved rather than assumed.
+    // A `BRAND_*` name is not reachable this way — those are strings, so they fall
+    // through to false, which is the colour rule's business (§4ai).
+    if (count($ts) === 1 && is_array($ts[0]) && $ts[0][0] === T_STRING) {
+        return isset($numericConsts[$ts[0][1]]);
+    }
+
     // ---- one call, whose parentheses run to the end of the expression ----
     $name = null; $openAt = null;
     if (is_array($ts[0]) && $ts[0][0] === T_STRING && isset($ts[1]) && $ts[1] === '(') {
@@ -618,7 +662,7 @@ function dateFormatIsLiteral(array $ts)
     return isset($ts[2]) && is_array($ts[2]) && $ts[2][0] === T_CONSTANT_ENCAPSED_STRING;
 }
 
-$numericConsts = numericClassConstants($root);
+$numericConsts = numericClassConstants($root) + numericGlobalConstants($root);
 $unaccounted   = [];
 foreach (phpFilesUnder($root, '', ['lib/', 'tools/']) as $rel) {
     $echoing = null; $startLine = 0;

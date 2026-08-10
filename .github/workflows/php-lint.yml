@@ -151,6 +151,18 @@ jobs:
       - name: Builder self-test — colours
         run: node tools/selftest_builder_colors.js
 
+      # #42: six inspector controls that quietly did less than they claimed. A
+      # minimum measured in screen pixels, a Fit that could not fit, a section with
+      # no way back from Hide — none of it a throw, all of it invisible to a parse.
+      - name: Builder self-test — an ordinary good day
+        run: node tools/selftest_builder_editing.js
+
+      # ADR-0010: the one thing in this app that can be taken back, so the one place
+      # a field a rebuild forgot to carry is a wrong canvas rather than a red line.
+      # The central check is a whole-string round trip, which cannot be read.
+      - name: Builder self-test — undo
+        run: node tools/selftest_builder_undo.js
+
       # #26: the defect was not a throw. A `.catch` doing the right thing for a
       # dropped packet did the wrong thing for a failure that was never going to
       # stop, and a sign kept last week's prices. Only visible by running the poll

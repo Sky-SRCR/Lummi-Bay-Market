@@ -4589,9 +4589,32 @@ chdir($brandDir);
 
 checkSame($brandDir . '/branding_config.php', $brandCfg->path(),
           'the module owns the filename, so no page has to spell it');
-checkSame(8, count(BrandingConfig::DEFAULTS), 'eight settings live in the file');
+checkSame(9, count(BrandingConfig::DEFAULTS), 'nine settings live in the file');
 checkSame(array_keys(BrandingConfig::DEFAULTS), array_keys($brandCfg->current()),
-          'and current() answers about all eight');
+          'and current() answers about all nine');
+check(array_key_exists('UNDO_STEPS', BrandingConfig::DEFAULTS),
+      'the Builder\'s undo depth is one of them, not a define() of its own');
+
+// ── What a stored undo depth means, once ─────────────────────
+// The value in the file is a string somebody may have typed, and the Builder acts on
+// it: it decides whether there is an Undo button, whether Ctrl+Z does anything, and
+// how many snapshots a tab holds. Two readers of it — the settings form and
+// builder.php — so it is one function, and the function takes the stored value as an
+// argument rather than reading the constant, or none of the shapes below could be
+// asked at all in a process that has already defined it (§4o).
+checkSame(5,  undoStepsSetting('5'),   'the default reads as five steps');
+checkSame(0,  undoStepsSetting('0'),   'zero reads as zero — off is a real answer, not a missing one');
+checkSame(20, undoStepsSetting('20'),  'the ceiling itself is allowed');
+checkSame(UNDO_STEPS_MAX, undoStepsSetting('500'),
+          'and a hand-edit above it is clamped, not honoured — the cost of the stack is a tab\'s memory');
+checkSame(0,  undoStepsSetting('-1'),  'a negative depth is off rather than an error');
+checkSame(0,  undoStepsSetting('five'),
+          'and so is a word, which is where a hand-edit to nonsense should land: no Undo behaves exactly as before');
+checkSame(0,  undoStepsSetting(''),    'an empty value is off');
+checkSame(3,  undoStepsSetting('3.7'), 'a fractional one is truncated, not rounded up past what was meant');
+checkSame(intval(BrandingConfig::DEFAULTS['UNDO_STEPS']),
+          undoStepsSetting(BrandingConfig::DEFAULTS['UNDO_STEPS']),
+          'and the shipped default survives its own reader, which is what stops the two disagreeing');
 // The constants are defined in this process by config.php, which is the state a
 // real save happens in: what is in force, not what the defaults say.
 checkSame(SITE_NAME, $brandCfg->current()['SITE_NAME'],
@@ -4643,7 +4666,7 @@ $defineCalls = 0;
 foreach (token_get_all($written) as $token) {
     if (is_array($token) && $token[0] === T_STRING && $token[1] === 'define') { $defineCalls++; }
 }
-checkSame(8, $defineCalls, 'with exactly eight define() calls — nothing was injected');
+checkSame(9, $defineCalls, 'with exactly nine define() calls — nothing was injected');
 checkMentions($written, var_export($evil, true), 'the value is stored as one escaped literal');
 
 // A backslash is the other half of it: var_export doubles it, and a naive escape
@@ -4732,7 +4755,7 @@ check(strpos($panelSource, 'file_put_contents') === false,
 check(strpos($panelSource, "define('BRAND_") === false,
       'and generates none of the file it used to build by hand');
 
-// ── The read side: one list of eight names, not five ─────────
+// ── The read side: one list of nine names, not five ──────────
 // `config.php`, `login.php`, `builder.php` and `help.php` each used to spell out the
 // same defaults, and two of them guarded the require on a different constant from
 // the other two. A page carrying its own copy of a default is a page that can
@@ -4753,10 +4776,10 @@ foreach ((array)glob(__DIR__ . '/../*.php') as $page) {
 checkSame([], $pagesWithTheirOwn, 'no page declares a branding constant of its own');
 checkSame([], $pagesLoadingItThemselves, 'and none of them reaches for the file directly');
 checkMentions(file_get_contents(__DIR__ . '/../config.php'), '->apply()',
-              'config.php is the one place the eight names are brought into being');
+              'config.php is the one place the nine names are brought into being');
 
 // Every one of them is defined in this process — config.php did it on the way in —
-// so `apply()` here must be a silent no-op rather than eight warnings and an
+// so `apply()` here must be a silent no-op rather than nine warnings and an
 // argument about who was right.
 $siteBefore = SITE_NAME;
 $brandCfg->apply();
@@ -4764,7 +4787,7 @@ $defined = 0;
 foreach (BrandingConfig::DEFAULTS as $name => $unusedDefault) {
     if (defined($name)) { $defined++; }
 }
-checkSame(8, $defined, 'apply() leaves all eight names defined');
+checkSame(9, $defined, 'apply() leaves all nine names defined');
 checkSame($siteBefore, SITE_NAME, 'and overrides nothing that was already set');
 
 // The same promise for the generated file itself, which is the half that a bare
@@ -4772,7 +4795,7 @@ checkSame($siteBefore, SITE_NAME, 'and overrides nothing that was already set');
 // any of these, and a `define()` of a name already taken warns and then keeps the
 // first value — the documented override worked while complaining about itself. Any
 // unsuppressed warning is a failed check in this harness, so loading it below is
-// the assertion: eight of them would show up as eight failures.
+// the assertion: nine of them would show up as nine failures.
 $reloadPath = $brandDir . '/reload_test.php';
 file_put_contents($reloadPath, BrandingConfig::render(['SITE_NAME' => 'Something Else']));
 include $reloadPath;
@@ -6162,4 +6185,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // did (#21 closed while it was open, so three checks that asserted the coercion now
 // assert the refusal). The MySQL figure is the SQLite one plus the 23 checks in the
 // engine-only section below, which is the same difference it has always been.
-reportChecks(testIsMysql() ? 1647 : 1624);
+reportChecks(testIsMysql() ? 1657 : 1634);

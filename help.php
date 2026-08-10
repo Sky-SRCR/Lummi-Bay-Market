@@ -172,6 +172,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <a href="#inspector"     class="sub-link">Inspector Panel</a>
     <a href="#multiselect"   class="sub-link">Multi-Select &amp; Align</a>
     <a href="#locking"       class="sub-link">Locking Blocks</a>
+    <a href="#undo"          class="sub-link">Undoing a Change</a>
     <a href="#publishing"    class="sub-link">Publishing</a>
 
     <h2>Content Types</h2>
@@ -407,7 +408,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Link DB Asset</strong> — link the block to a saved entry in the Asset Library so updates to the asset reflect everywhere it is used</li>
         <li><strong>Hide from the screens</strong> (admin only) — takes the block off every screen showing this display while keeping it in the layout, ready to bring back by unticking. Hiding a <strong>section</strong> hides everything inside it. Hidden blocks are faded on the canvas and wear a red HIDDEN band, so you can see at a glance what a customer cannot. Unlike the Work Area's Hide, this takes effect when you <strong>Publish</strong>.</li>
         <li><strong>Lock toggle</strong> — prevents accidental drags/resizes; locked blocks show a 🔒 icon</li>
-        <li><strong>Delete Block</strong> — removes the block from the canvas (cannot be undone until the next Publish)</li>
+        <li><strong>Delete Block</strong> — removes the block from the canvas. <strong>↺ Undo</strong> or Ctrl+Z brings it back if you have not reloaded the page; once you Publish, it is gone from the display</li>
     </ul>
 
     <h3>Branded text blocks (Section Header / Item Title / Price / Description)</h3>
@@ -487,6 +488,35 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><span>To unlock, select the block and un-tick the checkbox.</span></li>
     </ol>
     <div class="tip"><strong>Tip:</strong> Lock section backgrounds and header blocks once they are positioned correctly, so everyday users editing prices won't accidentally move them.</div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════ -->
+<div class="help-section" id="undo">
+    <h2>Undoing a Change</h2>
+    <a href="#" class="back-top">↑ Top</a>
+    <p>The <strong>↺ Undo</strong> button in the top control bar takes back your last change to
+       the canvas. <strong>Ctrl+Z</strong> (⌘Z on a Mac) does the same thing.</p>
+    <p>One press takes back one finished change — a block moved, a block resized, a block
+       added or deleted, a colour chosen, or a piece of text edited and clicked away from.
+       Dragging a block right across the screen is <em>one</em> change, not one per inch, and
+       typing a new price is one change, not one per letter.</p>
+    <p>While you are actually typing inside a text block, Ctrl+Z is the browser's ordinary
+       undo and takes back a letter at a time. Click away from the block first, and then
+       Ctrl+Z takes back the whole edit.</p>
+    <p>The button is greyed out when there is nothing left to take back, and hovering it says
+       how many steps it is still holding.</p>
+    <div class="note"><strong>Undo stops at Publish.</strong> It works on the canvas in front
+        of you, <em>before</em> it goes to the screens. It cannot take back a publish, and it
+        cannot bring back a display or an asset that was deleted. It also lives only in this
+        browser tab — reload the page or close it and the steps are gone, along with anything
+        you had not published.</div>
+    <div class="admin-only"><strong>Admin only:</strong> how many steps Undo keeps is set in
+        <strong>Admin Panel → Settings → Builder Undo</strong>. The default is 5 and the most
+        is 20. Setting it to <code>0</code> removes the button and the Ctrl+Z shortcut
+        altogether.</div>
+    <div class="tip"><strong>Tip:</strong> Undo is the safety net for the canvas, not for the
+        sign. If you have published something you did not mean to, the fix is to put it right
+        and publish again — the screens pick that up within 30 seconds.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -809,6 +839,20 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
        blocks first. Editing one changes what the sign shows within 30 seconds, with no
        publishing needed, and any Builder already open on that display will be asked to reload
        rather than allowed to publish over it.</p>
+
+    <h3>Settings tab — Site Name, Email, Builder Undo</h3>
+    <p>Three things on the Settings tab that you can change. Site Name is what appears in the
+       browser tab and on the sign-in screen; the email settings are the address password-reset
+       emails come from.</p>
+    <ul>
+        <li><strong>Builder Undo</strong> — how many steps back the <strong>↺ Undo</strong>
+            button in the Builder can go. The default is 5 and the most is 20. Each step holds a
+            copy of the whole canvas in the editor's browser tab, so a large number on a busy
+            sign costs that tab some memory; nothing is stored on the server either way.
+            <br>Set it to <code>0</code> to remove the Undo button and the Ctrl+Z shortcut
+            completely. See <a href="#undo">Undoing a Change</a> for what a step is and what
+            Undo cannot reach.</li>
+    </ul>
 
     <h3>Settings tab — This Server, Database Structure, Errors and Alerts</h3>
     <p>Three read-only readouts at the bottom of the Settings tab. Nothing on them can be

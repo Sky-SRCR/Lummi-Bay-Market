@@ -24,11 +24,13 @@ just the first Display's dimensions, not a property of the system.
    at that Display's size. Sections are top-level containers;
    text/image/video/carousel/marquee/table blocks live inside them. Opening a
    Display takes its **edit lock**, so a second person gets it read-only rather
-   than overwriting the first (ADR-0007).
+   than overwriting the first (ADR-0007). **Undo** (button or Ctrl+Z) reaches back
+   over the canvas a few steps, in that tab, before anything is published; how many
+   is an admin setting, default 5 (ADR-0010).
 3. **Publish** (`api.php?action=publish`) — replaces that one Display's layout in
    a single transaction, and refuses the write if the Display changed since the
-   tab was opened or if the lock has moved on. There is no undo and no version
-   history, so refusing beats merging (ADR-0006).
+   tab was opened or if the lock has moved on. Undo stops here — nothing published
+   can be taken back and nothing is versioned — so refusing beats merging (ADR-0006).
 4. **Viewer** (`viewer.php?display=<tag>`) — a public, login-free fullscreen
    renderer that polls `api.php?action=get_layout&display=<tag>` every 30s and
    scales the canvas to whatever screen it is on. **Every viewer URL names its
@@ -194,5 +196,7 @@ module map and the invariants any change has to preserve.
   moves, and what they prevent is silent.
 - `builder.php` is large and mostly inline JS — `php -l` cannot see those errors,
   so read edited JavaScript carefully.
-- **There is no undo anywhere in this app.** Publishing overwrites. Prefer
-  refusing a write to merging one.
+- **Nothing that has been published can be taken back.** Publishing overwrites, and
+  a deleted Display or asset row is gone. Prefer refusing a write to merging one. The
+  Builder's Undo (ADR-0010) is the one exception and a narrow one: a few steps over
+  the canvas, in one browser tab, before a publish.

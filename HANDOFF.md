@@ -93,11 +93,12 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/branding.php` | `BrandingConfig` / `BrandingWrite` — the **only** writer of `branding_config.php`, which every page of the app requires. Renders it, parses it, writes a temporary copy, reads that back byte for byte, and swaps it in with one `rename()`, so a reader gets the whole old file or the whole new one and a failed save leaves the site on exactly what it had |
 | `lib/install_paths.php` | Which install this folder is, and whose credentials it uses. Pure. One account can hold the live app and a rehearsal copy at the same depth, so a single shared credentials path made an unmodified copy connect to the **live** database in silence — the folder's own name selects `private/db_credentials_<folder>.php` when it exists, and the shared file otherwise, so no tracked file has to differ between the two |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **1624 checks** — and the same suite against real MySQL when `SELFTEST_MYSQL_DSN` is set, where it runs 1647. Run before pushing |
-| `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **42 checks** |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **1634 checks** — and the same suite against real MySQL when `SELFTEST_MYSQL_DSN` is set, where it runs 1657. Run before pushing |
+| `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **45 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit, and that each of the page's two opening reads reports its own failure rather than sharing one sentence, and that Publish cannot be fired twice), **93 checks** |
 | `tools/selftest_builder_colors.js` | `node tools/selftest_builder_colors.js` — the same JS again with the inspector open on stored values the CSSOM cannot parse, which it discards without saying so; the publish payload used to turn that silence into black, **43 checks** |
 | `tools/selftest_builder_editing.js` | `node tools/selftest_builder_editing.js` — the same JS under the third premise, an admin having an ordinary good day: the six inspector controls that quietly did less than they claimed (#42), and every canvas change committing its undo step, **86 checks** |
+| `tools/selftest_builder_undo.js` | `node tools/selftest_builder_undo.js` — the same JS under the fifth premise, an admin who wants the last thing they did back: the canvas round-tripped through snapshot and restore as whole strings, so a rebuild that drops a field this suite never thought to name still fails, plus every mutating control driven to prove it leaves exactly one step, **110 checks**. Undo is the one thing in this app that can be taken back (ADR-0010) |
 | `tools/selftest_viewer.js` | `node tools/selftest_viewer.js` — `viewer.php`'s own JS: the poll loop against a `fetch` the test controls, and every renderer given a block with nothing in it. The page that runs unattended on a television, where a throw is a blank sign, **169 checks** |
 | `tools/check_invariants.php` | `php tools/check_invariants.php` — the mechanical greps from BUILD-REFERENCE §5, run as pass/fail against the whole file set rather than a count, with comments dropped so prose about a rule does not fail it. **22 checks.** Prints what it deliberately does not cover on every run |
 | `tools/check_doc_numbering.php` | `php tools/check_doc_numbering.php` — no two write-ups share a number, no citation dangles, the invariants run unbroken, and **the next free section letter**, which is the question every branch cut from the same base has to answer. **6 checks** |
@@ -363,7 +364,7 @@ staleness check, no version history), 0007 (one editor per Display).
   widget. Steps 15–21 need a second account, two browsers, and one unavoidable
   15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 1624 self-test checks against SQLite, 433 node checks over `builder.php`'s and `viewer.php`'s
+  `php -l`, 1634 self-test checks against SQLite, 546 node checks over `builder.php`'s and `viewer.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare
@@ -398,12 +399,17 @@ kiosk scroll lock. `git log origin/main` has the detail.
   form behind a version check. Both are free, and both are what stops a move to a
   different host from silently dropping HttpOnly and Secure off the sign-in cookie.
 - Before pushing: `php -l` every touched file, then `php tools/selftest_layout.php`,
-  then both node suites (`tools/selftest_builder_readonly.js` and
-  `tools/selftest_builder_uploads.js`) if `builder.php` was touched. A self-test
+  then all five builder node suites (`tools/selftest_builder_readonly.js`,
+  `tools/selftest_builder_uploads.js`, `tools/selftest_builder_colors.js`,
+  `tools/selftest_builder_editing.js` and `tools/selftest_builder_undo.js`) if
+  `builder.php` was touched, and `tools/selftest_viewer.js` if `viewer.php` was. A self-test
   failure is a release blocker, not a broken test.
-- **No undo exists anywhere in this app.** Publishing overwrites. Prefer refusing a
-  write to merging one — that is why publish has both a staleness check and a lock
-  check, and why neither tries to merge.
+- **Nothing that has been published can be taken back.** Publishing overwrites.
+  Prefer refusing a write to merging one — that is why publish has both a staleness
+  check and a lock check, and why neither tries to merge. The Builder's Undo
+  (ADR-0010) reaches back over the canvas *before* a publish, in one browser tab
+  only; its depth is an admin setting (Settings → Builder Undo, default 5, 0 turns
+  it off) stored in `branding_config.php`, not in the database.
 - Use the vocabulary in [`CONTEXT.md`](CONTEXT.md) — Display, Viewer, Screen, screen
   name tag, canvas, grant, edit lock — in code, comments and UI copy.
 - Files use flat relative includes — keep page scripts at repo root.

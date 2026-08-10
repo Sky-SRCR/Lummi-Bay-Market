@@ -90,8 +90,13 @@ edited in place and every change reaches the sign by hand.
   a blank sign in the shop. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
   for the reason they always did: they cover a host that moves, and what they prevent
   is silent.
-- **No undo exists anywhere in this app.** Publishing overwrites. Prefer
-  refusing a write to merging one.
+- **Nothing that has been published can be taken back.** Publishing overwrites; a
+  deleted Display, a swept asset row and a saved brand standard are gone. Prefer
+  refusing a write to merging one. The **one** exception is the Builder's Undo
+  (ADR-0010), which reaches back a few steps over the canvas in one browser tab
+  *before* a publish — so a function that changes that canvas ends by committing a
+  step (invariant 27), and everything on the server side of a publish is still
+  written as if no undo existed, because there it does not.
 
 ## Before pushing
 
@@ -104,6 +109,7 @@ node tools/selftest_builder_readonly.js    # if builder.php was touched
 node tools/selftest_builder_uploads.js     # if builder.php was touched
 node tools/selftest_builder_colors.js      # if builder.php was touched
 node tools/selftest_builder_editing.js     # if builder.php was touched
+node tools/selftest_builder_undo.js        # if builder.php was touched
 node tools/selftest_viewer.js              # if viewer.php was touched
 ```
 
@@ -119,17 +125,17 @@ block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
 sign rather than a stack trace anybody will read.
 
-The five node suites go further and *run* that JavaScript, each under a premise the
+The six node suites go further and *run* that JavaScript, each under a premise the
 others cannot hold — a page that may not edit, an admin uploading a file, an admin
 opening a Display whose stored data is already wrong, an admin working the controls the
-inspector puts on a block, and a Screen whose server has stopped answering or whose
-blocks have nothing in them — because the defects they
-exist for are invisible to a parse: a lookup for a control the edit lock took away,
-a `fetch` chain with no `.catch()`, a colour the CSSOM discarded in silence and the
-publish payload then sent as black, a `.catch()` that correctly ignores a dropped
-packet and therefore also ignored a failure that was never going to stop, and a
-sentence written for whoever was building the layout, drawn on the board a customer
-reads prices off.
+inspector puts on a block, an admin taking back the last thing they did, and a Screen
+whose server has stopped answering or whose blocks have nothing in them — because the
+defects they exist for are invisible to a parse: a lookup for a control the edit lock
+took away, a `fetch` chain with no `.catch()`, a colour the CSSOM discarded in silence
+and the publish payload then sent as black, a field a rebuild forgot to carry, a
+`.catch()` that correctly ignores a dropped packet and therefore also ignored a failure
+that was never going to stop, and a sentence written for whoever was building the
+layout, drawn on the board a customer reads prices off.
 
 - **`json_encode` is never called outside `lib/http_reply.php`.** It returns `false`,
   not a throw, and `echo false` prints the empty string — so a reply holding one byte

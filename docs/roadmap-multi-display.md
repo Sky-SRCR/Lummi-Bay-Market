@@ -288,8 +288,12 @@ part of every snapshot — three places said to publish afterwards.
 
 - **Unscoped delete on publish (Phase 1)** — the one change that can lose every
   Display's layout at once. Highest-value review target of the project.
-- **No undo, ever** — publish overwrites and nothing is versioned. The lock and the
-  staleness check prevent collisions; neither recovers a layout after the fact.
+- **No undo after a publish** — publish overwrites and nothing is versioned. The
+  lock and the staleness check prevent collisions; neither recovers a layout after the
+  fact. The Builder's Undo (ADR-0010) stops at the publish button by design, and
+  version history was weighed and deferred there — including the trap that sinks a
+  naive attempt, `LayoutStore::publish()` sweeping the asset rows an old layout
+  referenced.
 - **Live schema drift** — the live database is behind the repo (it still lacks the
   lockout columns `auth.php` adds at runtime). Phase 1 must assume nothing about what
   is already applied.

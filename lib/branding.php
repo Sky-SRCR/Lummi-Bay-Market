@@ -122,6 +122,15 @@ class BrandingConfig
         'SITE_NAME'        => 'Store Display System',
         'MAIL_FROM'        => 'noreply@yourdomain.com',
         'MAIL_FROM_NAME'   => 'Display System',
+        // The ninth, and the first that is not about how the app looks or who mail
+        // comes from: how many steps the Builder's Undo goes back (ADR-0010). It
+        // lives here because this is the only writer of the generated file, and a
+        // `define()` of it anywhere else would be dropped the next time an admin
+        // saved the Branding form — the value gone, the form reporting success.
+        // Stored as a string like everything else; `undoStepsSetting()` in
+        // `config.php` is what turns it into a number the Builder can act on, and
+        // clamps it, so a hand-edit to 500 or to "five" still lands somewhere sane.
+        'UNDO_STEPS'       => '5',
     ];
 
     private $dir;

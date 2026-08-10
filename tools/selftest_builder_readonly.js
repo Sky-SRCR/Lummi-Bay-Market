@@ -157,7 +157,15 @@ function emitConditions() {
  */
 function canEmitForReadOnlyBasic(conds) {
     let e = conds.map(function (c) { return '(' + c + ')'; }).join(' && ') || 'true';
-    e = e.replace(/\$readOnly/g, 'true').replace(/\$isAdmin/g, 'false');
+    e = e.replace(/\$readOnly/g, 'true').replace(/\$isAdmin/g, 'false')
+         // Not a third runtime fact but a consequence of the first: builder.php
+         // computes `$undoSteps = $readOnly ? 0 : undoStepsSetting()`, so on this
+         // page it is 0 whatever an admin set. Left to the enumeration below it
+         // would be tried both ways, one of those ways would say yes, and a walker
+         // that believes a read-only page can emit #undo-btn would report the
+         // absent stub entry as its own bug. The check below holds the page to that
+         // derivation, so this line is a reading of the source and not a guess.
+         .replace(/\$undoSteps/g, '0');
 
     let n = 0;
     e = e.replace(/\$[A-Za-z_][A-Za-z0-9_]*(?:->[A-Za-z_][A-Za-z0-9_]*\([^)]*\))?|__unknown/g,
@@ -195,6 +203,21 @@ check(liars.length === 0,
 // this whole file was written about, and it must come back absent.
 check(!canEmitForReadOnlyBasic(EMITS['inspector'] || []),
       'and the walker can still tell an editable-only node from an emitted one');
+
+// Undo (ADR-0010) has two ways to be absent — the admin setting at 0, and this
+// page — and both take the button out of the markup rather than merely disabling
+// it. That is why every lookup for it is guarded, and a guard is only worth having
+// if something really does come back null.
+check(EMITS['undo-btn'] !== undefined && EMITS['undo-btn'].length > 0,
+      '#undo-btn is emitted conditionally, not unconditionally');
+check(!canEmitForReadOnlyBasic(EMITS['undo-btn'] || []),
+      'and a read-only page can never emit it, so the Undo lookup here really is null');
+
+// What makes the line above a reading rather than an assumption: the page derives
+// the depth from the lock, so there is no arrangement of admin settings that puts an
+// Undo button on a Builder somebody else is editing.
+check(/\$undoSteps\s*=\s*\$readOnly\s*\?\s*0\s*:\s*undoStepsSetting\(\)/.test(php),
+      'and the depth is derived from $readOnly, not merely read beside it');
 
 function stubEl(id) {
     return {
@@ -446,7 +469,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 42;
+    const expected = 45;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

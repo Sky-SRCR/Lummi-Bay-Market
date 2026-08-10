@@ -593,7 +593,11 @@ section('The WYSIWYG bar is gone, not merely unreachable');
     check(php.indexOf(pair[0]) < 0, pair[1] + ' is out of the file');
 });
 
-check(php.indexOf('_inner.innerText') >= 0, 'what publish reads out of a text block is still its plain text');
+// The read moved out of publishCanvas() into blockContent() when Undo needed the
+// same answer (ADR-0010). What it takes out of a text block has not moved: still
+// innerText, still one place, now with two callers instead of one.
+check(/function blockContent\(block\)[\s\S]{0,400}?inner\.innerText/.test(php),
+      'what publish reads out of a text block is still its plain text');
 
 // ============================================================
 // Result
