@@ -2,13 +2,15 @@
 // ============================================================
 // SERVER REPORT — what is this machine, and did the schema converge?
 // ============================================================
-// This project has been written to a PHP version nobody ever checked. The rule in
-// CLAUDE.md — "PHP 7.1-compatible syntax, the live server's version is unverified"
-// — has shaped every file in the repo, and the one real violation it ever caught
-// was not a syntax feature at all but a library signature that changed in 7.3
+// This project was written to a PHP version nobody had ever checked. The rule in
+// CLAUDE.md used to read "PHP 7.1-compatible syntax, the live server's version is
+// unverified", it shaped every file in the repo, and the one real violation it ever
+// caught was not a syntax feature at all but a library signature that changed in 7.3
 // (auth.php's session cookie parameters). A rule that costs this much should not
 // rest on a guess, and there is no shell on the live host: the only place the
-// answer can appear is a page an admin can open.
+// answer could appear was a page an admin can open. This one. It answered **8.2**,
+// the rule now says 8.2, and this card is what keeps that true — a host upgrade or
+// a move to a different account becomes visible here and nowhere else.
 //
 // The second half is the same problem wearing different clothes. Invariant 10 says
 // the live database is behind the repo and every schema change is an idempotent
@@ -41,11 +43,11 @@ require_once __DIR__ . '/request_scheme.php';
 class ServerReport
 {
     /**
-     * The oldest PHP this code is written to run on. Not a check that the server
-     * is modern — a check that the rule the repo has been obeying still matches
-     * the machine it was obeyed for.
+     * The PHP this code is written to run on. Not a check that the server is
+     * modern — a check that the rule the repo has been obeying still matches the
+     * machine it was obeyed for.
      */
-    const ASSUMED_PHP = '7.1';
+    const ASSUMED_PHP = '8.2';
 
     private $pdo;
     private $facts = null;
@@ -73,12 +75,7 @@ class ServerReport
     {
         $out = [];
 
-        $out['PHP version'] = [PHP_VERSION, PHP_VERSION_ID >= 70300
-            ? 'Newer than the ' . self::ASSUMED_PHP . ' this code is written for, so the '
-              . 'session cookie is hardened by the modern call. Worth telling the '
-              . 'developer: the repo is still avoiding features this server has.'
-            : 'At or below 7.2. The ' . self::ASSUMED_PHP . ' rule in the repo is right, '
-              . 'and the pre-7.3 session cookie form is the one in use.'];
+        $out['PHP version'] = [PHP_VERSION, self::phpVersionNote(PHP_VERSION_ID)];
 
         $out['MySQL version'] = [$this->mysqlVersion(), ''];
 
@@ -124,6 +121,41 @@ class ServerReport
                 : ''];
 
         return $out;
+    }
+
+    /**
+     * What this server's PHP version means, given the rule the repo obeys.
+     *
+     * The check now points the opposite way to the one it started as. While the
+     * live version was a guess, ASSUMED_PHP was the *oldest* PHP this might have
+     * to run on, so a newer server was merely wasteful — the repo was avoiding
+     * features it could have used. #51 answered the question: the rule states the
+     * version the code is written to use, and an *older* server is the failure.
+     *
+     * Not moot just because a parse error would take the page with it. PHP parses
+     * per file, so an 8.2-only construct in a file this path never includes leaves
+     * this card rendering and able to say so — which is the whole point of the
+     * warning, since no file uses one today and the first that does would be found
+     * by a blank sign otherwise.
+     *
+     * Takes the version id rather than reading PHP_VERSION_ID, for the reason
+     * `UploadLimit::smallestOf()` takes its ini values: three of the four cases
+     * are unreachable on whatever machine happens to run the test.
+     */
+    public static function phpVersionNote($versionId)
+    {
+        if ($versionId >= 80200) {
+            return '';
+        }
+        if ($versionId >= 70300) {
+            return 'Older than the ' . self::ASSUMED_PHP . ' this code is written for. '
+                 . 'The sign-in cookie is still hardened by the modern call, but syntax '
+                 . 'this repo is now allowed to use may not parse here. Tell the '
+                 . 'developer before the next deploy.';
+        }
+        return 'Far older than the ' . self::ASSUMED_PHP . ' this code is written for, '
+             . 'and below 7.3, so the pre-7.3 session cookie form is the one in use. '
+             . 'Tell the developer before the next deploy.';
     }
 
     /**

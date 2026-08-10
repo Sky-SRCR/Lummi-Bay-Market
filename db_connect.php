@@ -26,6 +26,28 @@
 require_once __DIR__ . '/lib/error_policy.php';
 ErrorPolicy::installDefault();
 
+// And for the same reason, one line further: every page that renders a stored value
+// has to escape it the same way, and `lib/markup.php` is where that rule lives (#15).
+// Requiring it here rather than eight times is not tidiness — a page that forgot the
+// include would be a fatal error on a live sign, discovered by whoever was looking at
+// it. This file is the one include they all already have.
+require_once __DIR__ . '/lib/markup.php';
+
+// The other half of that rule, for the values escaping cannot help with. The store's
+// own colours go into a `<style>` block, where there is no delimiter to escape and a
+// value that is not a colour is CSS. `lib/brand.php` reads them, so no page carries
+// its own copy of the defaults.
+//
+// It does *not* load `branding_config.php`. It did on the branch this came from, which
+// predates §4y: since that write-up `lib/branding.php` is the only file in the app
+// that spells the name, `config.php` brings the eight constants into being through it,
+// and a consistency grep in BUILD-REFERENCE §5 holds it to that. Two readers is one
+// more than the invariant allows, and the second one is redundant anyway — `Brand::`
+// reads constants, and by the time any page renders a stylesheet `config.php` has
+// defined them. Absent constants still answer the documented default, which is what
+// `tools/audit_colors.php` relies on when it runs with no app around it.
+require_once __DIR__ . '/lib/brand.php';
+
 $credentialsFile = dirname(__DIR__, 2) . '/private/db_credentials.php';
 
 

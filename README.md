@@ -184,7 +184,13 @@ module map and the invariants any change has to preserve.
   php tools/selftest_layout.php     # expect "N checks, 0 failed"
   ```
 
-- **PHP 7.1-compatible syntax only** — the live server's version is unverified.
+- **PHP 7.1-compatible syntax** — the live server's version is still unverified (#51).
+  A branch recorded it as 8.2, read off Settings → This Server; that page ships with
+  the multi-display build, which #46's probe found undeployed (`lib/` answers 404), so
+  it cannot have answered there, and Cloudflare fronts the site so no header does
+  either. The rule therefore stands, and costs nothing: every file lints clean on 7.1
+  as well as 8.4. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay for the same
+  reason they always did — they cover a host that moves.
 - `builder.php` is large and mostly inline JS — `php -l` cannot see those errors,
   so read edited JavaScript carefully.
 - **There is no undo anywhere in this app.** Publishing overwrites. Prefer

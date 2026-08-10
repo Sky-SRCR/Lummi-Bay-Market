@@ -43,6 +43,12 @@ require_once __DIR__ . '/lib/brand_styles.php';
 require_once __DIR__ . '/lib/display_request.php';
 require_once __DIR__ . '/lib/assets.php';
 require_once __DIR__ . '/lib/upload_limits.php';
+// Every reply below leaves through HttpReply::json(), which owns the three things
+// that travel with it: the status code (derived from the payload's own `reason`, so
+// the two can never disagree), the caching rules, and the encode. `echo
+// json_encode()` is what sent a zero-byte 200 for a payload holding one bad byte
+// (#26), and answering "no such sign" with 200 is what #28 is about.
+require_once __DIR__ . '/lib/http_reply.php';
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
 
@@ -62,9 +68,7 @@ if ($action !== 'get_layout') {
     // the publish. See builder.php's terminal lock answers.
     if (!syncSessionAccount($pdo)) {
         endSession();
-        header('Content-Type: application/json');
-        http_response_code(403);
-        echo json_encode([
+        HttpReply::json([
             'status'  => 'error',
             'reason'  => 'signed_out',
             'message' => 'Your account is no longer active. Sign in again.',
@@ -73,7 +77,13 @@ if ($action !== 'get_layout') {
     }
 }
 
-header('Content-Type: application/json');
+// Set here as well as in every HttpReply::json() below, so that a reply escaping by
+// some path this file has not thought of still leaves with the right type and is
+// still not cached. Cheap, and the case it covers is by definition one nobody
+// predicted.
+header('Content-Type: application/json; charset=utf-8');
+HttpReply::noStore();
+
 $isAdmin = isAdmin();
 
 // A POST whose body PHP dropped for exceeding post_max_size arrives with no
@@ -83,8 +93,8 @@ $isAdmin = isAdmin();
 // raw body, so "a POST with a content length and nothing in it" has exactly one
 // cause. See lib/upload_limits.php.
 if (UploadLimit::bodyWasDropped($_SERVER, $_POST, $_FILES)) {
-    http_response_code(413);
-    echo json_encode([
+    // 413 comes from the `too_large` reason now, rather than being set beside it.
+    HttpReply::json([
         'status'  => 'error',
         'reason'  => 'too_large',
         'message' => UploadLimit::droppedBodyMessage(),
@@ -96,8 +106,12 @@ if (UploadLimit::bodyWasDropped($_SERVER, $_POST, $_FILES)) {
 // GET endpoints are read-only, and get_layout is intentionally public so the
 // kiosk viewer can poll it without a session.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !csrfOk()) {
-    http_response_code(403);
-    echo json_encode(['status' => 'error', 'message' => 'Security token mismatch. Please reload the page and try again.']);
+    // Given explicitly rather than named: `csrf` is not one of the app's `reason`
+    // words, and inventing one here would put a new value in front of the Builder's
+    // terminal-refusal list for no gain.
+    HttpReply::json(
+        ['status' => 'error', 'message' => 'Security token mismatch. Please reload the page and try again.'],
+        403);
     exit;
 }
 
@@ -160,24 +174,47 @@ function uploadErrorMessage(int $code): string {
     return 'The upload failed (code ' . $code . '). Nothing was changed.';
 }
 
+/**
+ * The status code for a rejected upload, beside the sentence that explains it.
+ *
+ * Carried in the result rather than decided at the call site, because the three
+ * cases are genuinely different answers — too big, wrong kind, our fault — and the
+ * Builder's upload path is the one place in this app that already reads the code
+ * (`xhr.status >= 400`) rather than only the body.
+ */
+function uploadErrorCode(int $code): int {
+    switch ($code) {
+        case UPLOAD_ERR_INI_SIZE:
+        case UPLOAD_ERR_FORM_SIZE:
+            return 413;
+        case UPLOAD_ERR_NO_TMP_DIR:
+        case UPLOAD_ERR_CANT_WRITE:
+        case UPLOAD_ERR_EXTENSION:
+            return 500;   // nothing the person holding the file can do
+    }
+    return 400;
+}
+
 function validateFile(array $file, array $allowExt, array $allowMime): array {
     if ($file['error'] !== UPLOAD_ERR_OK) {
-        return ['ok' => false, 'msg' => uploadErrorMessage($file['error'])];
+        return ['ok' => false, 'code' => uploadErrorCode($file['error']),
+                'msg' => uploadErrorMessage($file['error'])];
     }
     // Not a flat 50 MB any more: the binding limit is whichever of the app's
     // ceiling and PHP's two is smallest, and the message has to name the real one
     // or the person trims their file to a number that will be refused again.
     if ($file['size'] > UploadLimit::bytes()) {
-        return ['ok' => false, 'msg' => 'That file is ' . UploadLimit::describeBytes($file['size'])
-                                      . '. This server accepts up to ' . UploadLimit::describe() . '.'];
+        return ['ok' => false, 'code' => 413,
+                'msg' => 'That file is ' . UploadLimit::describeBytes($file['size'])
+                       . '. This server accepts up to ' . UploadLimit::describe() . '.'];
     }
     $ext  = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     if (!in_array($ext, $allowExt, true)) {
-        return ['ok' => false, 'msg' => 'File extension not allowed.'];
+        return ['ok' => false, 'code' => 415, 'msg' => 'File extension not allowed.'];
     }
     $mime = mime_content_type($file['tmp_name']);
     if (!in_array($mime, $allowMime, true)) {
-        return ['ok' => false, 'msg' => 'File type rejected.'];
+        return ['ok' => false, 'code' => 415, 'msg' => 'File type rejected.'];
     }
     return ['ok' => true, 'ext' => $ext];
 }
@@ -261,7 +298,10 @@ function lockPayload(?Display $display, Actor $actor): array {
 
 /** Emit the standard "which Display?" failure for an endpoint that needs one. */
 function failResolution(DisplayResolution $resolution): void {
-    echo json_encode([
+    // The code follows the reason: 400 for a request that named nothing, 404 for a
+    // tag that is not here, 503 for a sign switched off, 403 for one that is not
+    // this account's, 409 for a tag and an id that disagree (#28).
+    HttpReply::json([
         'status'  => 'error',
         'reason'  => $resolution->kind(),
         'message' => $resolution->message(),
@@ -278,19 +318,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_layout') {
         // Nothing to render. The notice is the payload: the Viewer shows this
         // wording on the Screen, so a Display turned off (or deleted) while a
         // Screen is running replaces the layout with the notice within one poll.
-        echo json_encode([
+        //
+        // This is the one reply in the file that puts the kind in `status` rather
+        // than in `reason`, which is the shape the Viewer has read since Phase 2 —
+        // so the code is passed rather than derived. Unlike the others, all three of
+        // these used to be 200: a mistyped tag, a deleted sign and a retired one were
+        // indistinguishable to anything that did not read the body (#28).
+        HttpReply::json([
             'status'       => $resolution->kind(),
             'message'      => $resolution->message(),
             'display'      => null,
             'elements'     => [],
             'block_styles' => [],
-        ]);
+        ], HttpReply::codeForResolution($resolution));
         exit;
     }
 
-    $payload = $layouts->snapshot($resolution->display());
+    // publicSnapshot, not snapshot: this endpoint needs no sign-in, so whatever it
+    // returns is readable by anyone who knows a screen name tag. A hidden block is
+    // hidden from them too, content included (#25).
+    $payload = $layouts->publicSnapshot($resolution->display());
     $payload['status'] = 'success';
-    echo json_encode($payload);
+    HttpReply::json($payload);
     exit;
 }
 
@@ -307,7 +356,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_editor_layout') {
 
     $payload = $layouts->snapshot($resolution->display());
     $payload['status'] = 'success';
-    echo json_encode($payload);
+    HttpReply::json($payload);
     exit;
 }
 
@@ -315,7 +364,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_editor_layout') {
 // GET: get_assets
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_assets') {
-    echo json_encode((new AssetLibrary($pdo))->all());
+    // A bare list, as the asset picker has always received: no `status` to derive
+    // a code from, so it is given.
+    HttpReply::json((new AssetLibrary($pdo))->all(), 200);
     exit;
 }
 
@@ -323,15 +374,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_assets') {
 // POST: upload_file  (images – all roles)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'upload_file') {
-    if (!isset($_FILES['file'])) { echo json_encode(['status'=>'error','message'=>'No file.']); exit; }
+    if (!isset($_FILES['file'])) { HttpReply::json(['status'=>'error','message'=>'No file.'], 400); exit; }
     $check = validateFile($_FILES['file'], IMG_EXT, IMG_MIME);
-    if (!$check['ok']) { echo json_encode(['status'=>'error','message'=>$check['msg']]); exit; }
+    if (!$check['ok']) { HttpReply::json(['status'=>'error','message'=>$check['msg']], $check['code']); exit; }
     ensureUploads();
     $name = 'img_' . uniqid('',true) . '.' . $check['ext'];
     if (!move_uploaded_file($_FILES['file']['tmp_name'], 'uploads/' . $name)) {
-        echo json_encode(['status'=>'error','message'=>'Could not save uploaded file.']); exit;
+        HttpReply::json(['status'=>'error','message'=>'Could not save uploaded file.'], 500); exit;
     }
-    echo json_encode(['status'=>'success','path'=>'uploads/'.$name]);
+    HttpReply::json(['status'=>'success','path'=>'uploads/'.$name]);
     exit;
 }
 
@@ -339,16 +390,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'upload_file') {
 // POST: upload_video  (admin only)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'upload_video') {
-    if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
-    if (!isset($_FILES['file'])) { echo json_encode(['status'=>'error','message'=>'No file.']); exit; }
+    if (!$isAdmin) { HttpReply::json(['status'=>'error','message'=>'Admins only.'], 403); exit; }
+    if (!isset($_FILES['file'])) { HttpReply::json(['status'=>'error','message'=>'No file.'], 400); exit; }
     $check = validateFile($_FILES['file'], VID_EXT, VID_MIME);
-    if (!$check['ok']) { echo json_encode(['status'=>'error','message'=>$check['msg']]); exit; }
+    if (!$check['ok']) { HttpReply::json(['status'=>'error','message'=>$check['msg']], $check['code']); exit; }
     ensureUploads();
     $name = 'vid_' . uniqid('',true) . '.' . $check['ext'];
     if (!move_uploaded_file($_FILES['file']['tmp_name'], 'uploads/' . $name)) {
-        echo json_encode(['status'=>'error','message'=>'Could not save uploaded file.']); exit;
+        HttpReply::json(['status'=>'error','message'=>'Could not save uploaded file.'], 500); exit;
     }
-    echo json_encode(['status'=>'success','path'=>'uploads/'.$name]);
+    HttpReply::json(['status'=>'success','path'=>'uploads/'.$name]);
     exit;
 }
 
@@ -375,8 +426,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
         $_POST['layout_stamp'] ?? ''
     );
     if (!$request) {
-        echo json_encode([
+        // `invalid` is the word PublishResult uses for the same outcome — read, and
+        // refused — so this reply now carries it too, and gets the same 422.
+        HttpReply::json([
             'status'  => 'error',
+            'reason'  => 'invalid',
             'message' => 'That publish could not be read, so nothing was saved. Reload the display and try again.',
         ]);
         exit;
@@ -385,15 +439,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
     $result = $layouts->publish($display, $request);
 
     if ($result->isOk()) {
-        echo json_encode([
+        HttpReply::json([
             'status'       => 'success',
             'display'      => $display->tag(),
             'layout_stamp' => $result->stamp(),
         ]);
     } else {
-        echo json_encode([
+        HttpReply::json([
             'status'  => 'error',
-            'reason'  => $result->kind(),      // 'stale' | 'locked' | 'invalid' | 'failed'
+            // 'stale' | 'locked' | 'invalid' | 'busy' | 'failed' — 409 for the three
+            // that mean somebody else got there first, 422 for a layout that was read
+            // and refused, 500 for ours.
+            'reason'  => $result->kind(),
             'message' => $result->message(),
         ]);
     }
@@ -420,7 +477,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'hold_lock') {
     $resolution = DisplayRequest::forEditing($displays, $writeParams, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
 
-    echo json_encode(lockPayload(
+    HttpReply::json(lockPayload(
         $displays->claimLock($resolution->display(), $actor->id(), intval($_POST['idle_seconds'] ?? 0)),
         $actor
     ));
@@ -435,7 +492,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'lock_state') {
     $resolution = DisplayRequest::forEditing($displays, $_GET, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
 
-    echo json_encode(lockPayload($resolution->display(), $actor));
+    HttpReply::json(lockPayload($resolution->display(), $actor));
     exit;
 }
 
@@ -447,7 +504,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'release_lock') {
     $resolution = DisplayRequest::forEditing($displays, $writeParams, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
 
-    echo json_encode(lockPayload($displays->releaseLock($resolution->display(), $actor->id()), $actor));
+    HttpReply::json(lockPayload($displays->releaseLock($resolution->display(), $actor->id()), $actor));
     exit;
 }
 
@@ -457,11 +514,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'release_lock') {
 // next heartbeat. The confirm that states the holder loses unsaved work is in the
 // Builder; this endpoint is the deliberate act it confirms.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'take_over_lock') {
-    if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
+    if (!$isAdmin) { HttpReply::json(['status'=>'error','message'=>'Admins only.'], 403); exit; }
     $resolution = DisplayRequest::forEditing($displays, $writeParams, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
 
-    echo json_encode(lockPayload($displays->seizeLock($resolution->display(), $actor->id()), $actor));
+    HttpReply::json(lockPayload($displays->seizeLock($resolution->display(), $actor->id()), $actor));
     exit;
 }
 
@@ -471,7 +528,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'take_over_lock') {
 // Brand Standards typography is shared by every Display, so this endpoint is
 // deliberately not Display-scoped.
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_brand_styles') {
-    if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
+    if (!$isAdmin) { HttpReply::json(['status'=>'error','message'=>'Admins only.'], 403); exit; }
 
     // Brand Standards is the edit that reaches every sign without a publish, so the
     // edit lock covers it too — see DisplayStore::editedByAnyoneElse. Refused while
@@ -480,7 +537,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_brand_styles') {
     // tell them.
     $busy = $displays->editedByAnyoneElse(currentUser()['id']);
     if ($busy) {
-        echo json_encode([
+        HttpReply::json([
             'status'  => 'error',
             'reason'  => 'locked',
             'message' => $busy->editingSentence()
@@ -500,9 +557,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_brand_styles') {
     // said why. That is the defect the six-row seed in lib/schema.php was added to
     // prevent, and schemaTry() swallows a seed that does not apply, so it is worth
     // saying out loud rather than assuming.
-    echo json_encode($saved
+    HttpReply::json($saved
         ? ['status' => 'success', 'saved' => $saved]
-        : ['status' => 'error', 'message' => 'Nothing was saved — those block types are missing from the database.']);
+        // `failed` because it is: the rows this app seeds are not in the database, and
+        // there is nothing the admin at the keyboard did wrong or can do about it.
+        : ['status' => 'error', 'reason' => 'failed',
+           'message' => 'Nothing was saved — those block types are missing from the database.']);
     exit;
 }
 
@@ -510,11 +570,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_brand_styles') {
 // GET: get_canvas_elements  (admin only)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_canvas_elements') {
-    if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
+    if (!$isAdmin) { HttpReply::json(['status'=>'error','message'=>'Admins only.'], 403); exit; }
     $resolution = DisplayRequest::forEditing($displays, $_GET, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
-    // A bare array, as the Work Area list has always received.
-    echo json_encode($layouts->elementIndex($resolution->display()));
+    // A bare array, as the Work Area list has always received — so, like the asset
+    // list, its code is given rather than derived.
+    HttpReply::json($layouts->elementIndex($resolution->display()), 200);
     exit;
 }
 
@@ -522,18 +583,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_canvas_elements') {
 // POST: set_element_hidden  (admin only)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'set_element_hidden') {
-    if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
+    if (!$isAdmin) { HttpReply::json(['status'=>'error','message'=>'Admins only.'], 403); exit; }
     $resolution = DisplayRequest::forEditing($displays, $writeParams, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
 
     $id = intval($_POST['element_id'] ?? 0);
-    if (!$id) { echo json_encode(['status'=>'error','message'=>'Missing element_id.']); exit; }
+    if (!$id) { HttpReply::json(['status'=>'error','message'=>'Missing element_id.'], 400); exit; }
 
     $res = $layouts->setElementHidden($resolution->display(), $id,
                                       intval($_POST['hidden'] ?? 0) === 1, currentUser()['id']);
-    echo json_encode($res->isOk()
+    // ElementResult's kind — 'not_found' | 'locked' — carried through, so the code
+    // says 404 or 409 rather than the 200 both used to leave as.
+    HttpReply::json($res->isOk()
         ? ['status' => 'success']
-        : ['status' => 'error', 'message' => $res->message()]);
+        : ['status' => 'error', 'reason' => $res->kind(), 'message' => $res->message()]);
     exit;
 }
 
@@ -541,19 +604,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'set_element_hidden') {
 // POST: delete_canvas_element  (admin only)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'delete_canvas_element') {
-    if (!$isAdmin) { echo json_encode(['status'=>'error','message'=>'Admins only.']); exit; }
+    if (!$isAdmin) { HttpReply::json(['status'=>'error','message'=>'Admins only.'], 403); exit; }
     $resolution = DisplayRequest::forEditing($displays, $writeParams, $actor);
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
 
     $id = intval($_POST['element_id'] ?? 0);
-    if (!$id) { echo json_encode(['status'=>'error','message'=>'Missing element_id.']); exit; }
+    if (!$id) { HttpReply::json(['status'=>'error','message'=>'Missing element_id.'], 400); exit; }
 
     $res = $layouts->deleteElement($resolution->display(), $id, currentUser()['id']);
-    echo json_encode($res->isOk()
+    HttpReply::json($res->isOk()
         ? ['status' => 'success']
-        : ['status' => 'error', 'message' => $res->message()]);
+        : ['status' => 'error', 'reason' => $res->kind(), 'message' => $res->message()]);
     exit;
 }
 
-echo json_encode(['status' => 'error', 'message' => 'Unknown action.']);
+HttpReply::json(['status' => 'error', 'message' => 'Unknown action.'], 400);
 ?>

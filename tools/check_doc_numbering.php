@@ -62,9 +62,35 @@ section('Every write-up has a number of its own');
 // within it. Both depths count: the file settled into `###` at §4h and the seven
 // before it are `##`, and a check that knew about only one of those would have
 // reported five real citations as dangling.
+//
+// One letter *or two*: phase 4 ran past z, so §4aa follows §4z. A single-letter
+// pattern did not fail on those, which is worse than failing — it did not see them
+// at all, so nine write-ups were unchecked for duplication, every citation of them
+// was unchecked for dangling, and the advice below offered `§4{`. The one job this
+// file has is to be right about the next free letter.
+/**
+ * The letter after this one: z → aa, az → ba, zz → aaa.
+ *
+ * `chr(ord($last) + 1)` was right until §4z and then answered `§4{`, which is the
+ * character after z in ASCII and not a section anybody would write. Spelled out as
+ * a carry so the answer stays a letter however far phase 4 runs.
+ */
+function nextLetter($letters)
+{
+    $chars = array_reverse(str_split($letters));
+    $carry = true;
+    foreach ($chars as $i => $c) {
+        if (!$carry) { break; }
+        if ($c === 'z') { $chars[$i] = 'a'; }
+        else            { $chars[$i] = chr(ord($c) + 1); $carry = false; }
+    }
+    if ($carry) { $chars[] = 'a'; }
+    return implode('', array_reverse($chars));
+}
+
 $sections = array();          // "4u" => how many times it appears
 foreach ($lines as $line) {
-    if (preg_match('/^#{2,4}\s+(\d+)([a-z])\.\s/', $line, $m)) {
+    if (preg_match('/^#{2,4}\s+(\d+)([a-z]{1,2})\.\s/', $line, $m)) {
         $key = $m[1] . $m[2];
         $sections[$key] = isset($sections[$key]) ? $sections[$key] + 1 : 1;
     }
@@ -133,7 +159,7 @@ $citers = array_filter(array_merge(
 $dangling = array();
 foreach ($citers as $file) {
     $body = file_get_contents($file);
-    if (!preg_match_all('/§(\d+[a-z])\b/', $body, $m)) { continue; }
+    if (!preg_match_all('/§(\d+[a-z]{1,2})\b/', $body, $m)) { continue; }
     foreach (array_unique($m[1]) as $cited) {
         if (!isset($sections[$cited])) {
             $dangling[] = '§' . $cited . ' in ' . basename($file);
@@ -160,9 +186,13 @@ if (empty($fails)) {
     }
     sort($phase4);
     if (!empty($phase4)) {
+        // Order by length first, so 'z' sorts before 'aa' rather than after it.
+        usort($phase4, function ($a, $b) {
+            return strlen($a) === strlen($b) ? strcmp($a, $b) : strlen($a) - strlen($b);
+        });
         $last = end($phase4);
         echo "\nphase 4 runs to §4" . $last . "; the next free letter is §4"
-             . chr(ord($last) + 1) . "\n";
+             . nextLetter($last) . "\n";
     }
 }
 

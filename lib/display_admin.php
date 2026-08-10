@@ -5,11 +5,11 @@
 // Adding, editing, retiring and destroying a Display — the Phase 3 admin screen's
 // whole vocabulary, behind four methods.
 //
-//   create(fields)                → DisplayResult   blank, or a duplicate of another Display
-//   updateDetails(Display, fields)→ DisplayResult   title, screen name tag, location
-//   setActive(Display, bool)      → DisplayResult   retire without losing the layout
-//   destroy(Display, typedTag)    → DisplayResult   the layout and its grants go with it
-//   setAccess(accounts, wanted)   → DisplayResult   who may edit what, in one write
+//   create(fields)                  → DisplayResult   blank, or a duplicate of another Display
+//   updateDetails(Display, fields)  → DisplayResult   title, screen name tag, location
+//   setActive(Display, bool)        → DisplayResult   retire without losing the layout
+//   destroy(Display, typedTag, who) → DisplayResult   the layout and its grants go with it
+//   setAccess(accounts, wanted)     → DisplayResult   who may edit what, in one write
 //
 // Why this exists rather than more methods on DisplayStore: administering a
 // Display spans three tables. Creating one as a duplicate writes a `displays` row
@@ -33,13 +33,21 @@
 //     (ADR-0004), and only into an empty one.
 //   · Destroying a Display requires its screen name tag typed back. There is no
 //     undo anywhere in this app, and this is the most destructive button in it.
+//   · Destroying a Display is refused outright while somebody else is editing it
+//     (#19). Every other change of reach in this module frees the holder's lock and
+//     tells them; this is the one that cannot, because there is nothing left to hold
+//     and nobody left to tell. So it asks first instead.
 //   · A grant is only ever "this account may edit this Display" (ADR-0005). This
 //     module does not know what an account's *role* is — that is the panel's
 //     business, and it is why granting is offered for `basic` accounts only.
+//   · A background colour that cannot be read is refused, not replaced (#21). The
+//     rule itself is lib/color.php's; what this module adds is that both paths to
+//     a background refuse with the same sentence.
 
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/layout_store.php';
 require_once __DIR__ . '/grants.php';
+require_once __DIR__ . '/color.php';
 
 /**
  * The outcome of an administrative change, as a value.
@@ -51,7 +59,9 @@ class DisplayResult
 {
     const OK       = 'ok';
     const INVALID  = 'invalid';    // the input cannot be used
-    const CONFLICT = 'conflict';   // the input collides with an existing Display
+    // The input is fine; the state of things refuses it. A screen name tag another
+    // Display already has, or a Display somebody else is in the middle of editing.
+    const CONFLICT = 'conflict';
     const FAILED   = 'failed';     // the database refused; nothing was changed
 
     private $kind;
@@ -107,6 +117,15 @@ class DisplayResult
 
 class DisplayAdmin
 {
+    /**
+     * The background a new Display gets when the form did not name one.
+     *
+     * The dark navy the canvas has always had. It is a value applied at one visible
+     * decision — "nothing was supplied" — and never a substitute for a value that
+     * was supplied and could not be read; see create().
+     */
+    const DEFAULT_BACKGROUND = '#1a1a2e';
+
     private $pdo;
     private $displays;
     private $layouts;
@@ -149,8 +168,24 @@ class DisplayAdmin
         $clean['canvas_width']  = intval($width);
         $clean['canvas_height'] = intval($height);
         $clean['bg_type']       = 'color';
-        $clean['bg_val']        = self::cleanColor(isset($fields['bg_val']) ? $fields['bg_val'] : '');
         $clean['is_active']     = 1;
+
+        // Blank and unreadable are two different answers (#21). Nothing supplied
+        // means the admin never touched the swatch, and a new canvas has to have
+        // *some* background, so the default applies. A value that is not a colour
+        // means the form said something this app cannot store, and substituting the
+        // default there is how "created" used to be reported for a Display that is
+        // not the colour anybody chose.
+        $rawBg = isset($fields['bg_val']) ? $fields['bg_val'] : '';
+        if ($rawBg === '' || $rawBg === null) {
+            $clean['bg_val'] = self::DEFAULT_BACKGROUND;
+        } else {
+            $bg = Color::read($rawBg);
+            if ($bg === '') {
+                return DisplayResult::invalid('bg_val', self::colorRefusal($rawBg));
+            }
+            $clean['bg_val'] = $bg;
+        }
 
         // "Duplicate of" is resolved before anything is written, so a stale form
         // naming a Display that has since been deleted or is the wrong shape
@@ -316,11 +351,23 @@ class DisplayAdmin
      * Only a colour. Background *images* are set from the Builder, where the
      * upload is already validated in one place and you can see the canvas you are
      * changing.
+     *
+     * A value that is not a colour is refused rather than replaced (#21). This is
+     * the harsher of the two places it mattered: the old code substituted the dark
+     * default, advanced the layout stamp anyway, and reported the background
+     * "set" — so an admin got a colour they had not chosen, every Screen showing
+     * that Display took it within 30 seconds, and every Builder tab open at the
+     * time was invalidated on the way past. There is no undo for any of that.
      */
     public function setBackgroundColor(Display $display, $hex)
     {
+        $color = Color::read($hex);
+        if ($color === '') {
+            return DisplayResult::invalid('bg_val', self::colorRefusal($hex));
+        }
+
         try {
-            $this->displays->applyBackground($display, Background::color(self::cleanColor($hex)));
+            $this->displays->applyBackground($display, Background::color($color));
             $this->displays->advanceLayoutRevision($display);
             $updated = $this->displays->forId($display->id());
         } catch (Throwable $e) {
@@ -339,11 +386,52 @@ class DisplayAdmin
      * Destroy a Display and its layout, behind the screen name tag typed back.
      *
      * There is no undo in this app and nothing is versioned, so this is the one
-     * action that can lose work with no way back. The typed tag is the whole
-     * safeguard — an admin who mistypes it gets a refusal, not a deletion.
+     * action that can lose work with no way back. The typed tag is one safeguard —
+     * an admin who mistypes it gets a refusal, not a deletion — but it only proves
+     * the admin meant *this* sign. It says nothing about whether anybody was using it.
+     *
+     * **So this refuses while somebody else holds the edit lock (#19).** Every other
+     * change of reach in this app frees the holder's lock in the same transaction and
+     * lets their Builder say so; deletion is the one that cannot, because afterwards
+     * there is no row to free a lock on and no Display for their page to ask about.
+     * A clerk mid-layout simply lost the canvas under them, and the admin who did it
+     * was never told there was anybody there.
+     *
+     * `heldByOther()`, not `isHeld()` — the same predicate that makes a Builder
+     * read-only and refuses a publish. An admin deleting a sign they have open
+     * themselves is deleting their own work, knowingly, and is not somebody to
+     * protect from it. A lapsed lock does not block either, because LockState
+     * already rules that a Builder left open on a back-office monitor is nobody.
+     *
+     * The question is asked twice, deliberately:
+     *
+     *   · Before the typed tag, so an admin learns who is editing without first
+     *     being sent away to retype a tag for a deletion that was never going to
+     *     happen. The immovable fact goes first; the confirmation gate is for a
+     *     deletion that could actually go through.
+     *   · Again inside the transaction, against a row this module reads itself.
+     *     Otherwise the guarantee is "the caller handed me a Display it read
+     *     recently" — true of both callers today, and not a thing a module should
+     *     rest an irreversible write on.
+     *
+     * What stays open, and why it is left open: the re-read is a plain SELECT, so
+     * somebody can still claim the lock in the moment between it and the delete.
+     * What they lose then is that moment, not the twenty minutes this refusal exists
+     * for, and their Builder already has a sentence for a Display that has gone
+     * (builder.php's terminal lock answers). Closing it would mean a second
+     * `FOR UPDATE`, a second SQLite seam for it, and a second encounter with #35's
+     * lock-wait timeout — spent on the rarest write in the app, when the publish path
+     * that carries the first one has two people colliding on an ordinary Tuesday.
+     *
+     * @param int|string $actorId the admin doing the deleting. A value naming nobody
+     *                            errs towards refusing, not towards deleting: an
+     *                            unknown actor is "somebody else" to every held lock.
      */
-    public function destroy(Display $display, $typedTag)
+    public function destroy(Display $display, $typedTag, $actorId)
     {
+        $busy = self::editingRefusal($display, $actorId);
+        if ($busy) { return $busy; }
+
         if (DisplayStore::normalizeTag($typedTag) !== $display->tag()) {
             return DisplayResult::invalid('confirm_tag',
                 'Type the screen name tag "' . $display->tag() . '" exactly to delete this display. '
@@ -352,14 +440,30 @@ class DisplayAdmin
 
         try {
             $this->pdo->beginTransaction();
+
+            // Two things can have changed since the page carrying this form was
+            // drawn: another admin can have deleted the Display, and somebody can
+            // have started editing it. Both are read here rather than trusted from
+            // the argument, and both refuse before a single row is removed.
+            $fresh = $this->displays->forId($display->id());
+            if (!$fresh) {
+                $this->abandon();
+                return DisplayResult::failed('That display no longer exists. Nothing was changed.');
+            }
+            $busy = self::editingRefusal($fresh, $actorId);
+            if ($busy) {
+                $this->abandon();
+                return $busy;
+            }
+
             // Elements and grants first, and explicitly: both `ON DELETE CASCADE`
             // constraints may never have applied on a live database that is behind
             // the repo. A layout orphaned by a deleted Display is invisible to
             // every scoped query while still occupying the table, and an orphaned
             // grant is one id reuse away from granting the wrong sign.
-            $lost = $this->layouts->deleteAllElements($display);
-            $this->grants->revokeAllForDisplay($display);
-            $this->displays->deleteRow($display);
+            $lost    = $this->layouts->deleteAllElements($fresh);
+            $revoked = $this->grants->revokeAllForDisplay($fresh);
+            $this->displays->deleteRow($fresh);
             $this->pdo->commit();
         } catch (Throwable $e) {
             $this->abandon();
@@ -368,8 +472,41 @@ class DisplayAdmin
 
         return DisplayResult::done(
             'Display "' . $display->title() . '" (' . $display->tag() . ') and its '
-            . $lost . ' element' . ($lost === 1 ? '' : 's') . ' were deleted. '
-            . 'Any screen still pointed at it now shows "Display not found".');
+            . $lost . ' element' . ($lost === 1 ? '' : 's') . ' were deleted'
+            . ($revoked > 0
+                ? ', along with ' . $revoked . ' account' . ($revoked === 1 ? '\'s' : 's\'')
+                  . ' access to it'
+                : '')
+            . '. Any screen still pointed at it now shows "Display not found".');
+    }
+
+    /**
+     * "Somebody else is editing this" as a refusal, or null when nobody is.
+     *
+     * One helper, because destroy() asks the question twice — once of the Display it
+     * was handed and once of the row it re-reads — and two sentences that disagreed
+     * about who was editing would look like the app guessing rather than checking.
+     *
+     * The refusal names the holder, when they started, and both ways out: ask them,
+     * or wait for the idle window. The window is read from LockState rather than
+     * written here, so a change to ADR-0007's fifteen minutes cannot leave this
+     * sentence quoting the old number.
+     */
+    private static function editingRefusal(Display $display, $actorId)
+    {
+        $lock = $display->lockState();
+        if (!$lock->heldByOther($actorId)) { return null; }
+
+        $who   = $lock->holderName() !== '' ? $lock->holderName() : 'Somebody';
+        $since = $lock->takenAtLabel();
+        $mins  = intdiv(LockState::IDLE_LAPSE_SECONDS, 60);
+
+        return DisplayResult::conflict('',
+            $who . ' has "' . $display->title() . '" open in the builder'
+            . ($since === '' ? '' : ', since ' . $since)
+            . '. Deleting it would take the canvas out from under them and lose whatever '
+            . 'they have not published yet. Nothing was deleted. Ask them to close it, or '
+            . 'wait — the lock lapses ' . $mins . ' minutes after their last change.');
     }
 
     /**
@@ -556,14 +693,17 @@ class DisplayAdmin
         return 'viewer.php?display=' . $display->tag();
     }
 
-    /** A `#rrggbb` colour, or the dark default the canvas has always had. */
-    private static function cleanColor($value)
+    /**
+     * The one sentence both background paths refuse with.
+     *
+     * Written once because create() and setBackgroundColor() must say the same
+     * thing: an admin who sees two different explanations for the same rejected
+     * swatch will reasonably conclude the two forms accept different colours.
+     */
+    private static function colorRefusal($value)
     {
-        // One rule, asked rather than restated: Background owns what a background
-        // colour is, and the publish path refuses what fails it (decision #24). This
-        // door still coerces instead of refusing, which is decision #21 and still
-        // open — but it can no longer disagree with the other door about *which*
-        // values are the readable ones.
-        return Background::isValidColor($value) ? strtolower((string)$value) : Background::DEFAULT_COLOR;
+        return 'That background colour could not be read (' . Color::describe($value) . '). '
+             . 'Colours are written as six hexadecimal digits after a hash, like #1a1a2e. '
+             . 'Nothing was changed.';
     }
 }

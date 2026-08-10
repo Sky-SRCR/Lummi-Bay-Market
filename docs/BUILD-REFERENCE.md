@@ -63,14 +63,16 @@ Design rules, applied to every module added by this build:
 | `brand_styles.php` | `BrandStyles(PDO)` | The six branded block types: the only reader and writer of `block_styles`, the validation for every stored value, and the rule that a type absent from a save is left untouched. |
 | `password_resets.php` | `ResetTokenStore(PDO)` — `issue` / `verify` / `consume` / `redeem` / `discard`, and `PasswordResetCompletion(PDO, ResetTokenStore, AccountStore)` → `ResetOutcome` | **Every** `password_resets` statement, the 30-minute lifetime, and the guess budget: five tries per issued code, counted on the code's own row so a fresh cookie cannot buy five more. `redeem()` returns a bare boolean on purpose — the reset page must answer "wrong code", "no such account" and "budget spent" in the same words, and a caller that cannot tell them apart cannot leak the difference. It is now the composition of two halves that have to fall on opposite sides of a transaction boundary: `verify()` spends the guess and must never be rolled back, `consume()` spends the code and must be. `PasswordResetCompletion` is the use case (invariant 22) — code consumed, password changed, lockout released, or nothing at all — and `ResetOutcome` has three answers rather than two, because "refused" and "the database would not take it" have to look different to the visitor and identical to a stranger probing for usernames. |
 | `accounts.php` | `AccountStore`, `AccountAdmin` — `close()` / `edit()` → `AccountResult` | What it means for an account to be **closed**, and the transaction that closes one: grants surrendered, edit lock released, `closed_at` stamped, all or nothing. Also the two refusals that exist because closing cannot be undone — your own account, and the last admin who can still sign in. And `edit()`, the other three-table change: the role, the active flag and the email in one write, then the grants a **promotion** makes meaningless (an admin holds every Display by role, so the rows would sit there displayed nowhere and removable by nothing) and the locks a **demotion** puts out of reach (no grants left, so the account cannot even release what it is holding). Not a gatekeeper for all of `users`: creating an account and setting somebody's password from the panel are still written there. What lives here is closure and the reads that depend on it, so the files with an opinion about a user row cannot disagree about what a closed one means — plus the three `users` writes that have to happen inside somebody else's transaction, `setPassword()`, `clearLoginLockout()` and `updateProfile()`, because a page cannot hold a transaction over SQL it writes itself — plus sign-in's two, `findForSignIn()` and `registerFailedLogin()`, which `login.php` used to issue itself and which had to move before `LoginAttempt` could be a module with no database in it. Those three are the only methods in the class that let an exception out, deliberately: everything else answers a question, and a question is better answered "no" than not at all, but these are halves of a change that must not half-happen. `clearLoginLockout()` answers true when the three ADR-0001 columns are absent, for the same reason `isClosed()` answers false: a database without them has never locked anybody out. It adds no schema of its own: `closed_at` used to arrive from an `ensureSchema()` here that the admin panel called on every load, and is a gated plan entry as of §4v — which makes the *order* on that page load-bearing, since the store caches whether the column exists and is built after convergence, not before. |
-| `server_report.php` | `ServerReport(PDO, server?)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. It takes the request as an argument because the session cookie's `Secure` flag is now decided per request (§4u), and a report that could only describe the request it is running inside could not be checked against the other one. |
+| `server_report.php` | `ServerReport(PDO, server?)` — `runtime()` / `convergence()` / `isConverged()` | What machine this is, and whether the schema actually converged. Reads the database catalogue (through `readSchemaFacts()`, not its own query) and PHP's own configuration, and **no application data at all** — which is why it may name `users`, `displays` and `canvas_elements` without being a second writer. It trusts the catalogue only for a table the read actually covered; anything else falls back to a `SELECT … LIMIT 0`, because a confident wrong "missing" from the one report meant to be trusted is worse than no report. It exists because two things this repo depends on were never observable: the live PHP version (the whole 7.1 rule rests on it) and whether a `schemaTry()` statement landed, which by design fails silently. It takes the request as an argument because the session cookie's `Secure` flag is now decided per request (§4u), and a report that could only describe the request it is running inside could not be checked against the other one. `phpVersionNote()` is public and pure so its three bands can be tested on a machine that is none of them. |
 | `error_policy.php` | `ErrorPolicy::install(mode)` / `log` / `fail` / `report` / `noticeFor` / `status` | What happens when something goes wrong: the ini settings, set in code so they travel with the deploy and can be read back; the three handlers; where the log lives and when it rotates; and — the part that needed a module rather than a line — the last thing a request prints, which differs by audience. A Screen gets a self-re-checking kiosk notice, an endpoint gets JSON its caller can parse, a person gets a sentence. `noticeFor()` is pure so all three are testable without a failing server. `report()` is the one for a problem the app survived but an admin should hear about, and it takes a window: a problem that recurs on its own schedule — a schema statement retried on every page load, or every 30 seconds per Screen — has its *log line* throttled too, not only its email, or the record of it buries everything else in a 2 MB file. `firstInWindow()` and `stateFile()` are public for the same reason `report()` needs them: a repeated *attempt to fix* something needs the same restraint as a repeated report of it, and this module is where the state directory is decided. Depends on nothing: no database, no session, no config. |
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
 | `login_attempt.php` | `LoginAttempt(AccountStore)` — `attempt(username, password, now?)` → `LoginOutcome` | One sign-in, decided: which of six answers it is, and the sentence that goes with each. The rule it exists to make checkable is an **ordering** (ADR-0008, invariant 23) — closed, suspended and locked-out are settled before `password_verify()` runs, so the sentence never varies with the password and a guesser on a suspended account is not told when they have got it right. It also carries ADR-0001's two numbers and the counting they drive, in UTC (§4v): a `locked_until` further out than one window was not written by this code and is not honoured, which is both true of the policy and what stops a row left in the old local-time format from locking somebody out for a shift. **It holds no PDO**: every statement is `AccountStore`'s, which is what stops the file that decides what to say from growing a query that says something else, and leaves the thing under test as the decision rather than a database. `login.php` is the adapter — start a session, or print the sentence. |
 | `request_scheme.php` | `RequestScheme::isSecure(array $server): bool` | Whether the *browser's* leg of a request is HTTPS, asked for exactly one reason: whether the session cookie may carry `Secure`. A flat `true` there is not a hardening on an `http://` deployment, it is a correct password landing back on a blank login form for ever, because the browser discards the cookie and nothing anywhere says so. Believes the forwarded proxy headers, deliberately — refusing them costs a real Cloudflare-fronted deploy its `Secure` flag, while believing a forged one costs only the forger their own sign-in. Says false when the request says nothing. Depends on nothing, reads no superglobal. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. |
 | `branding.php` | `BrandingConfig` — `apply` / `current` / `save` → `BrandingWrite`, plus `path` / `load` and the pure `render` / `parses` | The generated `branding_config.php`: the eight settings it holds, their defaults, and **how a file the whole app requires is replaced while the app is running** (§4y). Nothing writes the live path but one `rename()`, and it is not reached until the replacement has been rendered, parsed, written to a temporary file beside it and read back byte for byte — so a reader gets the whole old file or the whole new one, and every failure leaves the site on exactly what it had and says so. `save()` takes only the settings a form actually edited and applies them over `current()`, which is what the old eight-positional-argument call could not do: each of the two forms passed the other's values back in from page variables. And the read side: `apply()` is one call for what used to be seven lines repeated in `config.php`, `login.php`, `builder.php` and `help.php`, each spelling out the same defaults and two of them guarding the `require` on a different constant from the other two. `config.php` calls it and `auth.php` requires `config.php`, so the eight names exist by the time anything renders; nothing already defined is ever overridden, which is what `config.php` promises about `db_credentials.php`. Defining constants is a global side effect no other module has — the exception is deliberate, because the names are the interface every template already reads. Depends on nothing — no database, no session, no config, because the page that manages this file is also the page that has to work when it is missing. |
+| `color.php` | `Color::read` / `isColor` / `describe` | What a colour is — `#rrggbb`, and nothing else. One rule, because it used to be written out four times and the four copies disagreed about what to do when a value failed it: `DisplayAdmin` substituted `#1a1a2e`, `BrandStyles` `#ffffff`, the Branding form whatever was already saved, and the Builder's `rgbToHex()` `#000000`. All four then reported success, so "saved" meant four different things and none of them meant "what you typed" (#21, #41). **It never picks a colour.** `read()` answers the colour or `''` and the caller decides what an empty answer means for it — a form refuses and names the field, the publish path refuses and names the block, a caller with a genuine default applies it visibly at the call site. Blank is deliberately *not* a colour: "nothing supplied" and "supplied and unreadable" are different answers and collapsing them is the defect. Not a normaliser either — no trimming, no `#fff` expansion, no `rgb()` — the accepted set is exactly what the three old regexes shared, so nothing that used to be storable stopped being storable. Pure, and depends on nothing. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
+| `http_reply.php` | `HttpReply::json(payload[, code])` / `noStore` / `jsValue`, and the pure `reply` / `codeFor` / `codeForPayload` / `codeForResolution` / `cacheHeaders` behind them | The envelope every answer leaves in: the status line, the caching rules, and the bytes of the body. **The encode**, because `json_encode` returns `false` and `echo false` prints nothing — one bad byte sent a zero-length 200 and a sign kept its layout for good (#26). Malformed UTF-8 is repaired and reported; anything else becomes a real 500 with a body that is known to encode, so no JSON request is ever answered with something that is not JSON. **The code**, derived from the payload's own `reason` rather than chosen beside it, because twenty-odd call sites cannot be kept in step by hand and a code that disagrees with a reason disagrees silently (#28). **The caching**, `no-store` everywhere, from one place — needed most by the 404s this module introduced, which are heuristically cacheable where the unlabelled 200 they replaced was not. `jsValue()` is the same encode for a value printed into a page's own `<script>`, where a `false` emits `var X = ;` and takes the whole block down. Pure functions under thin senders, the way `ErrorPolicy::noticeFor()` is, so all of it is testable where `header()` does nothing. Depends only on `ErrorPolicy`, for the sentence. |
 
 `lib/` is denied to the browser by `lib/.htaccess`. Nothing in `lib/` prints,
 redirects, reads `$_POST`/`$_GET`, or touches `$_SESSION` — adapters pass what
@@ -450,9 +452,17 @@ decisions already made, not new decisions.
   its lowest row to carry the old background onto the Display that replaces it —
   the one reader, and the reason invariant 2 says "retired to one reader" rather
   than "unread".
-- **PHP 7.1-compatible syntax.** The live server's PHP version is unverified and
-  `.htaccess` still carries `mod_php7` blocks, so no typed properties,
-  constructor promotion, enums, `readonly`, `match`, or arrow functions. This
+- **PHP 7.1-compatible syntax.** The live server's version is **still unverified**
+  (#51, §4k). It was briefly recorded as 8.2, read off Settings → This Server — but
+  that screen is part of the undeployed multi-display build, and #46's probe found
+  `lib/` answering 404 on the live site, so it cannot have answered there; Cloudflare
+  hides the version from every response header. So the rule stands, and it is free:
+  no file uses a typed property, constructor promotion, `readonly`, `match` or an
+  arrow function, and `php -l` passes on 7.1 as well as 8.4. CI stays pinned to 8.2
+  as the likely version and the one its MySQL service was built against — a pin is a
+  test target, not a claim about the host. The two 7.1-era fallbacks —
+  `.htaccess`'s `mod_php7` blocks and `auth.php`'s pre-7.3 session-cookie form —
+  stay, because they are free and they cover a move to a different host. This
   container has PHP 8.4 for `php -l` only.
 - **An inactive Display returns no elements from `get_layout`.** The API reports
   `status: "inactive"` and the Phase 2 Viewer renders the notice. A Phase 1
@@ -1030,8 +1040,9 @@ answer "present" fails 1.
 ### 4k. Two things this repo believed without ever looking
 
 **"PHP 7.1-compatible syntax — the live server's version is unverified."** That
-sentence has shaped every file here. It is also the only rule in the project with
-no way to check it, and the one real violation it ever caught was not syntax at
+sentence — the rule as it stood until the end of this section — shaped every file
+here. It was also the only rule in the project with no way to check it, and the one
+real violation it ever caught was not syntax at
 all: `session_set_cookie_params()`'s options-array form arrived in 7.3, and on 7.1
 it is a warning-and-no-op that silently drops HttpOnly, Secure and SameSite from
 the sign-in cookie. A syntax rule cannot catch a library signature, and neither
@@ -1077,10 +1088,35 @@ outright and asserts the report goes red and says why. Verified against two
 mutations — hard-coding the column check to true, and letting the no-catalogue
 fallback answer true on error — each of which fails 3.
 
-**Still open:** what the live server actually runs. The screen answers it the
-first time an admin opens Settings after this deploys; until then the 7.1 rule
-stands unchanged, because guessing in the other direction is the one mistake that
-breaks sign-in on the live site.
+**Recorded as answered — 8.2 — and then withdrawn at the merge.** The branch that
+answered it said the screen had been opened and reported 8.2, and changed the rule in
+`CLAUDE.md`, `README.md`, `HANDOFF.md` and the invariant list to match. It cannot have
+been that screen: it ships with the multi-display build, and #46's probe of the live
+site found `lib/` answering 404 — the build is not deployed, so the page does not run
+there. Cloudflare fronts the site, so no response header carries the version either.
+Nothing in this repo has observed it.
+
+So **the rule is back to 7.1-compatible and back to saying "unverified"**, which costs
+nothing: `php -l` passes on 7.1 as well as 8.4 and no file uses syntax the rule
+forbids. This is not a claim that the host is *not* 8.2 — it very likely is, and CI
+stays pinned there. It is the difference between a measurement and an expectation, on
+the one question where guessing wrong means the sign goes down.
+
+Three things did *not* change either way, each for its own reason:
+
+- **`auth.php` keeps the pre-7.3 branch.** The rule is about what may be written;
+  the branch is about what happens if the host moves. It costs one `if` and it is
+  the only thing standing between a different server and a sign-in cookie with no
+  HttpOnly, Secure or SameSite. `.htaccess`'s `mod_php7` blocks stay for the same
+  reason, next to the `mod_php8` ones that were already there.
+- **No file was rewritten to use 8.x syntax.** Nothing gains from `match` or a typed
+  property today, and a sweep like that is a large diff through code that has just
+  been changed, on an app with no undo and no CI running.
+- **`ServerReport` still reports the version, and now points the other way.**
+  `ASSUMED_PHP` was the *oldest* PHP this might have to run on, so anything newer
+  was merely wasteful. It is now the version the code is written to use, and an
+  *older* server is the failure — `phpVersionNote()` says so, in three bands, and
+  is pure so all three are testable on a machine that is none of them.
 
 ### 4l. An account number is never handed to a second person
 
@@ -2618,17 +2654,57 @@ Left standing, and named rather than skipped:
 
 ## 5. Verification
 
-No CI, no test suite, no PHP runtime on the target — verification is deliberate
-and manual. Run all of it before every push.
+There is no deploy pipeline — every change reaches the sign by hand — but as of
+#48 and #51 CI runs everything below except the two things that need a browser or
+a copy of live data. PHP 8.2, which is the live server's version (confirmed, not
+assumed — the 7.1 figure #51 was written against was a guess made while nobody
+could check), against two engines: SQLite and a real MySQL 5.7 service. Run it
+locally before every push anyway; the loop is faster than a push.
 
 ```
-php -l <every touched .php>              # syntax; also a GitHub Action
-php tools/selftest_layout.php            # the real modules, in-memory database
+php -l <every touched .php>              # syntax; also in CI, on 8.2
+php tools/check_invariants.php           # the greps below, run rather than read —
+                                         # comment-aware, so a module documenting a
+                                         # rule does not fail it
+php tools/selftest_layout.php            # the real modules, in-memory SQLite
 node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
                                          # that has only what a read-only page emits
 node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an
                                          # admin who can edit — driving a stubbed
                                          # XMLHttpRequest through every way an upload ends
+node tools/selftest_builder_colors.js    # the same JS again, against a Display whose
+                                         # stored data is already wrong, through a `style`
+                                         # that discards and normalises as a browser does
+node tools/selftest_viewer.js            # viewer.php's poll loop, against a fetch this
+                                         # test controls: the sign must not blank for one
+                                         # dropped packet, and must not stay up for an
+                                         # hour of them (§4af)
+```
+
+And, with a MySQL to point at — the same suite, with nothing stubbed:
+
+```
+SELFTEST_MYSQL_DSN='mysql:host=127.0.0.1;dbname=lbm_selftest;charset=utf8mb4' \
+SELFTEST_MYSQL_USER=... SELFTEST_MYSQL_PASS=... php tools/selftest_layout.php
+```
+
+On MySQL the fixture is built by running `schema.sql`, the `FOR UPDATE` stub is
+gone, and twenty-three further checks run that SQLite cannot be asked — see §4aa.
+Eight of those are the publish collision (§4ab), which needs two database sessions
+and so cannot exist on an in-memory fixture at all.
+
+**The greps below are what `tools/check_invariants.php` automates.** They are kept
+here because the annotations are the reasoning, and because five of them cannot be
+decided by pattern and are still yours to read: `canvas_elements` (the endpoint
+name `get_canvas_elements` is indistinguishable from the table), `ErrorPolicy::report`
+callers (a new one is allowed but has to be read for whether it can repeat),
+the *position* of `ensureSignageSchema()` calls, and the `grants_accounts` /
+`grants_displays` pairing. The checker prints that list on every run so nobody
+mistakes it for total coverage. `schema.sql` against `lib/schema.php` used to be a
+sixth; the MySQL run now asserts convergence has nothing left to do against a
+database built from that file, which is the same property mechanised.
+
+```
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
                                               # the get_canvas_elements endpoint NAME, and
                                               # server_report.php's expected-column list
@@ -2645,6 +2721,14 @@ grep -rn "schemaTry(\$pdo" --include=*.php .   # only lib/schema.php, and only f
                                               # named steps. A statement added anywhere else
                                               # bypasses signageSchemaPlan() and is therefore
                                               # ungated and untested — invariant 19
+grep -rn "json_encode(" --include=*.php .      # lib/http_reply.php, which owns it; the one in
+                                              # lib/error_policy.php, which is the last-resort
+                                              # notice and so cannot route through it (and has
+                                              # checked for false since it was written); and the
+                                              # self-test. Anywhere else is a reply that can
+                                              # leave as zero bytes behind a 200, or a
+                                              # `var X = ;` that takes a whole script block
+                                              # down — §4af
 grep -rn "ErrorPolicy::report" --include=*.php .  # api.php (an upload the server refused),
                                               # lib/schema.php (a schema statement it refused),
                                               # and one check in the self-test. A new caller is
@@ -2821,28 +2905,59 @@ grep -rn "file_put_contents" --include=*.php .  # lib/error_policy.php (the log,
                                               # renamed over, never opened with O_TRUNC where a reader
                                               # can find it half-done (invariant 24, §4y)
 grep -rn "file_put_contents" --include=*.php . | grep -v "^./lib/\|^./tools/"
-                                              # exactly one hit: admin_panel.php's branding writer. That
-                                              # is the membership test for group A of
+                                              # must be EMPTY. This is the membership test for group A of
                                               # docs/DEPLOY-SKIP.md — a repo-tracked file the running app
                                               # rewrites, so uploading the repo's copy reverts live state.
-                                              # A second root-level hit is a second file an upload would
-                                              # revert: add it to that list in the same commit. The lib/
-                                              # writers are excluded on purpose — they all write into the
-                                              # state directory, which is not in the repo (§4z)
+                                              # It was written expecting exactly one hit, admin_panel.php's
+                                              # branding writer, from a branch cut before §4y moved that
+                                              # write into lib/branding.php. There has been nothing to find
+                                              # since, so the number was wrong the day it landed — a grep
+                                              # whose stated answer cannot occur reads as covering
+                                              # something (#50's shape). Empty is the real rule, and a
+                                              # root-level hit now means a page has started writing a file
+                                              # an upload would revert: put it on that list in the same
+                                              # commit. The lib/ writers are excluded on purpose — they all
+                                              # write into the state directory, which is not in the repo,
+                                              # and lib/branding.php writes a temp file it renames (§4y, §4z)
 grep -rn "[^_]DISPLAY_TAG\|waDisplay()" --include=*.php .  # every request naming a Display must send
                                               # DISPLAY_ID / waDisplayId() with it (invariant 12), which
                                               # omission silently opts out of. viewer.php is the one
                                               # exception: a Screen sends the tag alone (ADR-0003)
+grep -rn "htmlspecialchars(" --include=*.php . # lib/markup.php, which names both flags, and
+                                              # lib/error_policy.php's last-resort notice, which cannot
+                                              # depend on it and passes them in full. Anywhere else is a
+                                              # call whose behaviour depends on the host's PHP version —
+                                              # §4ah
+grep -rn "BRAND_NAV_BG\|BRAND_NAV_BORDER\|BRAND_ACCENT\|BRAND_TEXT" --include=*.php .
+                                              # branding_config.php is the file; admin_panel.php writes
+                                              # it; lib/brand.php is the only reader. A page naming one
+                                              # is a page interpolating whatever the config holds into
+                                              # its own <style> block, where escaping is not what makes
+                                              # a value safe — §4ai
 ```
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it.
+**Three of the checks are not greps and cannot be written as one**, so they live only
+in `tools/check_invariants.php`: whether an escaped value lands inside a `<script>`
+(the same call is right or wrong depending on the element, and a regex looking for
+`<script` is fooled by `admin_panel.php` mentioning one in a PHP comment — only
+`T_INLINE_HTML` may move that state); whether every echo on a page is one of the five
+shapes safe by construction; and whether a class constant's *declared value* is a
+number. All three read the token stream.
+
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3400 lines of it.
 Anything touching that file needs reading, not linting. `node --check` over the
-extracted `<script>` body proves it parses; the two node suites go further and *run*
-it. `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only page
-emits, which is the only automated way to catch a lookup reaching for a control the
-lock took away. `selftest_builder_uploads.js` takes the opposite premise — an admin
-who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the only
-way to see a missing `.catch()`: the file parses perfectly without one.
+extracted `<script>` body proves it parses; the three node suites go further and
+*run* it. `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only
+page emits, which is the only automated way to catch a lookup reaching for a control
+the lock took away. `selftest_builder_uploads.js` takes the opposite premise — an
+admin who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the
+only way to see a missing `.catch()`: the file parses perfectly without one.
+`selftest_builder_colors.js` takes a third — an admin opening a Display whose stored
+data is already wrong — and is the one place where the *stub itself* is load-bearing:
+its `style` is a Proxy that discards an unparseable colour and normalises a parseable
+one, exactly as the CSSOM does. A stub that stored whatever it was given would make
+that whole suite pass against the defect it exists for, so the fidelity of the stub
+is asserted before anything is asserted through it.
 
 `schema.sql` has no automated check at all — nothing reads it, so a column missing
 from it fails silently on a future rebuild and nowhere else. Diff it against
@@ -2856,6 +2971,25 @@ On a server with a **copy** of live data — never the live database:
 php tools/rehearse_phase1.php            # converge schema, prove scoping, publish twice
 ```
 
+And on the **live** database, where this one is safe and its neighbour is not:
+
+```
+php tools/audit_colors.php               # every stored colour, read-only
+```
+
+Every statement it runs is a `SELECT`. It exists because #41 left a consequence
+only live data can hold — see §4ac — and it is the one tool here with no
+`--confirm-copy`, which is exactly why its header says so at length.
+
+CI runs the rehearsal too, but against a database built from `schema.sql` rather
+than a copy of live data, and the difference is the whole remaining point of doing
+it by hand.
+A schema.sql database is already converged, so the run proves the round trip —
+both widened ENUMs, the cascade rules, publish-and-republish scoping, DDL
+committing an open transaction — and cannot prove the one thing the tool was
+written for: that the idempotent statements apply to the live table **as it
+stands**. That still needs a copy, and is still a deploy-day step.
+
 Then in a real browser: sign in → edit → publish → the Screen updates within
 30s; publish again from a second stale tab → refused with a named holder;
 `api.php?action=get_layout` with no session still returns the drive-thru layout.
@@ -2863,6 +2997,1089 @@ Then in a real browser: sign in → edit → publish → the Screen updates with
 Phases 4–5 additionally need two accounts (one admin, one `basic` with a single
 grant) and, for the lock, two browsers. Phase 2 needs a genuinely
 different-shaped Display, including a portrait one.
+
+---
+
+### 4aa. The suite had never met the database it is about (#48, #51)
+
+Two decisions, one subject: what the tests were actually running against, and how
+much of §5 anybody was really doing.
+
+**The stub nobody could remove.** `SELECT … FOR UPDATE` has no SQLite equivalent,
+so `TestDisplayStore` replaced `lockLayoutRevision()` with a plain SELECT. Every
+other statement in the publish path was real; that one was not — and it is the row
+lock the publish transaction takes before it deletes anything, which makes it the
+line in this repo with the most riding on it and, until now, no test over it at
+all. Setting `SELFTEST_MYSQL_DSN` builds the fixture on a real MySQL database and
+`newTestDisplayStore()` hands back the real store, so all 827 checks go through the
+actual statement. SQLite stays the default: it needs nothing installed and runs in
+about a second, and the fast loop is the one people use.
+
+**Building the MySQL fixture from `schema.sql` was the cheap part and the valuable
+one.** Nothing read that file. A column missing from it failed silently on a future
+rebuild and nowhere else, which is why invariant 15 said to diff it against
+`lib/schema.php` by eye. The MySQL run now asserts that convergence has *nothing
+left to do* against a database built from it — the same property, mechanised. Drift
+between the two files fails a check instead of waiting for a rebuild.
+
+**A database per fixture, not one wiped between calls.** The suite holds two at
+once on purpose — one scoping check proves a rename in database A cannot reach into
+B — so a shared connection that reset itself would delete rows an earlier `$pdo`
+was still being asserted against. This cost an hour to find and is worth writing
+down: it presents as a `TypeError` about a null Display, forty checks after the
+real cause.
+
+**Four checks stay on SQLite deliberately**, and each says so where it sits. Three
+need a catalogue that *disagrees* with the tables — a column that is really there
+on a table `information_schema` never mentioned — and MySQL's cannot be made to
+lie. One needs `INSERT IGNORE` to be *refused*, which is the witness that the seed
+statement was never sent. `fakeCatalogue()` now rejects a non-SQLite handle rather
+than failing later with a confusing message about `ATTACH`.
+
+**What MySQL found:** the self-repair path completes. On SQLite the CREATE is
+refused, the table stays missing, and the exception comes back out — all the
+fixture could ever show. On MySQL `displays` and `display_permissions` are really
+recreated, the drive-thru Display is seeded, and the read that triggered the repair
+returns. §4q called that path "fixed" on the strength of a detector test; this is
+the first time the sequence has run end to end anywhere except
+`tools/rehearse_phase1.php` against live data.
+
+**#51's version half is still open**, and this section said otherwise for a while.
+It read "CI pins PHP 8.2 against a 7.1 target", and the answer recorded here was that
+the live server runs 8.2, so the pin was right and the 7.1 figure was a guess. The
+evidence given was Settings → This Server, which cannot have been the source: that
+screen is part of the build that has not been deployed, and #46's probe found `lib/`
+404 on the live site. §4k has the full retraction. The pin stays at 8.2 because it is
+the likely version and what CI's MySQL service was built against; the *rule* is back
+to 7.1-compatible, because a pin is a test target and the rule is a promise about a
+host nobody has measured.
+
+Running the suite on 7.1 did surface two ways this code misbehaves below PHP 8, and
+both are fixed even though neither is reachable on 8.x:
+
+- An array where a `temp_id` belongs. PHP 8 throws on the subscript and the publish
+  is refused; earlier versions warn and continue, mapping nothing, so the section's
+  content lands at root level — #31's silent reparenting. The refusal was real but
+  it lived in the language rather than in `LayoutStore`, and the check covering it
+  passed for a reason no reader of that file could see. It is written down now.
+- The error log never rotating, because the size was read from a stat cache PHP 8
+  invalidates and earlier versions do not.
+
+The second one leaves a check that cannot fail on 8.2, which is the shape #50 is
+about. It is kept and labelled as such rather than deleted, because what it records
+is worth more than the line — but it is not coverage and is not counted as any.
+
+**What still is not covered**, printed by `tools/check_invariants.php` on every run
+so it cannot be mistaken for full coverage: five §5 greps that no pattern can
+decide, and the rehearsal against a database that genuinely *lags* the repo, which
+needs a copy of live data and remains a deploy-day step.
+
+---
+
+### 4ab. The publish coerced everything and refused nothing (#23, #24, #25, #29–#32, #35)
+
+Seven decisions, one shape. Every field of a published layout arrived through
+`intval($el['x_pos'] ?? 0)` or `$el['font_family'] ?? 'Arial'` — and that is not a
+rule, it is a coercion with an answer for everything and a report on nothing.
+`"abc"` became 0. An array became 1, silently, which for `asset_id` meant the block
+pointed at library row 1 — whatever that is on this installation. A `type` of
+`"script"` was stored as `''` by a non-strict MySQL: a row that renders as nothing,
+matches no type filter, and is invisible in the Work Area. A width of 999999999 was
+either a failed publish reported as "Publish failed" or a truncation reported as
+success, depending on a MySQL setting nobody here has looked at.
+
+None of that had anywhere to be caught, because there was no step between "the JSON
+decoded" and "delete the layout and insert this". So the fix is a step, and the
+rule it applies is the one this app applies everywhere else: **refuse the write.**
+
+**`lib/layout_rules.php` is a pure function.** No PDO, no Display, no transaction.
+That is deliberate and it is the same lesson as `schema.php`'s decision half
+(§4o): a function with no I/O can be asked several hundred questions in a
+millisecond, so the vocabulary, the bounds, the column widths and the message
+wording are all covered exhaustively without a database anywhere near them. It runs
+**before `beginTransaction()`** — a refused publish has not opened a transaction,
+has not taken the row lock, and has not touched a row.
+
+What it decides, and why each one is not a coercion:
+
+| Decision | The rule |
+|---|---|
+| #29 | `type` and `block_subtype` must be in the vocabulary. `'Section'` mattered most: `insertContent` skips sections with `!==`, so a mis-cased one slipped past the skip and was inserted as top-level content — by a `basic` account, which is the rule ADR-0005 exists to hold. |
+| #30 | Numbers must be numbers and inside bounds; strings must be strings and inside their column widths. Refused, never clamped — except where the owner said clamp. |
+| #31 | Two sections cannot share a `temp_id`. The map is a plain array, so the second write replaced the first and every block belonging to the first section was inserted into the second: a whole column moved across the sign, silently, reporting success. |
+| #32 | `line_height` is **clamped** to 0.5–5, and written with an explicit empty thousands separator. `number_format($v, 2)` handed a DECIMAL(4,2) column the string `"2,000.00"`. |
+
+The clamp is the one place the answer is not "refuse", and it is not an
+inconsistency — it is the owner's decision on #32, recorded as such. A line height
+that is not a number at all is still refused; only an out-of-range *number* is
+clamped.
+
+**One vocabulary, not two.** `SCHEMA_ELEMENT_TYPE_ENUM` and
+`SCHEMA_BLOCK_SUBTYPE_ENUM` are now generated from `LayoutRules::ELEMENT_TYPES` and
+`::BLOCK_SUBTYPES` rather than spelled out again in `schema.php`. The drift between
+the list the column stored and the list the publish accepted *was* #29; two hand-
+written copies are how it got there. The generated strings are pinned by checks
+against the literals that used to be there, so a rebuild cannot quietly widen one.
+
+**A refusal is its own kind.** `PublishResult` gained `invalid` and `busy` beside
+`stale`, `locked` and `failed`, because `failed` means "something broke, try again"
+and these two mean the opposite things: `invalid` will be refused identically until
+the payload changes, and `busy` will very likely work in ten seconds. Both were
+added to the Builder's **alert** branch rather than its toast branch, for the reason
+the four already there are: a publish that was refused looks exactly like one that
+worked if the only trace is a toast that has already faded, and the next thing
+somebody does with a sign they believe they published is walk away from it.
+
+**#25 — the hidden blocks were public.** `api.php?action=get_layout` needs no
+sign-in, by design: a TV in a shop window cannot log in. It answered with the whole
+layout and let the Viewer's JavaScript skip the hidden blocks on the way to the DOM
+— a *rendering* rule standing in for an *access* rule. Anything an admin had hidden
+was one `curl` away, content and all: next month's prices, a promotion with a date
+on it, a section pulled because it was wrong. `publicSnapshot()` leaves them out at
+the query, along with the children of hidden sections. The Viewer's own filter
+stays where it is; that page runs unattended on a TV and a payload it did not
+expect must not be the thing between a customer and a price list.
+
+**#24 and #23 — the background address.** The rules lived near the admin panel and
+nowhere else, so the API had none of them. `bg_val` is written into `displays` by a
+publish and read back by the Viewer as `background-image: url('…')`, which makes an
+unvalidated colour field an address every Screen in the building fetches on every
+render. It did not even need an `image` background to reach: publish a "colour" of
+`https://elsewhere/x.png`, then publish `image` with no file, and the `keep-image`
+arm promotes the stored string to the image path. The rules moved onto `Background`
+itself, which is the thing that knows what a background is.
+
+That `keep-image` arm is also #23 — choosing Image on a Display that has never had
+one leaves `url('#1a1a2e')`, which loads nothing and takes the sign near black. It
+is the same two lines as #24's hole, so it was closed with it rather than left as a
+known defect in code being rewritten. **#23 was not in the batch that was asked
+for**; it is marked Done in `reviewed-decisions.md` and named here rather than
+folded in quietly.
+
+The check asks about the *intent*, and for `keep-image` about the value already
+stored — never about a stored value the intent is going to replace. A Display
+sitting on a bad value from before these rules can still be published to; it just
+cannot be switched onto it. Anything else would have locked an admin out of a sign
+because of a row written years ago.
+
+**#35 — a collision was a timeout.** InnoDB waits `innodb_lock_wait_timeout`
+seconds for a row lock and that defaults to **50**; PHP's `max_execution_time`
+defaults to **30**. So the second of two publishes to one Display was never told
+anything — it was killed mid-wait, with the `Content-Type` header already promising
+JSON, the transaction left for the connection's teardown, and "Network error." in
+the Builder for a publish whose fate nobody could determine. Five seconds now, set
+per session before the transaction opens, and 1205/1213 caught and turned into a
+sentence that says the true thing: try again in a moment.
+
+The detector is engine-neutral and message-based, which is #11's rule rather than a
+preference: PDO puts the *SQLSTATE* in `getCode()` and leaves 1205 in the message,
+and a check gated on a MySQL-only number is a check the SQLite leg can never reach,
+so nothing ever runs it.
+
+**The deliberate breakages the tests catch.** Verified by injection, not assumed:
+
+- Removing the shortened lock wait leaves the collision check *passing* — PHP CLI
+  has no time limit, so the second publish still eventually gets 1205 and still
+  comes back `busy`. What fails is the assertion that it gave up in **seconds**,
+  which waited the full 50. That timing assertion is the load-bearing one and the
+  only thing standing between #35 and a check that cannot fail.
+- The collision test needs two database sessions and is therefore MySQL-only. A row
+  lock is only a row lock across connections: the same PDO handle re-entering its
+  own transaction waits for nothing, so a same-connection version would have been
+  a check that passes for the wrong reason. `secondConnectionToLatestTestDb()`
+  exists for this one test and says so.
+- Two pre-existing checks changed from `failed` to `invalid` — the hostile-payload
+  pair from §4g. Their *surviving-layout* assertions are untouched, because the
+  point was never which kind came back, it was that two DELETEs did not run.
+
+**Left standing, and named rather than skipped:**
+
+- **A `basic` account can still publish content at root level.** ADR-0005 says they
+  work inside sections, and refusing an unresolvable parent would enforce it — but
+  a Display with admin-made root-level content would then refuse that clerk's every
+  publish, because their Builder resubmits what it loaded. Distinguishing
+  "resubmitted existing root content" from "new root content" is not something the
+  payload supports. Considered and left; it needs a payload change, not a check.
+- ~~**Colour *semantics* are not validated on the publish path**, only shape and
+  length.~~ **Closed by §4ac.** `font_color` was checked as a string within 50 bytes
+  and no further, because "an unreadable stored colour" is #41 and "the panel
+  coerced a colour it could not parse" is #21. Both were taken together in the
+  section after this one, and the publish path now refuses a colour it cannot read
+  and names the block.
+- ~~**`DisplayAdmin::cleanColor()` still coerces to `#1a1a2e`.**~~ **Closed by §4ac.**
+  It was left alone deliberately so the fix would have one clean place to land; it
+  landed there. The method is gone and both background paths refuse.
+
+---
+
+### 4ac. Refusing a value rather than guessing at it (#21, #41)
+
+Taken together because they are one defect seen from two ends. #21 is "the panel
+coerced values it could not parse and reported success". #41 is "an unreadable
+stored colour round-tripped through the colour picker and published back as black".
+The thing in the middle — the reason a colour nobody could read existed to be
+round-tripped, and the reason nothing ever said so — is that **the app had four
+different opinions about what a colour is, and all four of them substituted rather
+than refused**:
+
+| Where | Rule | Substituted | Then said |
+|---|---|---|---|
+| `DisplayAdmin::cleanColor()` | `/^#[0-9a-fA-F]{6}$/` | `#1a1a2e` | "Display created" / "Background colour set" |
+| `BrandStyles::cleanColor()` | the same regex | `#ffffff` | "Brand standards saved" |
+| Branding form, four times inline | the same regex | whatever was already saved | "Branding saved." |
+| `rgbToHex()` in `builder.php` | its own | `#000000` | nothing at all |
+
+Four copies of one rule is a smell. Four copies that disagree about the *fallback*
+is the bug: "saved" meant four different things and none of them meant "what you
+typed".
+
+**The rule is one pure function now** — `lib/color.php` — and its interface is the
+decision. `Color::read()` returns the colour or `''`. It never picks one. Every
+caller decides what an empty answer means for it, at the call site, where it is
+visible:
+
+- A form **refuses and names the field**.
+- The publish path **refuses and names the block**.
+- A caller with a genuine default — a new canvas has to have *some* background —
+  applies it explicitly, and only for the case that actually means "nothing was
+  supplied".
+
+That last distinction is most of #21. **Blank and unreadable are different
+answers.** `Color::isColor('')` is false on purpose; a predicate that said true for
+blank would collapse the two again, which is exactly how a form that submitted
+nothing and a form that submitted nonsense came to be treated identically.
+
+`Color::read()` is also deliberately **not** a normaliser: no trimming, no `#fff`
+expansion, no `rgb()`. Widening what the app stores is not what this change is for,
+and the accepted set is exactly what the three old regexes shared, so nothing that
+used to be storable stopped being storable.
+
+**What #21 changed, one caller at a time.**
+
+- `DisplayAdmin` — both background paths refuse, with the same sentence, because an
+  admin who sees two explanations for one rejected swatch will look for two causes.
+  `setBackgroundColor()` is the harsher half and the one worth stating plainly: it
+  used to substitute the dark default, **advance the layout stamp**, and report the
+  background "set". So an admin got a colour they had not chosen, every Screen took
+  it within 30 seconds, and every Builder tab open at the time was invalidated on
+  the way past. There is no undo for any of that. The test asserts all three
+  stopped — including that the stamp does not move on a refusal, which is the one
+  that would have gone unnoticed.
+- The **Branding form** refuses the whole save, logo included. A save that stored
+  the new logo and none of the colours is a half-applied change with no undo and
+  nothing saying which half landed — and `move_uploaded_file()` cannot be rolled
+  back, so the refusal has to happen *before* the upload rather than after it. That
+  is the one-token guard on the upload block, and it is load-bearing.
+- **Ids.** `intval` never fails, it guesses. `"abc"` is 0, which at least produced
+  "No account was named". The dangerous one is `"7abc"`, which is **7** — a real and
+  different account, edited, closed or password-reset with the change reported as a
+  success under the name the form had been showing. `intval([])` is 1, and account
+  number 1 is the first admin the store ever created; `intval(true)` is 1 too. So
+  the id now arrives at the module raw and the module decides. `AccountAdmin` and
+  `DisplayStore::forId()` each hold that predicate, and the panel stopped casting.
+- **`AccountAdmin::resetPassword()` is new.** The panel was running
+  `UPDATE users SET password_hash = ? WHERE id = ?` itself and printing "Password
+  reset." whatever the statement matched — including nothing, and including somebody
+  else. It goes through `AccountStore::setPassword()`, which asks whether the row
+  exists rather than reading `rowCount()` afterwards, because MySQL counts rows
+  *changed* and a re-used password comes back as zero.
+
+**What #41 changed, and why refusing is right here too.** The mechanism is worth
+writing down because every step of it is silent:
+
+1. A `font_color` holds something that is not `#rrggbb` — a row edited by hand, or
+   one written before §4ab.
+2. The Builder assigns it: `block.style.color = value`.
+3. **The CSSOM discards a value it cannot parse and says nothing.** The property is
+   not set to the bad value and not set to a default; it keeps what it had, which
+   for a fresh block is `''`.
+4. `rgbToHex('')` returned `'#000000'`.
+5. Publishing — changing nothing, touching nothing — wrote black over it. On a
+   #1a1a2e canvas the block did not look recoloured, it looked deleted.
+
+`readHex()` replaces `rgbToHex()` and answers `''` rather than inventing. But not
+inventing is only half: the block still has to render, so it renders in the default
+while **the value that was actually stored is kept on the element** and published
+back unchanged. `LayoutRules` then refuses that publish and names the block, and the
+inspector says so before you get there.
+
+That combination is the part worth defending, because at first reading it looks like
+a deadlock — the Builder round-trips a value the server will refuse. It is not a
+deadlock, it is an instruction: *Block 2 has a text colour that is not a colour
+("puce").* An admin picks a colour, the marker clears, the publish goes through. The
+alternatives are both worse. Silently normalising is the defect. Refusing to *load*
+the Display would take a sign away from the person who needs to fix it.
+
+#### The rows that were already there
+
+Everything above is about values arriving. None of it says anything about the ones
+already stored, and refusing at the door made those *worse* to hold: a `font_color`
+holding `puce` now makes its Display refuse **every** publish until somebody picks a
+colour for the named block. That is the right refusal, and it means the way to
+discover it was for somebody to press Publish and be told no — mid-change, standing
+in front of the sign they came to fix. Nothing in the app could answer "is there any
+such row?" and nothing outside it could either.
+
+`tools/audit_colors.php` asks. It is **read-only** — every statement a `SELECT` —
+and so it is the one tool in `tools/` that is safe to point at the live database.
+That needed saying loudly in its header, because `rehearse_phase1.php` sits beside
+it demanding `--confirm-copy`, and a reader who has learned that habit will assume
+the flag is missing rather than absent by design. Reporting is the whole job:
+writing a colour of our own over an unreadable one is precisely the defect #21 and
+#41 exist to stop, and there is no undo. A person picks the colour.
+
+It also does not include `db_connect.php`, which every page does — that file arms
+the alert mailer, so a mistyped `--host` would email the store's admins because
+somebody ran an audit. The price is that it knows where the credentials file lives,
+which is now the second place; `check_invariants.php` holds the two to one value.
+
+**One predicate, three consequences**, and separating them is most of the tool's
+value, because they send a person to three different screens:
+
+| Where | What it does now | Who refuses it |
+|---|---|---|
+| `canvas_elements.font_color` | that Display cannot publish at all | the publish door, by name |
+| `displays.bg_val` | the Screen quietly shows `#1a1a2e` instead | nothing — it renders |
+| `block_styles.font_color` | **every** branded block of that type, on **every** sign, renders in whatever the browser inherits | nothing at all |
+
+The third is the worst and was the surprise: `BrandStyles` cleans on the way *in*,
+not on the way out, so a row edited by hand is handed to every Screen as it stands.
+Black text on a dark canvas, everywhere, with no refusal anywhere in front of it.
+
+Three things the audit deliberately does **not** report, each of which would send
+somebody to fix something that is not wrong: a `font_color` on a **section**, which
+has no text of its own and which the publish door does not check either; a **blank**
+colour, which means "no colour of its own" and is what every branded block carries —
+#21's absent-versus-unreadable line, and a predicate that missed it would report the
+whole store; and the `bg_val` of a Display currently showing an **image**, which
+holds whatever it held before the switch and which nothing reads.
+
+The module is `lib/color_audit.php`: a use-case module in the §2 sense — it owns the
+sweep, writes no SQL of its own, and returns findings a caller turns into sentences.
+The one statement it needs is `LayoutStore::unreadableFontColors()`, on the module
+that owns the table, scoped by Display like every other statement there. 21 checks in
+`tools/selftest_layout.php`, on both engines, including that the publish door really
+does refuse the same value the audit reports — because an audit and a door that drift
+apart are each defensible alone and useless together.
+
+**Two things deliberately not done:**
+
+- **`BrandStyles::cleanColor()` still clamps.** That module's contract is that every
+  stored value renders, because these land on a wall-mounted Screen with nobody
+  watching. What changed is only that the rule is `Color`'s rather than a fourth
+  private copy. The caller with an admin in front of it — the panel — asks `Color`
+  directly and refuses, so by the time a value reaches the clamp it has already been
+  through that; the fallback covers the API path and a hand-built POST.
+- **The panel still says "That display no longer exists." for a malformed `d_id`.**
+  Accurate enough — no Display of that name exists — and the harmful half (deleting
+  a *different* Display on a matching typed tag) is closed. Three identical blocks
+  would need the distinction to say it better, and that is tidying rather than #21.
+
+**Coverage.** 69 new checks in `tools/selftest_layout.php` (both engines) and a
+third node suite, `tools/selftest_builder_colors.js`, at 43. The node suite is the
+one where the *stub* is load-bearing: its `style` is a Proxy that discards an
+unparseable colour and normalises a parseable one exactly as a browser does, because
+a stub that stored `'puce'` would have passed against the original bug. Its fidelity
+is asserted before anything is asserted through it.
+
+**The deliberate breakages the tests catch.** Verified by injection, not assumed:
+
+- Dropping `block.dataset.colorUnread ||` from the publish payload — the original
+  #41 line — fails with `expected "puce", got "#000000"`, which is the defect
+  reproduced verbatim.
+- Restoring `rgbToHex()`'s `return '#000000'` fails 8 checks across three sections,
+  because that one value propagates into the marker, the payload and the inspector.
+- Removing the `delete` that clears a stale marker fails exactly one: a block
+  somebody has just fixed would otherwise go on refusing to publish forever.
+- Restoring `setBackgroundColor()`'s coercion fails 4, including the layout stamp
+  moving on a refusal.
+
+### 4ad. Deleting a Display never asked who was using it (#19)
+
+Every other change of reach in this app frees the holder's edit lock in the same
+transaction and lets their Builder say so — a revoked grant, a closed account, a
+demotion, a suspension, a Display turned off (§4s, §4t). Deletion was the one that
+could not, and so it was the one that did nothing at all.
+
+It cannot, for a reason that is structural rather than an oversight: afterwards
+there is no row to free a lock on and no Display for the holder's page to ask about.
+The machinery those five changes rely on has nothing left to work with. So deletion
+is the case that has to **refuse in advance** instead of repairing afterwards.
+
+What happened without it: a clerk had Drive-Thru open and a shelf's worth of
+unpublished layout on screen. An admin deleted the Display. The clerk's canvas was
+still drawn — nothing tells a browser its subject has gone — and their next publish
+had nowhere to land. The admin was never told there was anybody there, and there is
+no undo anywhere in this app, so neither of them could get it back.
+
+**The predicate is `heldByOther()`, not `isHeld()`** — the same one that makes a
+Builder read-only and refuses a publish. An admin deleting a sign they have open
+themselves is deleting their own work, knowingly. A lapsed lock does not block
+either: `LockState` already rules that a Builder left open on a back-office monitor
+is nobody, and a lock whose holder can no longer sign in is nobody too (§4t). Both
+of those follow for free from asking `LockState` rather than testing the column, and
+both are checked, because "a deletion this app can never perform again" is the
+failure mode of getting that wrong.
+
+**It is asked twice, and the two asks do different jobs.**
+
+- *Before the typed tag.* The tag gate proves the admin means this sign; it says
+  nothing about whether anyone is using it. Asking the immovable fact first is the
+  difference between learning who is editing now and being sent away to retype a tag
+  for a deletion that was never going to happen.
+- *Inside the transaction, on a row the module reads itself.* Without it the
+  guarantee is "the caller handed me a Display it read recently" — true of both
+  callers today, and not something to rest an irreversible write on. This is also
+  what catches the realistic case: a delete form drawn a minute ago, submitted after
+  somebody opened the sign.
+
+**What is left open, on purpose.** The re-read is a plain `SELECT`, so a lock claimed
+between it and the delete still gets through. What that costs is the moment, not the
+twenty minutes the refusal exists for, and the holder's Builder already has a
+sentence for a Display that has gone. Closing it would mean a second `FOR UPDATE`, a
+second SQLite seam for it, and a second encounter with #35's lock-wait timeout —
+spent on the rarest write in the app, when the publish path carrying the first one
+has two people colliding on an ordinary Tuesday. Written down rather than left as an
+absence, because the next person to read `destroy()` will wonder.
+
+**The second half of #19 was the confirm box.** It said "Delete Drive-Thru and its
+12 elements?" — accurate, and the smallest part of the bill. Deleting also takes
+every assignment on the sign, and it may be taking it out from under somebody right
+now. Both are on the panel before the button: the assigned accounts are named, and a
+held lock replaces the button with who has it, since when, and the two ways out. The
+button is *disabled* rather than absent, because a page drawn while somebody was
+editing and submitted after they stopped is a POST the server has to judge on its
+own either way — the greying-out saves an admin typing a tag for nothing, and is not
+where the rule lives. The confirmation message now counts the revoked grants too.
+
+**Coverage.** 25 new checks in `tools/selftest_layout.php`, both engines, at the
+module — because the panel's greyed-out button is a courtesy and a POST can arrive
+without it. Every block builds its own Display through `freshDriveThru()`: half of
+what is under test is a *refusal*, so a regression leaves the sign standing where
+the test expected it gone, and the next block would otherwise die on the unique tag
+or on a null, reporting a crash three blocks from the line that broke.
+
+**The deliberate breakages the tests catch.** Verified by injection, not assumed:
+
+- Removing both checks — `destroy()` exactly as it shipped — fails 12, led by
+  *an admin cannot delete a Display somebody else is editing, correct tag and all*.
+- Removing only the in-transaction re-check fails 4: the stale-argument case goes
+  through, and the Display, its layout and its grant are all gone.
+- Removing only the pre-tag check fails 1 — the ordering. The deletion is still
+  refused, by the second ask; what is lost is the admin's next minute.
+- `heldByOther()` → `isHeld()` fails 2: the holder can no longer delete their own
+  sign, which is the over-correction this rule is one step away from.
+- Dropping the revoked-grant clause from the confirmation fails the #19 check that
+  the element count was never the whole cost.
+- Replacing the gone-already arm with a fallback to the caller's Display fails 2:
+  two admins on the button at once, and the second one told it worked.
+
+~~**Not covered here, and deliberately.** `DisplayStore::normalizeTag()` still does
+`(string)$tag`, so `confirm_tag[]=x` raises "Array to string conversion" above the
+document before refusing.~~ **Closed by §4ae**, which owns that function.
+
+### 4ae. A parameter that is not a tag names no sign (#27)
+
+**Half of this item was already fixed, and by something else.** #27 is recorded as
+"`?display[]=x` became the tag "array" **and printed a warning above the document**".
+The printing stopped at §4m: `ErrorPolicy` sets `display_errors` off and swallows
+warnings into a log rather than the response, so on the live server that warning has
+not reached a page since. Worth saying plainly, because it is the second item on this
+list whose stated premise had expired before anybody got to it (#51 was the first).
+
+**What was actually still broken** is the more interesting half:
+
+- `(string)['x']` is the literal word **`Array`**, and `array` is a perfectly valid
+  screen name tag — lowercase letters, five of them. So the request did not fail, it
+  went and looked one up. With no such Display the Screen said *"Display not found"*,
+  which is a lie: nothing was named. **With a Display genuinely tagged `array`, it
+  rendered that sign.** The self-test asserts exactly that case, and it is the check
+  that fails loudest when the cast is put back.
+- The warning still costs something even unprinted. A Screen hung on a wall with a
+  malformed address writes an "Array to string conversion" line every 30 seconds,
+  forever, into a 2 MB rotating log on a shared host.
+
+**The fix is that a tag is a string, and nothing else is a tag.** No cast anywhere:
+`DisplayRequest::locate()` answers `noTag()` for a `display` parameter that is not a
+string, and `DisplayStore::normalizeTag()` answers `''` for anything that is not one.
+The second closes the same defect at every other door in one line — `forTag()`, the
+delete confirm's typed tag, and the Display form's tag field all read the empty
+answer correctly already.
+
+**Where the care went: the ordering, not the predicate.** The obvious implementation
+is to fold a non-string to `''` and let the existing empty-tag path handle it. That
+is wrong, and only for editing. `locate()`'s entry rule says an account with exactly
+one Display to work on is not asked which one it meant — a convenience for a person
+opening the Builder at a single-sign store. Fold `display[]=x` to `''` and a
+**publish** carrying it inherits that convenience and lands on a Display the request
+never named. So the check returns before the fallback: *a tag that cannot be read is
+not a tag left out.* Injecting the fold-to-empty version fails exactly one check, by
+name, and that check is the whole reason this paragraph exists.
+
+The asymmetry with `confirmIdentity()` two methods below is deliberate and now sits
+in plain sight: an array in **`display_id`** is a `mismatch`, not "no claim". That
+parameter is a caller asserting which record it holds, so sending a malformed one is
+a disagreement. `display` is an address, and a malformed address names nothing.
+
+**Coverage.** 13 new checks, both engines. Four on `normalizeTag()` directly, the
+rest on resolution — including the `array`-tagged Display, the editing ordering, and
+a `set_error_handler` assertion that nothing warns. The suite's own "no PHP
+diagnostics during the run" guard catches the warning independently, which is why
+restoring either cast fails eight or nine checks rather than the two it breaks.
+
+**The deliberate breakages the tests catch.** Verified by injection:
+
+- Restoring `(string)` in `locate()` fails 9, led by *even with a Display genuinely
+  tagged "array", a list still reaches nothing — expected 'no_tag', got 'found'*.
+  That failure is the defect at its sharpest: a public URL rendering a sign nobody
+  asked for.
+- Restoring `(string)` in `normalizeTag()` fails 8, across the fold itself, the
+  Viewer path and the delete confirm.
+- Folding a non-string to `''` instead of stopping fails exactly 1: *a write is
+  refused rather than routed to the sole Display the entry rule would have picked*.
+
+### 4af. The envelope every answer leaves in (#26, #28)
+
+Two items, one module, because they are two symptoms of the same absence: nothing
+owned what an HTTP reply looks like. `lib/http_reply.php` now does — the status
+line, the caching rules, and the bytes of the body.
+
+**#26 — a reply that failed to encode.** The chain is short and every link is
+silent:
+
+`json_encode` returns **`false`** on failure — not an empty array, not a throw —
+and `echo false` prints the empty string. So a payload holding one byte that is not
+valid UTF-8 left as **200 OK, `Content-Type: application/json`, zero bytes**. On the
+Screen `r.json()` rejects, and the Viewer's `.catch` does exactly the right thing
+for a dropped packet: keeps the layout up, tries again in 30 seconds. But the cause
+was a byte in the database, so the next poll hit it too, and the one after that. A
+sign showing last week's prices, indefinitely, with nothing in any log.
+
+Two decisions worth writing down.
+
+**Malformed UTF-8 is repaired, not refused** — which needs saying, because
+CLAUDE.md's rule is *prefer refusing a write to merging one*, and this reads like
+the opposite until you look at what refusing costs:
+
+- This is a **read**. The stored bytes are untouched.
+- The write door is **already shut**: a publish arrives as a JSON string and
+  `json_decode` refuses malformed UTF-8 outright, so nothing invalid can enter
+  through the app at all. What is there came from a restore or a hand edit.
+- Refusing the read would take a whole sign dark over one character **and make the
+  fault unfixable through the app** — the Builder is the only tool for editing that
+  text and it would refuse to load the layout containing it. The only remaining fix
+  would be SQL against the live database, at a shop with no DBA.
+- U+FFFD loses nothing that was not already lost: the byte could not be rendered,
+  searched or exported. What it buys is that the damage becomes *visible*, in the
+  Builder, in the text, in front of the person who can fix it.
+
+And the admin is told — throttled to one report per sign per hour, because the
+alternative is 2,880 identical lines a day per Screen in a log that rotates at 2 MB.
+Anything json_encode cannot be talked into — INF, NAN, recursion, past the depth
+limit — is not repairable and becomes a real 500 carrying a body built from a
+payload this module controls. **The invariant is that no JSON request is ever
+answered with something that is not JSON**, and the self-test asserts it as a
+property over every input that has ever broken an encode here rather than as three
+examples.
+
+**The same defect in a different hat, and worse.** `var TAG = <` `?= json_encode($tag)
+?` `>;` emits `var TAG = ;` when the encode fails — a **parse error that takes down
+the whole script block**, not one value. Nine call sites had this: viewer.php (a
+blank television), builder.php ×6 and admin_panel.php ×3 (a page of controls that do
+nothing). All nine go through `HttpReply::jsValue()` now, which also fixes a second
+thing found on the way: the eight in builder.php and admin_panel.php passed
+`JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_AMP` by hand at every call and
+**viewer.php passed none** — safe only because a screen name tag is `[a-z0-9-]`,
+which is an argument that lives in another file. `jsValue()` carries the four flags
+for every caller.
+
+**And the sign has to notice.** That is the second half of #26's wording and it is
+a judgement, not a rule, so `tools/selftest_viewer.js` exists to pin where the line
+falls. `.catch` counts consecutive failures; ten of them — five minutes — replaces
+the layout with the notice. Not one, because blanking a working price board for a
+Wi-Fi roam would be a worse fault than the one being fixed; not never, because a
+stale *price* is a promise the store then has to keep, where a blank sign is not.
+The watchdog counts too: a request that never settles is the one shape of this
+failure no `.catch` can see, and before this it left the counter at zero however
+long the sign had been stranded.
+
+**#28 — real error codes, and no caching.** Missing, unknown and switched-off signs
+all answered 200, so anything that never reads the body — a proxy, an uptime check,
+`curl` after typing a tag onto a new television — was told all three had worked. The
+code is now **derived from the payload's own `reason`**, not chosen beside it: there
+are twenty-odd reply sites and a code that disagrees with a reason disagrees
+silently. `no_tag` → 400, `unknown` → 404, `inactive` → **503** with `Retry-After: 30`
+— "not here" and "here, switched off" being precisely the two the item says were
+conflated. `forbidden` → 403; `mismatch`, `stale`, `locked`, `busy` → 409; `invalid`
+→ 422; `failed` → 500. A reason nobody listed still gets a 400 rather than a 200.
+
+**The two halves of #28 are load-bearing on each other**, which is the part that
+would be easy to miss: a **404 is heuristically cacheable by default** (RFC 9110
+§15.5.5) where an unlabelled 200 with no validator mostly is not. Fixing the status
+codes *without* fixing the caching would have made a mistyped screen name tag
+**stickier** than it was before the item was touched. `no-store` goes on every reply
+from `HttpReply::json()`, on viewer.php before its first byte, and — via `auth.php`,
+which every protected page includes — on the pages behind the sign-in, where the
+ordinary case for a shop is a shared back-office computer whose back button after a
+sign-out redrew the admin panel, account names and all, from the browser's own store
+with no request the server could have refused.
+
+**Nothing broke in the Builder, and that was checked rather than hoped.** `fetch`
+does not reject on 4xx/5xx and builder.php reads `res.status` from the parsed body,
+never `r.ok`; the one place that does read a code is the XHR upload path, which
+already handled `>= 400` by showing the server's own message. `LOCK_TERMINAL` is a
+fixed list, so the two `reason` values added here (`invalid` on an unreadable
+publish, `failed` on a Brand Standards save with no rows) cannot become fatal to an
+editor mid-work.
+
+**Coverage.** 74 new checks in the PHP suite on both engines, plus the whole of
+`tools/selftest_viewer.js` (32) — the first suite that runs viewer.php's own
+JavaScript rather than only parsing it. It holds the interaction between the two
+items as well: a 503 from a sign an admin switched off must **not** count as the
+server being unreachable, or the deliberate notice would count down to a different
+one. A new consistency rule, *one module encodes JSON*, keeps the whole class shut
+rather than these nine instances of it.
+
+**The deliberate breakages the tests catch.** Verified by injection, thirteen of
+them; the ones worth naming:
+
+- `reply()` trusting `json_encode` again — the original defect — fails 14, led by
+  *a reply holding invalid UTF-8 is repaired, not dropped*.
+- Removing only the substitution fails 10: the sign goes to a 500 rather than to
+  the prices it could have shown.
+- Repairing but not reporting fails 2, and reporting without the throttle fails 1.
+- `inactive` answering 404 like `unknown` fails 3, one of them by name: *which is
+  the distinction #28 is about: those two are not the same answer*.
+- Dropping `no-store` fails 1; `codeForPayload` returning 200 for errors fails 2.
+- In the Viewer: `.catch` swallowing again fails 8; the watchdog only freeing the
+  flag fails 2; a poll that answers not clearing the count fails 6; and blanking on
+  the **first** failure fails 5, led by *and the sign keeps showing what it last
+  knew* — the guard against over-correcting this item.
+- An endpoint going back to `echo json_encode` is caught by the consistency check,
+  by file and line, not by a test.
+
+**Not covered here, and deliberately.** The Viewer still re-renders from scratch
+after any failed poll (`_layoutHash = ''`), which restarts videos and carousels — so
+a flaky link makes a visibly stuttering sign. It is pre-existing, it is not #26, and
+fixing it means deciding whether a re-render that produces identical markup should
+count as a change at all. Recorded rather than folded in.
+
+---
+
+### 4ag. A block with nothing in it was explaining itself to the customer (#45)
+
+An empty carousel drew **"Carousel — no slides added yet"** in grey, centred in the
+block, on a board somebody is reading to decide what to order. The sentence is
+addressed to whoever was building the layout, and it is the one audience that could
+never receive it: a person standing in front of a price sign cannot add a slide to
+it. What they can do is read it, and conclude the store's board is broken.
+
+**It was two blocks, not one.** `renderTable()` had the identical construction one
+function down — **"Table — no data"**, over an `rgba(0,0,0,0.3)` panel drawn
+specifically to hold the message. Both are closed here. Leaving the second would
+have meant knowingly shipping the defect the item describes, in code the item had
+just been applied to.
+
+**Drawing nothing costs the author nothing, and that is what makes it safe.** The
+warning still exists; it was simply in the wrong place. The Builder never renders
+carousel or table *content* on its canvas at all — it draws a label, and that label
+already counts: `↻ Carousel — 0 slides` (`builder.php:3062`) and `⋞ Table — 0 cols,
+0 rows` (`:3281`). So the surface the author is looking at while they forget to add
+the slides tells them, and the surface a customer is looking at says nothing. Both
+labels are asserted from the Viewer's own suite, because deleting one would quietly
+turn this decision into a block nobody can see is empty.
+
+**Returning is enough to draw nothing.** The caller appends the `.element-block`
+either way, and that class sets only `position` and `overflow` — no background, no
+border — so an empty one is not ink. That is the fact the fix rests on; it is
+written into the code beside the `return` rather than left to be re-derived by
+whoever next adds a rule to that stylesheet.
+
+**"Not a list of slides" reaches the same answer, by answering.** Element content is
+deliberately unvalidated for the non-text types (§2 invariant 6), so `slides` can be
+a string, an object or absent. It previously threw into the caller's `try` and the
+block was skipped — the same thing a customer sees, arrived at by accident. The
+guard is `!Array.isArray(slides) || slides.length === 0`, and the suite checks that
+each shape *decides* without throwing, because the two stop being equivalent the
+moment anybody moves the call.
+
+**Coverage.** `tools/selftest_viewer.js` grew from 32 checks to 75. It calls the two
+renderers directly across eight empty shapes — no slides, never configured,
+unparseable content, content that is not a list, and the four table equivalents —
+asserting for each that nothing is appended, no words reach the sign, and no panel
+is painted behind them. Then the same thing end to end through the real poll: a
+price beside an empty carousel and an empty table, asserting all three blocks are
+laid out and the only words on the canvas are `Sockeye 18.99`.
+
+Three checks guard the other way, because quietening a carousel that *does* have
+slides would be a far worse fault than the one #45 reports. Two more read the source
+with whole-line comments stripped, matched on the ASCII half of each sentence — a
+guard that looked for the em dash would be walked past by `—` or `&mdash;`,
+which is not hypothetical: the first injection run wrote it that way by accident and
+slipped through.
+
+**Verified by injection, four times.** Restoring the carousel placeholder fails 9,
+including *and a customer reads the price, and nothing addressed to the author*;
+restoring the table's fails 10; making the carousel return unconditionally fails 3,
+led by *a carousel that has a slide still draws it*; and deleting the Builder's
+label fails 1.
+
+#### Second pass: the marquee and the empty slide
+
+The first pass took out two sentences. The owner then asked for the two cases that
+are the same defect in colour rather than in English, and they turn out to be the
+worse pair, because a sentence at least looks like a mistake.
+
+**A marquee with no text painted a red bar and scrolled nothing along it.** The
+block already meant to draw nothing — `if (!text) return;` was in the function — but
+`block.style.background = bg` sat four lines above it, so the return ran after the
+paint. Default `#c0392b`: a solid red band across a price board, with no message on
+it, and an invisible span animating along it at 80 px/sec for as long as the sign is
+on. The guard moved above the paint, and the same lossless argument holds as for the
+carousel and the table, more directly than either: the Builder draws this block as
+**"▶ Marquee text — click to edit in inspector"** (`builder.php:3444`), on that same
+bar, on the screen where the box that fixes it is. The words the customer was
+getting a red bar instead of are already sitting in front of the author.
+
+Two smaller things the same guard settles. `'   '` is truthy, so a marquee of spaces
+used to paint and animate exactly like an empty one; it is trimmed now. And only a
+string or a number is a message — an object reached `textContent` and scrolled
+`[object Object]` past the customer, for the invariant-6 reason the carousel's
+`Array.isArray` exists.
+
+**A carousel slide with no image filled its image well with `#1a1a2e`.** A navy
+rectangle standing in for a picture nobody had chosen, hardcoded, drawn only in the
+`else` of `if (s.image)` — which is what separates it from the marquee's bar: the
+bar is a colour the author picked in the inspector, the navy is a colour the code
+picked because something was missing. So a carousel of blank slides rotated coloured
+panels past the customer every five seconds without ever saying anything.
+
+A slide now draws only if it holds something: an image, or — when it is not
+`imageOnly` — a title, price or description that is set. Slides with nothing in them
+are filtered out *before* the loop rather than skipped inside it, which is what makes
+the rotation right as well as the drawing: `slideEls` holds only slides that show
+something, so three slides of which one is real is one slide, not one slide and ten
+seconds of blank. A carousel whose every slide is empty draws nothing, exactly as one
+with no slides at all. A slide that is `null` or a string reaches that same answer by
+answering, where it used to throw on `s.textPosition`.
+
+The empty well is still **appended**, just not painted. Taking it away would give the
+text panel the full width and reflow a slide that is not the one at fault; the 40/60
+split is the layout the author arranged around their words. Only the colour goes.
+
+**Coverage.** 75 checks to 129. Eleven more empty shapes through `drewNothing` — six
+marquees, five carousels — plus a `paintUnder()` walk that fails on `#c0392b` or
+`#1a1a2e` appearing anywhere beneath a block, and the Builder's marquee sentence
+asserted from here like the other two labels.
+
+**Verified by injection, five times.** Painting the bar before the guard fails 7;
+restoring the navy well and drawing every slide fails 8, including *a carousel whose
+slides are not slides decides that without throwing*; a marquee that never draws
+fails 2; deleting the Builder's sentence fails 1.
+
+The fourth injection — making `s.image` stop counting as something a slide shows —
+**passed all 127 checks**, which is the useful result of the five. A slide can be a
+picture and no words at all; that is what `imageOnly` is for. Deciding a slide is
+empty whenever it has no text would have taken every photograph off every sign in the
+store and nothing would have said so. Two checks now cover it, and the suite is 129.
+
+#### Third pass: the picture and the film nobody chose
+
+The last two, taken on the same instruction. These are a different question from the
+first four, and the difference is the whole reason they were held back: the ink is
+not the page's. Nothing here writes a sentence or paints a panel — it appends an
+element and lets the browser decide what a missing file looks like.
+
+Which is exactly why they belong closed. `img.src = ''` is not an absent picture, it
+is a **broken** one by definition — the empty string puts the element straight into
+the broken state — and what a broken image looks like is the browser's choice: an
+icon on some, a blank box on others, at 100% × 100% because that is what
+`.element-block img` says. An autoplaying `<video>` with no `<source>` is the same
+shape of thing: it never plays, and its rectangle is black on one browser and
+transparent on the next. The old code even had the guard half-written — `if
+(content)` skipped the `<source>` and appended the empty player regardless.
+
+A store's sign must not look different because of which browser the television
+shipped with. Appending nothing is the one rendering that is the same everywhere, and
+it is also the true one: there is no picture here.
+
+**The empty path is not only the unfinished block.** `content` is `db_content` for a
+block linked to an asset, so an asset deleted out from under a live layout arrives
+here as null. That is the case that reaches a sign without anybody editing it.
+
+Both branches came out of the render loop into `renderImage()` and `renderVideo()`,
+beside the other three. The loop is an entry point and was carrying two blocks of
+element-shaping logic that nothing could call; a named function is testable, and
+these are the two that most needed testing, being the ones whose failure looks
+different in each browser.
+
+**The Builder had to start speaking for the video.** Drawing nothing is only safe
+while the author can still see the block, and the video was the one case with nothing
+on either surface — an empty `<video>` in the Builder too. It now gets the drawn
+placeholder an image already got (`svgPlaceholder(w, h, 'Video')`), cleared when a
+file is uploaded or an asset linked. Without it this pass would have made a block
+that exists in the database and is drawn by neither page.
+
+**Coverage.** 129 checks to 169: eight more empty shapes, five positive checks that a
+block with a file still shows it — path, fit mode, source and MIME type — and the two
+Builder placeholders asserted like the three labels before them.
+
+**Verified by injection, four times.** Appending the broken image anyway fails 6;
+appending the empty player anyway fails 4; removing the Builder's `'Video'`
+placeholder fails 1; a video that never plays fails 3.
+
+**#45 is closed.** All five block types that drew something when they had nothing now
+draw nothing: two sentences, two colours, and two elements whose appearance was the
+browser's to choose.
+
+### 4ah. Escaping was a default, and the default is not one behaviour (#15)
+
+159 calls to `htmlspecialchars()`, and not one of them said what it wanted. That is
+not a style complaint: **the function's default flag set changed in PHP 8.1.** Before
+it, `ENT_COMPAT | ENT_HTML401` — `"` escaped, `'` left alone. From it,
+`ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML401` — both escaped. So
+
+```php
+<input value='<?= htmlspecialchars($x) ?>'>     <!-- single-quoted attribute -->
+```
+
+was safe or an injection depending on which PHP the host was running, and nothing in
+the source recorded which was meant. This app is on 8.2, so the strict behaviour is
+what it gets today — and the 7.1-era fallbacks in `auth.php` and `.htaccess` are kept
+deliberately for a host that moves (§5), which makes "the default is fine now" exactly
+the assumption not to leave lying around.
+
+The quieter half is worse and has nothing to do with attacks. Without
+`ENT_SUBSTITUTE`, one byte of invalid UTF-8 makes `htmlspecialchars()` return **the
+empty string** — not the value, not an error, nothing. That is #26's shape on a page
+instead of in a reply: a stored character nobody typed on purpose, and a price that
+silently stops being displayed. With it the bad byte becomes U+FFFD and the rest of
+the value survives.
+
+`lib/markup.php` names both flags once. `Markup::text()` is the only door, and
+`tools/check_invariants.php` holds `htmlspecialchars(` to that file — with one
+carve-out, `lib/error_policy.php`, for the same reason it keeps a `json_encode`: it
+draws the last-resort notice, the path that must not depend on anything, and its call
+passes the flags in full.
+
+**Non-strings answer `''`,** for the reason `Color::read()` does: `(string)` on an
+array is the warning *"Array to string conversion"* and the literal text `Array`,
+printed onto the page. `null` matters more in practice — it arrives from every
+nullable column, a Display with no location, and passing it to `htmlspecialchars()`
+is a deprecation notice on 8.1 and later, logged on every single page load, saying
+nothing anybody can act on.
+
+**The flags were never the half that mattered most.** #15's other clause — "a username
+containing HTML reached a confirm box unescaped" — is a different bug wearing the same
+clothes, and it was still there with the strict default:
+
+```php
+onsubmit="return confirm('Close the account for <?= htmlspecialchars($name) ?>?…')"
+```
+
+That looks escaped. It is not. **The HTML parser decodes the attribute before the
+JavaScript parser sees it**, so the `&#039;` that `ENT_QUOTES` just produced is a plain
+`'` again by the time it is a string literal, and the string ends there. A username of
+`o'brien` breaks the page; one chosen with more intent runs whatever it likes, in an
+admin's session, on the Accounts screen. The escaping was not missing — it was correct
+for the wrong one of two nested contexts.
+
+`Markup::jsInAttr()` is the fix and the name for it: `HttpReply::jsValue()` produces a
+JSON literal with `'`, `"`, `<`, `>` and `&` all as `\uXXXX`, so nothing inside it can
+end anything, and `text()` then escapes the quotes that delimit it. It is passed as
+the **whole** argument, never spliced into a string — the sentence moved into a
+JavaScript function, `confirmCloseAccount()`, beside the `confirmTurnOff()` that had
+already solved this once by hand and was the only call in the codebase passing flags.
+
+The invariant that guards it catches the construction rather than the instance:
+an event attribute holding a quote and then a `Markup::` call is a value escaped for
+HTML and used as JavaScript, and no file may match. It fires on the natural way this
+comes back, because whoever reintroduces it will reach for `Markup::text()` — that is
+now what the rest of the file uses.
+
+**What is still spliced into a JavaScript string in an attribute, and why it is not
+the same thing:** `togglePanel('del-display-<?= $did ?>')` and two like it, plus
+`confirm('Remove <?= intval($tidyCount) ?> …')` in `crud.php`. Every one is an
+integer, and an integer has no representation that can end a string. The six
+`updatePreview('<?= $t ?>')` calls were strings — from a hardcoded list, not from the
+database, but strings — and they went through `jsInAttr()` anyway, so that the only
+values left spliced are numbers.
+
+**One trap found while writing the module, worth recording because it lints clean.**
+A `?` followed by `>` inside a `//` comment **ends PHP mode** — one-line comments run
+to the end of the line *or the end of the PHP block, whichever comes first*. The
+header of `lib/markup.php` quoted `<?= htmlspecialchars($x) ?>` as an example of the
+thing being fixed, and PHP dutifully left PHP mode there and printed the rest of the
+header onto the page. `php -l` says nothing: the file is valid. It was caught by the
+self-test loading the file at all, which is the only gate that could have. The
+examples in that file now write the tags as `{{ … }}`, and say why.
+
+**Coverage.** 19 checks in `tools/selftest_layout.php`, on both engines: each flag
+asserted by what it does rather than by being present, the bad-byte case, the
+non-string cases with no warning raised, and the nested-context defect demonstrated
+end to end — `Markup::text()`'s output decoded the way a browser decodes an attribute
+yields a live quote, and `jsInAttr()`'s does not.
+
+**Verified by injection, five times.** Dropping `ENT_SUBSTITUTE` fails 2, both saying
+the price no longer reaches the page; going back to the pre-8.1 default fails 3;
+casting non-strings instead of refusing them fails 2, one of which is the warning
+itself; putting the confirm box back fails the invariant **and** 2 checks; and a
+single raw `htmlspecialchars(` anywhere in a page fails the invariant by name.
+
+**What was left, and then closed.** #15 says "escape every stored value strictly,
+app-wide". The two passes above make every *escaped* value strict and put each one in
+the right context; neither proves every value **is** escaped. A page added later could
+still forget, and nothing caught that — what the invariants caught was forgetting
+*how*.
+
+Measured rather than guessed at: of 319 echoes across the eight pages, 174 went
+through a door and 145 did not. Almost all of the 145 were fine, and — this is the
+part that made a rule possible — they were fine in shapes that can be recognised
+rather than looked up. So the third pass is a classifier, in
+`tools/check_invariants.php`. **Every echoed expression on a page must be one of five
+things:**
+
+| shape | why it is safe |
+|---|---|
+| a door | `Markup::text()`, `Markup::jsInAttr()`, `HttpReply::jsValue()` — the three functions that exist to answer this |
+| a literal | a quoted string or a number, written in the source |
+| a safe call | `count`, `intval`, `intdiv`, `floatval`, `number_format`, `urlencode`, `rawurlencode`, and `date()` with a literal format — each returns only digits, or only characters no parser is looking for, whatever it is handed |
+| a colour | `Brand::navBg()` and its three siblings, which return `#rrggbb` because `Color::read()` decided (§4ai) |
+| a number | a class constant whose declaration in `lib/` is a numeric literal — **resolved**, not assumed, so `Foo::BAR = 'x <b>'` does not pass |
+
+and a ternary is safe when both branches are, a concatenation when every piece is.
+Both rules recurse, which is what makes five shapes enough: `' · ' .
+Markup::text($d->location())` is a literal and a door, and
+`!empty($u['created_at']) ? date('M j, Y', …) : '—'` is a safe call and a literal.
+A ternary's *condition* is not echoed and is not examined.
+
+**Nothing is on a list of exceptions, deliberately.** Fifteen echoes were converted to
+reach that state — ids and dimensions to `intval()`, labels and roles to
+`Markup::text()` — rather than named in an allow-list, because an allow-list is
+somewhere to put the next one too, and it stops being read at about the tenth entry.
+Widening the classifier is a change to what "safe" means here and gets reviewed as
+one; adding an integer to the seven safe calls is not.
+
+**Limits, stated.** `intval($x)` is trusted without asking what `$x` is — that is what
+`intval` is *for*, and a checker that went looking would be re-implementing PHP. It
+reads one expression at a time and knows nothing about where a value came from, so it
+cannot tell a safe `$id` from an unsafe one and does not try: it asks only that the
+line say which it is. An echo inside a `<script>` is judged by the previous rule as
+well as this one — different questions about the same line, and both have to hold.
+
+**Verified by injection, twenty times.** Ten shapes that must fail — `<?= $u['name'] ?>`,
+`$x . $y`, `date($fmt)`, `strtoupper($x)`, an unknown class constant, a ternary with
+one unsafe branch, `Brand::logo()` (a path, not a colour), `$a ?: 'fallback'` (the
+Elvis form echoes its condition), `'a' . $b . 'c'`, and `Markup::text($a) . $b` — and
+ten that must pass, including a parenthesised nested ternary that a first version got
+wrong and now does not.
+
+---
+
+### 4ai. The store's own colours, where escaping was the wrong tool (#15)
+
+The sweep for §4ah turned up a family that was never an escaping problem at all.
+`BRAND_ACCENT` and its three siblings were interpolated into the `<style>` block on
+the Builder, the Help page and the sign-in page — 13 places — and every one of them
+had been dutifully wrapped in `Markup::text()`.
+
+Which does nothing. **Inside a `<style>` the HTML parser is looking for `</style` and
+nothing else**, so escaping leaves the value untouched in every respect that matters,
+while reading at the call site like the question has been dealt with. An accent colour
+of
+
+```
+#fff; } body { background: url(https://example.invalid/x)
+```
+
+is, *after* escaping, exactly those characters inside a stylesheet: a closed rule and
+a new one. There is no delimiter for an entity to neutralise. What is needed there is
+not "make these characters inert" but **"this is a colour"** — and `lib/color.php`
+already knew how to decide that (§4ac).
+
+`lib/brand.php` is the reader. `Brand::accent()` answers `#rrggbb` or the documented
+default, `Color::read()` having decided which; `tools/check_invariants.php` holds the
+`BRAND_*` constants to that one file, so a page naming one is a page that has gone
+back to interpolating whatever is in the config.
+
+**It also collected the defaults, which had been written out four times** — once each
+in `login.php`, `help.php`, `builder.php` and `admin_panel.php`, agreeing only because
+nobody had yet had a reason to change one. Those four blocks are gone; `Brand::load()`
+reads the config file, and `db_connect.php` calls it beside `lib/markup.php` for the
+same reason it requires that: a page that forgot would be a fatal error on a live
+screen.
+
+**Not currently reachable through the form, which is why it is worth doing.** #21 made
+the Branding form read every colour through `Color::read()` and refuse the save,
+naming the field — so nothing an admin can type gets here. The other door is the one
+this is about: `branding_config.php` is *generated*, its own header invites a person
+to edit it, it predates the rule that validates the form, and a deployment upgraded
+from before #21 may already hold whatever the old silent substitution wrote. Exactly
+the shape §4ac exists for — the write path closed, the rows that were already there
+not.
+
+**A default here is not the #21 defect.** `DisplayAdmin` substituting a colour for one
+an admin had just typed was a lie about a save. This substitutes nothing and saves
+nothing: it reads a file that holds what it holds, and answers the documented default
+— the same one a deployment with no config at all gets. And it is said out loud rather
+than inferred, in two places. `ColorAudit` reports it under a kind of its own,
+`WRONG_IN_APP`, because it is the only unreadable colour in the app that **no sign
+uses** and a finding that read like the others would send somebody to the shop floor
+over a navigation bar; and the Branding tab opens with a notice naming each field and
+quoting what is stored.
+
+`Brand::pick()` and `Brand::unreadable()` are pure, taking the stored value rather
+than reading it, for the reason `layout_rules.php` is (§4o): `define()` cannot be
+undone, so a rule reachable only through the constants could only ever be tested with
+the one value the machine running the suite happens to hold.
+
+**Coverage.** 21 checks in `tools/selftest_layout.php` on both engines — every
+fallback path, each colour falling back to *its own* default rather than a shared one,
+an unknown key throwing rather than answering, the CSS-injection string refused with a
+companion check proving that escaping it would **not** have helped, and the audit
+finding end to end. Plus the invariant, and the tool run against a hand-edited config
+to see the sentence it actually prints.
+
+**The same boundary, one level further in.** The Brand Standards preview put six
+stored fields into a `style` **attribute** — `font-family`, `font_color` and four
+more. Escaping stops a value ending the *attribute*; nothing stopped it ending the
+*declaration* inside it, so a stored `Arial; position: fixed; top: 0` was, after
+escaping, exactly that. Smaller than the `<style>` case — the blast radius is extra
+declarations on one `<span>` in the Admin Panel, not a rule that escapes into the
+page — and the same mistake.
+
+`BrandStyles` already had the answer and was only ever asked on the way *in*. Its
+`cleanFamily()` refuses a family whole rather than stripping it down, because
+`Arial;position:fixed` edited into `Arialpositionfixed` would store a font nobody
+asked for and say nothing. What was missing was a way to ask on the way *out*:
+`BrandStyles::readable()` runs a row through the same six cleaners `save()` uses, and
+`unrenderable()` lists the fields where the stored value and the drawn value differ,
+so the tab names them instead of quietly drawing the substitute.
+
+**Writing the "they agree" check found a disagreement**, which is the reason to write
+it: `readable()` was passing `DEFAULTS['font_color']` (`#000000`, the schema column
+default) as `cleanColor()`'s fallback, while `save()` used `cleanColor()`'s own
+(`#ffffff`). The page would have drawn one and a save stored the other. The fix is the
+#21 distinction again, and it is now load-bearing in a second place: **absent** is
+answered by `DEFAULTS`, **unreadable** by the cleaner's own substitute, and they are
+different questions.
+
+`all()` stays raw, deliberately — `ColorAudit` reads it, and an audit whose source had
+already been tidied would report nothing and be believed.
+
+**Coverage.** 25 further checks: every field's clamp, both `<style>`-attribute
+injections with a companion check proving escaping would not have helped, absent-vs-
+unreadable, the numeric fields compared as numbers (a `DECIMAL(4,2)` comes back
+`'1.20'` from MySQL and `1.2` from SQLite, and a difference of engine is not a fault to
+put in front of an admin), a loop asserting reader and writer agree field by field, and
+three cross-file checks on the page itself — because the defect was never in the module,
+it was in a caller trusting a promise the module had only made about values it wrote.
+
+**Verified by injection, four times.** `readable()` handing back the row fails 5;
+`unrenderable()` going quiet fails 6; the page reaching into the row again fails by
+name; and deleting the notice while keeping the loop that computes it fails too — the
+check is on the render, because working out a list and not drawing it is the same page
+with more code in it.
 
 ---
 

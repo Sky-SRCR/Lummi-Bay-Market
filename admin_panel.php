@@ -11,6 +11,9 @@ require_once __DIR__ . '/lib/branding.php';
 require_once __DIR__ . '/lib/server_report.php';
 require_once __DIR__ . '/lib/password_resets.php';
 require_once __DIR__ . '/lib/accounts.php';
+// Explicit, though display_admin.php pulls it in too: this page asks Color directly
+// when it refuses a branding colour, and a transitive include is not a dependency.
+require_once __DIR__ . '/lib/color.php';
 requireCurrentAccount($pdo);
 requireAdmin();
 
@@ -83,11 +86,24 @@ function viewerUrlFor(Display $display): string {
 $branding = new BrandingConfig(__DIR__);
 $branding->load();
 $brand      = $branding->current();
+
+// The four colours are read back through Brand:: rather than taken from the config
+// as stored — the same reader the Builder, the Help page and the sign-in page draw
+// their stylesheets from, so what this form offers as "what is there now" is what
+// those pages are actually painting. Handing an unreadable stored value to a
+// `type=color` input shows black, and "keep what is there" would then quietly mean
+// "store black". `$brandBad` is what the Branding tab says so with, because a config
+// nobody can read is something to be told about, not silently corrected (#21).
+//
+// There is no writer here. `writeBrandingConfig()` lived on this page until §4y and
+// the branch this came from still carried it; `$branding->save()` below is the only
+// way the file is written now, and it is the only thing that names it.
+$brandBad   = Brand::unreadable();
 $curLogo    = $brand['BRAND_LOGO'];
-$curNavBg   = $brand['BRAND_NAV_BG'];
-$curBorder  = $brand['BRAND_NAV_BORDER'];
-$curAccent  = $brand['BRAND_ACCENT'];
-$curText    = $brand['BRAND_TEXT'];
+$curNavBg   = Brand::navBg();
+$curBorder  = Brand::navBorder();
+$curAccent  = Brand::accent();
+$curText    = Brand::text();
 $curSite    = $brand['SITE_NAME'];
 $curMail    = $brand['MAIL_FROM'];
 $curMailN   = $brand['MAIL_FROM_NAME'];
@@ -109,8 +125,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $msg = 'All fields are required.'; $msgType = 'error';
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $msg = 'Invalid email address.'; $msgType = 'error';
-        } elseif (strlen($pass) < 8) {
-            $msg = 'Password must be at least 8 characters.'; $msgType = 'error';
+        } elseif (strlen($pass) < AccountAdmin::PASSWORD_MIN) {
+            $msg = 'Password must be at least ' . AccountAdmin::PASSWORD_MIN . ' characters.';
+            $msgType = 'error';
         } else {
             try {
                 $pdo->prepare("INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)")
@@ -141,8 +158,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $msg = 'Invalid email address.'; $msgType = 'error';
         } else {
+            // The id goes across raw. Casting it here was the panel deciding which
+            // account this form meant, and `intval` decides that for any input at
+            // all — "7abc" is account 7 (#21). AccountAdmin refuses what does not
+            // name one.
             $res = $accountAdmin->edit(
-                intval($_POST['edit_id'] ?? 0),
+                $_POST['edit_id'] ?? '',
                 in_array($_POST['edit_role'] ?? '', ['admin','basic']) ? $_POST['edit_role'] : 'basic',
                 isset($_POST['edit_active']),
                 $email,
@@ -154,18 +175,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tab = 'users';
     }
 
-    // Reset another user's password
+    // Reset another user's password. Through AccountAdmin, because the statement this
+    // used to run here matched no row for an id that named nothing and printed
+    // "Password reset." regardless — and matched the *wrong* row for an id like
+    // "7abc", which intval() reads as 7 (#21).
     if (isset($_POST['action_reset_pass'])) {
-        $uid  = intval($_POST['reset_uid'] ?? 0);
-        $pass = $_POST['new_pass'] ?? '';
-        if (strlen($pass) < 8) {
-            $msg = 'Password must be at least 8 characters.'; $msgType = 'error';
-        } else {
-            $pdo->prepare("UPDATE users SET password_hash = ? WHERE id = ?")
-                ->execute([password_hash($pass, PASSWORD_DEFAULT), $uid]);
-            $msg = 'Password reset.';
-        }
-        $tab = 'users';
+        $res     = $accountAdmin->resetPassword($_POST['reset_uid'] ?? '', $_POST['new_pass'] ?? '');
+        $msg     = $res->message();
+        $msgType = $res->isOk() ? 'success' : 'error';
+        $tab     = 'users';
     }
 
     // Close an account. Never a DELETE: the row has to stay so its id number can
@@ -173,7 +191,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // closing means, and the transaction that surrenders their access with it,
     // lives in AccountAdmin — this collects the form and prints the answer.
     if (isset($_POST['action_close_user'])) {
-        $res     = $accountAdmin->close(intval($_POST['close_id'] ?? 0), $user['id']);
+        $res     = $accountAdmin->close($_POST['close_id'] ?? '', $user['id']);
         $msg     = $res->message();
         $msgType = $res->isOk() ? 'success' : 'error';
         $tab     = 'users';
@@ -251,13 +269,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     // Delete a display and its layout. There is no undo anywhere in this app, so
-    // the typed screen name tag is the safeguard — DisplayAdmin checks it.
+    // the typed screen name tag is one safeguard — DisplayAdmin checks it — and
+    // refusing while somebody else has it open in the builder is the other (#19).
+    // The actor is passed because that check is "somebody *else*": an admin who has
+    // this sign open themselves is deleting their own work and is not stopped.
     if (isset($_POST['action_delete_display'])) {
         $display = $displayStore->forId($_POST['d_id'] ?? 0);
         if (!$display) {
             $msg = 'That display no longer exists.'; $msgType = 'error';
         } else {
-            $res     = $displayAdmin->destroy($display, $_POST['confirm_tag'] ?? '');
+            $res     = $displayAdmin->destroy($display, $_POST['confirm_tag'] ?? '', $user['id']);
             $msg     = $res->message();
             $msgType = $res->isOk() ? 'success' : 'error';
         }
@@ -304,13 +325,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // Save branding (logo + colors)
     if (isset($_POST['action_save_branding'])) {
-        $navBg     = preg_match('/^#[0-9a-fA-F]{6}$/', $_POST['nav_bg']     ?? '') ? $_POST['nav_bg']     : $curNavBg;
-        $navBorder = preg_match('/^#[0-9a-fA-F]{6}$/', $_POST['nav_border'] ?? '') ? $_POST['nav_border'] : $curBorder;
-        $accent    = preg_match('/^#[0-9a-fA-F]{6}$/', $_POST['accent']     ?? '') ? $_POST['accent']     : $curAccent;
-        $navText   = preg_match('/^#[0-9a-fA-F]{6}$/', $_POST['nav_text']   ?? '') ? $_POST['nav_text']   : $curText;
+        // Four colours, and a value that is not one is refused rather than swapped
+        // for whatever is already saved (#21). The old line did the swap silently and
+        // then reported "Branding saved." — so an admin who pasted a colour in the
+        // wrong notation was told it worked, went and looked at the navigation bar,
+        // and saw the colour they had been trying to replace. Nothing distinguished
+        // that from the save having had no effect, because it had had no effect.
+        //
+        // Blank still means "not supplied, keep what is there": these are `type=color`
+        // inputs, which always submit, so a blank one is a form that did not render
+        // the field rather than an admin clearing it.
+        $brandFields = [
+            'nav_bg'     => ['Navigation background', $curNavBg],
+            'nav_border' => ['Navigation border',     $curBorder],
+            'accent'     => ['Accent',                $curAccent],
+            'nav_text'   => ['Navigation text',       $curText],
+        ];
+        $brandKept   = [];
+        $brandUnread = [];
+        foreach ($brandFields as $field => $spec) {
+            $raw = $_POST[$field] ?? '';
+            if ($raw === '') { $brandKept[$field] = $spec[1]; continue; }
+            $read = Color::read($raw);
+            if ($read === '') {
+                $brandUnread[]       = $spec[0];
+                $brandKept[$field]   = $spec[1];
+            } else {
+                $brandKept[$field]   = $read;
+            }
+        }
+        if ($brandUnread) {
+            // The whole save is refused, logo included — see the guard on the upload
+            // below. A branding save that stored the new logo and none of the colours
+            // would be a half-applied change with no undo and nothing saying which
+            // half landed.
+            $msg = (count($brandUnread) === 1
+                    ? $brandUnread[0] . ' is not a colour this app can store.'
+                    : implode(', ', $brandUnread) . ' are not colours this app can store.')
+                 . ' Colours are written as six hexadecimal digits after a hash, like'
+                 . ' #1a1a2e. Nothing was saved.';
+            $msgType = 'error';
+        }
+        $navBg     = $brandKept['nav_bg'];
+        $navBorder = $brandKept['nav_border'];
+        $accent    = $brandKept['accent'];
+        $navText   = $brandKept['nav_text'];
         $rawExist  = $_POST['existing_logo'] ?? '';
         $logoPath  = preg_match('/^uploads\/brand_logo\.[a-z]{2,4}$/', $rawExist) ? $rawExist : $curLogo;
-        if (!empty($_FILES['logo_file']['name'])) {
+        // `$msg === ''` here is the refusal above, and it is what makes this save
+        // all-or-nothing: move_uploaded_file() cannot be rolled back, so a refused
+        // colour has to stop the upload before it happens rather than after.
+        if ($msg === '' && !empty($_FILES['logo_file']['name'])) {
             // SVG is intentionally excluded: an SVG can carry <script> and would
             // be stored XSS when served from our own origin.
             $allowed = ['image/png'=>'png','image/jpeg'=>'jpg','image/gif'=>'gif',
@@ -352,6 +417,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
             if ($res->isOk()) {
                 $curLogo = $logoPath; $curNavBg = $navBg; $curBorder = $navBorder; $curAccent = $accent; $curText = $navText;
+                // All four went through Color::read() above, so the notice this page
+                // may have opened with is no longer true of the file on disk. Leaving
+                // it up would tell an admin their save had not taken.
+                $brandBad = [];
                 $msg = 'Branding saved.';
             } else {
                 $msg = $res->message(); $msgType = 'error';
@@ -470,6 +539,17 @@ $canvasPresets = [
     ['1920×540 — Wide strip / ticker',                 1920,  540],
 ];
 $styles = (new BrandStyles($pdo))->all();
+// Read raw, above, because ColorAudit reads the same method and an audit whose source
+// had already been tidied would find nothing. What the form draws goes through
+// BrandStyles::readable(); this is the list of places the two differ, which is what the
+// tab says out loud rather than substituting in silence (#21's whole point).
+$styleBad = [];
+foreach ($styles as $_bsType => $_bsRow) {
+    foreach (BrandStyles::unrenderable($_bsRow) as $_bsBad) {
+        $styleBad[] = ['type' => $_bsType] + $_bsBad;
+    }
+}
+unset($_bsType, $_bsRow, $_bsBad);
 $typeLabels = [
     'section_header' => 'Section Header',
     'item_title'     => 'Item Title',
@@ -484,7 +564,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Admin Panel — <?= htmlspecialchars(SITE_NAME) ?></title>
+    <title>Admin Panel — <?= Markup::text(SITE_NAME) ?></title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
         body { background: #f0f2f5; min-height: 100vh; }
@@ -606,12 +686,12 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 <body>
 
 <nav>
-    <span class="brand"><?= htmlspecialchars(SITE_NAME) ?></span>
+    <span class="brand"><?= Markup::text(SITE_NAME) ?></span>
     <a href="builder.php">Builder</a>
     <a href="crud.php">Asset Manager</a>
     <a href="admin_panel.php" class="active">Admin Panel</a>
     <span style="color:#bdc3c7; font-size:13px;">
-        <?= htmlspecialchars($user['username']) ?>
+        <?= Markup::text($user['username']) ?>
         <span class="role-badge">ADMIN</span>
     </span>
     <a href="logout.php">Sign Out</a>
@@ -629,7 +709,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 <div class="content">
 
 <?php if ($msg): ?>
-    <div class="msg-box msg-<?= $msgType ?>"><?= htmlspecialchars($msg) ?></div>
+    <div class="msg-box msg-<?= Markup::text($msgType) ?>"><?= Markup::text($msg) ?></div>
 <?php endif; ?>
 
 <!-- ============================================================ -->
@@ -639,7 +719,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
     <div class="card">
         <h2>Add New User</h2>
         <form method="POST">
-            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
             <div class="form-row">
                 <div class="form-group">
                     <label>Username</label>
@@ -680,26 +760,26 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             <tbody>
             <?php foreach ($users as $u): ?>
                 <tr>
-                    <td><strong><?= htmlspecialchars($u['username']) ?></strong>
+                    <td><strong><?= Markup::text($u['username']) ?></strong>
                         <?php if ($u['id'] === $user['id']): ?>
                             <span style="font-size:11px; color:#7f8c8d;">(you)</span>
                         <?php endif; ?>
                     </td>
-                    <td><?= htmlspecialchars($u['email']) ?></td>
-                    <td><span class="badge badge-<?= $u['role'] ?>"><?= strtoupper($u['role']) ?></span></td>
+                    <td><?= Markup::text($u['email']) ?></td>
+                    <td><span class="badge badge-<?= Markup::text($u['role']) ?>"><?= Markup::text(strtoupper($u['role'])) ?></span></td>
                     <td><span class="badge badge-<?= $u['is_active']?'active':'inactive' ?>">
                         <?= $u['is_active'] ? 'Active' : 'Inactive' ?>
                     </span></td>
                     <td><?= !empty($u['created_at']) ? date('M j, Y', strtotime($u['created_at'])) : '—' ?></td>
                     <td>
                         <button class="btn btn-blue" style="font-size:11px; padding:5px 10px;"
-                                onclick="toggleEdit(<?= $u['id'] ?>)">Edit</button>
+                                onclick="toggleEdit(<?= intval($u['id']) ?>)">Edit</button>
 
                         <?php if ($u['id'] !== $user['id']): ?>
                         <form method="POST" style="display:inline;"
-                              onsubmit="return confirm('Close the account for <?= htmlspecialchars($u['username']) ?>?\n\nThey will not be able to sign in again, and they will lose access to every display. This cannot be undone, and the name stays reserved.')">
-                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
-                            <input type="hidden" name="close_id" value="<?= $u['id'] ?>">
+                              onsubmit="return confirmCloseAccount(<?= Markup::jsInAttr($u['username']) ?>)">
+                            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
+                            <input type="hidden" name="close_id" value="<?= intval($u['id']) ?>">
                             <button type="submit" name="action_close_user"
                                     class="btn btn-red" style="font-size:11px; padding:5px 10px;"
                                     title="Permanently close this account. Their name stays reserved and anything they published still says who published it.">Close Account</button>
@@ -708,16 +788,16 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     </td>
                 </tr>
                 <!-- Inline edit row -->
-                <tr class="edit-row" id="edit-<?= $u['id'] ?>">
+                <tr class="edit-row" id="edit-<?= intval($u['id']) ?>">
                     <td colspan="6">
                         <form method="POST">
-                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+                            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
                             <div class="form-row">
-                                <input type="hidden" name="edit_id" value="<?= $u['id'] ?>">
+                                <input type="hidden" name="edit_id" value="<?= intval($u['id']) ?>">
                                 <div class="form-group">
                                     <label>Email</label>
                                     <input type="email" name="edit_email"
-                                           value="<?= htmlspecialchars($u['email']) ?>" style="width:200px;" required>
+                                           value="<?= Markup::text($u['email']) ?>" style="width:200px;" required>
                                 </div>
                                 <div class="form-group">
                                     <label>Role</label>
@@ -740,9 +820,9 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                             </div>
                         </form>
                         <form method="POST" style="margin-top:8px;">
-                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+                            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
                             <div class="form-row">
-                                <input type="hidden" name="reset_uid" value="<?= $u['id'] ?>">
+                                <input type="hidden" name="reset_uid" value="<?= intval($u['id']) ?>">
                                 <div class="form-group">
                                     <label>Set New Password</label>
                                     <input type="password" name="new_pass" placeholder="min 8 characters" style="width:200px;">
@@ -777,9 +857,9 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             <tbody>
             <?php foreach ($closedUsers as $c): ?>
                 <tr style="color:#7f8c8d;">
-                    <td><strong><?= htmlspecialchars($c['username']) ?></strong></td>
-                    <td><?= htmlspecialchars($c['email']) ?></td>
-                    <td><?= htmlspecialchars(strtoupper($c['role'])) ?></td>
+                    <td><strong><?= Markup::text($c['username']) ?></strong></td>
+                    <td><?= Markup::text($c['email']) ?></td>
+                    <td><?= Markup::text(strtoupper($c['role'])) ?></td>
                     <td><?= !empty($c['closed_at']) ? date('M j, Y', strtotime($c['closed_at'] . ' UTC')) : '—' ?></td>
                 </tr>
             <?php endforeach; ?>
@@ -818,27 +898,27 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         ?>
         <div class="display-card <?= $d->isActive() ? '' : 'is-off' ?>">
             <div class="display-head">
-                <h3><?= htmlspecialchars($d->title()) ?></h3>
-                <span class="tag-chip"><?= htmlspecialchars($d->tag()) ?></span>
+                <h3><?= Markup::text($d->title()) ?></h3>
+                <span class="tag-chip"><?= Markup::text($d->tag()) ?></span>
                 <span class="badge badge-<?= $d->isActive() ? 'active' : 'inactive' ?>">
                     <?= $d->isActive() ? 'On' : 'Turned off' ?>
                 </span>
             </div>
             <div class="display-facts">
-                <strong><?= $d->dimensionsLabel() ?></strong> <?= $d->orientation() ?>
-                &nbsp;·&nbsp; <?= $count ?> element<?= $count === 1 ? '' : 's' ?>
+                <strong><?= Markup::text($d->dimensionsLabel()) ?></strong> <?= Markup::text($d->orientation()) ?>
+                &nbsp;·&nbsp; <?= intval($count) ?> element<?= $count === 1 ? '' : 's' ?>
                 <?php if ($d->location() !== ''): ?>
-                    &nbsp;·&nbsp; <?= htmlspecialchars($d->location()) ?>
+                    &nbsp;·&nbsp; <?= Markup::text($d->location()) ?>
                 <?php endif; ?>
                 <br>
                 <?php if ($d->lastPublishDescription() !== ''): ?>
-                    Last published by <?= htmlspecialchars($d->lastPublishDescription()) ?>
+                    Last published by <?= Markup::text($d->lastPublishDescription()) ?>
                 <?php else: ?>
                     Never published
                 <?php endif; ?>
                 <br>
                 <?php if ($editors): ?>
-                    Assigned to <strong><?= htmlspecialchars(implode(', ', $editors)) ?></strong>
+                    Assigned to <strong><?= Markup::text(implode(', ', $editors)) ?></strong>
                     &nbsp;·&nbsp; and every admin
                 <?php else: ?>
                     Admins only — no basic account has been assigned this display
@@ -851,18 +931,18 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                 if ($cardLock->isHeld()):
                 ?>
                     <br><span class="lock-line">Being edited now by
-                    <strong><?= htmlspecialchars($cardLock->holderName() !== '' ? $cardLock->holderName() : 'someone') ?></strong><?php
-                        if ($cardLock->takenAtLabel() !== ''): ?>, since <?= htmlspecialchars($cardLock->takenAtLabel()) ?><?php
+                    <strong><?= Markup::text($cardLock->holderName() !== '' ? $cardLock->holderName() : 'someone') ?></strong><?php
+                        if ($cardLock->takenAtLabel() !== ''): ?>, since <?= Markup::text($cardLock->takenAtLabel()) ?><?php
                         endif; ?> — opening it in the builder shows it read-only, and an admin can take over there.</span>
                 <?php endif; ?>
             </div>
 
             <div class="addr-row">
                 <label style="font-size:12px;font-weight:600;color:#666;">Screen address</label>
-                <input type="text" readonly value="<?= htmlspecialchars($url) ?>"
-                       id="addr-<?= $did ?>" onclick="this.select()">
+                <input type="text" readonly value="<?= Markup::text($url) ?>"
+                       id="addr-<?= intval($did) ?>" onclick="this.select()">
                 <button class="btn btn-gray" style="font-size:12px;padding:6px 12px;"
-                        onclick="copyAddr(<?= $did ?>)">Copy</button>
+                        onclick="copyAddr(<?= intval($did) ?>)">Copy</button>
             </div>
 
             <div class="display-actions">
@@ -870,56 +950,56 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                    href="builder.php?display=<?= urlencode($d->tag()) ?>">Open in Builder</a>
                 <a class="btn btn-gray" style="text-decoration:none;" target="_blank"
                    href="viewer.php?display=<?= urlencode($d->tag()) ?>">View ↗</a>
-                <button class="btn btn-gray" onclick="togglePanel('edit-display-<?= $did ?>')">Edit</button>
+                <button class="btn btn-gray" onclick="togglePanel('edit-display-<?= intval($did) ?>')">Edit</button>
 
                 <form method="POST" style="display:inline;">
-                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
-                    <input type="hidden" name="d_id" value="<?= $did ?>">
+                    <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
+                    <input type="hidden" name="d_id" value="<?= intval($did) ?>">
                     <?php if ($d->isActive()): ?>
                         <input type="hidden" name="d_turn_off" value="1">
                         <button type="submit" name="action_toggle_display" class="btn btn-gray"
-                                onclick="return confirmTurnOff(<?= htmlspecialchars(json_encode($d->title()), ENT_QUOTES) ?>)">
+                                onclick="return confirmTurnOff(<?= Markup::jsInAttr($d->title()) ?>)">
                             Turn off</button>
                     <?php else: ?>
                         <button type="submit" name="action_toggle_display" class="btn btn-green">Turn on</button>
                     <?php endif; ?>
                 </form>
 
-                <button class="btn btn-red" onclick="togglePanel('del-display-<?= $did ?>')">Delete…</button>
+                <button class="btn btn-red" onclick="togglePanel('del-display-<?= intval($did) ?>')">Delete…</button>
             </div>
 
             <!-- Edit -->
-            <div class="display-panel" id="edit-display-<?= $did ?>">
+            <div class="display-panel" id="edit-display-<?= intval($did) ?>">
                 <form method="POST">
-                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
-                    <input type="hidden" name="d_id" value="<?= $did ?>">
+                    <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
+                    <input type="hidden" name="d_id" value="<?= intval($did) ?>">
                     <div class="form-row">
                         <div class="form-group">
                             <label>Title</label>
-                            <input type="text" name="d_title" value="<?= htmlspecialchars($d->title()) ?>"
+                            <input type="text" name="d_title" value="<?= Markup::text($d->title()) ?>"
                                    style="width:200px;" required>
                         </div>
                         <div class="form-group">
                             <label>Screen name tag</label>
-                            <input type="text" name="d_tag" value="<?= htmlspecialchars($d->tag()) ?>"
-                                   data-original-tag="<?= htmlspecialchars($d->tag()) ?>"
+                            <input type="text" name="d_tag" value="<?= Markup::text($d->tag()) ?>"
+                                   data-original-tag="<?= Markup::text($d->tag()) ?>"
                                    pattern="[a-z0-9\-]{2,32}" style="width:170px;" required>
                         </div>
                         <div class="form-group">
                             <label>Location (for reference)</label>
-                            <input type="text" name="d_location" value="<?= htmlspecialchars($d->location()) ?>"
+                            <input type="text" name="d_location" value="<?= Markup::text($d->location()) ?>"
                                    placeholder="e.g. Front entrance" style="width:200px;">
                         </div>
                         <div class="form-group">
                             <label>Canvas size</label>
-                            <input type="text" value="<?= $d->dimensionsLabel() ?>" disabled
+                            <input type="text" value="<?= Markup::text($d->dimensionsLabel()) ?>" disabled
                                    title="Set when the display was created and fixed from then on" style="width:110px;">
                         </div>
                         <div class="form-group">
                             <label>Background colour</label>
                             <input type="color" name="d_bg"
                                    value="<?= $d->backgroundType() === 'color'
-                                              ? htmlspecialchars($d->backgroundValue()) : '#1a1a2e' ?>">
+                                              ? Markup::text($d->backgroundValue()) : '#1a1a2e' ?>">
                         </div>
                         <div class="form-group">
                             <label>&nbsp;</label>
@@ -932,7 +1012,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                         no undo. To run this sign at another size, add a display at that size instead.
                         <?php if ($d->backgroundType() === 'image'): ?>
                             <br>This display currently uses an uploaded background image
-                            (<code><?= htmlspecialchars($d->backgroundValue()) ?></code>). Saving a colour here
+                            (<code><?= Markup::text($d->backgroundValue()) ?></code>). Saving a colour here
                             replaces it. Background images are uploaded from the Builder.
                         <?php else: ?>
                             Background images are uploaded from the Builder, where you can see the canvas.
@@ -942,33 +1022,64 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             </div>
 
             <!-- Delete -->
-            <div class="display-panel" id="del-display-<?= $did ?>">
+            <?php
+            // What deleting this actually costs, stated before the button rather
+            // than discovered after it (#19). The element count was the whole of it
+            // and it was the smallest part: the assignments go too, and somebody may
+            // be working on the canvas at this moment. `$busyNow` is the same
+            // question DisplayAdmin::destroy() asks — this page just asks it early,
+            // so a deletion that would be refused is not offered in the first place.
+            $busyNow = $cardLock->heldByOther($user['id']) ? $cardLock : null;
+            ?>
+            <div class="display-panel" id="del-display-<?= intval($did) ?>">
                 <div class="danger-panel">
                     <p style="font-size:13px;color:#c0392b;font-weight:600;margin-bottom:8px;">
-                        Delete “<?= htmlspecialchars($d->title()) ?>” and its <?= $count ?>
+                        Delete “<?= Markup::text($d->title()) ?>” and its <?= intval($count) ?>
                         element<?= $count === 1 ? '' : 's' ?>?
                     </p>
                     <p class="hint" style="margin-bottom:10px;">
                         This cannot be undone — nothing in this app is versioned. Any screen still pointed at
-                        <code><?= htmlspecialchars($d->tag()) ?></code> will show “Display not found”.
+                        <code><?= Markup::text($d->tag()) ?></code> will show “Display not found”.
+                        <?php if ($editors): ?>
+                            <br><?= count($editors) ?> account<?= count($editors) === 1 ? '' : 's' ?>
+                            assigned to it (<?= Markup::text(implode(', ', $editors)) ?>)
+                            lose<?= count($editors) === 1 ? 's' : '' ?> that access with it.
+                        <?php endif; ?>
                     </p>
+                    <?php if ($busyNow): ?>
+                        <p style="font-size:13px;color:#c0392b;font-weight:600;margin-bottom:10px;">
+                            <?= Markup::text($busyNow->holderName() !== '' ? $busyNow->holderName() : 'Somebody') ?>
+                            has this open in the builder<?php
+                                if ($busyNow->takenAtLabel() !== ''): ?>, since
+                                <?= Markup::text($busyNow->takenAtLabel()) ?><?php
+                                endif; ?>. Deleting it now would lose whatever they have not published,
+                            so it will be refused. Ask them to close it, or wait — the lock lapses
+                            <?= intdiv(LockState::IDLE_LAPSE_SECONDS, 60) ?> minutes after their last change.
+                        </p>
+                    <?php endif; ?>
                     <form method="POST">
-                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
-                        <input type="hidden" name="d_id" value="<?= $did ?>">
+                        <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
+                        <input type="hidden" name="d_id" value="<?= intval($did) ?>">
                         <div class="form-row">
                             <div class="form-group">
-                                <label>Type <code><?= htmlspecialchars($d->tag()) ?></code> to confirm</label>
-                                <input type="text" name="confirm_tag" autocomplete="off" style="width:200px;">
+                                <label>Type <code><?= Markup::text($d->tag()) ?></code> to confirm</label>
+                                <input type="text" name="confirm_tag" autocomplete="off" style="width:200px;"
+                                       <?= $busyNow ? 'disabled' : '' ?>>
                             </div>
                             <div class="form-group">
                                 <label>&nbsp;</label>
-                                <button type="submit" name="action_delete_display" class="btn btn-red">
+                                <?php // Disabled, not absent: a page drawn while somebody was editing and
+                                      // submitted after they stopped would otherwise be a POST the server
+                                      // has to refuse anyway. The server refuses either way — this is the
+                                      // half that stops an admin typing the tag for nothing. ?>
+                                <button type="submit" name="action_delete_display" class="btn btn-red"
+                                        <?= $busyNow ? 'disabled' : '' ?>>
                                     Delete this display</button>
                             </div>
                             <div class="form-group">
                                 <label>&nbsp;</label>
                                 <button type="button" class="btn btn-gray"
-                                        onclick="togglePanel('del-display-<?= $did ?>')">Cancel</button>
+                                        onclick="togglePanel('del-display-<?= intval($did) ?>')">Cancel</button>
                             </div>
                         </div>
                     </form>
@@ -996,13 +1107,13 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             <p class="hint">There are no displays to assign yet. Add one below.</p>
         <?php else: ?>
         <form method="POST">
-            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
             <?php foreach ($displays as $d): ?>
                 <!-- Names the displays this save covers — the columns below. A box
                      nobody ticked and a display that was not on the page when this
                      form was rendered are the same absence in a POST, and only one of
                      them means "take that access away". -->
-                <input type="hidden" name="grants_displays[]" value="<?= $d->id() ?>">
+                <input type="hidden" name="grants_displays[]" value="<?= intval($d->id()) ?>">
             <?php endforeach; ?>
             <div style="overflow-x:auto;">
                 <table class="grant-table">
@@ -1011,8 +1122,8 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                             <th>Account</th>
                             <?php foreach ($displays as $d): ?>
                                 <th style="text-align:center;">
-                                    <?= htmlspecialchars($d->title()) ?><br>
-                                    <span class="tag-chip"><?= htmlspecialchars($d->tag()) ?></span>
+                                    <?= Markup::text($d->title()) ?><br>
+                                    <span class="tag-chip"><?= Markup::text($d->tag()) ?></span>
                                     <?php if (!$d->isActive()): ?><br><span
                                         style="font-size:10px;color:#c0392b;font-weight:700;">TURNED OFF</span><?php endif; ?>
                                 </th>
@@ -1028,8 +1139,8 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                             <td>
                                 <!-- Names the accounts this save covers, so one left open while an
                                      account was added cannot strip the new account's access. -->
-                                <input type="hidden" name="grants_accounts[]" value="<?= $uid ?>">
-                                <strong><?= htmlspecialchars($bu['username']) ?></strong>
+                                <input type="hidden" name="grants_accounts[]" value="<?= intval($uid) ?>">
+                                <strong><?= Markup::text($bu['username']) ?></strong>
                                 <?php if (!$bu['is_active']): ?>
                                     <span class="badge badge-inactive">Inactive</span>
                                 <?php endif; ?>
@@ -1039,9 +1150,9 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                             </td>
                             <?php foreach ($displays as $d): ?>
                                 <td style="text-align:center;">
-                                    <input type="checkbox" name="grant[<?= $uid ?>][]" value="<?= $d->id() ?>"
+                                    <input type="checkbox" name="grant[<?= intval($uid) ?>][]" value="<?= intval($d->id()) ?>"
                                            <?= in_array($d->id(), $held, true) ? 'checked' : '' ?>
-                                           title="<?= htmlspecialchars($bu['username'] . ' may edit ' . $d->title()) ?>">
+                                           title="<?= Markup::text($bu['username'] . ' may edit ' . $d->title()) ?>">
                                 </td>
                             <?php endforeach; ?>
                         </tr>
@@ -1064,7 +1175,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
     <div class="card">
         <h2>Add a Display</h2>
         <form method="POST" id="new-display-form">
-            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
 
             <div class="step">
                 <div class="step-label">1 · Canvas size</div>
@@ -1079,7 +1190,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                         <select id="d_preset" onchange="applyPreset()" style="width:290px;">
                             <option value="">Choose a size…</option>
                             <?php foreach ($canvasPresets as $p): ?>
-                                <option value="<?= $p[1] ?>x<?= $p[2] ?>"><?= htmlspecialchars($p[0]) ?></option>
+                                <option value="<?= intval($p[1]) ?>x<?= intval($p[2]) ?>"><?= Markup::text($p[0]) ?></option>
                             <?php endforeach; ?>
                             <option value="custom">Custom…</option>
                         </select>
@@ -1169,8 +1280,35 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             cannot change them. Changes reach every screen within 30 seconds — no publishing
             needed, because a screen reads this typography on each poll.
         </p>
+        <?php if ($styleBad): ?>
+            <!-- Nothing this form can submit produces one of these — BrandStyles
+                 validates every field on the way in. It reaches here from a row edited
+                 outside the app, or written before one of these rules existed. The
+                 table below already shows what renders; without this it would look
+                 like the row, and the next save would store the substitute for good. -->
+            <div style="border-left:4px solid #e67e22; background:#fff8f0; border-radius:4px;
+                        padding:10px 14px; margin-bottom:16px;">
+                <strong style="color:#e67e22; font-size:13px;">Stored values that cannot be used</strong>
+                <ul style="font-size:13px; color:#555; margin:6px 0 0 18px;">
+                    <?php foreach ($styleBad as $bad): ?>
+                        <li><?= Markup::text($typeLabels[$bad['type']] ?? $bad['type']) ?> —
+                            <?= Markup::text($bad['label']) ?> is stored as
+                            <?php /* Color::describe() rather than the value: it shortens,
+                                    quotes, and names the type of anything that is not a
+                                    string. Not colour-specific despite where it lives —
+                                    a second copy for font families would be a second
+                                    opinion about how to quote a value in a sentence. */ ?>
+                            <?= Markup::text(Color::describe($bad['value'])) ?>, so
+                            <?= Markup::text($bad['instead']) ?> is what every sign draws.</li>
+                    <?php endforeach; ?>
+                </ul>
+                <p style="font-size:12px; color:#7f8c8d; margin-top:6px;">
+                    The boxes below show what is being drawn. Saving this form stores it.
+                </p>
+            </div>
+        <?php endif; ?>
         <form method="POST">
-            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
             <table class="bs-table">
                 <thead>
                     <tr>
@@ -1186,55 +1324,64 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                 </thead>
                 <tbody>
                 <?php foreach ($typeLabels as $t => $label):
-                    $s = $styles[$t] ?? [];
-                    $ff = $s['font_family'] ?? 'Arial';
-                    $fs = $s['font_size']   ?? 16;
-                    $fc = $s['font_color']  ?? '#000000';
-                    $fw = $s['font_weight'] ?? 'normal';
-                    $fi = $s['font_style']  ?? 'normal';
-                    $lh = $s['line_height'] ?? 1.4;
+                    // Through readable(), not out of the row. These six land in a
+                    // `style` attribute below, and escaping stops a value ending the
+                    // attribute but not the declaration inside it: a stored
+                    // `Arial; position: fixed; top: 0` was, after escaping, exactly
+                    // that. The cleaners were only ever reached on the way in, which
+                    // is a promise about rows this app wrote and about no others.
+                    // $stored keeps the row itself, because the notice above the
+                    // table quotes what is actually there (#15, §4ai).
+                    $stored = $styles[$t] ?? [];
+                    $s  = BrandStyles::readable($stored);
+                    $ff = $s['font_family'];
+                    $fs = $s['font_size'];
+                    $fc = $s['font_color'];
+                    $fw = $s['font_weight'];
+                    $fi = $s['font_style'];
+                    $lh = $s['line_height'];
                 ?>
-                <tr id="bs-row-<?= $t ?>">
-                    <td><strong><?= htmlspecialchars($label) ?></strong></td>
+                <tr id="bs-row-<?= Markup::text($t) ?>">
+                    <td><strong><?= Markup::text($label) ?></strong></td>
                     <td>
-                        <select name="bs_<?= $t ?>_family" onchange="updatePreview('<?= $t ?>')">
+                        <select name="bs_<?= Markup::text($t) ?>_family" onchange="updatePreview(<?= Markup::jsInAttr($t) ?>)">
                             <?php foreach ($fontFamilies as $ff_opt): ?>
-                                <option value="<?= htmlspecialchars($ff_opt) ?>"
-                                    <?= $ff === $ff_opt ? 'selected' : '' ?>><?= $ff_opt ?></option>
+                                <option value="<?= Markup::text($ff_opt) ?>"
+                                    <?= $ff === $ff_opt ? 'selected' : '' ?>><?= Markup::text($ff_opt) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </td>
                     <td>
-                        <input type="number" name="bs_<?= $t ?>_size" value="<?= intval($fs) ?>"
-                               min="8" max="200" onchange="updatePreview('<?= $t ?>')">
+                        <input type="number" name="bs_<?= Markup::text($t) ?>_size" value="<?= intval($fs) ?>"
+                               min="8" max="200" onchange="updatePreview(<?= Markup::jsInAttr($t) ?>)">
                     </td>
                     <td>
-                        <input type="color" name="bs_<?= $t ?>_color" value="<?= htmlspecialchars($fc) ?>"
-                               oninput="updatePreview('<?= $t ?>')">
+                        <input type="color" name="bs_<?= Markup::text($t) ?>_color" value="<?= Markup::text($fc) ?>"
+                               oninput="updatePreview(<?= Markup::jsInAttr($t) ?>)">
                     </td>
                     <td>
-                        <select name="bs_<?= $t ?>_weight" onchange="updatePreview('<?= $t ?>')">
+                        <select name="bs_<?= Markup::text($t) ?>_weight" onchange="updatePreview(<?= Markup::jsInAttr($t) ?>)">
                             <option value="normal" <?= $fw==='normal'?'selected':'' ?>>Normal</option>
                             <option value="bold"   <?= $fw==='bold'  ?'selected':'' ?>>Bold</option>
                         </select>
                     </td>
                     <td>
-                        <select name="bs_<?= $t ?>_fstyle" onchange="updatePreview('<?= $t ?>')">
+                        <select name="bs_<?= Markup::text($t) ?>_fstyle" onchange="updatePreview(<?= Markup::jsInAttr($t) ?>)">
                             <option value="normal" <?= $fi==='normal' ?'selected':'' ?>>Normal</option>
                             <option value="italic" <?= $fi==='italic' ?'selected':'' ?>>Italic</option>
                         </select>
                     </td>
                     <td>
-                        <input type="number" name="bs_<?= $t ?>_lh" value="<?= number_format(floatval($lh),2) ?>"
-                               min="0.8" max="4" step="0.1" style="width:70px;" onchange="updatePreview('<?= $t ?>')">
+                        <input type="number" name="bs_<?= Markup::text($t) ?>_lh" value="<?= number_format(floatval($lh),2) ?>"
+                               min="0.8" max="4" step="0.1" style="width:70px;" onchange="updatePreview(<?= Markup::jsInAttr($t) ?>)">
                     </td>
                     <td style="max-width:220px; overflow:hidden; white-space:nowrap;">
-                        <span class="preview-text" id="preview-<?= $t ?>"
-                              style="font-family:<?= htmlspecialchars($ff) ?>; font-size:<?= intval($fs) ?>px;
-                                     color:<?= htmlspecialchars($fc) ?>; font-weight:<?= htmlspecialchars($fw) ?>;
-                                     font-style:<?= htmlspecialchars($fi) ?>; line-height:<?= floatval($lh) ?>;
+                        <span class="preview-text" id="preview-<?= Markup::text($t) ?>"
+                              style="font-family:<?= Markup::text($ff) ?>; font-size:<?= intval($fs) ?>px;
+                                     color:<?= Markup::text($fc) ?>; font-weight:<?= Markup::text($fw) ?>;
+                                     font-style:<?= Markup::text($fi) ?>; line-height:<?= floatval($lh) ?>;
                                      display:inline-block; max-width:200px; overflow:hidden; white-space:nowrap; vertical-align:middle;">
-                            <?= htmlspecialchars($label) ?>
+                            <?= Markup::text($label) ?>
                         </span>
                     </td>
                 </tr>
@@ -1255,17 +1402,41 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 <!-- ============================================================ -->
 <div id="tab-branding" style="display:<?= $tab==='branding'?'block':'none' ?>">
     <form method="POST" enctype="multipart/form-data">
-        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
-        <input type="hidden" name="existing_logo" value="<?= htmlspecialchars($curLogo) ?>">
+        <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
+        <input type="hidden" name="existing_logo" value="<?= Markup::text($curLogo) ?>">
+
+        <?php if ($brandBad): ?>
+            <!-- Nothing typed into this form can produce one of these — #21 refuses the
+                 save and names the field. It reaches here from branding_config.php being
+                 a generated file that is documented as hand-editable, or from a colour
+                 stored before that rule existed. The pages are already showing the
+                 default; saying so is the difference between a page that looks wrong and
+                 a page that is wrong, and only one of them is worth anybody's morning. -->
+            <div class="card" style="border-left:4px solid #e67e22;">
+                <h2 style="color:#e67e22;">Stored colours this app cannot read</h2>
+                <p style="font-size:13px; color:#555; margin-bottom:8px;">
+                    branding_config.php holds <?= count($brandBad) === 1 ? 'a value' : 'values' ?>
+                    that <?= count($brandBad) === 1 ? 'is not a colour' : 'are not colours' ?>.
+                    Every page is drawing the default instead. Saving this form replaces
+                    <?= count($brandBad) === 1 ? 'it' : 'them' ?> with whatever the pickers below show.
+                </p>
+                <ul style="font-size:13px; color:#555; margin:0 0 0 18px;">
+                    <?php foreach ($brandBad as $bad): ?>
+                        <li><?= Markup::text($bad['label']) ?> is stored as
+                            <?= Markup::text(Color::describe($bad['value'])) ?>.</li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+        <?php endif; ?>
 
         <div class="card">
             <h2>Logo</h2>
             <?php if ($curLogo): ?>
                 <div style="margin-bottom:10px;">
-                    <img src="<?= htmlspecialchars($curLogo) ?>" alt="Current logo"
+                    <img src="<?= Markup::text($curLogo) ?>" alt="Current logo"
                          style="max-height:60px; max-width:200px; object-fit:contain; border:1px solid #eee; padding:4px; border-radius:4px;">
                 </div>
-                <p style="font-size:12px; color:#7f8c8d; margin-bottom:10px;">Current: <?= htmlspecialchars($curLogo) ?></p>
+                <p style="font-size:12px; color:#7f8c8d; margin-bottom:10px;">Current: <?= Markup::text($curLogo) ?></p>
             <?php endif; ?>
             <div class="form-group">
                 <label>Upload Logo (PNG, JPG, SVG)</label>
@@ -1282,32 +1453,32 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             <table style="border-collapse:collapse; width:100%; font-size:13px;">
                 <tr>
                     <td style="padding:8px 0; width:160px; color:#555; font-weight:600;">Nav Background</td>
-                    <td style="padding:8px 0;"><input type="color" name="nav_bg" value="<?= htmlspecialchars($curNavBg) ?>" oninput="brandPreview()"></td>
+                    <td style="padding:8px 0;"><input type="color" name="nav_bg" value="<?= Markup::text($curNavBg) ?>" oninput="brandPreview()"></td>
                     <td style="padding:8px 12px; color:#7f8c8d; font-size:12px;">Top navigation background</td>
                 </tr>
                 <tr>
                     <td style="padding:8px 0; color:#555; font-weight:600;">Nav Border</td>
-                    <td style="padding:8px 0;"><input type="color" name="nav_border" value="<?= htmlspecialchars($curBorder) ?>" oninput="brandPreview()"></td>
+                    <td style="padding:8px 0;"><input type="color" name="nav_border" value="<?= Markup::text($curBorder) ?>" oninput="brandPreview()"></td>
                     <td style="padding:8px 12px; color:#7f8c8d; font-size:12px;">Bottom border line on nav</td>
                 </tr>
                 <tr>
                     <td style="padding:8px 0; color:#555; font-weight:600;">Accent Color</td>
-                    <td style="padding:8px 0;"><input type="color" name="accent" value="<?= htmlspecialchars($curAccent) ?>" oninput="brandPreview()"></td>
+                    <td style="padding:8px 0;"><input type="color" name="accent" value="<?= Markup::text($curAccent) ?>" oninput="brandPreview()"></td>
                     <td style="padding:8px 12px; color:#7f8c8d; font-size:12px;">Buttons and highlights</td>
                 </tr>
                 <tr>
                     <td style="padding:8px 0; color:#555; font-weight:600;">Nav Text Color</td>
-                    <td style="padding:8px 0;"><input type="color" name="nav_text" value="<?= htmlspecialchars($curText) ?>" oninput="brandPreview()"></td>
+                    <td style="padding:8px 0;"><input type="color" name="nav_text" value="<?= Markup::text($curText) ?>" oninput="brandPreview()"></td>
                     <td style="padding:8px 12px; color:#7f8c8d; font-size:12px;">Site name text in the nav</td>
                 </tr>
             </table>
 
             <div style="margin-top:16px; background:#2c3e50; border-radius:6px; padding:10px 14px;
                         display:flex; align-items:center; gap:14px;" id="brand-preview-nav">
-                <span id="bpv-brand" style="font-weight:bold; font-size:14px; color:<?= htmlspecialchars($curText) ?>;">
-                    <?= htmlspecialchars($curSite) ?>
+                <span id="bpv-brand" style="font-weight:bold; font-size:14px; color:<?= Markup::text($curText) ?>;">
+                    <?= Markup::text($curSite) ?>
                 </span>
-                <span id="bpv-btn" style="background:<?= htmlspecialchars($curAccent) ?>; color:#fff;
+                <span id="bpv-btn" style="background:<?= Markup::text($curAccent) ?>; color:#fff;
                       padding:4px 12px; border-radius:4px; font-size:12px;">Publish</span>
             </div>
         </div>
@@ -1321,13 +1492,13 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 <!-- ============================================================ -->
 <div id="tab-settings" style="display:<?= $tab==='settings'?'block':'none' ?>">
     <form method="POST">
-        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+        <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
 
         <div class="card">
             <h2>Site Name</h2>
             <div class="form-group" style="max-width:400px;">
                 <label>Site Name</label>
-                <input type="text" name="site_name" value="<?= htmlspecialchars($curSite) ?>"
+                <input type="text" name="site_name" value="<?= Markup::text($curSite) ?>"
                        placeholder="Store Display System" style="width:100%;">
             </div>
             <p style="font-size:12px; color:#7f8c8d; margin-top:6px;">Shown in browser tab and on the login screen.</p>
@@ -1342,12 +1513,12 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             <div class="form-row">
                 <div class="form-group" style="flex:1; min-width:220px;">
                     <label>From Address</label>
-                    <input type="email" name="mail_from" value="<?= htmlspecialchars($curMail) ?>"
+                    <input type="email" name="mail_from" value="<?= Markup::text($curMail) ?>"
                            placeholder="noreply@yourdomain.com" style="width:100%;">
                 </div>
                 <div class="form-group" style="flex:1; min-width:200px;">
                     <label>From Name</label>
-                    <input type="text" name="mail_name" value="<?= htmlspecialchars($curMailN) ?>"
+                    <input type="text" name="mail_name" value="<?= Markup::text($curMailN) ?>"
                            placeholder="Display System" style="width:100%;">
                 </div>
             </div>
@@ -1359,9 +1530,10 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
     <?php
     // Read-only, and outside the form on purpose: nothing here is a setting and
     // there is nothing to submit. See lib/server_report.php for why it exists —
-    // in short, the repo has been written to a PHP version nobody ever checked,
-    // and the schema converges silently enough that a column can fail to apply
-    // for months without anyone noticing.
+    // in short, the repo was written to a PHP version nobody had ever checked (this
+    // card is what checked it, and the rule now says 8.2 because of what it said),
+    // and the schema converges silently enough that a column can fail to apply for
+    // months without anyone noticing.
     $server = new ServerReport($pdo);
     ?>
     <div class="card">
@@ -1375,12 +1547,12 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             <?php foreach ($server->runtime() as $label => $fact): ?>
             <tr style="border-bottom:1px solid #ecf0f1;">
                 <td style="padding:7px 10px 7px 0; color:#7f8c8d; white-space:nowrap; vertical-align:top;">
-                    <?= htmlspecialchars($label) ?>
+                    <?= Markup::text($label) ?>
                 </td>
                 <td style="padding:7px 0; vertical-align:top;">
-                    <strong><?= htmlspecialchars($fact[0]) ?></strong>
+                    <strong><?= Markup::text($fact[0]) ?></strong>
                     <?php if ($fact[1] !== ''): ?>
-                        <div style="color:#7f8c8d; font-size:12px; margin-top:2px;"><?= htmlspecialchars($fact[1]) ?></div>
+                        <div style="color:#7f8c8d; font-size:12px; margin-top:2px;"><?= Markup::text($fact[1]) ?></div>
                     <?php endif; ?>
                 </td>
             </tr>
@@ -1399,12 +1571,12 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             <?php foreach (ErrorPolicy::status() as $label => $fact): ?>
             <tr style="border-bottom:1px solid #ecf0f1;">
                 <td style="padding:7px 10px 7px 0; color:#7f8c8d; white-space:nowrap; vertical-align:top;">
-                    <?= htmlspecialchars($label) ?>
+                    <?= Markup::text($label) ?>
                 </td>
                 <td style="padding:7px 0; vertical-align:top; word-break:break-all;">
-                    <strong><?= htmlspecialchars($fact[0]) ?></strong>
+                    <strong><?= Markup::text($fact[0]) ?></strong>
                     <?php if ($fact[1] !== ''): ?>
-                        <div style="color:#7f8c8d; font-size:12px; margin-top:2px; word-break:normal;"><?= htmlspecialchars($fact[1]) ?></div>
+                        <div style="color:#7f8c8d; font-size:12px; margin-top:2px; word-break:normal;"><?= Markup::text($fact[1]) ?></div>
                     <?php endif; ?>
                 </td>
             </tr>
@@ -1433,12 +1605,12 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             <?php foreach ($server->convergence() as $col): ?>
             <tr style="border-bottom:1px solid #ecf0f1;">
                 <td style="padding:6px 10px 6px 0; white-space:nowrap;">
-                    <code><?= htmlspecialchars($col['table']) ?>.<?= htmlspecialchars($col['column']) ?></code>
+                    <code><?= Markup::text($col['table']) ?>.<?= Markup::text($col['column']) ?></code>
                 </td>
                 <td style="padding:6px 0; color:<?= $col['ok'] ? '#27ae60' : '#c0392b' ?>; font-weight:600;">
                     <?= $col['ok'] ? '&#10003; present' : '&#10007; missing' ?>
                     <?php if ($col['note'] !== ''): ?>
-                        <span style="color:#7f8c8d; font-weight:normal;">— <?= htmlspecialchars($col['note']) ?></span>
+                        <span style="color:#7f8c8d; font-weight:normal;">— <?= Markup::text($col['note']) ?></span>
                     <?php endif; ?>
                 </td>
             </tr>
@@ -1463,9 +1635,9 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                 <label>Display</label>
                 <select id="wa-display" onchange="loadCanvasElements()" style="width:340px;">
                     <?php foreach ($displays as $d): ?>
-                    <option value="<?= htmlspecialchars($d->tag()) ?>" data-id="<?= intval($d->id()) ?>">
-                        <?= htmlspecialchars($d->title()) ?> — <?= htmlspecialchars($d->tag()) ?>
-                        (<?= $d->dimensionsLabel() ?>)
+                    <option value="<?= Markup::text($d->tag()) ?>" data-id="<?= intval($d->id()) ?>">
+                        <?= Markup::text($d->title()) ?> — <?= Markup::text($d->tag()) ?>
+                        (<?= Markup::text($d->dimensionsLabel()) ?>)
                     </option>
                     <?php endforeach; ?>
                 </select>
@@ -1485,12 +1657,12 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 
 <script>
     var _tabs = ['users','displays','brand','branding','settings','workarea'];
-    var CSRF_TOKEN = <?= json_encode(csrfToken()) ?>;
+    var CSRF_TOKEN = <?= HttpReply::jsValue(csrfToken()) ?>;
 
     // Every Display, for filtering the "duplicate from" list to the ones of the
     // exact size being created (ADR-0004). The server checks it again — this only
     // stops the wrong choice being offered.
-    var DISPLAYS = <?= json_encode($dupCandidates, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+    var DISPLAYS = <?= HttpReply::jsValue($dupCandidates) ?>;
 
     function showTab(name) {
         _tabs.forEach(function(t) {
@@ -1518,6 +1690,20 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         } else {
             try { document.execCommand('copy'); } catch (e) { /* the text is selected either way */ }
         }
+    }
+
+    /**
+     * The account name arrives as a JavaScript value, never spliced into one.
+     *
+     * This sentence used to be built in the HTML attribute with the username
+     * escaped for HTML, which the HTML parser undoes before this parser sees it —
+     * so `o'brien` ended the string and anything after it ran (#15). Nothing is
+     * escaped here because nothing needs to be: it is already a string.
+     */
+    function confirmCloseAccount(username) {
+        return confirm('Close the account for ' + username + '?\n\n' +
+            'They will not be able to sign in again, and they will lose access to ' +
+            'every display. This cannot be undone, and the name stays reserved.');
     }
 
     function confirmTurnOff(title) {
@@ -1774,7 +1960,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
     }
 
     // Auto-load if Work Area is the landing tab
-    if (<?= json_encode($tab) ?> === 'workarea') loadCanvasElements();
+    if (<?= HttpReply::jsValue($tab) ?> === 'workarea') loadCanvasElements();
 
     function brandPreview() {
         var nav  = document.getElementById('brand-preview-nav');

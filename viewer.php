@@ -26,6 +26,14 @@ ErrorPolicy::install(ErrorPolicy::SCREEN);
 require_once __DIR__ . '/db_connect.php';
 require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/display_request.php';
+require_once __DIR__ . '/lib/http_reply.php';
+
+// Nothing this page serves may be held (#28). Two of the three notices below exist
+// in order to stop being true — a sign gets turned back on, a tag gets corrected —
+// and the meta refresh that re-checks them every 30 seconds is worth nothing if the
+// browser or a proxy answers the refresh out of its own store. Before any output,
+// because a header set after the first byte is a warning, not a header.
+HttpReply::noStore();
 
 $resolution = DisplayRequest::forViewing(new DisplayStore($pdo), $_GET);
 $display    = $resolution->display();
@@ -43,12 +51,20 @@ $display    = $resolution->display();
 // capable kiosk browser.
 if (!$resolution->isFound()) {
     $notice = $resolution->message();
+    // 400, 404 or 503 rather than the 200 all three used to leave as (#28). The
+    // Screen renders the body either way — this is for everything that will never
+    // read it: a proxy deciding whether it may keep the answer, an uptime check, an
+    // admin running `curl` after typing a tag onto a new television.
+    http_response_code(HttpReply::codeForResolution($resolution));
+    if (!headers_sent() && $resolution->kind() === DisplayResolution::INACTIVE) {
+        header('Retry-After: ' . HttpReply::RETRY_AFTER);
+    }
     ?><!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta http-equiv="refresh" content="30">
-<title><?= htmlspecialchars($display ? $display->title() : 'Display') ?></title>
+<title><?= Markup::text($display ? $display->title() : 'Display') ?></title>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -70,7 +86,7 @@ if (!$resolution->isFound()) {
 </style>
 </head>
 <body>
-<p class="notice"><?= htmlspecialchars($notice) ?></p>
+<p class="notice"><?= Markup::text($notice) ?></p>
 </body>
 </html><?php
     exit;
@@ -82,7 +98,7 @@ $canvasH = $display->canvasHeight();
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title><?= htmlspecialchars($display->title()) ?></title>
+<title><?= Markup::text($display->title()) ?></title>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     /* Kiosk / embedded display: never scroll in either direction. Lock the
@@ -109,7 +125,7 @@ $canvasH = $display->canvasHeight();
     /* The Display's canvas, at the dimensions fixed when it was created
        (ADR-0004) — scaled to fill any Screen via JS. */
     #viewer-canvas {
-        width: <?= $canvasW ?>px; height: <?= $canvasH ?>px;
+        width: <?= intval($canvasW) ?>px; height: <?= intval($canvasH) ?>px;
         position: absolute; top: 0; left: 0;
         transform-origin: top left;
         overflow: hidden;
@@ -242,10 +258,14 @@ $canvasH = $display->canvasHeight();
 <div id="viewer-notice"></div>
 <script>
     // This Display's canvas, fixed at creation (ADR-0004).
-    var CANVAS_W = <?= $canvasW ?>;
-    var CANVAS_H = <?= $canvasH ?>;
+    var CANVAS_W = <?= intval($canvasW) ?>;
+    var CANVAS_H = <?= intval($canvasH) ?>;
     // The screen name tag this Screen was pointed at. Every poll names it.
-    var DISPLAY_TAG = <?= json_encode($display->tag()) ?>;
+    //
+    // Through HttpReply, not json_encode: a bare json_encode returning false here
+    // emits `var DISPLAY_TAG = ;`, which is a parse error that takes the whole
+    // script down and leaves a blank television with nothing in any log (#26).
+    var DISPLAY_TAG = <?= HttpReply::jsValue($display->tag()) ?>;
 
     // Scale the canvas to fill the actual Screen. Letterboxed on a shape
     // mismatch — min() preserves proportions rather than distorting prices.
@@ -268,6 +288,22 @@ $canvasH = $display->canvasHeight();
     var _loading    = false;
     var _carouselTimers = [];
     var _marqueeStops   = [];   // array of cancel functions, one per marquee
+
+    // How many polls in a row may fail before the sign stops showing what it last
+    // knew (#26).
+    //
+    // Not one, deliberately. A single failed poll is a dropped packet, a Wi-Fi
+    // roam, a PHP-FPM restart, somebody re-uploading a file over FTP — and blanking
+    // a working price board for any of those would be a worse fault than the one
+    // this fixes. Ten of them is five minutes, which no transient in this shop
+    // reaches and which bounds how wrong a sign can be: a customer is never looking
+    // at prices more than five minutes after the app stopped being able to confirm
+    // them.
+    //
+    // Going dark is the right end state for a *price* sign specifically. Showing
+    // stale prices is a promise the store then has to keep; showing nothing is not.
+    var STALE_AFTER_FAILURES = 10;
+    var _failedPolls = 0;
 
     function stopAnimations() {
         _carouselTimers.forEach(function(t) { clearInterval(t); });
@@ -297,16 +333,57 @@ $canvasH = $display->canvasHeight();
     function loadLayout() {
         if (_loading) return;
         _loading = true;
-        // A request that never settles must not freeze the sign for good. _loading
-        // is only cleared in .then/.catch, and fetch has no timeout of its own, so
-        // one wedged request (captive portal, stalled worker, a query blocked on a
-        // lock) would silently end all further polling.
-        var _watchdog = setTimeout(function() { _loading = false; }, 20000);
+
+        // Whichever of the three below gets there first is the only one that counts.
+        // Without it a wedged request that the watchdog freed and that then rejected
+        // was both counted twice and able to clear `_loading` out from under the
+        // poll that had already replaced it.
+        var settled = false;
+
+        // A request that never settles must not freeze the sign for good. fetch has
+        // no timeout of its own, so one wedged request (captive portal, stalled
+        // worker, a query blocked on a lock) would silently end all further polling.
+        //
+        // It counts as a failed poll, and that is the point: a request that never
+        // answers is the exact shape of "the sign kept its old layout forever with
+        // no notice", and a watchdog that only freed the flag was invisible to any
+        // counter that lived in .catch.
+        var _watchdog = setTimeout(function() { pollFailed(); }, 20000);
+
+        /** A poll that got a reply, whatever the reply said. */
+        function pollSucceeded() {
+            if (settled) { return; }
+            settled = true;
+            clearTimeout(_watchdog);
+            _loading     = false;
+            _failedPolls = 0;
+        }
+
+        /**
+         * A poll that did not. The layout stays up — until enough of them have
+         * failed in a row that it can no longer be claimed to be current.
+         */
+        function pollFailed() {
+            if (settled) { return; }
+            settled = true;
+            clearTimeout(_watchdog);
+            _loading    = false;   // allow retry on next interval
+            _layoutHash = '';      // and re-render from scratch when it comes back
+            _failedPolls++;
+            if (_failedPolls >= STALE_AFTER_FAILURES) {
+                // The same sentence the server sends for its own failures, so a sign
+                // says one thing whichever end stopped working.
+                showNotice('This sign is temporarily unavailable.');
+            }
+        }
+
         fetch('api.php?action=get_layout&display=' + encodeURIComponent(DISPLAY_TAG))
+            // A non-2xx reply is not a rejected fetch, and this endpoint answers 400,
+            // 404 and 503 now (#28) — the body is the same JSON in every case, and
+            // reaching the server at all is what `pollSucceeded` means here.
             .then(function(r) { return r.json(); })
             .then(function(data) {
-                clearTimeout(_watchdog);
-                _loading = false;
+                pollSucceeded();
 
                 if (!data || data.status !== 'success') {
                     showNotice(data && data.message);
@@ -425,39 +502,10 @@ $canvasH = $display->canvasHeight();
                         block.textContent = content || '';
 
                     } else if (el.type === 'image') {
-                        var _p   = (content || '').split('|');
-                        var _src = _p[0];
-                        var _fit = _p[1] || 'fill';
-                        var img = document.createElement('img');
-                        img.src = _src || '';
-                        img.alt = '';
-                        // Apply fit mode
-                        if (_fit === 'contain' || _fit === 'cover') {
-                            img.style.objectFit = _fit;
-                        } else if (_fit === 'fit-w') {
-                            img.style.height = 'auto';
-                        } else if (_fit === 'fit-h') {
-                            img.style.width = 'auto';
-                        } else {
-                            img.style.objectFit = 'fill';
-                        }
-                        block.appendChild(img);
+                        renderImage(block, content);
 
                     } else if (el.type === 'video') {
-                        var vid = document.createElement('video');
-                        vid.autoplay   = true;
-                        vid.loop       = true;
-                        vid.muted      = true;
-                        vid.playsInline = true;
-                        if (content) {
-                            var src = document.createElement('source');
-                            src.src  = content;
-                            var _ext = content.split('.').pop().toLowerCase();
-                            var _mime = {mp4:'video/mp4',webm:'video/webm',ogv:'video/ogg',ogg:'video/ogg'};
-                            if (_mime[_ext]) src.type = _mime[_ext];
-                            vid.appendChild(src);
-                        }
-                        block.appendChild(vid);
+                        renderVideo(block, content);
 
                     } else if (el.type === 'carousel') {
                         renderCarousel(block, content, blockStyles);
@@ -482,29 +530,149 @@ $canvasH = $display->canvasHeight();
                 // stayed blank until somebody walked over and reloaded the browser.
                 _layoutHash = hash;
             })
-            .catch(function() {
-                clearTimeout(_watchdog);
-                _loading = false;   // allow retry on next interval
-                _layoutHash = '';   // and re-render from scratch when it comes back
-            });
+            // Reached by a dropped connection, by a reply that is not JSON, and —
+            // until #26 — by a 200 with a zero-length body, which is what an
+            // unchecked encode sent whenever one stored character was not valid
+            // UTF-8. That cause was permanent, so the sign sat on its last layout
+            // and retried into the same failure every 30 seconds, for months,
+            // silently. The server no longer produces it; this end no longer
+            // swallows it either way.
+            .catch(function() { pollFailed(); });
+    }
+
+    // ── Image ───────────────────────────────────────────────────
+    //
+    // Lifted out of the render loop to sit beside the other four, because the
+    // question it now has to answer is the same one they answer and it is easier
+    // to be sure of — and to test — in a function with a name.
+    function renderImage(block, content) {
+        // `path|fit`. The path is empty when nothing was ever chosen, and also
+        // when the asset a block was linked to has since been deleted: `content`
+        // is `db_content` for a linked block, and that comes back null.
+        var parts = (typeof content === 'string') ? content.split('|') : [];
+        var src   = (parts[0] || '').trim();
+        var fit   = parts[1] || 'fill';
+
+        // An image with no file draws nothing (#45). `img.src = ''` is not an
+        // absent picture — it is a *broken* one, by definition: the empty string
+        // puts the element straight into the broken state, and what a broken image
+        // looks like is then the browser's decision. An icon on some, a blank box
+        // on others, at 100% × 100% because that is what .element-block img says.
+        //
+        // A store's sign must not look different because of which browser the
+        // television happens to ship with. Appending nothing is the one rendering
+        // that is the same everywhere, and it is also the honest one: there is no
+        // picture here.
+        //
+        // The author still sees the block. The Builder draws a placeholder in its
+        // place — svgPlaceholder(w, h, 'Image') — with the asset picker beside it.
+        if (src === '') { return; }
+
+        var img = document.createElement('img');
+        img.src = src;
+        img.alt = '';
+        // Apply fit mode
+        if (fit === 'contain' || fit === 'cover') {
+            img.style.objectFit = fit;
+        } else if (fit === 'fit-w') {
+            img.style.height = 'auto';
+        } else if (fit === 'fit-h') {
+            img.style.width = 'auto';
+        } else {
+            img.style.objectFit = 'fill';
+        }
+        block.appendChild(img);
+    }
+
+    // ── Video ───────────────────────────────────────────────────
+    function renderVideo(block, content) {
+        var path = (typeof content === 'string') ? content.trim() : '';
+
+        // The same answer as the image, for the same reason (#45). An autoplaying
+        // <video> with no source inside it never plays anything; it is a rectangle
+        // whose colour the browser picks — black on some, transparent on others —
+        // and the sign should not depend on which. The `if (content)` below used to
+        // skip only the <source>, and appended the empty player regardless.
+        //
+        // This is the one of the five where the Builder had nothing to say either,
+        // so it now draws the placeholder it already draws for an image.
+        if (path === '') { return; }
+
+        var vid = document.createElement('video');
+        vid.autoplay    = true;
+        vid.loop        = true;
+        vid.muted       = true;
+        vid.playsInline = true;
+
+        var src  = document.createElement('source');
+        src.src  = path;
+        var ext  = path.split('.').pop().toLowerCase();
+        var mime = {mp4:'video/mp4',webm:'video/webm',ogv:'video/ogg',ogg:'video/ogg'};
+        if (mime[ext]) src.type = mime[ext];
+        vid.appendChild(src);
+
+        block.appendChild(vid);
     }
 
     // ── Carousel ────────────────────────────────────────────────
+
+    /** The same three-way test the text panel below applies to each of its fields. */
+    function slideFieldSet(v) { return v !== null && v !== undefined && v !== ''; }
+
+    /**
+     * Whether a slide holds anything a customer could read or look at.
+     *
+     * Element content is unvalidated for the non-text types (invariant 6), so a
+     * slide can be null, a string, or an object with every field left blank — and
+     * each of those used to draw. A blank slide still got its image well, and the
+     * well painted itself #1a1a2e when there was no image to put in it: a navy
+     * rectangle standing in for a picture nobody had chosen, rotating past the
+     * customer every five seconds.
+     */
+    function slideShowsSomething(s) {
+        if (!s || typeof s !== 'object') { return false; }
+        if (s.image)     { return true;  }
+        if (s.imageOnly) { return false; }   // the image is the whole slide, and there is none
+        return slideFieldSet(s.title) || slideFieldSet(s.price) || slideFieldSet(s.description);
+    }
+
     function renderCarousel(block, content, blockStyles) {
         var data = {};
         try { data = JSON.parse(content || '{}'); } catch(e) {}
         var slides   = data.slides   || [];
         var interval = Math.max(500, data.interval || 5000);
 
+        // A carousel with no slides draws nothing at all (#45). It used to print
+        // "Carousel — no slides added yet" in grey, on a board a customer is
+        // reading to decide what to order. That sentence was written for whoever
+        // was building the layout, and it never reached them: the person standing
+        // in front of a price sign cannot add a slide to it.
+        //
+        // Saying nothing here costs the author nothing either, because the surface
+        // they are actually looking at already tells them. The Builder labels the
+        // same block "↻ Carousel — 0 slides" on its own canvas, whether or not this
+        // page ever says a word.
+        //
+        // Returning is enough to draw nothing: the caller appends `block` either
+        // way, and .element-block sets only position and overflow — no background,
+        // no border, so an empty one is not ink.
+        //
+        // A `slides` that is not an array lands here rather than throwing further
+        // down. Element content is deliberately unvalidated for the non-text types
+        // (invariant 6), and "not a list of slides" is a block with nothing
+        // showable in it, which is this case.
+        if (!Array.isArray(slides)) { return; }
+
+        // And a list of slides with nothing in them is the same block by a longer
+        // route (#45, second pass). Filtering here rather than skipping inside the
+        // loop is what makes the rotation right as well as the drawing: `slideEls`
+        // then holds only slides that show something, so a carousel of three where
+        // two are blank no longer spends ten seconds of every fifteen on nothing.
+        var showable = slides.filter(slideShowsSomething);
+        if (showable.length === 0) { return; }
+
         var wrap = document.createElement('div');
         wrap.className = 'carousel-wrap';
-
-        if (slides.length === 0) {
-            wrap.style.cssText = 'display:flex;align-items:center;justify-content:center;color:#aaa;font-family:Arial;font-size:18px;';
-            wrap.textContent = 'Carousel — no slides added yet';
-            block.appendChild(wrap);
-            return;
-        }
 
         // Helper: apply a blockStyles entry to an element, with CSS fallbacks
         function applyStyle(el, styleKey, fallback) {
@@ -526,7 +694,7 @@ $canvasH = $display->canvasHeight();
         }
 
         var slideEls = [];
-        slides.forEach(function(s) {
+        showable.forEach(function(s) {
             var pos   = s.textPosition || 'right';
             var slide = document.createElement('div');
             slide.className = s.imageOnly ? 'carousel-slide' : 'carousel-slide pos-' + pos;
@@ -554,9 +722,13 @@ $canvasH = $display->canvasHeight();
                     img.style.objectFit = fit; // contain / cover / fill
                 }
                 imgWrap.appendChild(img);
-            } else {
-                imgWrap.style.background = '#1a1a2e';
             }
+            // No `else`. A slide that reaches here without an image has text, and
+            // the well used to fill itself with #1a1a2e to mark the space a picture
+            // would have taken — placeholder ink, hardcoded, drawn only because
+            // something was missing. It is still appended, empty: the 40/60 split is
+            // the layout the author arranged around their words, and taking the well
+            // away as well would reflow a slide that is not the one at fault.
             slide.appendChild(imgWrap);
 
             if (!s.imageOnly) {
@@ -619,11 +791,12 @@ $canvasH = $display->canvasHeight();
         var widths   = data.widths  || [];
         var rowPad   = Math.max(0, parseInt(data.row_padding) || 0);
 
-        if (!headers.length || !rows.length) {
-            block.style.cssText += 'display:flex;align-items:center;justify-content:center;color:#aaa;font-family:Arial;font-size:14px;background:rgba(0,0,0,0.3);';
-            block.textContent = 'Table — no data';
-            return;
-        }
+        // The same as the carousel above, and the same answer (#45). An empty table
+        // drew "Table — no data" over a grey panel, so the sign carried both a
+        // sentence meant for the author and a box drawn to hold it. The author is
+        // in the Builder, where this block reads "⋞ Table — 0 cols, 0 rows".
+        if (!Array.isArray(headers) || !Array.isArray(rows)
+            || headers.length === 0 || rows.length === 0) { return; }
 
         var wrap = document.createElement('div');
         wrap.className = 'table-wrap';
@@ -677,12 +850,34 @@ $canvasH = $display->canvasHeight();
         var data = {};
         try { data = JSON.parse(content || '{}'); } catch(e) {}
 
-        var text   = data.text   || '';
         var speed  = Math.max(1, data.speed  || 80);  // px/sec; clamp to ≥1 to prevent idle loop
         var color  = data.color  || '#ffffff';
         var size   = data.size   || 28;
         var weight = data.weight || 'bold';
         var bg     = data.bg === 'transparent' ? 'transparent' : (data.bg || '#c0392b');
+
+        // Only a string or a number is a message. Anything else — an object, a
+        // list, a boolean — used to reach textContent all the same and scroll
+        // "[object Object]" past the customer, because element content is
+        // unvalidated for the non-text types (invariant 6) and this end never asked.
+        var text = (typeof data.text === 'string' || typeof data.text === 'number')
+                 ? String(data.text) : '';
+
+        // A marquee with nothing to say draws nothing at all (#45, second pass).
+        // This block already meant to do nothing here — `if (!text) return;` sat
+        // four lines below — but the background was assigned before it, so an
+        // unfinished marquee painted a solid #c0392b band across the sign and then
+        // scrolled an empty span along it. A red bar with no message on a price
+        // board is not a quieter version of the message; it is a different sign,
+        // and one nobody chose.
+        //
+        // The author keeps the warning, as with the carousel and the table: the
+        // Builder draws this same block as "▶ Marquee text — click to edit in
+        // inspector", on that same bar, on the surface where it can be acted on.
+        //
+        // Spaces are not a message either. `'   '` is truthy, so it used to paint
+        // the bar and animate an invisible span along it forever.
+        if (text.trim() === '') { return; }
 
         block.style.background = bg;
 
@@ -691,7 +886,7 @@ $canvasH = $display->canvasHeight();
 
         var span = document.createElement('span');
         span.className        = 'marquee-text';
-        span.textContent      = text || '';
+        span.textContent      = text;
         span.style.color      = color;
         span.style.fontSize   = size + 'px';
         span.style.fontWeight = weight;
@@ -699,8 +894,6 @@ $canvasH = $display->canvasHeight();
 
         wrap.appendChild(span);
         block.appendChild(wrap);
-
-        if (!text) return;
 
         var cancelled = false;
         var pos       = 0;

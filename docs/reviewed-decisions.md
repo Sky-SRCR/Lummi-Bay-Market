@@ -52,49 +52,145 @@ written down rather than remembered:
 | — | An alert per failure would exhaust the host's mail allowance exactly when a database is down, so the one alert that matters never arrives. | One email per problem per hour, to admins only. | **Done** | §4m |
 | 13 | The last step of a password reset made two irreversible writes with no transaction between them. | All-or-nothing. | **Done** | §4r |
 | 14 | The Phase 1 rehearsal script proved a tautology — it agreed with itself. | Make it prove what it claims. | **Done** | §4r |
-| 15 | A username containing HTML reached a confirm box unescaped, and 133 escaping calls carried no flags. | Escape every stored value strictly, app-wide. | Open | — |
+| 15 | A username containing HTML reached a confirm box unescaped, and 133 escaping calls carried no flags. | Escape every stored value strictly, app-wide. | **Done** — 159 of them by the time they were counted, and the flags were the smaller half. `htmlspecialchars()`'s default changed in PHP 8.1, so the same source escaped single quotes on one host and not on another, and blanked a whole value on one byte of bad UTF-8; `lib/markup.php` names both flags once and `check_invariants.php` holds the function to that file. The confirm box was a different bug in the same clothes: it *was* escaped, for HTML, inside a JavaScript string — which the HTML parser decodes first, handing the quote back. `Markup::jsInAttr()` is the fix, and an invariant catches the construction rather than the instance. A third pass then closed "app-wide": a classifier holds every echo on every page to one of five shapes safe by construction — a door, a literal, a safe call, a validated colour, or a class constant whose declaration is a number — with no allow-list, fifteen echoes converted to reach it, and twenty injections either side of the line. The same sweep found two families where escaping is the wrong tool entirely — the store's brand colours going into a `<style>` block, and six Brand Standards fields going into a `style` attribute, where escaping stops a value ending the attribute but not the declaration inside it. Both are validated on the way out now (`Brand::`, `BrandStyles::readable()`) and both say which stored value they could not use. | §4ah, §4ai |
 | 16 | The permissions grid read a column that wasn't on the page as "take that access away", and F5 replayed the whole save. | Save only what the form covered, then redirect. | **Done** | §4s |
 | 17 | Taking access away left the edit lock stranded on the person who lost it, and told them nothing. | Release it, and tell them. | **Done** | §4s |
 | 18 | Promoting somebody to admin left individual assignments nothing could see and nothing could remove. | Clear them on promotion. | **Done** | §4s |
-| 19 | Deleting a Display never asked whether anyone was editing it, and the confirm undercounted what a mid-edit clerk loses. | Refuse while somebody else is editing. | Open | — |
+| 19 | Deleting a Display never asked whether anyone was editing it, and the confirm undercounted what a mid-edit clerk loses. | Refuse while somebody else is editing. | **Done** — the refusal is asked twice, before the typed tag and again inside the transaction on a row the module reads itself. The confirm now names the accounts that lose access and, when somebody has it open, who and since when. | §4ad |
 | 20 | Deleting an account freed its number for the next person, leaving "last published by" naming a stranger. | Keep the username as text, and never reuse an account number — close accounts instead of deleting them. | **Done** | §4l |
-| 21 | The admin panel coerced values it could not parse and reported success — an unreadable colour, an account id that isn't one. | Refuse, and say so. | Open | — |
+| 21 | The admin panel coerced values it could not parse and reported success — an unreadable colour, an account id that isn't one. | Refuse, and say so. | **Done** — taken with #41; they are one defect from two ends. What a colour is now lives in one pure module instead of four disagreeing copies, and an id reaches the module raw so `intval` cannot pick a different, real account. | §4ac |
 | 22 | Turning off a Display, suspending an account, or renaming a tag each left the edit lock behind, and never re-checked whether the holder may still sign in. | Free the lock when reach changes, never honour a lock whose holder cannot sign in, and tell the person. A rename tells them but keeps their lock. | **Done** | §4t |
-| 23 | Choosing "Image" for a background when no image is stored leaves a colour where a filename goes — the sign goes near-black. | Refuse the change. | Open | — |
-| 24 | The background address was validated in the admin panel but not in the API, so a publish could point every screen at any host. *(The "any host" half was aimed at the image branch, which the API cannot reach — an image background is a validated upload under a name the server chose. What a publish could really do is write any string into the colour column four readers assume is six hex digits, which ends in a sign keeping the colour it had and a picker publishing black. §4x has the detail.)* | Validate it in the module. | **Done** | §4x |
-| 25 | The public feed served blocks an admin had deliberately hidden, content and all. | Leave them out. | Open | — |
-| 26 | A reply that failed to encode sent back a zero-length success, and the sign kept its old layout forever with no notice. | Send a real error, and let the sign notice. | Open | — |
-| 27 | `?display[]=x` became the tag "array" and printed a warning above the document. | Treat it as no sign named. | Open | — |
-| 28 | Missing, unknown and switched-off signs all answered "200 OK", and nothing anywhere set caching rules. | Real error codes, and stop caching. | Open | — |
-| 29 | Publish accepted any block type, so a basic account could insert top-level content. | Accept only known types and refuse the rest. | Open | — |
-| 30 | Wrong-shaped and absurd values were coerced and written rather than refused. | Refuse the publish. | Open | — |
-| 31 | Two blocks sharing a temporary id silently reparented one of them into the wrong section. | Refuse the publish. | Open | — |
-| 32 | Line height was stored with a thousands separator, so some values could not be read back. *(First framed as a prices problem. It never touched prices — no sign has ever shown a stray comma.)* | Clamp it to 0.5–5 and store it plain. | Open | — |
+| 23 | Choosing "Image" for a background when no image is stored leaves a colour where a filename goes — the sign goes near-black. | Refuse the change. | **Done** — closed with #24: it is the same `keep-image` arm. Not in the batch asked for; see §4ab. | §4ab |
+| 24 | The background address was validated in the admin panel but not in the API, so a publish could point every screen at any host. *(The "any host" half was aimed at the image branch, which the API cannot reach — an image background is a validated upload under a name the server chose. What a publish could really do is write any string into the colour column four readers assume is six hex digits, which ends in a sign keeping the colour it had and a picker publishing black. §4x has the detail.)* | Validate it in the module. | **Done** | §4x, §4ab |
+| 25 | The public feed served blocks an admin had deliberately hidden, content and all. | Leave them out. | **Done** | §4ab |
+| 26 | A reply that failed to encode sent back a zero-length success, and the sign kept its old layout forever with no notice. | Send a real error, and let the sign notice. | **Done** — with one refinement stated rather than assumed: malformed UTF-8 is *repaired and reported* rather than refused, because refusing takes a whole sign dark over one character **and** makes the fault unfixable through the app (the Builder would refuse to load the text that needs editing). Everything json_encode cannot be talked into is still a real 500. The sign notices after ten failed polls — not one, or a Wi-Fi roam blanks a working price board. | §4af |
+| 27 | `?display[]=x` became the tag "array" and printed a warning above the document. | Treat it as no sign named. | **Done** — and the printing half had already stopped at §4m, so what was left was the wrong answer: `array` is a valid tag, so a Screen was told "Display not found" when nothing had been named, and a Display genuinely tagged `array` was rendered. | §4ae |
+| 28 | Missing, unknown and switched-off signs all answered "200 OK", and nothing anywhere set caching rules. | Real error codes, and stop caching. | **Done** — 400 / 404 / **503**, derived from the payload's own `reason` so a code and a reason cannot disagree, and `no-store` everywhere including the pages behind the sign-in. The two halves turned out to be load-bearing on each other: a 404 is heuristically cacheable where the unlabelled 200 it replaced was not, so the codes without the caching would have made a mistyped tag stickier than before. | §4af |
+| 29 | Publish accepted any block type, so a basic account could insert top-level content. | Accept only known types and refuse the rest. | **Done** | §4ab |
+| 30 | Wrong-shaped and absurd values were coerced and written rather than refused. | Refuse the publish. | **Done** | §4ab |
+| 31 | Two blocks sharing a temporary id silently reparented one of them into the wrong section. | Refuse the publish. | **Done** | §4ab |
+| 32 | Line height was stored with a thousands separator, so some values could not be read back. *(First framed as a prices problem. It never touched prices — no sign has ever shown a stray comma.)* | Clamp it to 0.5–5 and store it plain. | **Done** | §4ab |
 | 33 | An account with no signs assigned could still write the shared asset library and upload files. | Nothing until it has a sign. | Open | — |
 | 34 | A file bigger than the server's real limit was reported as a security problem. | Detect it and say so plainly. | **Done** | §4n |
-| 35 | A publish that collided with another died as a PHP timeout before it could reach its own clean message. | Give up on the collision sooner, and report it properly. | Open | — |
+| 35 | A publish that collided with another died as a PHP timeout before it could reach its own clean message. | Give up on the collision sooner, and report it properly. | **Done** | §4ab |
 | 36 | The branding file was written in place with no locking, so a short write took the whole app down. | Write a temporary file, then swap it in. | **Done** | §4y |
 | 37 | The asset editor read the file type from a hidden form field instead of the stored record. | Read it from the record. | **Done** | §4w |
 | 38 | Two login problems: a secure-cookie setting causes an invisible sign-in loop on plain HTTP, and the suspended-account message tells a guesser the password was right. | Fix both. | **Done** | §4u, §4v |
 | 39 | Double-clicking Publish produced a success message and a stale-sign warning together. | Ignore the second while the first is still running. | Open | — |
 | 40 | A basic account with the sign open read-only threw an error on every canvas click. | Guard the lookup. | **Done** — the click-path lookup was settled by #3; the same banner's second lookup, the one at page load, was guarded to match. | §4j |
-| 41 | An unreadable stored colour round-tripped through the colour picker and published back as black. | Validate on the way in and on the way out. | Open | — |
+| 41 | An unreadable stored colour round-tripped through the colour picker and published back as black. | Validate on the way in and on the way out. | **Done** — taken with #21. Out: the Builder keeps a stored colour it cannot read instead of publishing `#000000` over it, and says so in the inspector. In: the publish path refuses one and names the block. **Since:** refusing at the door made the rows already stored worse to hold — one of them makes its Display refuse every publish — so `tools/audit_colors.php` finds them, read-only, against the live database. It also turned up a third case with no refusal in front of it at all: a hand-edited `block_styles` colour renders on every sign, because BrandStyles cleans on the way in and not on the way out. | §4ac |
 | 42 | Six smaller Builder rough edges: section minimum size measured in screen pixels, Fit cannot fit a very large canvas, no way to unhide a section, deleting a slide field cannot be undone, marquee "Transparent" loses the colour, and dead code. | All six. | Open | — |
 | 43 | Deleting an account wrote to three tables with no transaction, going around the owning module. | All-or-nothing, through the module. | **Done** — settled by #20: closing is one transaction in `AccountAdmin`, and no `DELETE FROM users` exists anywhere. | §4l |
 | 44 | Nothing set a timezone, so "editing since 2:15pm" followed whatever the host's `php.ini` happened to say. | A store timezone setting on the Branding page. | Open | — |
-| 45 | The sign itself printed "Carousel — no slides added yet" where a customer could read it. | Draw nothing. | Open | — |
+| 45 | The sign itself printed "Carousel — no slides added yet" where a customer could read it. | Draw nothing. | **Done** — and it was two blocks, not one: `renderTable()` printed "Table — no data" over a grey panel drawn to hold it, and both are closed. Drawing nothing loses no warning, because the Builder already labels the same blocks `↻ Carousel — 0 slides` and `⋞ Table — 0 cols, 0 rows` on its own canvas — the surface the author is actually looking at. A second pass then took the two cases that are the same defect in colour rather than in English: a marquee with no text painted a solid `#c0392b` bar and scrolled an empty span along it, and a carousel slide with no image filled its image well with `#1a1a2e`. A third took the last two, where the ink was the browser's rather than the page's — an **image** with no file is a *broken* image, not an absent one, and an empty `<video>` is a rectangle whose colour the browser picks. All five block types draw nothing now. The Builder gained a `'Video'` placeholder in the same pass, because that block had nothing on either surface. | §4ag |
 | 46 | Deployment step 3 had no do-not-overwrite list, so re-uploading reverted live branding and restored `setup.php`. | Write down what to skip. | **Done** | §4z |
-| 48 | The test database differs from MySQL in twelve ways, including row locking stubbed out entirely. | Test against real MySQL as well. | Open | — |
-| 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | Part done — `schema.php`'s *decision* is now a pure function with 43 checks (§4o); its statements are still MySQL-only. | §4o |
+| 48 | The test database differs from MySQL in twelve ways, including row locking stubbed out entirely. | Test against real MySQL as well. | **Done** | §4aa |
+| 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | Part done — `schema.php`'s *decision* is a pure function with 43 checks (§4o). Its *statements* now run for real on the MySQL leg (#48), which leaves the mutation coverage on `plain_text.php` as the open half. | §4o, §4aa |
 | 50 | About 29 checks in the suite could not fail, and five invariants had no automated check at all. | Replace the hollow ones, and cover the missing rules. | Open — the harness itself was hardened so a suite that stops early now fails, but the 29 have not been swept. | — |
-| 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | Part done — **the live PHP version is still unknown.** Settings → This Server answers it the first time an admin opens it after deploy; until then the 7.1 rule stands. | §4g |
+| 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | Part done — the half about *running* things is done: CI now runs the greps (`tools/check_invariants.php`), the rehearsal, all four node suites and the MySQL self-test, so three of §5's four pre-push steps no longer depend on somebody remembering. **The version half is still open, and was briefly recorded as closed in error.** The branch this came from stated the live host runs 8.2, read from Settings → This Server — but that page is part of the undeployed multi-display build, and #46's probe of the live site found `lib/` answering 404, so it cannot have been opened there. Nothing in this repo observes the version, and Cloudflare fronts the site so no header reveals it. **The 7.1 rule therefore stands**, and costs nothing: the branch that raised this confirmed `php -l` passes on 7.1 as well as 8.4, because no file uses syntax the rule forbids. CI stays pinned to 8.2 as the *likely* version and the one its MySQL services were built against. | §4aa, §4k |
 
 ## Where this stands
 
-**27 done, 2 part done, 21 open** — counted off the Status column above, which is
-50 rows because there is no #47. The 51st item is the unnumbered policy named at the
-top; it has no row and therefore no status, and two branches counting the same table
-have each quietly folded it into a different total. It is counted here as neither.
+**44 done, 1 part done (#49), 5 open** — counted off the Status column above, which
+is 50 rows because there is no #47. The 51st item is the unnumbered policy named at
+the top; it has no row and therefore no status, and two branches counting the same
+table have each quietly folded it into a different total. It is counted here as
+neither. The count was recounted from the table at the merge rather than carried
+across from either side: both branches had been adding to it independently, and
+both totals were right about their own half and wrong about the whole.
+
+#48 and #51 were taken together because they are the same subject — what the tests
+run against, and whether anybody runs them. Both are Done; the version question
+inside #51 was answered rather than worked around, and the answer was that the
+premise was wrong.
+
+**#24, #25, #29, #30, #31, #32 and #35** were then taken as one batch, for the same
+reason: they are all one subject, which is that the publish path coerced every value
+it was given and refused none of them. They are written up together in §4ab.
+
+**#23 was not in that batch and is Done anyway.** Its fix is literally the same arm
+of the same `switch` as #24's — choosing "Image" with nothing stored, and a poisoned
+colour being promoted to an image path, are the same two lines. Closing one and
+leaving the other would have meant knowingly shipping a near-black sign in code that
+had just been rewritten. Recorded here rather than folded in quietly.
+
+Two things #30 deliberately did **not** cover, so the items that own them stayed
+clean: colour *semantics* on the publish path (#41), and `DisplayAdmin::cleanColor()`
+still coercing an unreadable colour to `#1a1a2e` (#21). Both were named in §4ab and
+both are now closed together in **§4ac** — they are one defect from two ends, which is
+that the app held four disagreeing opinions about what a colour is and every one of
+them substituted a value rather than refusing.
+
+**#19 completes the edit-lock set begun in #17 and #22.** Those two made every change
+of reach free the lock it stranded and tell the person holding it. Deletion could not
+join them — afterwards there is no row to free a lock on and nobody to tell — so it is
+the one that refuses in advance instead. §4ad also names one thing it deliberately did
+not fix: `normalizeTag()` still raises a warning on an array, which is **#27**'s half
+of the same function — and **#27 then closed it**, so that note in §4ad is struck
+through rather than left standing.
+
+**#27 is the second item whose premise had expired.** Its "printed a warning above
+the document" half stopped being true at §4m, which turned `display_errors` off and
+sends warnings to a log. What was left was worse than the wording suggested: the cast
+produced the tag `array`, which is valid, so a Screen was told "Display not found"
+when nothing had been named — and a Display genuinely tagged `array` was rendered by
+`?display[]=x`. #51 was the first item like this. Both were answered rather than
+worked around, and in both cases the answer changed what the work was.
+
+**#26 and #28 were taken together because they are one absence.** Nothing in the app
+owned what an HTTP reply looks like — not the status line, not the caching rules, not
+the bytes of the body — so a payload that would not encode left as a zero-length 200
+and a sign that did not exist left as a 200 too. `lib/http_reply.php` owns all three
+now, and taking them apart would have been the wrong economy: the caching half of #28
+is what stops the status-code half from making things *worse*, because a 404 is
+cacheable by default where the unlabelled 200 it replaces is not.
+
+Two things came out of the pair that were not in either item. The same unchecked
+encode was in **nine** places printing values into a page's own `<script>`, where a
+failure is a parse error that takes the whole block down — a blank television, or a
+Builder whose controls do nothing — and eight of the nine were passing XSS-escaping
+flags by hand that the ninth, viewer.php, was not passing at all. And #26's "let the
+sign notice" needed a suite that *runs* viewer.php's JavaScript rather than parsing
+it, which is `tools/selftest_viewer.js` and is now part of the standing gate. It
+exists to hold a judgement rather than a rule: how many failed polls a sign may show
+prices through. One is too few and never is too many, and neither end of that is
+obvious enough to leave to memory.
+
+**#45 was the first item that suite paid for.** The Viewer's renderers had never been
+run by anything, so the placeholder it names had survived every gate the repo has —
+it parses, and parsing is all `php -l` and `node --check` can ask. The item names the
+carousel; the identical construction in `renderTable()` is closed with it.
+
+The first pass stopped there and named three blocks that still drew something,
+because none of them was a sentence and this app has no undo. The owner took two of
+the three: a **marquee** with no text painted a solid red bar and scrolled an empty
+span along it, and a **carousel slide** with no image filled its image well with
+navy. Both are closed in a second pass under the same number (§4ag) — the marquee's
+own `if (!text) return;` was already there, four lines below the paint. The suite
+went 75 → 129, and the injection that matters most is the one that *passed*: making
+an image stop counting as something a slide shows broke nothing, which would have
+taken every photograph off every sign in the store. That gap is covered now.
+
+A third pass then took the last two, on the same instruction. An **image** with no
+file and a **video** with no source were held back because the ink is the browser's
+rather than the page's — which turned out to be the argument for closing them, not
+against: `src=''` is a *broken* image by definition, and what a broken image or an
+empty `<video>` looks like differs by browser. A sign must not look different because
+of which browser the television shipped with. Both branches moved out of the render
+loop into `renderImage()` and `renderVideo()`, and the Builder gained a `'Video'`
+placeholder, because that block had nothing to show on either surface. 129 → 169.
+
+**#45 is closed.** Five block types, six drawings, all of them nothing now.
+
+**#15 was two items sharing a sentence.** The flags half is a rule with 159 copies and
+no opinion — `htmlspecialchars()`'s default changed in PHP 8.1, so the same source
+behaved differently on different hosts, and one byte of bad UTF-8 blanked a whole
+value. That is `lib/markup.php`, held to one file by the invariants. The other half —
+the confirm box the item names — was still a live hole under the *strict* default,
+because the value was escaped for HTML and then used as JavaScript, and the HTML
+parser undoes the escaping before the JavaScript parser reads it. Two different
+mistakes, one line of source. What #15 does **not** close is stated in §4ah: every
+escaped value is now strict, which is not the same as every value being escaped.
 
 The order has been the owner's call throughout, one item at a time. There is no
 suggested order in this file on purpose — anything left is worth doing, and which

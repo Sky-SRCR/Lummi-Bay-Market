@@ -85,7 +85,7 @@ a.pick:hover { background:#3d566e; }
 </head>
 <body>
 <div class="wrap">
-  <?php if ($notice !== ''): ?><div class="notice"><?= htmlspecialchars($notice) ?></div><?php endif; ?>
+  <?php if ($notice !== ''): ?><div class="notice"><?= Markup::text($notice) ?></div><?php endif; ?>
 
   <?php if ($choices): ?>
     <h1>Which display do you want to edit?</h1>
@@ -96,12 +96,12 @@ a.pick:hover { background:#3d566e; }
     <?php foreach ($choices as $d): ?>
       <a class="pick" href="builder.php?display=<?= urlencode($d->tag()) ?>">
         <span class="row">
-          <span class="title"><?= htmlspecialchars($d->title()) ?></span>
-          <span class="tag"><?= htmlspecialchars($d->tag()) ?></span>
+          <span class="title"><?= Markup::text($d->title()) ?></span>
+          <span class="tag"><?= Markup::text($d->tag()) ?></span>
           <?php if (!$d->isActive()): ?><span class="off">TURNED OFF</span><?php endif; ?>
         </span>
-        <span class="facts"><?= $d->dimensionsLabel() ?> <?= $d->orientation() ?><?php
-          if ($d->location() !== '') { echo ' · ' . htmlspecialchars($d->location()); } ?></span>
+        <span class="facts"><?= Markup::text($d->dimensionsLabel()) ?> <?= Markup::text($d->orientation()) ?><?php
+          if ($d->location() !== '') { echo ' · ' . Markup::text($d->location()); } ?></span>
       </a>
     <?php endforeach; ?>
   <?php elseif (!$allDisplays): ?>
@@ -168,12 +168,15 @@ $switchable = count($actor->openable($displayStore->all()));
 
 // The BRAND_* constants this page's CSS reads are defined by config.php, which
 // auth.php requires above — one list of eight names and defaults, in lib/branding.php.
+// The four that are colours are then read back through Brand::, not escaped: they
+// land in the <style> block below, where there is no delimiter for an entity to
+// neutralise and a value that is not a colour is CSS.
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Builder — <?= htmlspecialchars(SITE_NAME) ?></title>
+<title>Builder — <?= Markup::text(SITE_NAME) ?></title>
 <script src="https://cdn.jsdelivr.net/npm/interactjs@1.10.27/dist/interact.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0;
@@ -183,10 +186,10 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 
 /* ── Nav ── */
 #top-nav {
-    background: <?= htmlspecialchars(BRAND_NAV_BG) ?>; padding: 0 16px; display: flex; align-items: center;
-    gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid <?= htmlspecialchars(BRAND_NAV_BORDER) ?>;
+    background: <?= Brand::navBg() ?>; padding: 0 16px; display: flex; align-items: center;
+    gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid <?= Brand::navBorder() ?>;
 }
-#top-nav .brand { font-weight: bold; font-size: 14px; color: <?= htmlspecialchars(BRAND_TEXT) ?>; }
+#top-nav .brand { font-weight: bold; font-size: 14px; color: <?= Brand::text() ?>; }
 #top-nav .user-badge { margin-left: 20px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #bdc3c7; white-space: nowrap; flex-shrink: 0; }
 #top-nav .nav-spacer { flex: 1; }
 #top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px; padding: 5px 9px; border-radius: 3px; }
@@ -194,7 +197,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 .role-tag { background: <?= $isAdmin ? '#e74c3c' : '#3498db' ?>; color: #fff;
             font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
             text-transform: uppercase; }
-.btn.publish-btn { background: <?= htmlspecialchars(BRAND_ACCENT) ?>; }
+.btn.publish-btn { background: <?= Brand::accent() ?>; }
 
 /* Which sign am I editing? Never left to be inferred from the canvas shape. */
 #top-nav .display-badge { margin-left: 18px; display: flex; align-items: center; gap: 7px;
@@ -281,7 +284,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
    Scaled by the zoom control — transform-origin keeps the top-left anchored so
    scroll position and pointer maths stay predictable. */
 #builder-canvas {
-    width: <?= $canvasW ?>px; height: <?= $canvasH ?>px; background: #fff; position: relative;
+    width: <?= intval($canvasW) ?>px; height: <?= intval($canvasH) ?>px; background: #fff; position: relative;
     flex-shrink: 0; box-shadow: 0 10px 30px rgba(0,0,0,.5);
     background-size: cover; background-position: center;
     transform-origin: top left;
@@ -530,19 +533,19 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 
 <!-- ── Top Nav ── -->
 <div id="top-nav">
-    <?php if (BRAND_LOGO): ?>
-        <img src="<?= htmlspecialchars(BRAND_LOGO) ?>" alt="<?= htmlspecialchars(SITE_NAME) ?>"
+    <?php if (Brand::logo()): ?>
+        <img src="<?= Markup::text(Brand::logo()) ?>" alt="<?= Markup::text(SITE_NAME) ?>"
              style="max-height:32px; max-width:130px; object-fit:contain; flex-shrink:0;">
     <?php endif; ?>
-    <span class="brand"><?= htmlspecialchars(SITE_NAME) ?></span>
+    <span class="brand"><?= Markup::text(SITE_NAME) ?></span>
     <span class="user-badge">
-        <?= htmlspecialchars($me['username']) ?>
+        <?= Markup::text($me['username']) ?>
         <span class="role-tag"><?= $isAdmin ? 'ADMIN' : 'USER' ?></span>
     </span>
     <span class="display-badge" title="The display you are editing. Publishing sends only this one to its screen.">
-        <span class="d-title"><?= htmlspecialchars($display->title()) ?></span>
-        <span class="d-tag"><?= htmlspecialchars($display->tag()) ?></span>
-        <span class="d-dims"><?= $display->dimensionsLabel() ?></span>
+        <span class="d-title"><?= Markup::text($display->title()) ?></span>
+        <span class="d-tag"><?= Markup::text($display->tag()) ?></span>
+        <span class="d-dims"><?= Markup::text($display->dimensionsLabel()) ?></span>
         <?php if (!$display->isActive()): ?><span class="d-off">off</span><?php endif; ?>
     </span>
     <?php if ($switchable > 1): ?>
@@ -562,8 +565,8 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 <?php if ($readOnly): ?>
 <div id="lock-banner">
     <span>
-        <span class="who"><?= htmlspecialchars($lockHolder) ?></span> is editing this display<?php
-            if ($lock->takenAtLabel() !== ''): ?> (since <?= htmlspecialchars($lock->takenAtLabel()) ?>)<?php
+        <span class="who"><?= Markup::text($lockHolder) ?></span> is editing this display<?php
+            if ($lock->takenAtLabel() !== ''): ?> (since <?= Markup::text($lock->takenAtLabel()) ?>)<?php
             endif; ?>. You are looking at it read-only — one person edits a display at a time, so
         nothing here can be moved, changed or published. It frees up on its own
         <?= intval(LockState::IDLE_LAPSE_SECONDS / 60) ?> minutes after they stop working.
@@ -572,7 +575,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     </span>
     <?php if ($isAdmin): ?>
         <button class="btn danger" onclick="takeOverEditing()"
-                title="Take the edit lock from <?= htmlspecialchars($lockHolder) ?>">Take over editing</button>
+                title="Take the edit lock from <?= Markup::text($lockHolder) ?>">Take over editing</button>
     <?php endif; ?>
 </div>
 <?php else: ?>
@@ -626,7 +629,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <button class="btn orange" onclick="createBlock('text','price')">+ Price</button>
     <button class="btn orange" onclick="createBlock('text','description')">+ Description</button>
     <?php else: ?>
-    <span style="font-size:12px; color:#bdc3c7;">Read-only — <?= htmlspecialchars($lockHolder) ?> has this display open.</span>
+    <span style="font-size:12px; color:#bdc3c7;">Read-only — <?= Markup::text($lockHolder) ?> has this display open.</span>
     <?php endif; ?>
 
     <?php if ($isAdmin && !$readOnly): ?>
@@ -733,21 +736,21 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <div class="insp-row">
             <div>
                 <label>X (px)</label>
-                <input type="number" id="insp-x" min="-<?= $canvasW ?>" max="<?= $canvasW ?>" onchange="applyPos('x',this.value)">
+                <input type="number" id="insp-x" min="-<?= intval($canvasW) ?>" max="<?= intval($canvasW) ?>" onchange="applyPos('x',this.value)">
             </div>
             <div>
                 <label>Y (px)</label>
-                <input type="number" id="insp-y" min="-<?= $canvasH ?>" max="<?= $canvasH ?>" onchange="applyPos('y',this.value)">
+                <input type="number" id="insp-y" min="-<?= intval($canvasH) ?>" max="<?= intval($canvasH) ?>" onchange="applyPos('y',this.value)">
             </div>
         </div>
         <div class="insp-row" style="margin-top:4px;">
             <div>
                 <label>W (px)</label>
-                <input type="number" id="insp-w" min="40" max="<?= $canvasW ?>" onchange="applyDim('w',this.value)">
+                <input type="number" id="insp-w" min="40" max="<?= intval($canvasW) ?>" onchange="applyDim('w',this.value)">
             </div>
             <div>
                 <label>H (px)</label>
-                <input type="number" id="insp-h" min="24" max="<?= $canvasH ?>" onchange="applyDim('h',this.value)">
+                <input type="number" id="insp-h" min="24" max="<?= intval($canvasH) ?>" onchange="applyDim('h',this.value)">
             </div>
         </div>
     </div>
@@ -808,6 +811,13 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                 <label>Color</label>
                 <input type="color" id="font-color" style="width:100%;"
                        oninput="updateStyle('color',this.value)">
+            </div>
+            <!-- Shown only for a stored colour the browser could not read (#41). A
+                 colour input has no way to display one — it falls back to black and
+                 looks like a deliberate choice — so the swatch is not evidence of
+                 anything here and the sentence has to say so. -->
+            <div id="font-color-unread" style="display:none; grid-column:1 / -1;
+                 font-size:11px; line-height:1.4; color:#e67e22; margin-top:4px;">
             </div>
             <div>
                 <label>Weight</label>
@@ -1000,20 +1010,20 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 // CONSTANTS (injected by PHP)
 // ============================================================
 var IS_ADMIN  = <?= $isAdmin ? 'true' : 'false' ?>;
-var SITE_NAME = <?= json_encode(SITE_NAME, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
-var CSRF_TOKEN = <?= json_encode(csrfToken(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var SITE_NAME = <?= HttpReply::jsValue(SITE_NAME) ?>;
+var CSRF_TOKEN = <?= HttpReply::jsValue(csrfToken()) ?>;
 
 // The Display being edited. Its canvas size was fixed at creation (ADR-0004), so
 // these are constants for the life of the page — every bound, clamp and default
 // below is derived from them rather than from a hardcoded 1920×1080.
-var DISPLAY_TAG   = <?= json_encode($display->tag(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var DISPLAY_TAG   = <?= HttpReply::jsValue($display->tag()) ?>;
 // The record this page was actually opened on. The tag above addresses it, but an
 // admin may rename a tag and hand the old one to another sign, so every call below
 // sends both and the server refuses any that disagree (DisplayRequest::ID_PARAM).
 var DISPLAY_ID    = <?= intval($display->id()) ?>;
-var DISPLAY_TITLE = <?= json_encode($display->title(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
-var CANVAS_W      = <?= $canvasW ?>;
-var CANVAS_H      = <?= $canvasH ?>;
+var DISPLAY_TITLE = <?= HttpReply::jsValue($display->title()) ?>;
+var CANVAS_W      = <?= intval($canvasW) ?>;
+var CANVAS_H      = <?= intval($canvasH) ?>;
 
 // Whether somebody else holds this Display's edit lock (ADR-0007). Decided by the
 // server before this page was built, and constant for its life: every control that
@@ -1021,7 +1031,7 @@ var CANVAS_H      = <?= $canvasH ?>;
 // guards below are the belt to that braces — for the keyboard, and for anything
 // reachable without a button.
 var READ_ONLY   = <?= $readOnly ? 'true' : 'false' ?>;
-var LOCK_HOLDER = <?= json_encode($lockHolder, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var LOCK_HOLDER = <?= HttpReply::jsValue($lockHolder) ?>;
 
 // The idle window and its warning, from the one place they are defined
 // (LockState) rather than a second copy that could drift away from it.
@@ -1033,8 +1043,8 @@ var LOCK_WARN_SECONDS  = <?= LockState::WARN_AFTER_SECONDS ?>;
 // how big a chosen file is before sending a byte, so a file that cannot arrive is
 // refused in the file picker rather than after two minutes of uploading it. The
 // server checks the same number again; this only saves the wait.
-var UPLOAD_MAX_BYTES = <?= UploadLimit::bytes() ?>;
-var UPLOAD_MAX_LABEL = <?= json_encode(UploadLimit::describe(), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+var UPLOAD_MAX_BYTES = <?= intval(UploadLimit::bytes()) ?>;
+var UPLOAD_MAX_LABEL = <?= HttpReply::jsValue(UploadLimit::describe()) ?>;
 
 // Editor zoom. The canvas is CSS-scaled, so interact.js deltas — which arrive in
 // screen pixels — are divided by ZOOM before becoming canvas coordinates. Miss one
@@ -1478,6 +1488,11 @@ function renderBlock(el, parent, isNew) {
         var vid = document.createElement('video');
         vid.autoplay = true; vid.loop = true; vid.muted = true; vid.playsInline = true;
         if (content) { var src = document.createElement('source'); src.src = content; vid.appendChild(src); }
+        // A video with no file gets the drawn placeholder an image already gets,
+        // and for a reason that is now load-bearing: the Viewer draws nothing at
+        // all for it (#45), so this is the only surface left that shows the block
+        // exists. An empty <video> is a rectangle the author has to remember.
+        else { vid.poster = svgPlaceholder(el.width, el.height, 'Video'); }
         block.appendChild(vid);
     } else if (el.type === 'carousel') {
         var cdata = {};
@@ -1522,18 +1537,69 @@ function applyTextStyles(block, el) {
         var bs = blockStyles[sub];
         block.style.fontFamily  = bs.font_family;
         block.style.fontSize    = bs.font_size + 'px';
-        block.style.color       = bs.font_color;
+        applyStoredColor(block, bs.font_color);
         block.style.fontWeight  = bs.font_weight;
         block.style.fontStyle   = bs.font_style;
         block.style.lineHeight  = bs.line_height;
     } else {
         block.style.fontFamily  = el.font_family  || 'Arial';
         block.style.fontSize    = (el.font_size||16) + 'px';
-        block.style.color       = el.font_color   || '#000000';
+        applyStoredColor(block, el.font_color);
         block.style.fontWeight  = el.font_weight  || 'normal';
         block.style.fontStyle   = el.font_style   || 'normal';
         block.style.lineHeight  = el.line_height  || 1.4;
     }
+}
+
+// Put a stored colour on a block without losing it if it cannot be read (#41).
+//
+// The block has to render, so an unreadable colour still gets the default on
+// screen — but the value that was actually stored is kept on the element, and
+// collectElements() publishes *that* rather than what the swatch ended up showing.
+// The publish path then refuses it and names the block (LayoutRules), which is how
+// an admin finds out at all. Anything else is this app quietly deciding that an
+// unreadable colour means black.
+//
+// A readable colour clears the marker, so a block whose colour was fixed stops
+// carrying the old bad value the moment the fix is loaded back.
+function applyStoredColor(block, stored) {
+    var raw = (stored === null || stored === undefined) ? '' : String(stored);
+    var hex = readHex(raw);
+    if (raw !== '' && hex === '') {
+        block.dataset.colorUnread = raw;
+    } else {
+        delete block.dataset.colorUnread;
+    }
+    block.style.color = hex || '#000000';
+}
+
+// Say so in the inspector when the selected block carries a colour nobody can read.
+//
+// Without this the only way to find out is to press Publish and read the refusal,
+// and the swatch actively misleads in the meantime: a colour input given a value it
+// cannot parse shows #000000, which is indistinguishable from somebody having
+// chosen black.
+//
+// Null-guarded because the inspector is not sent at all to a page that may not edit
+// (§4j) — a lookup for a control that isn't there is exactly the defect
+// tools/selftest_builder_readonly.js exists to catch (#40's subject too).
+//
+// `textContent`, never innerHTML: the value being quoted came out of the database
+// and is under nobody's control here.
+function showUnreadableColor(block) {
+    var note = document.getElementById('font-color-unread');
+    if (!note) return;
+    var stored = (block && block.dataset) ? (block.dataset.colorUnread || '') : '';
+    if (!stored) {
+        note.style.display = 'none';
+        note.textContent = '';
+        return;
+    }
+    if (stored.length > 40) { stored = stored.slice(0, 40) + '…'; }
+    note.textContent = 'The saved colour for this block (' + stored + ') is not one this app can '
+                     + 'read, so the swatch is showing black rather than what is saved. Choose a '
+                     + 'colour to replace it — publishing is refused until you do.';
+    note.style.display = 'block';
 }
 
 // ============================================================
@@ -1595,7 +1661,8 @@ function showInspector(block) {
     if (IS_ADMIN && type==='text' && subtype==='free') {
         document.getElementById('font-family').value  = block.style.fontFamily.replace(/['"]/g,'') || 'Arial';
         document.getElementById('font-size').value    = parseInt(block.style.fontSize) || 16;
-        document.getElementById('font-color').value   = rgbToHex(block.style.color) || '#000000';
+        document.getElementById('font-color').value   = readHex(block.style.color) || '#000000';
+        showUnreadableColor(block);
         document.getElementById('font-weight').value  = block.style.fontWeight || 'normal';
         document.getElementById('line-height').value  = parseFloat(block.style.lineHeight) || 1.4;
     }
@@ -1975,6 +2042,11 @@ function fmtCmd(evt, cmd) {
 function updateStyle(prop, val) {
     if (!activeBlock) return;
     activeBlock.style[prop] = val;
+    // Choosing a colour is the deliberate act that retires an unreadable stored one
+    // (#41). Until it happens the block keeps publishing the value it came with, so
+    // the refusal keeps coming back — which is the point: something has to change,
+    // and it has to be somebody's decision rather than this function's.
+    if (prop === 'color') { delete activeBlock.dataset.colorUnread; }
 }
 
 // ============================================================
@@ -2230,6 +2302,7 @@ function uploadBlockVideo(input) {
         var vid = target.querySelector('video');
         if (!vid) { showToast('That block is no longer a video block. The file uploaded but was not used.', true); return; }
         vid.innerHTML = '';
+        vid.poster = '';   // there is a file now; the "Video" placeholder comes off
         var src = document.createElement('source');
         src.src = path; vid.appendChild(src); vid.load();
         target.dataset.manualPath = path;
@@ -2257,6 +2330,7 @@ function linkAsset(assetId) {
     } else if (activeBlock.dataset.type === 'video') {
         var vid = activeBlock.querySelector('video');
         vid.innerHTML = '';
+        vid.poster = '';   // as above: a linked asset is a file
         var src = document.createElement('source');
         src.src = match.content; vid.appendChild(src); vid.load();
     }
@@ -2357,7 +2431,11 @@ function publishCanvas() {
             save_to_db_pool: savePool,
             font_family:    block.style.fontFamily  || 'Arial',
             font_size:      parseInt(block.style.fontSize) || 16,
-            font_color:     rgbToHex(block.style.color) || '#000000',
+            // The stored value wins while it is still unreadable (#41), so a publish
+            // cannot quietly replace a colour nobody could read with black. It clears
+            // the moment somebody picks a colour — see updateStyle(). A block that
+            // simply never had a colour still publishes '#000000', exactly as before.
+            font_color:     block.dataset.colorUnread || readHex(block.style.color) || '#000000',
             font_weight:    block.style.fontWeight  || 'normal',
             font_style:     block.style.fontStyle   || 'normal',
             line_height:    parseFloat(block.style.lineHeight) || 1.4,
@@ -2406,13 +2484,22 @@ function publishCanvas() {
                           + 'That screen updates within 30 seconds.');
                 loadAssets();
             } else if (res.reason === 'stale' || res.reason === 'locked'
+                       || res.reason === 'invalid' || res.reason === 'busy'
                        || isTerminalLockReason(res.reason)) {
                 // Nothing was saved, and none of these refusals may be glimpsed and
                 // missed: the layout on screen is still the editor's, and what to do
                 // next differs — reload for a stale stamp, wait for somebody else's
-                // edit lock, reload for a screen name tag that moved, ask an admin for
-                // a display that is no longer yours, sign in again for an account that
-                // no longer may. The message says which; a toast would not be read.
+                // edit lock, fix the named block for a layout the server would not
+                // store, publish again in a moment for a collision, reload for a
+                // screen name tag that moved, ask an admin for a display that is no
+                // longer yours, sign in again for an account that no longer may. The
+                // message says which; a toast would not be read.
+                //
+                // 'invalid' and 'busy' are here rather than in the toast branch for
+                // the same reason as the rest: a publish that was refused looks
+                // exactly like one that worked if the only trace is a toast that
+                // has already faded, and the next thing somebody does with a sign
+                // they believe they published is walk away from it.
                 //
                 // The terminal ones also raise the bar, so it is still on screen after
                 // the alert is dismissed. Reaching one here rather than from a beat
@@ -2926,11 +3013,35 @@ function getCanvasDropCenter(defW, defH, parent) {
     return { x: cx, y: cy };
 }
 
-function rgbToHex(rgb) {
-    if (!rgb || rgb.startsWith('#')) return rgb||'#000000';
-    var m = rgb.match(/^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/);
-    if (!m) return '#000000';
-    return '#'+[m[1],m[2],m[3]].map(function(n){return ('0'+parseInt(n,10).toString(16)).slice(-2);}).join('');
+// A colour as `#rrggbb`, or '' when it is not one (#41).
+//
+// The old rgbToHex() answered '#000000' for anything it could not parse, and two
+// callers believed it: the inspector swatch and the publish payload. That is the
+// whole of #41. A stored colour the browser cannot read — from a hand-edited row,
+// or from before the publish path checked (§4ab left colour semantics to this item)
+// — is assigned to `block.style.color`, where the CSSOM **discards it silently**
+// and leaves the property empty. rgbToHex('') then returned black, and the next
+// publish wrote black over it. Nobody typed it, nothing reported it, and there is
+// no undo. On a #1a1a2e canvas the block did not look recoloured; it looked gone.
+//
+// So this one refuses to invent. '' means "not a colour", and every caller decides
+// what to do with that for itself — see applyTextStyles() and collectElements().
+//
+// It reads the two notations the CSSOM hands back as well as the one we store,
+// because `block.style.color` is normalised by the browser and never comes back in
+// the `#rrggbb` form it went in as. `rgba()` is included for the alpha the marquee
+// controls can set; the alpha itself is dropped, which is what storing `#rrggbb`
+// has always meant.
+function readHex(value) {
+    if (typeof value !== 'string') return '';
+    var v = value.trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase();
+
+    var m = v.match(/^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,[^)]*)?\)$/);
+    if (!m) return '';
+    var parts = [m[1], m[2], m[3]].map(function (n) { return parseInt(n, 10); });
+    for (var i = 0; i < 3; i++) { if (parts[i] > 255) return ''; }
+    return '#' + parts.map(function (n) { return ('0' + n.toString(16)).slice(-2); }).join('');
 }
 
 function escHtml(s) {

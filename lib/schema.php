@@ -168,13 +168,19 @@ if (!defined('SCHEMA_TABLES')) {
 // comparison that decides whether to run it cannot drift apart. Lower case and
 // no spaces, which is the form `information_schema.COLUMNS.COLUMN_TYPE` reports;
 // MySQL accepts it verbatim in an ALTER.
+//
+// Built from LayoutRules rather than spelled out again, because "written once"
+// has to include the publish path as well. It did not: the column knew the seven
+// types and the publish knew none of them, so an unknown `type` was accepted by
+// the store and then stored as '' by a non-strict MySQL (#29). One list now
+// decides both what may be published and what the column may hold.
+require_once __DIR__ . '/layout_rules.php';
+
 if (!defined('SCHEMA_ELEMENT_TYPE_ENUM')) {
-    define('SCHEMA_ELEMENT_TYPE_ENUM',
-        "enum('section','text','image','video','carousel','marquee','table')");
+    define('SCHEMA_ELEMENT_TYPE_ENUM', LayoutRules::enumSql(LayoutRules::ELEMENT_TYPES));
 }
 if (!defined('SCHEMA_BLOCK_SUBTYPE_ENUM')) {
-    define('SCHEMA_BLOCK_SUBTYPE_ENUM',
-        "enum('free','section_header','item_title','item_title_2','price','price_2','description')");
+    define('SCHEMA_BLOCK_SUBTYPE_ENUM', LayoutRules::enumSql(LayoutRules::BLOCK_SUBTYPES));
 }
 
 // The six branded block types, seeded as one statement. One row per type must

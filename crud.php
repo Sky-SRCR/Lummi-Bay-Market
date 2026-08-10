@@ -299,7 +299,7 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Asset Library — <?= htmlspecialchars(SITE_NAME) ?></title>
+    <title>Asset Library — <?= Markup::text(SITE_NAME) ?></title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         nav { background:#1a252f; padding:0 20px; display:flex; align-items:center; gap:18px; height:50px; margin-bottom:24px; }
@@ -398,12 +398,12 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
 </head>
 <body>
 <nav>
-    <span class="brand"><?= htmlspecialchars(SITE_NAME) ?></span>
+    <span class="brand"><?= Markup::text(SITE_NAME) ?></span>
     <a href="builder.php">Builder</a>
     <a href="crud.php" class="active">Asset Library</a>
     <?php if (isAdmin()): ?><a href="admin_panel.php">Admin Panel</a><?php endif; ?>
     <span style="color:#bdc3c7; font-size:13px;">
-        <?= htmlspecialchars($me['username']) ?>
+        <?= Markup::text($me['username']) ?>
         <span class="role-tag"><?= isAdmin() ? 'ADMIN' : 'USER' ?></span>
     </span>
     <a href="logout.php">Sign Out</a>
@@ -418,26 +418,27 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
         <h2><?= $editAsset ? '&#9998; Edit Asset' : '&#10010; Add New Asset' ?></h2>
 
         <?php if ($message): ?>
-            <div class="msg <?= $msgClass ?>"><?= htmlspecialchars($message) ?></div>
+            <div class="msg <?= Markup::text($msgClass) ?>"><?= Markup::text($message) ?></div>
         <?php endif; ?>
 
         <?php if ($editAsset): ?>
         <!-- EDIT FORM -->
         <form method="POST" action="crud.php" enctype="multipart/form-data">
             <input type="hidden" name="action_update" value="1">
-            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
             <!-- No hidden type field: what this entry is comes from the stored row
                  on the way in and on the way out, so the form cannot claim it is
-                 something else and skip the rule that goes with it. -->
+                 something else and skip the rule that goes with it. #37 removed it;
+                 this branch predates that and would have put it back. -->
             <input type="hidden" name="edit_id"   value="<?= intval($editAsset['id']) ?>">
 
             <div class="form-group">
                 <label>Type</label>
-                <input type="text" value="<?= htmlspecialchars(strtoupper($editAsset['type'])) ?>" disabled>
+                <input type="text" value="<?= Markup::text(strtoupper($editAsset['type'])) ?>" disabled>
             </div>
             <div class="form-group">
                 <label>Label</label>
-                <input type="text" name="edit_label" value="<?= htmlspecialchars($editAsset['label'] ?? '') ?>" placeholder="e.g. Summer Promo Banner">
+                <input type="text" name="edit_label" value="<?= Markup::text($editAsset['label'] ?? '') ?>" placeholder="e.g. Summer Promo Banner">
                 <?php if (!empty($editAsset['auto_pooled'])): ?>
                 <small style="display:block; margin-top:4px; color:#7e5109; font-size:11px;">
                     This was saved automatically when a sign was published. Saving it here
@@ -450,7 +451,7 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
             <?php if ($editAsset['type'] === AssetLibrary::TYPE_TEXT): ?>
             <div class="form-group">
                 <label>Text Content</label>
-                <textarea name="edit_content" rows="5"><?= htmlspecialchars($editAsset['content']) ?></textarea>
+                <textarea name="edit_content" rows="5"><?= Markup::text($editAsset['content']) ?></textarea>
             </div>
             <?php elseif ($editAsset['type'] !== AssetLibrary::TYPE_IMAGE): ?>
             <!-- Publishing pools a block's content under the *block's* type, so a
@@ -460,18 +461,18 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
                  it with a file. Shown as what it is instead, and stored as it
                  arrives — stripping markup out of JSON leaves neither. -->
             <div class="form-group">
-                <label>Stored Content (<?= htmlspecialchars(strtoupper($editAsset['type'])) ?>)</label>
-                <textarea name="edit_content" rows="5"><?= htmlspecialchars($editAsset['content']) ?></textarea>
+                <label>Stored Content (<?= Markup::text(strtoupper($editAsset['type'])) ?>)</label>
+                <textarea name="edit_content" rows="5"><?= Markup::text($editAsset['content']) ?></textarea>
                 <small style="display:block; margin-top:4px; color:#7f8c8d; font-size:11px;">
                     This entry was saved automatically when a
-                    <?= htmlspecialchars($editAsset['type']) ?> block was published, and holds
+                    <?= Markup::text($editAsset['type']) ?> block was published, and holds
                     that block's own settings. Change it only if you know what it should say.
                 </small>
             </div>
             <?php else: ?>
             <div class="form-group">
                 <label>Current Image</label>
-                <img src="<?= htmlspecialchars($editAsset['content']) ?>"
+                <img src="<?= Markup::text($editAsset['content']) ?>"
                      style="max-width:100%; max-height:80px; border-radius:4px; display:block; margin-bottom:8px;">
             </div>
             <div class="form-group">
@@ -480,7 +481,7 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
             </div>
             <div class="form-group">
                 <label>Or update path / URL</label>
-                <input type="text" name="edit_content" value="<?= htmlspecialchars($editAsset['content']) ?>" placeholder="uploads/image.jpg">
+                <input type="text" name="edit_content" value="<?= Markup::text($editAsset['content']) ?>" placeholder="uploads/image.jpg">
             </div>
             <?php endif; ?>
 
@@ -494,7 +495,7 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
         <!-- ADD FORM -->
         <form method="POST" action="crud.php" enctype="multipart/form-data">
             <input type="hidden" name="action_create" value="1">
-            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
 
             <div class="form-group">
                 <label>Type</label>
@@ -565,7 +566,7 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
             <form method="POST" action="crud.php"
                   onsubmit="return confirm('Remove <?= intval($tidyCount) ?> unused auto-saved entr<?= $tidyCount === 1 ? 'y' : 'ies' ?>? Nothing on any sign will change.')">
                 <input type="hidden" name="action_tidy" value="1">
-                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+                <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
                 <button type="submit" class="btn btn-blue" style="font-size:13px; padding:8px 14px;">Tidy up</button>
             </form>
         </div>
@@ -587,11 +588,11 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
             <tbody>
                 <?php foreach ($assets as $row): ?>
                 <tr>
-                    <td style="color:#95a5a6; font-size:12px;">#<?= $row['id'] ?></td>
-                    <td><strong><?= htmlspecialchars($row['label'] ?: '—') ?></strong></td>
+                    <td style="color:#95a5a6; font-size:12px;">#<?= intval($row['id']) ?></td>
+                    <td><strong><?= Markup::text($row['label'] ?: '—') ?></strong></td>
                     <td>
                         <span class="badge <?= $row['type'] === 'image' ? 'badge-image' : 'badge-text' ?>">
-                            <?= htmlspecialchars($row['type']) ?>
+                            <?= Markup::text($row['type']) ?>
                         </span>
                         <?php if (!empty($row['auto_pooled'])): ?>
                         <span class="badge badge-auto"
@@ -600,30 +601,30 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
                         <?php $issue = AssetLibrary::contentIssue($row); ?>
                         <?php if ($issue !== null): ?>
                         <span class="badge badge-check"
-                              title="Saved before the Library checked this: <?= htmlspecialchars($issue) ?>. Nothing has been changed.">check</span>
+                              title="Saved before the Library checked this: <?= Markup::text($issue) ?>. Nothing has been changed.">check</span>
                         <?php endif; ?>
                     </td>
                     <td>
                         <?php if ($row['type'] === 'image'): ?>
-                            <img src="<?= htmlspecialchars($row['content']) ?>"
+                            <img src="<?= Markup::text($row['content']) ?>"
                                  style="max-width:70px; max-height:44px; border-radius:3px; object-fit:cover;"
                                  onerror="this.style.display='none'">
                         <?php else: ?>
                             <span style="font-size:12px; color:#555;">
-                                <?= htmlspecialchars(mb_strimwidth(strip_tags($row['content']), 0, 40, '…')) ?>
+                                <?= Markup::text(mb_strimwidth(strip_tags($row['content']), 0, 40, '…')) ?>
                             </span>
                         <?php endif; ?>
                     </td>
                     <td>
                         <div class="action-row">
                             <?php if (isAdmin()): ?>
-                            <a href="crud.php?edit_id=<?= $row['id'] ?>" class="btn btn-blue" style="text-decoration:none; font-size:12px; padding:6px 12px;">Edit</a>
+                            <a href="crud.php?edit_id=<?= intval($row['id']) ?>" class="btn btn-blue" style="text-decoration:none; font-size:12px; padding:6px 12px;">Edit</a>
 
                             <form method="POST" action="crud.php" style="display:inline;"
                                   onsubmit="return confirm('Delete this asset? This cannot be undone.')">
                                 <input type="hidden" name="action_delete" value="1">
-                                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
-                                <input type="hidden" name="delete_id" value="<?= $row['id'] ?>">
+                                <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
+                                <input type="hidden" name="delete_id" value="<?= intval($row['id']) ?>">
                                 <button type="submit" class="btn btn-red" style="font-size:12px; padding:6px 12px;">Delete</button>
                             </form>
                             <?php else: ?>

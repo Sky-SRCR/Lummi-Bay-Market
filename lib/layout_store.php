@@ -10,7 +10,8 @@
 // empties all of them. So there is exactly one copy.
 //
 // Interface, in full:
-//   snapshot(Display)                     → the payload a Viewer or Builder renders
+//   snapshot(Display)                     → the payload the Builder edits
+//   publicSnapshot(Display)               → the same, less what a Screen may not see
 //   publish(Display, PublishRequest)      → PublishResult
 //   elementIndex(Display)                 → the admin Work Area list
 //   setElementHidden(Display, id, bool, actorId) → ElementResult
@@ -46,11 +47,16 @@
 //   · type='text' content is stripped to plain text (ADR-0002); carousel/table/
 //     marquee JSON and media paths are not.
 //   · Anything that changes the published layout advances the stamp.
+//   · A payload that cannot be stored faithfully is refused before the DELETE,
+//     with a sentence naming the block — never coerced into something storable
+//     (LayoutRules; #29, #30, #31, #32).
+//   · A hidden element is not in the payload a Screen receives at all (#25).
 
 require_once __DIR__ . '/plain_text.php';
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/brand_styles.php';
 require_once __DIR__ . '/assets.php';
+require_once __DIR__ . '/layout_rules.php';
 
 /** One publish attempt: the layout, the background intent, who is publishing, and the stamp they hold. */
 class PublishRequest
@@ -132,7 +138,7 @@ class ElementResult
  */
 class PublishResult
 {
-    private $kind;      // 'ok' | 'stale' | 'locked' | 'invalid' | 'failed'
+    private $kind;      // 'ok' | 'stale' | 'locked' | 'invalid' | 'busy' | 'failed'
     private $stamp;
     private $message;
 
@@ -147,12 +153,26 @@ class PublishResult
     public static function stale($message)  { return new self('stale', '', $message); }
     /** Somebody else holds the edit lock (ADR-0007) — a different refusal from a stale stamp. */
     public static function locked($message) { return new self('locked', '', $message); }
+
     /**
-     * The request itself cannot be carried out — nothing about the Display's state
-     * would make it work, so unlike `stale` and `locked` there is nothing to wait
-     * for or reload. Today the only one is a background colour that is not a colour.
+     * The layout itself cannot be stored as sent (LayoutRules), or the background
+     * intent is not one that can be applied.
+     *
+     * Its own kind rather than `failed`, because the two need opposite things from
+     * the person reading them: `failed` means something broke and trying again is
+     * reasonable, `invalid` means trying again will be refused identically until
+     * the payload changes. It is also the only refusal here that is nobody else's
+     * doing — no colleague, no stale stamp, just this publish.
      */
     public static function invalid($message) { return new self('invalid', '', $message); }
+
+    /**
+     * Another publish to this same Display held the row and did not let go in time
+     * (#35). Distinct from `locked`, which is the edit lock and a person; this is
+     * two writes colliding in the same second or two.
+     */
+    public static function busy($message)   { return new self('busy', '', $message); }
+
     public static function failed($message) { return new self('failed', '', $message); }
 
     public function isOk()    { return $this->kind === 'ok'; }
@@ -209,14 +229,51 @@ class LayoutStore
      */
     public function snapshot(Display $display)
     {
+        return $this->buildSnapshot($display, false);
+    }
+
+    /**
+     * The same snapshot, with everything hidden left out — the payload a Screen
+     * gets, and the one anybody on the street can fetch (#25).
+     *
+     * `api.php?action=get_layout` is public and unauthenticated by design: a TV in
+     * a shop window cannot sign in. It used to answer with the *whole* layout and
+     * let the Viewer's JavaScript skip the hidden blocks on the way to the DOM,
+     * which is a rendering rule standing in for an access rule. Anything an admin
+     * had hidden — next month's prices, a promotion with a date on it, a section
+     * pulled because it was wrong — was one `curl` away, content and all, and the
+     * only sign that this was so was that it never appeared on the screen.
+     *
+     * Hiding a section hides what is inside it, so its children go too. That is the
+     * same rule the Viewer applies, and it stays there as well: this is a page that
+     * runs unattended on a TV, and a payload it did not expect must not be the
+     * thing standing between a customer and a price list.
+     */
+    public function publicSnapshot(Display $display)
+    {
+        return $this->buildSnapshot($display, true);
+    }
+
+    private function buildSnapshot(Display $display, $visibleOnly)
+    {
+        // One statement with a switchable predicate rather than two: the Display
+        // scoping and the asset join are the parts that must not diverge, and a
+        // second copy of this query is a second place to forget `display_id`.
+        $hiddenFilter = $visibleOnly
+            ? " AND ce.hidden = 0
+                AND (ce.section_id IS NULL
+                     OR ce.section_id NOT IN (SELECT h.id FROM canvas_elements h
+                                               WHERE h.display_id = ? AND h.hidden = 1))"
+            : "";
+
         $stmt = $this->pdo->prepare(
             "SELECT ce.*, a.content AS db_content
                FROM canvas_elements ce
                LEFT JOIN assets a ON ce.asset_id = a.id
-              WHERE ce.display_id = ?
+              WHERE ce.display_id = ?" . $hiddenFilter . "
               ORDER BY CASE WHEN ce.type='section' THEN 0 ELSE 1 END, ce.sort_order ASC, ce.id ASC"
         );
-        $stmt->execute([$display->id()]);
+        $stmt->execute($visibleOnly ? [$display->id(), $display->id()] : [$display->id()]);
         $elements = $stmt->fetchAll();
 
         // Brand Standards belongs to BrandStyles, which is the only writer of that
@@ -248,6 +305,51 @@ class LayoutStore
         );
         $stmt->execute([$display->id()]);
         return $stmt->fetchAll();
+    }
+
+    /**
+     * The blocks on this Display whose stored `font_color` is not a colour.
+     *
+     * The same question `LayoutRules` asks at the publish door (§4ac), asked of what
+     * is already stored rather than of what is arriving. It exists because #41 left
+     * a live consequence nobody could see: a row holding `puce` — hand-edited, or
+     * written before the rule existed — makes this Display refuse every publish
+     * until somebody picks a colour for that block, and the only way to discover
+     * that was for somebody to press Publish and be told no. Usually while standing
+     * in front of the sign they were trying to change.
+     *
+     * Scoped by Display like every other statement here, and read through the
+     * module that owns the table rather than by a tool with its own SQL.
+     *
+     * `type = 'section'` is excluded because the door excludes it: a section has no
+     * text of its own, so its `font_color` is not read and not checked. Blank is
+     * excluded because blank is legal — it means "no colour of its own", which is
+     * what every branded block carries, and treating it as a fault would report the
+     * whole store (#21's absent-versus-unreadable line).
+     *
+     * The length half of the door's check cannot fire on a stored value: the column
+     * is VARCHAR(50) and the limit is 50, so anything that fits is short enough.
+     *
+     * @return array rows, in the order the Builder lays them out
+     */
+    public function unreadableFontColors(Display $display)
+    {
+        $stmt = $this->pdo->prepare(
+            "SELECT id, type, block_subtype, section_id, hidden, x_pos, y_pos, font_color
+               FROM canvas_elements
+              WHERE display_id = ?
+                AND type <> 'section'
+                AND font_color IS NOT NULL
+                AND font_color <> ''
+              ORDER BY sort_order ASC, id ASC"
+        );
+        $stmt->execute([$display->id()]);
+
+        $bad = [];
+        foreach ($stmt->fetchAll() as $row) {
+            if (!Color::isColor($row['font_color'])) { $bad[] = $row; }
+        }
+        return $bad;
     }
 
     /** How many elements this Display carries — what a delete confirm needs to state. */
@@ -327,7 +429,12 @@ class LayoutStore
                 $row['font_color'],
                 $row['font_weight'],
                 $row['font_style'],
-                number_format(floatval($row['line_height']), 2),
+                // Through the same clamp as a publish, not `number_format($v, 2)`.
+                // DECIMAL(4,2) cannot hold a value that needs a thousands
+                // separator, so a row that predates the column — or one hand-edited
+                // — is brought inside the bounds here rather than copied into a
+                // string the placeholder cannot bind (#32).
+                LayoutRules::lineHeight($row['line_height']),
                 $row['text_align'],
                 intval($row['locked']) ? 1 : 0,
                 intval($row['sort_order']),
@@ -498,12 +605,22 @@ class LayoutStore
      */
     public function publish(Display $display, PublishRequest $request)
     {
-        // Before the transaction, because nothing about the Display decides this and
-        // a request that cannot be carried out should not take the row lock every
-        // other publish is queuing for. A background colour that is not a colour
-        // refuses the whole publish rather than being dropped from it: dropping it
-        // is a merge, and the person would be told their publish succeeded while the
-        // one change they made to it was thrown away (invariant 5).
+        // Before the transaction, because none of it needs one and a payload that
+        // cannot be stored should never have reached the row lock, let alone the
+        // DELETE. A refusal here has touched nothing at all (#29, #30, #31, #32).
+        $check = LayoutRules::check($request->elements());
+        if (!$check->isOk()) {
+            return PublishResult::invalid($check->message());
+        }
+
+        // The background's own version of that, and it is a separate question from
+        // the one asked under the lock below. `Background::INVALID` is a colour that
+        // could not be parsed into an intent at all (#24), so there is no `kind` for
+        // `problemWith()` to switch on and it answers "no problem" — this is the only
+        // thing that catches it. Refusing the whole publish rather than dropping the
+        // background from it: dropping it is a merge, and the person would be told
+        // their publish succeeded while the one change they made was thrown away
+        // (invariant 5).
         if (!$request->background()->isUsable()) {
             return PublishResult::invalid(
                 'That background colour could not be read, so nothing was published.'
@@ -512,6 +629,11 @@ class LayoutStore
         }
 
         try {
+            // Give up on a colliding publish in seconds rather than being killed
+            // mid-wait by PHP's own time limit (#35). Before beginTransaction: it
+            // is the row lock taken inside it that this governs.
+            $this->displays->limitPublishLockWait();
+
             // Inside the try: beginTransaction can throw too (a connection that
             // died between the request starting and this call), and a publish that
             // fails must be a returned value, never an escaping exception.
@@ -537,6 +659,18 @@ class LayoutStore
             if ((string)intval($current) !== $request->stamp()) {
                 $this->abandon();
                 return PublishResult::stale($this->stalenessMessage($fresh ?: $display));
+            }
+
+            // The background is checked here rather than with the elements above,
+            // because `keep-image` is a question about what this Display already
+            // stores and the answer has to come from the row just read under the
+            // lock (#23, #24). Still before anything is written.
+            if ($request->isAdmin()) {
+                $problem = $request->background()->problemWith(($fresh ?: $display)->backgroundValue());
+                if ($problem !== null) {
+                    $this->abandon();
+                    return PublishResult::invalid($problem);
+                }
             }
 
             // Read before the layout is deleted: these are the library rows this
@@ -580,6 +714,17 @@ class LayoutStore
             // the Builder reported "Network error." for a rejected publish. Only
             // PDO's teardown was undoing the delete.
             $this->abandon();
+
+            // A collision has its own answer, because "try again" is true for it
+            // and misleading for everything else that lands here (#35).
+            if (errorSaysLockWait($e->getCode(), $e->getMessage())) {
+                return PublishResult::busy(
+                    'Another publish to this display was still finishing, so this one was not saved. '
+                    . 'Nothing on the screen changed and your work is still here — publish again in a '
+                    . 'moment. If it keeps happening, check whether somebody else has the same display '
+                    . 'open.');
+            }
+
             return PublishResult::failed('Publish failed. Nothing was saved.');
         }
     }
@@ -623,11 +768,35 @@ class LayoutStore
             if (($el['type'] ?? '') !== 'section') { continue; }
             $this->insertSection($display, $el);
             if (!empty($el['temp_id'])) {
+                self::requireUsableTempId($el['temp_id']);
                 $tempMap[$el['temp_id']] = $this->pdo->lastInsertId();
             }
         }
 
         $this->insertContent($display, $elements, $tempMap);
+    }
+
+    /**
+     * Refuse a temp id that cannot be an array key, rather than letting PHP decide.
+     *
+     * The rule itself is LayoutRules', and a publish is turned away by it long
+     * before reaching here — with a sentence naming the block, which is the whole
+     * improvement. This is the backstop for the paths that do not come through
+     * publish(), and for a future caller who adds one and forgets. It throws rather
+     * than returning, because by the time it is reached the DELETE has run and
+     * "carry on with a value PHP invented" is the outcome #31 is about.
+     *
+     * Below PHP 8 the bad subscript emits a warning and carries on: the section is
+     * inserted but never mapped, and on the read side the same subscript yields
+     * null, so the section's content is written at root level. That is not
+     * reachable on 8.2, and this is not a portability shim for it.
+     */
+    private static function requireUsableTempId($value)
+    {
+        if (!LayoutRules::isUsableTempId($value)) {
+            throw new InvalidArgumentException(
+                'a temp_id must be a string or an integer, not ' . gettype($value));
+        }
     }
 
     /**
@@ -651,6 +820,7 @@ class LayoutStore
         foreach ($elements as $el) {
             if (($el['type'] ?? '') !== 'section') { continue; }
             if (empty($el['temp_id']) || empty($el['db_id'])) { continue; }
+            self::requireUsableTempId($el['temp_id']);
             $dbId = intval($el['db_id']);
             if (isset($ownSections[$dbId])) {
                 $tempMap[$el['temp_id']] = $dbId;
@@ -703,7 +873,12 @@ class LayoutStore
             $type = $el['type'] ?? 'text';
             if ($type === 'section') { continue; }
 
+            // The read side of the same subscript, and the more dangerous half: on
+            // 7.1 an array here yields null through the `??`, which parents the
+            // block at root level instead of inside its section. Refused rather
+            // than resolved, for the reasons on requireUsableTempId().
             $parentTmp = $el['parent_temp_id'] ?? null;
+            if ($parentTmp) { self::requireUsableTempId($parentTmp); }
             $sectionId = $parentTmp ? ($tempMap[$parentTmp] ?? null) : null;
             $assetId   = !empty($el['asset_id']) ? intval($el['asset_id']) : null;
             $manual    = $el['manual_content'] ?? '';
@@ -745,7 +920,7 @@ class LayoutStore
                 $el['font_color']  ?? '#000000',
                 $el['font_weight'] ?? 'normal',
                 $el['font_style']  ?? 'normal',
-                number_format(floatval($el['line_height'] ?? 1.4), 2),
+                LayoutRules::lineHeight($el['line_height'] ?? null),
                 $el['text_align']  ?? '',
                 intval($el['locked'] ?? 0),
                 $order++,

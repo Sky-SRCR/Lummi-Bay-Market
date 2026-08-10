@@ -76,14 +76,21 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/plain_text.php` | `toPlainText()` — signage content is plain text (ADR-0002) |
 | `lib/login_attempt.php` | `LoginAttempt` — what a refused sign-in is allowed to say, and in what order the questions are asked (ADR-0008). Every question that does not depend on the password is answered first, so no sentence and no counter can tell a guesser the password was right. Holds no PDO: it decides, `AccountStore` writes |
 | `lib/request_scheme.php` | `RequestScheme` — is the browser's own leg of this request HTTPS, and may the session cookie therefore claim `Secure` (ADR-0009). Asserting it over plain HTTP made every sign-in loop back to a blank form in silence. Also the scheme the viewer address is built from, which had its own copy of the question and got it wrong behind a proxy |
+| `lib/markup.php` | `Markup::text()` — the only `htmlspecialchars` in the app, with both flags named rather than defaulted (the default changed in PHP 8.1). `Markup::jsInAttr()` for a value used as JavaScript inside an attribute, which HTML escaping does **not** make safe |
+| `lib/brand.php` | The store's own colours, read through `Color::read()` rather than escaped — they land in a `<style>` block, where there is no delimiter for an entity to neutralise and a value that is not a colour is CSS. Also holds the defaults, which four pages used to carry a copy of each, and reads the generated config through `BrandingConfig`, which owns it |
 | `lib/error_policy.php` | The error policy, set in code: errors off, logging on, the three handlers, and the notice a Screen / an endpoint / a person gets when something breaks. `report()` is for a problem the app survived, and throttles the log as well as the email when the problem repeats on its own |
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
 | `lib/branding.php` | `BrandingConfig` / `BrandingWrite` — the **only** writer of `branding_config.php`, which every page of the app requires. Renders it, parses it, writes a temporary copy, reads that back byte for byte, and swaps it in with one `rename()`, so a reader gets the whole old file or the whole new one and a failed save leaves the site on exactly what it had |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **1030 checks**. Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **1484 checks** — and the same suite against real MySQL when `SELFTEST_MYSQL_DSN` is set, where it runs 1507. Run before pushing |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **39 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit), **53 checks** |
+| `tools/selftest_builder_colors.js` | `node tools/selftest_builder_colors.js` — the same JS again with the inspector open on stored values the CSSOM cannot parse, which it discards without saying so; the publish payload used to turn that silence into black, **43 checks** |
+| `tools/selftest_viewer.js` | `node tools/selftest_viewer.js` — `viewer.php`'s own JS: the poll loop against a `fetch` the test controls, and every renderer given a block with nothing in it. The page that runs unattended on a television, where a throw is a blank sign, **169 checks** |
+| `tools/check_invariants.php` | `php tools/check_invariants.php` — the mechanical greps from BUILD-REFERENCE §5, run as pass/fail against the whole file set rather than a count, with comments dropped so prose about a rule does not fail it. **21 checks.** Prints what it deliberately does not cover on every run |
+| `tools/check_doc_numbering.php` | `php tools/check_doc_numbering.php` — no two write-ups share a number, no citation dangles, the invariants run unbroken, and **the next free section letter**, which is the question every branch cut from the same base has to answer. **6 checks** |
+| `tools/audit_colors.php` | `php tools/audit_colors.php` — **read-only, and the one tool here that is safe to point at the live database.** Reports every stored colour the app cannot read: the element colours that make a Display refuse to publish, and the backgrounds and Brand Standards rows that quietly render in a colour nobody chose, and the brand colours in `branding_config.php`, which no sign uses and which are reported under a heading that says so. It changes nothing; a person picks the colour. Exit 0 clean, 1 with findings, 2 if it could not look |
 | `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data. It also publishes every element type and block subtype the schema allows and reads them back, checks that a deleted Display really cascades, and prints which of the five page-added columns landed |
 | `config.php` | Brings the eight branding constants (`BRAND_*`, `SITE_NAME`, `MAIL_FROM`, `MAIL_FROM_NAME`) into being through `lib/branding.php`. The one place that loads `branding_config.php` |
 | `db_connect.php` | PDO `$pdo`; loads creds from `../../private/db_credentials.php` |
@@ -345,7 +352,7 @@ staleness check, no version history), 0007 (one editor per Display).
   widget. Steps 15–21 need a second account, two browsers, and one unavoidable
   15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 1030 self-test checks against SQLite, 92 node checks over `builder.php`'s
+  `php -l`, 1484 self-test checks against SQLite, 304 node checks over `builder.php`'s and `viewer.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare
@@ -363,10 +370,18 @@ kiosk scroll lock. `git log origin/main` has the detail.
 
 - **Data access lives in `lib/`.** A new query means a new method on the owning
   module, not a `$pdo` handed to a page script. One module per table (§3).
-- **PHP 7.1-compatible syntax** — the live server's version is unverified and
-  `.htaccess` still carries `mod_php7` blocks. No typed properties, constructor
-  promotion, enums, `readonly`, `match`, or arrow functions. This container has a
-  much newer PHP, for `php -l` only.
+- **PHP 7.1-compatible syntax** — the live server's version is **still unverified**
+  (#51). A branch recorded it as 8.2, read off Settings → This Server; that screen
+  ships with the multi-display build, which #46's probe of the live site found
+  undeployed (`lib/` answers 404), so it cannot have answered there. Cloudflare
+  fronts the site, so no response header reveals it either. The rule stands until
+  somebody opens that screen on the deployed app, and it costs nothing: every file
+  lints clean on 7.1 as well as on 8.4. No file uses a typed property, constructor
+  promotion, `readonly`, `match` or an arrow function. Two 7.1-era fallbacks stay on
+  purpose whatever the answer turns out to be: `.htaccess` carries `mod_php7` blocks
+  alongside its `mod_php8` ones, and `auth.php` keeps the pre-7.3 session-cookie
+  form behind a version check. Both are free, and both are what stops a move to a
+  different host from silently dropping HttpOnly and Secure off the sign-in cookie.
 - Before pushing: `php -l` every touched file, then `php tools/selftest_layout.php`,
   then both node suites (`tools/selftest_builder_readonly.js` and
   `tools/selftest_builder_uploads.js`) if `builder.php` was touched. A self-test

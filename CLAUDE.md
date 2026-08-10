@@ -78,7 +78,13 @@ edited in place and every change reaches the sign by hand.
   could reach without an account — and it checks a CSRF token before it looks at the
   account, **softly**, because a 403 on the front door answers "your browser is not
   keeping cookies" with the word *security* and no way forward.
-- **PHP 7.1-compatible syntax** — the live server's version is unverified.
+- **PHP 7.1-compatible syntax** — the live server's version is still unverified (#51).
+  A branch recorded it as 8.2, read off Settings → This Server; that page ships with
+  the multi-display build, which #46's probe found undeployed (`lib/` answers 404), so
+  it cannot have answered there, and Cloudflare fronts the site so no header does
+  either. The rule therefore stands, and costs nothing: every file lints clean on 7.1
+  as well as 8.4. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay for the same
+  reason they always did — they cover a host that moves.
 - **No undo exists anywhere in this app.** Publishing overwrites. Prefer
   refusing a write to merging one.
 
@@ -87,9 +93,12 @@ edited in place and every change reaches the sign by hand.
 ```
 php -l <every touched .php>
 php tools/selftest_layout.php
+php tools/check_invariants.php             # the mechanical half of BUILD-REFERENCE §5
 php tools/check_doc_numbering.php          # if a doc gained a section or invariant
 node tools/selftest_builder_readonly.js    # if builder.php was touched
 node tools/selftest_builder_uploads.js     # if builder.php was touched
+node tools/selftest_builder_colors.js      # if builder.php was touched
+node tools/selftest_viewer.js              # if viewer.php was touched
 ```
 
 `check_doc_numbering.php` also prints the next free section letter. That is the
@@ -104,7 +113,45 @@ block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
 sign rather than a stack trace anybody will read.
 
-The two node suites go further and *run* that JavaScript, under opposite premises
-— a page that may not edit, and an admin uploading a file — because the defects
-they exist for are invisible to a parse: a lookup for a control the edit lock took
-away, and a `fetch` chain with no `.catch()`.
+The four node suites go further and *run* that JavaScript, each under a premise the
+others cannot hold — a page that may not edit, an admin uploading a file, an admin
+opening a Display whose stored data is already wrong, and a Screen whose server has
+stopped answering or whose blocks have nothing in them — because the defects they
+exist for are invisible to a parse: a lookup for a control the edit lock took away,
+a `fetch` chain with no `.catch()`, a colour the CSSOM discarded in silence and the
+publish payload then sent as black, a `.catch()` that correctly ignores a dropped
+packet and therefore also ignored a failure that was never going to stop, and a
+sentence written for whoever was building the layout, drawn on the board a customer
+reads prices off.
+
+- **`json_encode` is never called outside `lib/http_reply.php`.** It returns `false`,
+  not a throw, and `echo false` prints the empty string — so a reply holding one byte
+  of invalid UTF-8 left as a zero-length 200 and the sign kept its layout for good.
+  Printed into a page's own `<script>` the same `false` emits `var X = ;`, which is a
+  parse error that takes the whole block down. `HttpReply::json()` and
+  `HttpReply::jsValue()` are the two doors; `tools/check_invariants.php` enforces it.
+- **`htmlspecialchars` is never called outside `lib/markup.php`.** Its default flag set
+  changed in PHP 8.1, so an unflagged call escapes single quotes on one host and not on
+  another, and blanks the whole value on one byte of bad UTF-8. `Markup::text()` names
+  both flags once. The other half of the same rule is contextual and is the one that bit:
+  a value escaped for HTML and then dropped into a JavaScript string inside an event
+  attribute is **not** escaped, because the HTML parser decodes the attribute before the
+  JavaScript parser reads it. `Markup::jsInAttr()` is that case, passed as the whole
+  argument and never spliced into one; the sentence belongs in a JS function.
+  `tools/check_invariants.php` enforces both — and holds every echo on a page to one of
+  five shapes safe by construction (a door, a literal, a safe call, a validated colour, a
+  class constant whose declaration is a number), which is what makes *forgetting* to
+  escape a failing check rather than something noticed later. There is no allow-list: a
+  new line either says which shape it is or converts.
+- **A colour in a `<style>` block is validated, never escaped.** Escaping is for a
+  delimiter and a stylesheet has none — `#fff; } body { … }` survives `Markup::text()`
+  intact and is a closed rule and a new one. The store's brand colours go through
+  `Brand::navBg()` and its three siblings, which answer `#rrggbb` or the documented
+  default because `Color::read()` decided. No page names a `BRAND_*` constant. The same
+  holds one boundary further in, inside a `style` **attribute**: escaping stops a value
+  ending the attribute and not the declaration, so a stored Brand Standards row is drawn
+  through `BrandStyles::readable()`, never read out of the row. Both say which stored
+  value they could not use — a substitute nobody is told about is #21 again.
+- **A reply's status code comes from its `reason`, never from beside it.**
+  `HttpReply` maps the app's own vocabulary of failure onto HTTP once. A code chosen
+  at a call site is a second opinion, and it disagrees silently.

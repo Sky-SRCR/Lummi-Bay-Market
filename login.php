@@ -11,6 +11,9 @@ if (isLoggedIn()) {
 
 // The BRAND_* constants this page's CSS reads are defined by config.php, which
 // auth.php requires above — one list of eight names and defaults, in lib/branding.php.
+// The four that are colours are then read back through Brand::, not escaped: they
+// land in the <style> block below, where there is no delimiter for an entity to
+// neutralise and a value that is not a colour is CSS.
 
 $error = '';
 
@@ -65,7 +68,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sign In — <?= htmlspecialchars(SITE_NAME) ?></title>
+    <title>Sign In — <?= Markup::text(SITE_NAME) ?></title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
@@ -90,10 +93,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             font-size: 16px; margin-bottom: 18px;
             transition: border-color .2s;
         }
-        input:focus { outline: none; border-color: <?= htmlspecialchars(BRAND_ACCENT) ?>; }
+        input:focus { outline: none; border-color: <?= Brand::accent() ?>; }
         .btn {
             width: 100%; padding: 13px;
-            background: <?= htmlspecialchars(BRAND_ACCENT) ?>; color: #fff;
+            background: <?= Brand::accent() ?>; color: #fff;
             border: none; border-radius: 6px;
             font-size: 16px; font-weight: bold; cursor: pointer;
         }
@@ -111,22 +114,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body>
 <div class="card">
-    <?php if (BRAND_LOGO): ?>
+    <?php if (Brand::logo()): ?>
         <div style="text-align:center; margin-bottom:16px;">
-            <img src="<?= htmlspecialchars(BRAND_LOGO) ?>" alt="<?= htmlspecialchars(SITE_NAME) ?>"
+            <img src="<?= Markup::text(Brand::logo()) ?>" alt="<?= Markup::text(SITE_NAME) ?>"
                  style="max-height:60px; max-width:180px; object-fit:contain;">
         </div>
     <?php endif; ?>
-    <h1><?= htmlspecialchars(SITE_NAME) ?></h1>
+    <h1><?= Markup::text(SITE_NAME) ?></h1>
     <p class="subtitle">Sign in to your account</p>
     <?php if ($error): ?>
-        <div class="error"><?= htmlspecialchars($error) ?></div>
+        <div class="error"><?= Markup::text($error) ?></div>
     <?php endif; ?>
     <form method="POST">
-        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrfToken()) ?>">
+        <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
         <label for="username">Username</label>
         <input type="text" id="username" name="username"
-               value="<?= htmlspecialchars($_POST['username'] ?? '') ?>"
+               value="<?= Markup::text($_POST['username'] ?? '') ?>"
                autocomplete="username" autofocus required>
         <label for="password">Password</label>
         <input type="password" id="password" name="password"

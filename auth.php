@@ -1,5 +1,20 @@
 <?php
 // Session authentication helpers — include at the top of every protected page.
+//
+// Nothing behind a sign-in may be held by a cache (#28). Set here because this file
+// is what every such page includes, and because the case it covers is the ordinary
+// one for a shop: a back-office computer several people share, where the back button
+// after a sign-out used to redraw the admin panel — account names, email addresses,
+// who holds which sign — from the browser's own store, with no request made and
+// nothing the server could have refused. api.php includes this too, and the same
+// answer is right there for a different reason: a poll whose whole purpose is to be
+// current must never be answered from anything but the database.
+//
+// Before session_start(), so it is set on the request that establishes the session
+// as well as on every one after it.
+require_once __DIR__ . '/lib/http_reply.php';
+HttpReply::noStore();
+
 // AUTH_NO_SESSION lets the one public entry point — api.php's get_layout, polled
 // every 30 seconds by every Screen — include this file for its helpers without
 // opening a session it never reads. A framed Screen returns no cookie, so each
@@ -19,13 +34,15 @@ if (!defined('AUTH_NO_SESSION') && session_status() === PHP_SESSION_NONE) {
     // decided per request, by lib/request_scheme.php, which is where the reasoning
     // about proxies and forged headers is written down.
     //
-    // Two forms, because the options-array signature arrived in PHP 7.3 and this
-    // app targets 7.1 with the live version unverified. On 7.1 the array form is
-    // not a partial success — it fails argument parsing and sets *nothing*, so
-    // the cookie loses HttpOnly and Secure as well as SameSite, and the warning
-    // it emits lands before session_start() and can break sign-in outright. The
-    // pre-7.3 idiom appends the attribute to the path, which the header accepts
-    // verbatim.
+    // Two forms, because the options-array signature arrived in PHP 7.3. The live
+    // server runs 8.2 (#51, reported by Settings → This Server), so the branch below
+    // always takes the modern call today and the fallback is dead code on this host.
+    // It stays anyway: it is one `if`, and it is what covers the app being moved to
+    // an older one. Before 7.3 the array form is not a partial success — it fails
+    // argument parsing and sets *nothing*, so the cookie loses HttpOnly and Secure
+    // as well as SameSite, and the warning it emits lands before session_start() and
+    // can break sign-in outright. The pre-7.3 idiom appends the attribute to the
+    // path, which the header accepts verbatim.
     if (PHP_VERSION_ID >= 70300) {
         session_set_cookie_params([
             'path'     => '/',
