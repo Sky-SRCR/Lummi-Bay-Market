@@ -1374,6 +1374,35 @@ check(strpos($closedRight->message(), 'deactivated') === false,
       'a retired employee is never told they are deactivated, which would mean asking to be switched back on');
 checkMentions($closedRight->message(), 'new one', 'they are told the thing that can actually happen');
 
+// ---- And the same oracle in the clock ----------------------------------------
+// ADR-0008 made the *sentence* independent of the password. It stayed dependent in
+// the timing: returning before password_verify() made these refusals come back a
+// bcrypt sooner than a wrong password on a live account, and a stopwatch is no
+// harder to reach for than reading the wording. Every account that exists now pays
+// for the hash, whether or not its answer will be looked at.
+//
+// Checked structurally rather than by measuring, deliberately. A wall-clock
+// assertion on a hash cost is exactly the flaky check #50 is about, and it would
+// have to pass on a machine whose bcrypt cost nobody here chose. This asserts the
+// property the module documents instead, which is what a change would break.
+// Structural: it proves where the call sits, not that a refusal was slow.
+$gateSrc = file_get_contents(__DIR__ . '/../lib/login_attempt.php');
+$spendAt = strpos($gateSrc, '$passwordOk = password_verify(');
+$closedAt = strpos($gateSrc, 'isClosed($accountId)');
+$readAt  = strpos($gateSrc, 'if (!$passwordOk)');
+check($spendAt !== false, 'the password is spent into a variable rather than checked inline');
+check($readAt !== false, 'and read back once, at the end');
+check($spendAt < $closedAt,
+      'the hash is spent before the state checks, so a suspended refusal costs what a wrong password costs');
+check($closedAt < $readAt,
+      'and what the password said is not consulted until every state check has had its turn');
+// The three state branches must decide on state alone. If any of them started
+// reading $passwordOk, the wording would depend on the password again — ADR-0008
+// from the other end.
+$betweenStates = substr($gateSrc, $closedAt, $readAt - $closedAt);
+check(strpos($betweenStates, '$passwordOk') === false,
+      'and no state branch between them consults it, which would put the message oracle back');
+
 // ---- The lockout still works, and still comes second --------------------------
 $pdo->exec("UPDATE users SET is_active = 1, closed_at = NULL WHERE id = 2");
 for ($i = 1; $i < LoginAttempt::MAX_ATTEMPTS; $i++) {
@@ -5529,4 +5558,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // did (#21 closed while it was open, so three checks that asserted the coercion now
 // assert the refusal). The MySQL figure is the SQLite one plus the 23 checks in the
 // engine-only section below, which is the same difference it has always been.
-reportChecks(testIsMysql() ? 1511 : 1488);
+reportChecks(testIsMysql() ? 1516 : 1493);

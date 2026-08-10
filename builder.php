@@ -1097,9 +1097,16 @@ var blockStyles    = {};     // brand standards cache
 // INIT
 // ============================================================
 document.addEventListener('DOMContentLoaded', function() {
-    Promise.all([loadAssets(), loadLayout()]).catch(function() {
-        showToast('Failed to load layout.', true);
-    });
+    // Two independent reads, each reporting its own failure. One shared handler said
+    // "Failed to load layout." for either, and there was never a missing .catch() —
+    // Promise.all carried one for both, so nothing went unhandled and a message always
+    // appeared. The defect was that the message was false half the time it appeared:
+    // the asset library failing does not mean the layout did not load, and the two
+    // matter very differently. A missing library is an empty dropdown. A missing layout
+    // means the canvas on screen is not this sign, which is worth saying out loud on a
+    // page whose whole purpose is to publish what is on screen.
+    loadAssets();
+    loadLayout();
     setupCanvas();
     // No role test here on purpose: this ran on every page load with the emit
     // condition spelled out a second time, and a lookup that survives only while
@@ -1168,6 +1175,14 @@ function loadAssets() {
             list.forEach(function(a) {
                 sel.innerHTML += '<option value="'+a.id+'">['+a.type.toUpperCase()+'] '+escHtml(a.label||a.content.substr(0,20))+'</option>';
             });
+        })
+        // Its own failure, named as itself — the lesser of the two opening reads. What
+        // it costs is the library dropdown and rendering for blocks that point into it;
+        // the layout on screen is still this sign's, so editing and publishing remain
+        // safe and are not discouraged here.
+        .catch(function() {
+            showToast('The asset library could not be loaded, so the library dropdown '
+                      + 'is empty. The layout itself is fine.', true);
         });
 }
 
@@ -1231,6 +1246,23 @@ function loadLayout() {
             });
 
             setupInteract();
+        })
+        // The one that matters, and it says the part that matters rather than naming
+        // the function that broke: this canvas is not the sign, so do not edit it.
+        //
+        // One sentence covers a reply that never arrived and one that arrived
+        // unreadable, because the advice is identical and "the connection dropped"
+        // would be a guess — something may well have answered for the endpoint.
+        //
+        // The reassurance is true and rests on something already tested rather than on
+        // care: LAYOUT_STAMP starts empty, only a successful read fills it, and a
+        // publish with no stamp is refused (ADR-0006). So an admin who ignores this and
+        // edits anyway still cannot overwrite the sign — they are told here instead of
+        // at the publish, which is the improvement.
+        .catch(function() {
+            showToast('This display\'s layout could not be loaded, so the canvas below '
+                      + 'is not what the sign is showing. Nothing has been saved. '
+                      + 'Reload before editing.', true);
         });
 }
 

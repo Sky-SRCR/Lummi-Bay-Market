@@ -416,15 +416,89 @@ beatRefusedWith('', 'Something went wrong.');
 checkSame('none', document.getElementById('lock-access-bar').style.display,
           'and so is a failure with no reason at all, which is what a dropped beat looks like');
 
+// ---- The two opening reads, each reporting itself ---------------------------
+//
+// These exist because the defect they cover was invisible to every other kind of
+// check. There was no missing `.catch()` — `Promise.all([loadAssets(), loadLayout()])`
+// carried one for both — so nothing was ever an unhandled rejection and a message
+// always appeared. A parse cannot see it and a grep for `.catch` finds it present.
+// What was wrong was that one sentence stood for two unrelated failures, and it was
+// the wrong sentence for one of them.
+//
+// Driving the real chains is the only way to read what a person would be told, which
+// is why the tail of this suite is async.
+
+async function openingReads() {
+    section('Each opening read says what actually failed');
+
+    // ---- The layout read: the one that matters -------------------------------
+    // Three ways it can fail, two of which produce the same advice on purpose.
+    reset();
+    global.fetch = () => Promise.reject(new Error('no route to host'));
+    await loadLayout();
+    checkMentions(toast(), 'not what the sign is showing',
+                  'a layout read that never answered says the canvas is not the sign');
+    checkMentions(toast(), 'Nothing has been saved',
+                  'and says nothing was saved, which ADR-0006 makes true rather than reassuring');
+    checkMentions(toast(), 'Reload before editing', 'and says what to do about it');
+    check(isErr(), 'and it is an error, not a note');
+    check(toast().indexOf('asset library') === -1,
+          'and does not mention the asset library, which had nothing to do with it');
+
+    reset();
+    global.fetch = () => Promise.resolve({ json: () => Promise.reject(new SyntaxError('<html>')) });
+    await loadLayout();
+    checkMentions(toast(), 'not what the sign is showing',
+                  'a reply that arrived unreadable gets the same advice, because it is the same advice');
+    check(isErr(), 'and is an error too');
+
+    // ---- The library read: the lesser one ------------------------------------
+    reset();
+    global.fetch = () => Promise.reject(new Error('no route to host'));
+    await loadAssets();
+    checkMentions(toast(), 'asset library', 'a failed library read names the library');
+    checkMentions(toast(), 'dropdown is empty', 'and says what is actually lost');
+    checkMentions(toast(), 'layout itself is fine',
+                  'and says the layout is fine, which is the half the shared handler got wrong');
+    check(toast().indexOf('Nothing has been saved') === -1,
+          'and does not tell an admin their layout failed to load, which was false half the time');
+    check(toast().indexOf('Reload before editing') === -1,
+          'and does not send them away from a page they can still safely use');
+
+    // ---- The two are not the same sentence ----------------------------------
+    // The whole defect in one check: if a future change routes both through one
+    // handler again, these two strings become equal.
+    reset();
+    global.fetch = () => Promise.reject(new Error('down'));
+    await loadLayout();
+    const layoutSaid = toast();
+    reset();
+    await loadAssets();
+    const assetsSaid = toast();
+    check(layoutSaid !== assetsSaid,
+          'the two reads do not print the same sentence, which is the whole of this fix');
+    check(layoutSaid !== '' && assetsSaid !== '',
+          'and neither of them fails silently');
+}
+
 // ---- Total ------------------------------------------------------------------
 
 // The expected total, for the same reason the other two suites carry one: without
 // it, deleting half this file still reports a clean run.
-const expected = 53;
-if (checks !== expected) {
-    fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
+function finish() {
+    const expected = 67;
+    if (checks !== expected) {
+        fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
+    }
+
+    console.log('\n' + checks + ' checks, ' + fails.length + ' failed');
+    fails.forEach(function (f) { console.log('  FAILED: ' + f); });
+    process.exit(fails.length ? 1 : 0);
 }
 
-console.log('\n' + checks + ' checks, ' + fails.length + ' failed');
-fails.forEach(function (f) { console.log('  FAILED: ' + f); });
-process.exit(fails.length ? 1 : 0);
+// A rejection in here would otherwise exit 0 with a short count, which is the
+// failure mode the harness hardening in #50 was about.
+openingReads().then(finish, function (e) {
+    fails.push('the opening-reads section threw: ' + (e && e.message));
+    finish();
+});

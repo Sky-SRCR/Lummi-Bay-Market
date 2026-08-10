@@ -156,12 +156,29 @@ class LoginAttempt
         }
         $accountId = intval($account['id']);
 
-        // ---- Everything the password has no part in, settled first -----------
+        // ---- The password is spent here, and not read until the end ----------
         //
-        // Nothing above this point and nothing in the three branches below reads
-        // `$password`. That is the property worth protecting when this code is
-        // changed: a state check moved below `password_verify()` puts the oracle
-        // straight back, and it will look like a tidy-up.
+        // Every account that exists pays for one `password_verify()`, including the
+        // ones that are about to be refused for a reason the password has nothing to
+        // do with. That looks like waste and is the point: bcrypt is the slowest thing
+        // on this path by orders of magnitude, so returning before it makes a closed,
+        // suspended or locked-out account answer *measurably sooner* than a wrong
+        // password on a live one. ADR-0008 closed the oracle in the wording; skipping
+        // the hash reopens it in the clock, and a stopwatch is not a harder instrument
+        // to reach for than reading a sentence.
+        //
+        // **The property to protect when this code is changed:** none of the three
+        // branches below reads `$passwordOk`. Their outcomes are decided by the
+        // account's state alone, exactly as before — the only thing that moved is
+        // where the cost is paid. Moving this call back down, or making any state
+        // branch consult it, restores one oracle or the other, and either will look
+        // like a tidy-up.
+        //
+        // An account that does not exist is still refused without a hash, because
+        // that is existence rather than a credential and ADR-0001 settles it: an
+        // unknown username and a wrong password say the same sentence, and this
+        // module is not where user enumeration is answered.
+        $passwordOk = password_verify($password, (string)$account['password_hash']);
 
         // Closed is asked before suspended because closing clears `is_active` as
         // well (lib/accounts.php), so every closed account is also a suspended
@@ -182,8 +199,8 @@ class LoginAttempt
             return LoginOutcome::refused(LoginOutcome::LOCKED, self::lockedMessage($lockedUntil - $now));
         }
 
-        // ---- And only now the password ---------------------------------------
-        if (!password_verify($password, (string)$account['password_hash'])) {
+        // ---- And only now what the password said ------------------------------
+        if (!$passwordOk) {
             return $this->countFailure($account, $now);
         }
 
