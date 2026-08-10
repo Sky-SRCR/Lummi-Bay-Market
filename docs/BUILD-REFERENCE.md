@@ -68,7 +68,7 @@ Design rules, applied to every module added by this build:
 | `alerts.php` | `AlertMailer(stateDir, siteName)` — `notify` / `remember` / `recipients` | Telling somebody. Both halves are on disk rather than in the database, because the commonest thing to alert about *is* the database: the rate limiter is a stamp file (one email per problem per hour, keyed by kind + file + line) and the recipient list is a cache written whenever an admin opens the admin panel. With nowhere writable it sends nothing at all — a limiter that fails open means one email per Screen per poll. `deliver()` is the single line that reaches `mail()`, separated so the rules can be tested without one. |
 | `login_attempt.php` | `LoginAttempt(AccountStore)` — `attempt(username, password, now?)` → `LoginOutcome` | One sign-in, decided: which of six answers it is, and the sentence that goes with each. The rule it exists to make checkable is an **ordering** (ADR-0008, invariant 23) — closed, suspended and locked-out are settled before `password_verify()` runs, so the sentence never varies with the password and a guesser on a suspended account is not told when they have got it right. It also carries ADR-0001's two numbers and the counting they drive, in UTC (§4v): a `locked_until` further out than one window was not written by this code and is not honoured, which is both true of the policy and what stops a row left in the old local-time format from locking somebody out for a shift. **It holds no PDO**: every statement is `AccountStore`'s, which is what stops the file that decides what to say from growing a query that says something else, and leaves the thing under test as the decision rather than a database. `login.php` is the adapter — start a session, or print the sentence. |
 | `request_scheme.php` | `RequestScheme::isSecure(array $server): bool` | Whether the *browser's* leg of a request is HTTPS, asked for exactly one reason: whether the session cookie may carry `Secure`. A flat `true` there is not a hardening on an `http://` deployment, it is a correct password landing back on a blank login form for ever, because the browser discards the cookie and nothing anywhere says so. Believes the forwarded proxy headers, deliberately — refusing them costs a real Cloudflare-fronted deploy its `Secure` flag, while believing a forged one costs only the forger their own sign-in. Says false when the request says nothing. Depends on nothing, reads no superglobal. |
-| `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. Six statements whose **order** is the substance: breaks are rewritten before the strip, or `strip_tags` takes the line break away with the tag; entities are decoded after it, because `strip_tags` eats from a `<` to the end of a value and decoding first would delete the rest of a price line (§4am). The cost of that order is that encoded markup lands as literal text, inert only because every renderer draws stored text with `textContent`. |
+| `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. Seven statements whose **order** is the substance (§4am): breaks are rewritten before the strip, or `strip_tags` takes the line break away with the tag; a `<` that cannot open a tag is escaped before the strip, because `strip_tags` is not a parser and deletes from a `<` to the end of the value; and entities are decoded after it, since a browser sends a typed `<` back as `&lt;`. `PLAIN_TEXT_NOT_A_TAG` is the single answer to "is this markup?" and is used in exactly one place. The cost of the order is that encoded markup lands as literal text, inert only because every renderer draws stored text with `textContent`. **The only caller of `strip_tags()` in the repo** — a label or a preview that wants plain text asks this, or it disagrees with the sign. |
 | `branding.php` | `BrandingConfig` — `apply` / `current` / `save` → `BrandingWrite`, plus `path` / `load` and the pure `render` / `parses` | The generated `branding_config.php`: the eight settings it holds, their defaults, and **how a file the whole app requires is replaced while the app is running** (§4y). Nothing writes the live path but one `rename()`, and it is not reached until the replacement has been rendered, parsed, written to a temporary file beside it and read back byte for byte — so a reader gets the whole old file or the whole new one, and every failure leaves the site on exactly what it had and says so. `save()` takes only the settings a form actually edited and applies them over `current()`, which is what the old eight-positional-argument call could not do: each of the two forms passed the other's values back in from page variables. And the read side: `apply()` is one call for what used to be seven lines repeated in `config.php`, `login.php`, `builder.php` and `help.php`, each spelling out the same defaults and two of them guarding the `require` on a different constant from the other two. `config.php` calls it and `auth.php` requires `config.php`, so the eight names exist by the time anything renders; nothing already defined is ever overridden, which is what `config.php` promises about `db_credentials.php`. Defining constants is a global side effect no other module has — the exception is deliberate, because the names are the interface every template already reads. Depends on nothing — no database, no session, no config, because the page that manages this file is also the page that has to work when it is missing. |
 | `color.php` | `Color::read` / `isColor` / `describe` | What a colour is — `#rrggbb`, and nothing else. One rule, because it used to be written out four times and the four copies disagreed about what to do when a value failed it: `DisplayAdmin` substituted `#1a1a2e`, `BrandStyles` `#ffffff`, the Branding form whatever was already saved, and the Builder's `rgbToHex()` `#000000`. All four then reported success, so "saved" meant four different things and none of them meant "what you typed" (#21, #41). **It never picks a colour.** `read()` answers the colour or `''` and the caller decides what an empty answer means for it — a form refuses and names the field, the publish path refuses and names the block, a caller with a genuine default applies it visibly at the call site. Blank is deliberately *not* a colour: "nothing supplied" and "supplied and unreadable" are different answers and collapsing them is the defect. Not a normaliser either — no trimming, no `#fff` expansion, no `rgb()` — the accepted set is exactly what the three old regexes shared, so nothing that used to be storable stopped being storable. Pure, and depends on nothing. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
@@ -4074,7 +4074,7 @@ were mutation-tested line by line, and the numbers are why the item existed.
 
 | | before | after |
 |---|---|---|
-| `lib/plain_text.php` | 2 of 17 killed | **17 of 17** |
+| `lib/plain_text.php` | 2 of 17 killed | **17 of 17** (and 26 of 26 once the bug below was fixed) |
 | `lib/schema.php` | 43 of 67 killed | **65 of 67** |
 
 Both survivor counts hide the same shape: the checks that existed were about *outcomes
@@ -4083,7 +4083,8 @@ silence.
 
 #### The sanitiser had one check on it, and it exercised one line
 
-`toPlainText()` is six statements, and every text block on every sign goes through it —
+`toPlainText()` was six statements when it was measured, and every text block on every
+sign goes through it —
 `crud.php`, `AssetLibrary::saveEdit()` and `LayoutStore::publish()` all funnel in. The
 only thing standing over it was a publish asserting that `<script>alert(1)</script>Hello`
 stores as `alert(1)Hello`, which kills exactly one mutation: deleting `strip_tags`. The
@@ -4165,14 +4166,51 @@ One more is worth recording because of *how* it dies: making the repair lock blo
 lock and then calls again in the same process. A hang rather than a red line, but not a
 survivor.
 
+#### The bug the coverage found, and the fix it got
+
+Writing the characterisation check turned one up. `strip_tags` is **not a parser**: it
+enters tag mode at any `<` that is not followed by whitespace, and with nothing to close
+it, deletes the rest of the value. The Builder reads a text block with `innerText`, so a
+typed `<` reaches the server literally — and `Kids <12 eat free` was stored as `Kids`.
+Silently, on the way *into* the database, with nothing to see in the Builder, no error
+anywhere, and no undo. It was recorded here as found-not-fixed for one commit, and then
+fixed on the owner's say-so.
+
+The fix is one statement before the strip: escape every `<` that HTML could not open a
+tag with, and let the decode already at the end turn it back into a character.
+
+```php
+define('PLAIN_TEXT_NOT_A_TAG', '#<(?![a-zA-Z!/?][^<>]*>)#');
+```
+
+A `<` opens a tag only when a letter, `/`, `!` or `?` follows it **and** something closes
+it before the next `<`. That second half matters as much as the first: `Sale <best value`
+has a letter after the `<` and is still not a tag, because no tag spans the end of the
+value. What reaches `strip_tags` afterwards is exactly what a browser would treat as
+markup, so `<b>`, `</div>`, `<!-- -->`, `<?php`, `<B>` and an `<img>` full of quoted
+attributes are all still taken away.
+
+Rejected: **swapping the decode in front of the strip**, which is the fix that suggests
+itself and is the one that breaks the sign — it hands `strip_tags` the very `&lt;` this
+exists to keep away from it. And **an allow-list HTML parser**, which ADR-0002 already
+turned down for the whole feature and which this does not need: the question here is not
+*which* tags are safe, it is whether a thing is a tag at all.
+
+Two other callers of `strip_tags` had the same defect one step further out, both on
+already-plain text, and both now ask `toPlainText()` instead: the pooled row's auto label
+(`Kids <12 eat free` was filed in the Library as *"Auto: Kids "*, losing the only clue to
+which block it came from) and `crud.php`'s 40-character asset preview, which showed a
+line the sign did not. `strip_tags()` is now called in exactly one place in the repo, and
+§5 has the grep that keeps it that way.
+
+**9 further mutations, all 9 killed** — including the two that needed the boundary put
+under load: `[^<>]*` widened to `.*`, which lets the search for a closing `>` run past
+the next `<` (caught by `Sale <best and <b>bold</b>`), and dropping the upper-case half of
+the tag-name class (caught by `<B>OPEN</B>`). `crud.php` is a page and has no harness;
+its change is the same one-word substitution as `assets.php`, which does.
+
 Left standing:
 
-- **A literal `<` typed into the Builder still takes the rest of the line with it.** The
-  Builder reads a text block with `innerText`, so a typed `<` reaches the server as one,
-  and `strip_tags` removes everything from it onward: `Kids <12 eat free` reaches the sign
-  as `Kids`. This is a real content loss on a real kind of price sign, and it is now a
-  characterisation check rather than a surprise — fixing it means changing a sanitiser,
-  which is somebody's decision and not a coverage task's to take.
 - **`lib/schema.php`'s statements are still MySQL-only.** No SQLite fixture can execute an
   `ALTER TABLE … MODIFY COLUMN`, so none of the above reaches them; what does is #48's
   second leg, which runs the same suite against a real MySQL (§4aa) and asserts
@@ -4246,14 +4284,17 @@ node tools/selftest_builder_editing.js   # and under the third: an ordinary good
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
                                               # the get_canvas_elements endpoint NAME, and
                                               # server_report.php's expected-column list
-grep -rn "strip_tags\|html_entity_decode" --include=*.php .  # lib/plain_text.php is the sanitiser, and
-                                              # the order of those two calls is load-bearing in both
-                                              # directions (§4am). The only other hits are label
-                                              # truncation for display — crud.php's asset preview and
-                                              # assets.php's auto-label — and neither decides what is
-                                              # stored. A new hit on a path that WRITES is a second
-                                              # sanitiser with its own opinion about that order; call
-                                              # toPlainText() instead
+grep -rn "strip_tags(\|html_entity_decode(" --include=*.php .  # exactly TWO calls in app code,
+                                              # both in lib/plain_text.php and adjacent, with the
+                                              # escape of a non-tag "<" between them. strip_tags is not
+                                              # a parser — it deletes from a "<" to the end of the
+                                              # value — so a second caller is a second answer to "is
+                                              # this markup?", and the first thing it will get wrong is
+                                              # a price line reading "Kids <12 eat free" (§4am). Call
+                                              # toPlainText() instead, for a label and a preview as
+                                              # much as for what is stored. The self-test's own
+                                              # html_entity_decode() calls run the other way, undoing
+                                              # an escape to assert it happened
 grep -rn "information_schema\." --include=*.php lib/  # only lib/schema.php: the three reads
                                               # plus one comment. server_report.php asks
                                               # readSchemaFacts() instead of writing a fourth

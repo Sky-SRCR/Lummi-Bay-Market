@@ -457,15 +457,42 @@ checkSame("Wings & Fries\n\n<10 pieces\n\n\$8.99",
           toPlainText("<div>Wings &amp; Fries</div>\n\n\n<div>&lt;10 pieces</div><br><b>\$8.99</b>   \n"),
           'a paste out of a browser arrives as the lines somebody typed');
 
-// ---- Known: a literal "<" typed into the Builder takes the line with it -------
-// Not a rule, a *characterisation*. The Builder reads a text block with innerText,
-// so a typed "<" reaches the server as one, and strip_tags then removes everything
-// from it to the end of the value. "Kids <12 eat free" reaches the sign as "Kids".
-// Nothing here fixes that — the fix is a change to a sanitiser and belongs to
-// whoever decides it — but it is now written down and this check fails if it ever
-// changes, deliberately or otherwise.
-checkSame('Kids', toPlainText('Kids <12 eat free'),
-          'a typed "<" still eats the rest of the line — recorded, not endorsed');
+// ---- A "<" somebody typed is a character, not the start of a deletion ---------
+// strip_tags is not a parser. It enters tag mode at any "<" not followed by
+// whitespace and, with nothing to close it, deletes the rest of the value — so
+// "Kids <12 eat free" reached the sign as "Kids", on the way into the database,
+// with nothing to see in the Builder and no error anywhere. The Builder reads a
+// text block with innerText, so a typed "<" arrives literal and this is the whole
+// path it takes.
+checkSame('Kids <12 eat free', toPlainText('Kids <12 eat free'),
+          'a "<" before a digit is a character somebody typed');
+checkSame('Pints <16oz', toPlainText('Pints <16oz'), 'with or without a space after it');
+checkSame('Beer <$4', toPlainText('Beer <$4'), 'and before punctuation');
+checkSame('5 < 10 < 20', toPlainText('5 < 10 < 20'), 'more than one of them in a line');
+checkSame('Sale <best value', toPlainText('Sale <best value'),
+          'and even before a letter, when nothing ever closes it — no tag can span the end of the value');
+checkSame('<', toPlainText('<'), 'a "<" on its own is still a "<"');
+
+// The other side of that boundary, which is what makes it a boundary: everything a
+// browser would read as a tag is still taken away. The rule is one regex used in
+// one place, because two opinions about "is this markup?" is how this comes back.
+checkSame('OPEN', toPlainText('<b>OPEN</b>'), 'a real tag is still stripped');
+checkSame('alert(1)', toPlainText('<script>alert(1)</script>'), 'and so is a script');
+checkSame('', toPlainText('<img src=x onerror="steal()">'),
+          'including one whose attributes are full of quotes and brackets');
+checkSame('', toPlainText('<!-- a comment -->'), 'comments go');
+checkSame('', toPlainText('<?php echo 1; ?>'), 'and so does anything shaped like PHP');
+checkSame('acd', toPlainText('a<b>c</b>d'), 'a tag mid-sentence takes only itself');
+checkSame('OPEN', toPlainText('<B>OPEN</B>'),
+          'a tag shouted in capitals is the same tag — HTML does not care and neither does this');
+
+// The two live together in one value, which is where the boundary has to hold: the
+// "<" that opens nothing is kept, the one that opens something is taken, and the
+// search for the closing ">" does not run past the next "<" looking for one.
+checkSame('Sale <best and bold', toPlainText('Sale <best and <b>bold</b>'),
+          'an unclosed "<" and a real tag in the same line are told apart');
+checkSame("Half rack\nFull rack", toPlainText('<div>Half rack</div><div>Full rack</div>'),
+          'and the break rewrites still see the tags they are looking for');
 
 // ─────────────────────────────────────────────────────────────
 section('A basic publish may return root content, never invent it');
@@ -1993,6 +2020,17 @@ checkSame('Sockeye  21.99', $pdo->query("SELECT content FROM assets")->fetchColu
           'and it is the words that are on the sign now');
 checkSame(1, intval($pdo->query("SELECT COUNT(*) FROM canvas_elements WHERE asset_id IS NOT NULL")->fetchColumn()),
           'the block still points at it — the sweep did not cut the line it was reading');
+
+// The label a publish gives a pooled row is what an admin scrolls the Library
+// looking for, so it goes through the same sanitiser the content does. strip_tags
+// on its own deletes from a "<" onwards, which labelled this row "Auto: Kids " and
+// left the only clue to which block it belongs to on the cutting-room floor.
+$fresh = $store->forId($sign->id());
+$layouts->publish($fresh, new PublishRequest([$block('Kids <12 eat free')], Background::unchanged(),
+                                             1, true, $fresh->layoutStamp()));
+checkSame('Auto: Kids <12 eat free',
+          $pdo->query("SELECT label FROM assets WHERE content = 'Kids <12 eat free'")->fetchColumn(),
+          'an auto-saved row is labelled with the whole line, "<" and all');
 
 // What the sweep must never touch: a row a person made. An unused one is not
 // junk, it is the image somebody uploaded ready for next week.
@@ -6124,4 +6162,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // did (#21 closed while it was open, so three checks that asserted the coercion now
 // assert the refusal). The MySQL figure is the SQLite one plus the 23 checks in the
 // engine-only section below, which is the same difference it has always been.
-reportChecks(testIsMysql() ? 1632 : 1609);
+reportChecks(testIsMysql() ? 1647 : 1624);
