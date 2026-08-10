@@ -452,18 +452,21 @@ decisions already made, not new decisions.
   its lowest row to carry the old background onto the Display that replaces it —
   the one reader, and the reason invariant 2 says "retired to one reader" rather
   than "unread".
-- **PHP 7.1-compatible syntax.** The live server's version is **still unverified**
-  (#51, §4k). It was briefly recorded as 8.2, read off Settings → This Server — but
-  that screen is part of the undeployed multi-display build, and #46's probe found
-  `lib/` answering 404 on the live site, so it cannot have answered there; Cloudflare
-  hides the version from every response header. So the rule stands, and it is free:
-  no file uses a typed property, constructor promotion, `readonly`, `match` or an
-  arrow function, and `php -l` passes on 7.1 as well as 8.4. CI stays pinned to 8.2
-  as the likely version and the one its MySQL service was built against — a pin is a
-  test target, not a claim about the host. The two 7.1-era fallbacks —
-  `.htaccess`'s `mod_php7` blocks and `auth.php`'s pre-7.3 session-cookie form —
-  stay, because they are free and they cover a move to a different host. This
-  container has PHP 8.4 for `php -l` only.
+- **PHP 8.2 is the floor** (#51, §4k) — **stated by the store owner, 2026-08-10**, not
+  observed by anything in this repo. It was twice recorded as 8.2 before that on
+  evidence that could not exist: Settings → This Server ships with the undeployed
+  build, #46's probe found `lib/` answering 404 live, and Cloudflare hides the version
+  from every response header. So the floor rests on a person, written down with a date,
+  and confirming it on that screen is a deploy-day step. CI's 8.2 pin now enforces the
+  target rather than accepting everything the target forbids.
+  Modern syntax is permitted. As of today **no file uses a typed property, constructor
+  promotion, `readonly`, `match` or an arrow function**, which is what keeps the floor
+  one line to lower again — check that before assuming it is still true. Spend it
+  deliberately: guessing low only forwent syntax, where a floor that turns out wrong is
+  a parse error, and a parse error in a file a Screen loads is a blank sign in the shop.
+  The two 7.1-era fallbacks — `.htaccess`'s `mod_php7` blocks and `auth.php`'s pre-7.3
+  session-cookie form — stay, because they are free and what they prevent is silent.
+  This container has PHP 8.4 for `php -l` only.
 - **An inactive Display returns no elements from `get_layout`.** The API reports
   `status: "inactive"` and the Phase 2 Viewer renders the notice. A Phase 1
   Viewer would show an empty canvas — unreachable in practice, since nothing can
@@ -1088,21 +1091,39 @@ outright and asserts the report goes red and says why. Verified against two
 mutations — hard-coding the column check to true, and letting the no-catalogue
 fallback answer true on error — each of which fails 3.
 
-**Recorded as answered — 8.2 — and then withdrawn at the merge.** The branch that
-answered it said the screen had been opened and reported 8.2, and changed the rule in
-`CLAUDE.md`, `README.md`, `HANDOFF.md` and the invariant list to match. It cannot have
-been that screen: it ships with the multi-display build, and #46's probe of the live
-site found `lib/` answering 404 — the build is not deployed, so the page does not run
-there. Cloudflare fronts the site, so no response header carries the version either.
-Nothing in this repo has observed it.
+**Answered — 8.2 — on the third attempt, and the first two are worth keeping in view
+because they are the same wrong answer arrived at twice.** A branch recorded 8.2 and
+raised the rule to match, citing Settings → This Server. That cannot have been the
+source: the screen ships with the multi-display build, and #46's probe of the live
+site found `lib/` answering 404, so the page does not run there — and Cloudflare
+fronts the site, so no response header carries the version either. The claim was
+withdrawn and the rule put back to 7.1-compatible. That withdrawal was then itself
+incomplete for one merge: the four top-level docs were reverted while
+`lib/server_report.php`, `auth.php`, `lib/markup.php`, `lib/layout_store.php`,
+`admin_panel.php` and §5 still stated 8.2 as fact, so the repo asserted both floors at
+once — and `ASSUMED_PHP` was the one an admin would have read off a screen.
 
-So **the rule is back to 7.1-compatible and back to saying "unverified"**, which costs
-nothing: `php -l` passes on 7.1 as well as 8.4 and no file uses syntax the rule
-forbids. This is not a claim that the host is *not* 8.2 — it very likely is, and CI
-stays pinned there. It is the difference between a measurement and an expectation, on
-the one question where guessing wrong means the sign goes down.
+**The store owner then stated it: PHP 8.2, 2026-08-10.** That is the source the first
+attempt never had. It is not a reading this repo can take for itself — nothing here
+observes the version, and that is exactly why it is written down with a date and a
+person rather than left as a fact with no provenance. `ServerReport`'s card is what
+will confirm it the moment the build is deployed, and what will contradict it if the
+host is ever moved or downgraded.
 
-Three things did *not* change either way, each for its own reason:
+So **the floor is 8.2 and the rule no longer says "unverified"**. That is a real
+loosening: modern syntax is permitted, and CI's 8.2 pin now enforces the target it was
+always pinned to rather than accepting everything that target forbids. It is also
+reversible in one line for as long as nothing uses a later construct — which is true
+today, and stops being true the first time somebody writes a `match`.
+
+The direction of the risk flipped with the answer, and that is the thing to hold on to.
+While the version was a guess, guessing *low* only forwent syntax; the conservative
+choice and the cheap choice were the same one. With a floor declared, being wrong means
+a parse error, and a parse error in a file a Screen loads is a blank sign in a shop
+rather than a stack trace anybody reads. So the floor is paired with making a wrong
+floor *say so* — see the last item below.
+
+Three things did *not* change with the answer, each for its own reason:
 
 - **`auth.php` keeps the pre-7.3 branch.** The rule is about what may be written;
   the branch is about what happens if the host moves. It costs one `if` and it is
@@ -1112,11 +1133,18 @@ Three things did *not* change either way, each for its own reason:
 - **No file was rewritten to use 8.x syntax.** Nothing gains from `match` or a typed
   property today, and a sweep like that is a large diff through code that has just
   been changed, on an app with no undo and no CI running.
-- **`ServerReport` still reports the version, and now points the other way.**
-  `ASSUMED_PHP` was the *oldest* PHP this might have to run on, so anything newer
-  was merely wasteful. It is now the version the code is written to use, and an
-  *older* server is the failure — `phpVersionNote()` says so, in three bands, and
-  is pure so all three are testable on a machine that is none of them.
+- **`ServerReport` reports the version, and now points the other way.** `ASSUMED_PHP`
+  was the *oldest* PHP this might have to run on, so anything newer was merely
+  wasteful. It is now the floor the code is written to, and an *older* server is the
+  failure — which is what makes the card the alarm for the paragraph above rather
+  than routine commentary. `phpVersionNote()` says so in three bands, and is pure so
+  all three are testable on a machine that is none of them:
+  8.2 and up says nothing; below 8.2 warns that syntax this repo is now allowed to use
+  may not parse, while noting the cookie is still hardened by the modern call; below
+  7.3 says which session-cookie form `auth.php` has actually branched to, because
+  there the version stops being a rule and becomes behaviour. Silent on the expected
+  case on purpose — a note an admin reads every time is a note they learn to skip,
+  and skipping it is how the two bands that matter get missed.
 
 ### 4l. An account number is never handed to a second person
 
@@ -2657,10 +2685,11 @@ Left standing, and named rather than skipped:
 There is no deploy pipeline — every change reaches the sign by hand — but as of
 #48 and #51 CI runs everything below except the two things that need a browser or
 a copy of live data. It runs on PHP 8.2, against two engines: SQLite and a real
-MySQL 5.7 service. That 8.2 is a **test target, not a measurement of the host** —
-the live version is still unverified (§4aa, §4k), and the rule the repo obeys is
-7.1-compatible syntax for that reason. Run it locally before every push anyway;
-the loop is faster than a push.
+MySQL 5.7 service. That 8.2 is now also the repo's declared floor — the store owner
+stated the host runs it (§4k) — so the pin enforces the target rather than merely
+accepting everything the target forbids. It remains a *statement*, not something this
+repo has measured; confirming it on Settings → This Server is a deploy-day step. Run
+the suite locally before every push anyway; the loop is faster than a push.
 
 ```
 php -l <every touched .php>              # syntax; also in CI, on 8.2
@@ -3045,15 +3074,16 @@ returns. §4q called that path "fixed" on the strength of a detector test; this 
 the first time the sequence has run end to end anywhere except
 `tools/rehearse_phase1.php` against live data.
 
-**#51's version half is still open**, and this section said otherwise for a while.
-It read "CI pins PHP 8.2 against a 7.1 target", and the answer recorded here was that
-the live server runs 8.2, so the pin was right and the 7.1 figure was a guess. The
-evidence given was Settings → This Server, which cannot have been the source: that
-screen is part of the build that has not been deployed, and #46's probe found `lib/`
-404 on the live site. §4k has the full retraction. The pin stays at 8.2 because it is
-the likely version and what CI's MySQL service was built against; the *rule* is back
-to 7.1-compatible, because a pin is a test target and the rule is a promise about a
-host nobody has measured.
+**#51's version half took three attempts**, and this section stated two different
+wrong things along the way. It read "CI pins PHP 8.2 against a 7.1 target", and the
+answer first recorded here was that the live server runs 8.2 — evidence: Settings →
+This Server, which cannot have been the source, because that screen is part of the
+build that has not been deployed and #46's probe found `lib/` 404 on the live site.
+That was withdrawn and the rule put back to 7.1-compatible. **The store owner then
+stated it: 8.2, 2026-08-10**, which is the source the first attempt lacked, and the
+floor is 8.2 on that basis. Still not a measurement this repo took — confirming it on
+that screen is a deploy-day step. §4k carries the whole sequence, including why the
+direction of the risk flips once a floor is declared rather than guessed low.
 
 Running the suite on 7.1 did surface two ways this code misbehaves below PHP 8, and
 both are fixed even though neither is reachable on 8.x:
@@ -3069,9 +3099,10 @@ both are fixed even though neither is reachable on 8.x:
 The second one leaves a check that cannot fail on PHP 8, which is the shape #50 is
 about. It is kept and labelled as such rather than deleted, because what it records
 is worth more than the line — but it is not coverage and is not counted as any. Note
-that "not reachable" here is a statement about 8.x and not about the shop: while the
-live version is unverified, both of these remain live possibilities on the host, which
-is the second reason they were fixed rather than noted.
+that "not reachable" rests on the same statement the floor does: 8.x is what the store
+was said to run, and neither of these was ever observed there. They were fixed rather
+than noted because a refusal that lives in a language version leaves when the host
+does, and because the cost of writing it down was one check either way.
 
 **What still is not covered**, printed by `tools/check_invariants.php` on every run
 so it cannot be mistaken for full coverage: five §5 greps that no pattern can
@@ -3856,12 +3887,12 @@ it, `ENT_COMPAT | ENT_HTML401` — `"` escaped, `'` left alone. From it,
 ```
 
 was safe or an injection depending on which PHP the host was running, and nothing in
-the source recorded which was meant. Which PHP this app is on is unverified (#51,
-§4k), so *which* of those two behaviours it gets today is unknown — and the 7.1-era
-fallbacks in `auth.php` and `.htaccess` are kept deliberately for that reason as well
-as for a host that moves (§5), which makes "the default is fine now" exactly the
-assumption not to leave lying around. Naming both flags is what removes the question
-rather than answering it.
+the source recorded which was meant. This app was stated to run 8.2 (#51, §4k), so the
+strict behaviour is what it gets today — which is precisely the situation where "the
+default is fine now" is the assumption not to leave lying around, because it is true
+until the host moves and says nothing when it does. The 7.1-era fallbacks in `auth.php`
+and `.htaccess` are kept for that same reason (§5). Naming both flags removes the
+question rather than answering it, which is the only version-independent fix.
 
 The quieter half is worse and has nothing to do with attacks. Without
 `ENT_SUBSTITUTE`, one byte of invalid UTF-8 makes `htmlspecialchars()` return **the

@@ -370,16 +370,20 @@ kiosk scroll lock. `git log origin/main` has the detail.
 
 - **Data access lives in `lib/`.** A new query means a new method on the owning
   module, not a `$pdo` handed to a page script. One module per table (§3).
-- **PHP 7.1-compatible syntax** — the live server's version is **still unverified**
-  (#51). A branch recorded it as 8.2, read off Settings → This Server; that screen
-  ships with the multi-display build, which #46's probe of the live site found
-  undeployed (`lib/` answers 404), so it cannot have answered there. Cloudflare
-  fronts the site, so no response header reveals it either. The rule stands until
-  somebody opens that screen on the deployed app, and it costs nothing: every file
-  lints clean on 7.1 as well as on 8.4. No file uses a typed property, constructor
-  promotion, `readonly`, `match` or an arrow function. Two 7.1-era fallbacks stay on
-  purpose whatever the answer turns out to be: `.htaccess` carries `mod_php7` blocks
-  alongside its `mod_php8` ones, and `auth.php` keeps the pre-7.3 session-cookie
+- **PHP 8.2 is the floor** — stated by the store owner, 2026-08-10 (#51, §4k). Nothing
+  in this repo has *observed* it. An earlier branch claimed it from Settings → This
+  Server; that screen ships with the multi-display build, which #46's probe of the live
+  site found undeployed (`lib/` answers 404), so it cannot have answered there, and
+  Cloudflare fronts the site so no response header reveals it either. So the floor rests
+  on a person, and `ServerReport::phpVersionNote()` is what notices if the host is ever
+  moved or downgraded — **confirming it is a step on the deploy checklist**, not a thing
+  already done. Modern syntax is now allowed; as of today no file uses a typed property,
+  constructor promotion, `readonly`, `match` or an arrow function, which is what keeps
+  the floor one line to lower again. Be deliberate about spending it: guessing low only
+  forwent syntax, where a declared floor that turns out wrong is a parse error, and a
+  parse error in a file a Screen loads is a blank sign in the shop rather than anything
+  anybody reads. Two 7.1-era fallbacks stay on purpose: `.htaccess` carries `mod_php7`
+  blocks alongside its `mod_php8` ones, and `auth.php` keeps the pre-7.3 session-cookie
   form behind a version check. Both are free, and both are what stops a move to a
   different host from silently dropping HttpOnly and Secure off the sign-in cookie.
 - Before pushing: `php -l` every touched file, then `php tools/selftest_layout.php`,

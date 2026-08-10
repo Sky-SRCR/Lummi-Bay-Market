@@ -34,13 +34,12 @@ if (!defined('AUTH_NO_SESSION') && session_status() === PHP_SESSION_NONE) {
     // decided per request, by lib/request_scheme.php, which is where the reasoning
     // about proxies and forged headers is written down.
     //
-    // Two forms, because the options-array signature arrived in PHP 7.3. Which one
-    // runs here is unknown: the live version is still unverified (#51 — a branch
-    // recorded 8.2 off Settings → This Server, but that screen ships with a build
-    // #46's probe found undeployed, and Cloudflare hides the version from the
-    // headers; §4k). So neither branch is dead code, and the `if` is doing real work
-    // rather than covering a host that might one day move. Before 7.3 the array form
-    // is not a partial success — it fails
+    // Two forms, because the options-array signature arrived in PHP 7.3. The store
+    // was stated to run 8.2 (#51, §4k — the owner's word, dated; nothing in this repo
+    // has observed it), so the modern call is the one that runs today and the fallback
+    // covers a host that moves rather than the host we have. It stays anyway: it is
+    // one `if`, and what it prevents is silent. Before 7.3 the array form is not a
+    // partial success — it fails
     // argument parsing and sets *nothing*, so the cookie loses HttpOnly and Secure
     // as well as SameSite, and the warning it emits lands before session_start() and
     // can break sign-in outright. The pre-7.3 idiom appends the attribute to the

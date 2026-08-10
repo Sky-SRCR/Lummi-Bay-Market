@@ -38,8 +38,11 @@ Which has to be written twice, and is: the options-array form of
 `samesite` — it sets **nothing at all**, losing `HttpOnly` and `Secure` with it,
 and emits a warning ahead of `session_start()` that can break sign-in outright.
 The pre-7.3 branch appends the attribute to the path (`'/; SameSite=Lax'`), which
-the header carries verbatim. The live PHP version is still unverified (decision
-#51), so both branches are live code rather than one being a formality.
+the header carries verbatim. The store was stated to run 8.2 (decision #51), so the
+modern branch is the one that runs today — but the pre-7.3 branch stays rather than
+being deleted as a formality, because nothing here has *observed* that version and
+what its absence would cost is a sign-in cookie silently missing `HttpOnly`,
+`Secure` and `SameSite`.
 
 `Settings → This Server` reports Secure against the scheme, so an admin reading
 "Secure: no" over plain HTTP is told the site is not on HTTPS rather than that a

@@ -2327,36 +2327,37 @@ foreach ($runtime as $fact) {
 }
 check($allStrings, 'every fact is a printable pair, so the panel cannot be handed an object');
 
-// ASSUMED_PHP is a floor, not a measurement: the repo writes 7.1-compatible syntax
-// while the live version is unverified (§4k), so a *newer* server is told nothing and
-// the two bands below the floor each name something true on the host. Three bands,
-// and this machine is only ever one of them — which is why phpVersionNote() takes the
-// version id rather than reading PHP_VERSION_ID.
-checkSame('7.1', ServerReport::ASSUMED_PHP,
-          'the floor is the version the repo is written to, not the one CI pins');
-checkSame('', ServerReport::phpVersionNote(70300),
-          'a server on the oldest version the cookie call needs says nothing');
-checkSame('', ServerReport::phpVersionNote(80400),
-          'and neither does a much newer one — being ahead of the floor is not a problem');
+// ASSUMED_PHP is the floor the repo is written to — 8.2, on the owner's statement
+// (§4k) rather than on anything this code measured. A server at or above it is told
+// nothing; the two bands below it fire on different things and must not print the
+// same sentence, because what to do about them differs. Three bands, and this machine
+// is only ever one of them — which is why phpVersionNote() takes the version id
+// rather than reading PHP_VERSION_ID.
+checkSame('8.2', ServerReport::ASSUMED_PHP,
+          'the floor is the version the store was stated to run');
 checkSame('', ServerReport::phpVersionNote(80200),
-          'including the version CI pins, which is a test target and not a claim');
-$cookieBand = ServerReport::phpVersionNote(70200);
-check($cookieBand !== '', 'a server below 7.3 does say so, because auth.php branches there');
-check(strpos($cookieBand, 'pre-7.3 session cookie form') !== false,
+          'a server on the floor has nothing said about it');
+checkSame('', ServerReport::phpVersionNote(80400),
+          'and neither does a newer one — being ahead of the floor is not a problem');
+$behind = ServerReport::phpVersionNote(80100);
+check($behind !== '', 'a server below the floor does say so');
+checkMentions($behind, ServerReport::ASSUMED_PHP,
+              'and names the version the code is written for');
+check(strpos($behind, 'may not parse') !== false,
+      'and warns that syntax the repo may now use will not parse there');
+check(strpos($behind, 'still hardened') !== false,
+      'and says the sign-in cookie is unaffected, because above 7.3 it is');
+// Above 7.3, so this band must not claim the old cookie branch is in use.
+check(strpos($behind, 'pre-7.3 session cookie form') === false,
+      'and does not blame the cookie form, which 8.1 does not use');
+$ancient = ServerReport::phpVersionNote(70100);
+checkMentions($ancient, '7.3',
+              'below 7.3 the note reaches for the one thing that actually breaks');
+check(strpos($ancient, 'pre-7.3 session cookie form') !== false,
       'and names which cookie form is in use, which is what auth.php branches on');
-check(strpos($cookieBand, 'Session cookie') !== false,
+check(strpos($ancient, 'Session cookie') !== false,
       'and points at the row that reads the three flags back off the live cookie');
-// Above the floor, so this band must not claim the code will fail to parse.
-check(strpos($cookieBand, 'may not parse') === false,
-      'and does not warn about syntax, because 7.2 is still above the floor');
-$belowFloor = ServerReport::phpVersionNote(70000);
-checkMentions($belowFloor, ServerReport::ASSUMED_PHP,
-              'below the floor the note names the version the code is written for');
-check(strpos($belowFloor, 'may not parse') !== false,
-      'and says the code may not parse at all, which is a blank sign on a Screen');
-check(strpos($belowFloor, 'pre-7.3 session cookie form') !== false,
-      'and still names the cookie form, since below the floor is also below 7.3');
-check($cookieBand !== $belowFloor,
+check($behind !== $ancient,
       'the two speaking bands do not print the same sentence — what to do next differs');
 
 // ─────────────────────────────────────────────────────────────

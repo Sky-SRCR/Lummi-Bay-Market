@@ -8,26 +8,25 @@ name: PHP lint and self-test
 # What this used to be: `php -l` and the self-test, on PHP 8.2, on SQLite.
 #
 # Decision #51 had two halves. One was "CI pins 8.2 against a 7.1 target". That half
-# is still open: the live server's version has never been observed — the screen that
-# would report it ships with the undeployed build, and Cloudflare hides it from every
-# response header (see BUILD-REFERENCE §4k). The pin stays at 8.2 because it is the
-# likely version and the one the MySQL service below was built against. It is a test
-# target, not a claim about the host, and the repo's syntax rule still says
-# 7.1-compatible — which costs nothing, since lint passes on both.
+# is closed: the store owner stated the host runs 8.2 (2026-08-10), the repo's floor is
+# 8.2 on that basis, and this pin now enforces the target instead of accepting
+# everything the target forbids. The version has still never been *observed* — the
+# screen that would report it ships with the undeployed build, and Cloudflare hides it
+# from every response header (BUILD-REFERENCE §4k) — so confirming it is a deploy-day
+# step, and ServerReport::phpVersionNote() is what shouts if the host moves.
 #
 # The other half was real. CI ran neither the consistency greps nor the rehearsal,
 # so three of the four things BUILD-REFERENCE §5 asks for before every push were
 # things only a person could be relied on to do. All of them run here now, against
 # both database engines.
 #
-# Running the suite on 7.1 did find two ways the code misbehaves below PHP 8 — an
-# array where a temp_id belongs is accepted rather than refused, and the error log
-# never rotates. Neither is reachable on 8.x, so neither is reachable in this job.
-# Both are fixed anyway, and while the host's version is unobserved neither can be
-# called "not a live defect" either. 7.1 is still not pinned here: a second matrix
-# leg testing a version nobody has seen the store run would constrain every future
-# change on the strength of the same guess, in the other direction. The rule is
-# carried by `php -l` passing on both, and by review.
+# Running the suite on 7.1, while the target was still unknown, did find two ways the
+# code misbehaves below PHP 8 — an array where a temp_id belongs is accepted rather
+# than refused, and the error log never rotates. Neither is reachable on 8.x, so
+# neither is reachable in this job. Both are fixed anyway, because a refusal that
+# lives in a language version leaves when the host does. 7.1 is deliberately not a
+# second matrix leg: with the floor at 8.2 that would test a version this app is not
+# written for and is not run on.
 
 on:
   push:

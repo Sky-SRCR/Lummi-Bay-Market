@@ -790,9 +790,10 @@ class LayoutStore
      * inserted but never mapped, and on the read side the same subscript yields
      * null, so the section's content is written at root level — a whole section's
      * worth of blocks moved out of it, reported as a success. On PHP 8 the same
-     * subscript throws, which this turns into a sentence instead. Whether the live
-     * host is either side of that line is unverified (#51), so both readings are
-     * live and this is the one place that does not depend on knowing which.
+     * subscript throws. The store runs 8.2 (#51), so the throw is what happens here
+     * and this turns it into a sentence; the check is written out rather than left to
+     * the language because a refusal that lives in a version is a refusal that leaves
+     * when the host does.
      */
     private static function requireUsableTempId($value)
     {

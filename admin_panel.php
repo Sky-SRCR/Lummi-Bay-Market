@@ -1530,10 +1530,11 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
     <?php
     // Read-only, and outside the form on purpose: nothing here is a setting and
     // there is nothing to submit. See lib/server_report.php for why it exists —
-    // in short, the repo is written to a PHP version nobody has ever checked (this
-    // card is where the answer will appear once the build is deployed — it has not
-    // answered yet, #51), and the schema converges silently enough that a column can
-    // fail to apply for months without anyone noticing.
+    // in short, the repo is written to a PHP version this code has never observed —
+    // 8.2, on the owner's word (#51) — so this card is what confirms it once the build
+    // is deployed and what contradicts it if the host ever moves; and the schema
+    // converges silently enough that a column can fail to apply for months without
+    // anyone noticing.
     $server = new ServerReport($pdo);
     ?>
     <div class="card">

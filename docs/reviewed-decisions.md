@@ -87,11 +87,11 @@ written down rather than remembered:
 | 48 | The test database differs from MySQL in twelve ways, including row locking stubbed out entirely. | Test against real MySQL as well. | **Done** | §4aa |
 | 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | Part done — `schema.php`'s *decision* is a pure function with 43 checks (§4o). Its *statements* now run for real on the MySQL leg (#48), which leaves the mutation coverage on `plain_text.php` as the open half. | §4o, §4aa |
 | 50 | About 29 checks in the suite could not fail, and five invariants had no automated check at all. | Replace the hollow ones, and cover the missing rules. | Open — the harness itself was hardened so a suite that stops early now fails, but the 29 have not been swept. | — |
-| 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | Part done — the half about *running* things is done: CI now runs the greps (`tools/check_invariants.php`), the rehearsal, all four node suites and the MySQL self-test, so three of §5's four pre-push steps no longer depend on somebody remembering. **The version half is still open, and was briefly recorded as closed in error.** The branch this came from stated the live host runs 8.2, read from Settings → This Server — but that page is part of the undeployed multi-display build, and #46's probe of the live site found `lib/` answering 404, so it cannot have been opened there. Nothing in this repo observes the version, and Cloudflare fronts the site so no header reveals it. **The 7.1 rule therefore stands**, and costs nothing: the branch that raised this confirmed `php -l` passes on 7.1 as well as 8.4, because no file uses syntax the rule forbids. CI stays pinned to 8.2 as the *likely* version and the one its MySQL services were built against. | §4aa, §4k |
+| 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | **Done** — both halves, the version one on the third attempt. *Running:* CI now runs the greps (`tools/check_invariants.php`), the rehearsal, all four node suites and the MySQL self-test, so three of §5's four pre-push steps no longer depend on somebody remembering. *Version:* **the store owner stated it — PHP 8.2, 2026-08-10** — and the floor is 8.2 on that basis, so CI's pin enforces the target instead of accepting everything the target forbids. Twice before, this was recorded as closed on evidence that could not exist: a branch cited Settings → This Server, which ships with the undeployed build (#46's probe found `lib/` answering 404), and Cloudflare hides the version from every header. The difference now is a source — a person, dated — rather than a screen that does not run. Still not something this repo has *observed*, so confirming it on that screen is a deploy-day step and `ServerReport::phpVersionNote()` is the alarm if the host is moved or downgraded. Note the risk changed direction: guessing low only forwent syntax, where a declared floor that is wrong is a parse error, and that is a blank sign rather than a message. | §4aa, §4k |
 
 ## Where this stands
 
-**43 done, 2 part done (#49, #51), 5 open** — counted off the Status column above, which
+**44 done, 1 part done (#49), 5 open** — counted off the Status column above, which
 is 50 rows because there is no #47. The 51st item is the unnumbered policy named at
 the top; it has no row and therefore no status, and two branches counting the same
 table have each quietly folded it into a different total. It is counted here as
@@ -99,17 +99,26 @@ neither. The count was recounted from the table at the merge rather than carried
 across from either side: both branches had been adding to it independently, and
 both totals were right about their own half and wrong about the whole.
 
-#48 and #51 were taken together because they are the same subject — what the tests
-run against, and whether anybody runs them. #48 is Done. **#51 is Part done**: the
-half about *running* things is closed, and the version half was briefly recorded as
-answered and then withdrawn — the evidence was a screen that ships with the
-undeployed build, so it cannot have reported anything (§4k, and the row above). The
-7.1 rule stands. That withdrawal was itself incomplete for one merge: the four
-top-level docs were put back while `lib/server_report.php`, `auth.php`,
-`lib/markup.php`, `lib/layout_store.php`, `admin_panel.php` and §5 still stated 8.2 as
-fact — so the repo asserted both floors at once, and `ServerReport::ASSUMED_PHP` was
-the one an admin would have read off a screen. Settled in one pass; the constant is a
-floor of `7.1` again and `phpVersionNote()`'s bands are floor-relative.
+#48 and #51 were taken together because they are the same subject — what the tests run
+against, and whether anybody runs them. Both are Done, and **#51's version half is the
+one item in this list that was answered wrongly twice before it was answered.** Worth
+keeping in view, because each attempt failed differently:
+
+1. A branch recorded 8.2 citing Settings → This Server — a screen that ships with the
+   undeployed build and therefore cannot have reported anything. Withdrawn.
+2. The withdrawal itself was incomplete for one merge: the four top-level docs were put
+   back while `lib/server_report.php`, `auth.php`, `lib/markup.php`,
+   `lib/layout_store.php`, `admin_panel.php` and §5 still stated 8.2 as fact — so the
+   repo asserted both floors at once, and `ASSUMED_PHP` was the one an admin would have
+   read off a screen. Fixed in one pass.
+3. The store owner stated it: **8.2, 2026-08-10.** A source, dated. The floor is 8.2 on
+   that basis, and the docs now say where the fact came from rather than asserting it
+   bare — which is the whole difference between this attempt and the first.
+
+The lesson is not "check harder". It is that a fact with no recorded provenance reads
+exactly like a fact with a bad one, and the only defence is writing down who said it and
+when. Nothing in this repo observes the version even now; the deploy checklist confirms
+it, and `phpVersionNote()` contradicts it if the host ever moves.
 
 **#24, #25, #29, #30, #31, #32 and #35** were then taken as one batch, for the same
 reason: they are all one subject, which is that the publish path coerced every value
@@ -236,7 +245,7 @@ at either way.
 |--------|-----|-------------------|
 | `claude/issue-28-l1comq` | `dd1a099` | #26/#28/#27/#45, all landed via the sweep. It split the reply into `lib/http_cache.php` beside the status code; `lib/http_reply.php` owns all three of status, caching and body instead, for the reason stated under #26 above — the caching half is what stops the status-code half making a mistyped tag *stickier*, so the two do not belong in separate modules. |
 | `claude/open-issues-count-hub0pv` | `4214f2b` | #29–#32 in four commits where the sweep did it in one. Read closely because of that; see below. The sweep's `lib/layout_rules.php` was kept — it is a pure module, so every shape can be put through it in a test, where this branch's rules are private statics inside `LayoutStore` reachable only by attempting a publish (§4o's reason). It also reports every problem in a payload rather than the first. |
-| `claude/app-db-domain-testing-h0ulyg` | `1526023` | It raised the syntax rule to a declared floor of 8.2. Honest about it — its own message says "This is a decision, not a measurement" — but the decision went the wrong way for this app: below the floor is a parse error, and a parse error on a Screen is a blank sign nobody reads a stack trace off. The floor stays at 7.1 while the version is unverified, which costs nothing. It is also the branch that surfaced the contradiction fixed above. |
+| `claude/app-db-domain-testing-h0ulyg` | `1526023` | **It was right about the floor, and the floor it argued for is now the rule.** Recorded here as closed for raising it to 8.2 on a decision rather than a measurement — its own message says so plainly — and that reasoning was rejected while the version was unverified. The owner then supplied the version and the same conclusion followed, so the disagreement was about evidence, not about the answer. Still closed rather than merged: what it did *around* the floor is not wanted. It uses `session_set_cookie_params()`'s array form alone, which below 7.3 sets nothing at all and silently drops `HttpOnly`, `Secure` and `SameSite` — `auth.php` guards that call by version instead — and it deletes `.htaccess`'s `mod_php7` hardening blocks, which is a separate decision that was not being made. Its `phpVersionNote()` design, "make a wrong floor say so", is the one on `main`. It is also the branch whose reading surfaced the both-floors-at-once contradiction. |
 
 **Two things were on those branches and are not on `main`.** Neither is a competing
 answer to something already solved, so neither was covered by picking:
