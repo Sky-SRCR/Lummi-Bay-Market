@@ -303,3 +303,42 @@ ever closed again, read it first — this is four for four.
   never a missing `.catch()`, so no suite caught it and no grep would have; fourteen
   checks in `tools/selftest_builder_uploads.js` drive the real chains, and restoring the
   shared handler kills the section outright.
+
+## The branch that was drained rather than closed
+
+`claude/start-37-jlkcgn` (tip `362e235`) is the one parallel branch that was **not**
+adjudicated against another implementation, because four of its nine commits were the
+same work `main` already had and the other three were not on `main` at all. It has now
+been walked end to end and is empty:
+
+| Its commit | What happened |
+|-----------|---------------|
+| `d526c85` (#37), `deb30c1` (#40), `746a38e` (#25), `f487d3f` (#19) | Already closed on `main` by other branches. Skipped. |
+| `52d8722` "Publish once, whatever the mouse does" | Already closed as §4ak. Skipped. |
+| `fd4821a` "Six controls that quietly did less than they said" | Landed earlier as `f692cb6` (#42, §4al). |
+| `1deeccd` (#49), `362e235` (the `<` bug) | Landed as `856d3c0` and `964a043`. §4am. |
+| `b4de714` (Builder undo) | Landed as `253b74e`. ADR-0010, §4an, invariant 27. |
+
+**Nothing is left on it**, so it can go the way of the others:
+
+```
+git push origin --delete claude/start-37-jlkcgn
+```
+
+Three things are worth carrying out of the port rather than leaving in the diff:
+
+- **A feature branch cut before a refactor carries the pre-refactor version of
+  everything it touches.** `b4de714` wrote `branding_config.php` from a nine-argument
+  `writeBrandingConfig()` on the admin page, which #36 replaced while that branch was
+  open (§4y). Taking the *argument* — the undo depth is a stored setting — meant putting
+  it in `BrandingConfig::DEFAULTS`, where the module that owns the file can see it.
+  Taking the *code* would have restored a second writer, and the symptom would have been
+  the depth silently resetting whenever somebody saved the Branding form.
+- **Two correct features can be wrong together.** The undo restore and the root-content
+  rule (§4aj) landed a week apart from different branches, and the pair had a defect
+  neither had alone: a restored block lost its database id, so a basic account's next
+  publish was refused for a placement they never made. Both suites passed. It took a
+  fixture block with an id to make the round trip able to see it.
+- **A duplicate commit is not the same question as a duplicate branch.** Five of the
+  nine were genuinely already closed, and checking that was cheap. The three that were
+  not would have been lost by closing the branch on the strength of the five.

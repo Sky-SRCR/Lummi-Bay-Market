@@ -378,6 +378,14 @@ content per ADR-0002, session cookie flags, reset enumeration), the Asset Librar
 SVG/non-image block, the new-text-block highlight, and the viewer framing +
 kiosk scroll lock. `git log origin/main` has the detail.
 
+**What is left, and what can run beside what:**
+[`docs/work-lanes.md`](docs/work-lanes.md). Three audit items are open — #33, #44 and
+#50 — and the first thing on that list is not a code change: four commits of
+`builder.php` changes have never been rendered by a browser, and `lbm-test/` exists so
+they can be. It also allocates the section letter and invariant number each lane may
+use, because four branches once asked `check_doc_numbering.php` the same question at
+the same time and all got the same answer.
+
 ## 8. Conventions / gotchas for the next session
 
 - **Data access lives in `lib/`.** A new query means a new method on the owning
