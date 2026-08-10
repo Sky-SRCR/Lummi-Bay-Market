@@ -2887,3 +2887,12 @@ PR that adds a write-up, and again before merging one that has been open a while
 `php tools/check_doc_numbering.php`. It also runs in CI, deliberately even when the
 step before it failed, since a red suite on every branch is what a shared broken base
 looks like and merging is what happens next.
+
+**If a change needs anything at deploy time, it ships with a row in `HANDOFF.md` §5
+→ "Deploy notes since the multi-display checklist".** One line, naming its decision
+and its section here. The numbered checklist in `docs/roadmap-multi-display.md` is
+one specific visit and is not renumbered as work merges, so without that row the
+instruction exists only in a write-up nobody reads standing at the server — which is
+how §4y's folder permission nearly shipped as a surprise. "Nothing to do, but you
+will notice X" is worth a row too: the point is that the person deploying meets it
+here rather than on the sign.

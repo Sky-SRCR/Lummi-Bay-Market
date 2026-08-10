@@ -303,6 +303,13 @@ part of every snapshot — three places said to publish afterwards.
 
 ## Before this reaches the sign
 
+**This list is one specific deploy** — the multi-display cutover, written when Phase
+6 landed. It is not renumbered when later work merges. Read
+**`HANDOFF.md` §5 → "Deploy notes since the multi-display checklist"** alongside it:
+that is where anything a later change needs at deploy time is recorded, and at the
+time of writing one of its rows is a permission that has to be right before branding
+can be edited at all.
+
 In order, on the one visit:
 
 1. **Back up the database.** Publishing has no undo and this deploy rewrites how

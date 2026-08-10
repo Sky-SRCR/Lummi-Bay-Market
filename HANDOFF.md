@@ -165,12 +165,6 @@ anything, they hold every Display by role.
   ("Store Display System"), not "Lummi Bay Market". Which is also why overwriting it
   costs almost nothing *today* — the list above is what keeps that true once somebody
   has used the Branding page.
-- **The webroot directory must be writable by the web user**, not just
-  `branding_config.php` itself. Since §4y that file is replaced by writing a
-  temporary copy beside it and `rename`-ing over it, so the permission that matters
-  moved from the file to the folder. If only the file was made writable, the first
-  save after this deploy fails with *"Check the folder permissions."* and nothing is
-  changed. Confirm it by saving anything on Admin Panel → Branding.
 - `viewer.php` requires **no login**, so any screen on the network can display it.
 - **Every Viewer URL names its Display** (ADR-0003):
   `…/viewer.php?display=drive-thru`. A bare `viewer.php` shows a "no display
@@ -293,6 +287,27 @@ anything, they hold every Display by role.
   adds them on any sign-in attempt, and the clear now copes if they were never added
   at all, which used to raise "unknown column" *after* the password had changed.
 
+### Deploy notes since the multi-display checklist
+
+The numbered visit in
+[`docs/roadmap-multi-display.md`](docs/roadmap-multi-display.md) → *"Before this
+reaches the sign"* is **one specific deploy**, written when Phase 6 landed. Work
+merged after it does not get renumbered into that list, so anything a later change
+needs at deploy time is a row here. Read both before going to the server.
+
+**When a PR changes what a deploy has to do, add a row.** One line, with the
+decision number and the write-up it comes from. Two of them below are "nothing to
+do" — they are here because they will be noticed and are not faults.
+
+| Since | At deploy time | Why |
+|-------|----------------|-----|
+| **#36** · §4y | **Make sure the webroot directory is writable by the web user**, not just `branding_config.php` itself. Confirm by saving anything on Admin Panel → Branding. If only the file is writable the save refuses with *"Check the folder permissions."* and changes nothing — safe, but branding cannot be edited until it is fixed. | That file is now replaced by writing a temporary copy beside it and `rename`-ing over it, so the permission that matters moved from the file to the folder. |
+| **#37** · §4w | **Nothing to do.** Expect **check** marks on the Asset Library the first time it is opened, with a count above the table. | Entries saved before the type rules are labelled with what today's rules would refuse or change. Nothing was rewritten, and no sign changed. |
+| **#38** · §4v | **Nothing to do.** Any login lockout in force at the moment of the deploy is released — the store is west of UTC. | `locked_until` moved to UTC and old rows read earlier from here. Bounded: a lockout is never more than 15 minutes out, and the failure counter beside it is untouched. §4v has the east-of-UTC case, which does not apply to this store. |
+| **#38** · §4u | **Nothing new to do** — step 4 of the checklist already covers it. The three lockout columns are now added by schema convergence on the first authenticated request rather than by `login.php`. On this installation they are already there. | `ensureLockoutColumns()` was the one piece of DDL in the app a bot could reach with no account. |
+| **#46** · §4z | **Upload by [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md), not by dragging the tree over.** Four things on the server are not in the repo or differ from it, and a mirroring client reverts or deletes them silently. Do not upload the repo's `branding_config.php` or `setup.php`; do not let the client delete `uploads/` or the log folder. That file also lists the five checks to run afterwards. | The step that needed these facts did not carry them — every one was already in this repo, in a file the person at the FTP client was not reading. |
+| **#46** · §4z | **Nothing to do**, twice over. `setup.php` deletes itself the moment the first admin exists, so the old "remember to delete it" step is no longer a step — it only needs *not re-uploading*. And `.htaccess` now denies `.md`, so a docs file that reaches the server is unreadable rather than serving `HANDOFF.md` and the paths in it. | Both are backstops for the upload that forgets, not instructions. A host that forbids the self-delete says so on the page instead of alerting. |
+
 ## 6. The multi-display build (this branch)
 
 Six phases, each shippable on its own, planned and tracked in
@@ -330,7 +345,7 @@ staleness check, no version history), 0007 (one editor per Display).
   widget. Steps 15–21 need a second account, two browsers, and one unavoidable
   15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 914 self-test checks against SQLite, 92 node checks over `builder.php`'s
+  `php -l`, 1030 self-test checks against SQLite, 92 node checks over `builder.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare
