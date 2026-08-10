@@ -48,10 +48,15 @@ require_once __DIR__ . '/lib/markup.php';
 // `tools/audit_colors.php` relies on when it runs with no app around it.
 require_once __DIR__ . '/lib/brand.php';
 
-$credentialsFile = dirname(__DIR__, 2) . '/private/db_credentials.php';
+// Which credentials this install uses, and why it is not simply one shared path:
+// two copies of this app in two folders on one account walk up to the same place, so
+// an unmodified rehearsal copy used to connect to the *live* database in silence.
+// `lib/install_paths.php` has the whole reasoning. The order is folder-specific
+// first, shared second, so the live install's behaviour is exactly what it was.
+require_once __DIR__ . '/lib/install_paths.php';
+$credentialsFile = InstallPaths::credentialsFile(__DIR__);
 
-
-if (file_exists($credentialsFile)) {
+if ($credentialsFile !== '') {
     require_once $credentialsFile;
 } else {
     // ---- Fallback placeholders – fill these in if you are not

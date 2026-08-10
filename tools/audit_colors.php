@@ -52,11 +52,21 @@ $user = $opt('user');
 $pass = $opt('pass');
 
 if ($host === null || $db === null || $user === null) {
-    $credentialsFile = dirname(__DIR__, 3) . '/private/db_credentials.php';
-    if (!file_exists($credentialsFile)) {
+    // Asked of the module rather than spelled again here. This file deliberately does
+    // not include db_connect.php — that installs the error policy and arms the alert
+    // mailer, so a mistyped --host would email the store's admins because somebody ran
+    // an audit — but knowing where the credentials live *twice* is its own problem, and
+    // it grew teeth once the answer stopped being a single fixed path: with two installs
+    // on one account, a second opinion here would audit the live database while the
+    // app in this folder is pointed at a copy. `lib/install_paths.php` is pure and
+    // includes nothing, so asking it costs none of what db_connect.php would.
+    require_once __DIR__ . '/../lib/install_paths.php';
+    $credentialsFile = InstallPaths::credentialsFile(dirname(__DIR__));
+    if ($credentialsFile === '') {
+        $tried = implode("\n  ", InstallPaths::credentialsCandidates(dirname(__DIR__)));
         fwrite(STDERR, "No database named.\n\n"
-            . "Expected the app's credentials at:\n  $credentialsFile\n\n"
-            . "Not there, so name one instead:\n"
+            . "Looked for the app's credentials at:\n  $tried\n\n"
+            . "Neither is there, so name one instead:\n"
             . "  php tools/audit_colors.php --host=HOST --db=NAME --user=USER --pass=PASS\n");
         exit(2);
     }

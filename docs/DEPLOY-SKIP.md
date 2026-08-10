@@ -121,6 +121,71 @@ is unverified — the file denies itself to a browser by design, so only somebod
 FTP can answer it. `schema.sql` answering 403 says the live copy is at least roughly
 the repo's, which makes a hand-edit unlikely rather than impossible.
 
+## E. A second install, for rehearsing on a copy
+
+`https://www.srcresort.com/lbm-test/` is a rehearsal copy, with its own database
+(`silverad_lummi_market_drive_thru_2`). PHP on this host is 8.2 (#51 — this is where
+that came from).
+
+**The trap this exists to close.** `lbm-test/` sits at the same depth as `lbm/`, and
+credentials are found by walking two folders up to `private/`. Both folders reach the
+*same* file, so an unmodified copy in `lbm-test/` connects to the **live** database —
+and then behaves perfectly. Signing in converges schema on the live tables. Pressing
+Publish overwrites a real sign. Nothing warns you, because from the app's point of view
+nothing is wrong. There is no undo anywhere here, so the first symptom is a customer
+reading the wrong prices.
+
+**So the rehearsal copy gets its own credentials file, and nothing in the tree
+changes.** `lib/install_paths.php` looks for a name-specific file first:
+
+```
+/home/ACCOUNT/private/db_credentials_lbm-test.php     <- create this, once
+/home/ACCOUNT/private/db_credentials.php              <- the live one, untouched
+```
+
+`db_credentials_lbm-test.php` is the live file with one line changed:
+
+```php
+<?php
+define('DB_HOST', 'localhost');
+define('DB_NAME', 'silverad_lummi_market_drive_thru_2');   // the copy
+define('DB_USER', 'your_user');
+define('DB_PASS', 'your_password');
+```
+
+Do **not** edit `lbm-test/db_connect.php` instead. A hand-edited tracked file survives
+only as long as somebody remembers it, reverts on the next upload, and what it reverts
+*to* is "the test folder points at the live database". The live install needs no file of
+its own, now or ever — absent a specific one, the shared file is used exactly as before.
+
+### Uploading to `lbm-test/`
+
+Groups A–D above still apply, with two differences:
+
+- **`branding_config.php`** — group A protects the *server's* copy because the app
+  generates it. A brand-new folder has no copy to protect, so upload the repo's one
+  here; the app rewrites it the first time you save on the Branding page.
+- **`setup.php`** — group B, and it matters *more* here. If the copied database has its
+  users table, the page self-disables and deletes itself. Point a fresh install at an
+  empty database and it is a public "make yourself an admin" form. Do not upload it.
+
+Everything else is unchanged, including the three `.htaccess` files. A fresh folder has
+none, so `lib/` and `tools/` are browsable until they arrive — upload each with its
+folder, not afterwards.
+
+### The one check that proves it is isolated
+
+**Admin Panel → Settings → This Server** now reports **This install** and
+**Database**. On `lbm-test/` they must read `lbm-test` and
+`silverad_lummi_market_drive_thru_2`.
+
+If **Database** says `silverad_lummi_market_drive_thru`, the per-install credentials
+file is missing or misnamed, and this folder is talking to the live sign. Stop, and do
+not publish. Nothing else in the app will tell you.
+
+Run that check **before** signing in a second time, not after — the sign-in that shows
+you the card is also the one that converges schema on whatever database it found.
+
 ## After you upload, five checks that catch a mistake from this list
 
 1. **Admin Panel → Settings → This Server** — the site name is the store's, not

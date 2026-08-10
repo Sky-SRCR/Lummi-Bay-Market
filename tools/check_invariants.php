@@ -178,14 +178,15 @@ $rules = [
     ],
     [
         'name'   => 'one path to the credentials that live outside the webroot',
-        'regex'  => '/private\/db_credentials\.php/',
+        'regex'  => '/db_credentials/',
         'in'     => '',
-        // tools/audit_colors.php deliberately does not include db_connect.php: that
-        // file installs the error policy and arms the alert mailer, so a mistyped
-        // --host would email the store's admins because somebody ran an audit. The
-        // cost of not including it is that it knows where the credentials are, and
-        // the cost of knowing that twice is this rule.
-        'expect' => ['db_connect.php', 'tools/audit_colors.php'],
+        // lib/install_paths.php is the one owner now, and the rule got sharper when
+        // it moved there. While the answer was a single fixed path, a second copy was
+        // merely stale-able; with two installs on one account it is a live hazard —
+        // the app in a folder pointed at a copy of the database, and something beside
+        // it still resolving to the live one. db_connect.php and tools/audit_colors.php
+        // both ask the module. The self-test names the paths because it asserts them.
+        'expect' => ['lib/install_paths.php', 'tools/selftest_layout.php'],
         'why'    => 'a second opinion about where the credentials live is one that goes stale '
                   . 'silently — the file is outside the repo and nothing else can catch it',
     ],

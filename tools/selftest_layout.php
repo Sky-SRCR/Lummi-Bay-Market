@@ -2546,6 +2546,61 @@ check($behind !== $ancient,
       'the two speaking bands do not print the same sentence — what to do next differs');
 
 // ─────────────────────────────────────────────────────────────
+section('Which install is this, and whose credentials does it use');
+
+// Two copies of this app on one hosting account — `public_html/lbm/` for the sign,
+// `public_html/lbm-test/` for a rehearsal against a duplicate database — walk up to
+// the *same* private directory. So an unmodified rehearsal copy connected to the live
+// database and behaved perfectly: schema converged, Displays all present, publish
+// succeeded, sign overwritten. Nothing downstream could notice, which is why the rule
+// is here and not left to whoever sets the folder up.
+//
+// Pure, so every shape can be put through it. Only the last two checks touch a real
+// directory, and they use a throwaway one.
+checkSame('lbm-test', InstallPaths::installName('/home/acct/public_html/lbm-test'),
+          'the install is named by its own folder');
+checkSame('lbm-test', InstallPaths::installName('/home/acct/public_html/lbm-test/'),
+          'and a trailing slash does not change the answer');
+checkSame('lbm', InstallPaths::installName('/home/acct/public_html/lbm'),
+          'which for the live folder is the name it has always had');
+// Not sanitising a request — the web server decides where the app lives. It is
+// refusing to build a path out of a shape it did not expect, the way Color::read()
+// refuses a value about to become CSS.
+checkSame('', InstallPaths::installName('/'),        'a root directory names no install');
+checkSame('', InstallPaths::installName('/home/x/.'), 'and neither does "."');
+checkSame('', InstallPaths::installName('/home/x/..'), 'nor ".." — both match the characters and neither is a name');
+checkSame('', InstallPaths::installName('/home/x/we b'), 'a space is refused rather than escaped');
+checkSame('', InstallPaths::installName('/home/x/a$b'), 'and so is anything else outside the safe set');
+
+$cands = InstallPaths::credentialsCandidates('/home/acct/public_html/lbm-test');
+checkSame(2, count($cands), 'a named install has two candidates');
+checkSame('/home/acct/private/db_credentials_lbm-test.php', $cands[0],
+          'its own file is tried first, and lives OUTSIDE the webroot');
+checkSame('/home/acct/private/db_credentials.php', $cands[1],
+          'and the shared file is the fallback, so the live install is unaffected');
+$shared = InstallPaths::credentialsCandidates('/');
+checkSame(1, count($shared), 'an install with no usable name has only the shared candidate');
+check(substr($shared[0], -20) === '/db_credentials.php' || substr($shared[0], -19) === '/db_credentials.php',
+      'and it is the shared file exactly');
+check(strpos($shared[0], 'db_credentials_') === false,
+      'never a per-install name built out of something unexpected');
+
+// The specific file winning is the whole feature, so it is proved against real files
+// rather than inferred from the order of the list.
+$instDir = newTestStateDir();
+mkdir($instDir . '/public_html/lbm-test', 0777, true);
+mkdir($instDir . '/private', 0777, true);
+$appDir = $instDir . '/public_html/lbm-test';
+checkSame('', InstallPaths::credentialsFile($appDir),
+          'with neither file present it answers empty, so db_connect.php can say which is missing');
+file_put_contents($instDir . '/private/db_credentials.php', "<?php\n");
+checkSame($instDir . '/private/db_credentials.php', InstallPaths::credentialsFile($appDir),
+          'with only the shared file it uses that — an install that predates this change is unchanged');
+file_put_contents($instDir . '/private/db_credentials_lbm-test.php', "<?php\n");
+checkSame($instDir . '/private/db_credentials_lbm-test.php', InstallPaths::credentialsFile($appDir),
+          'and the moment its own file exists that wins, which is what isolates the rehearsal copy');
+
+// ─────────────────────────────────────────────────────────────
 section('Convergence asks the catalogue before it alters anything');
 
 // This file's statements are MySQL-only, so the SQLite fixture cannot run them —
@@ -5719,4 +5774,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // did (#21 closed while it was open, so three checks that asserted the coercion now
 // assert the refusal). The MySQL figure is the SQLite one plus the 23 checks in the
 // engine-only section below, which is the same difference it has always been.
-reportChecks(testIsMysql() ? 1537 : 1514);
+reportChecks(testIsMysql() ? 1554 : 1531);

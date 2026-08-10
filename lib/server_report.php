@@ -51,6 +51,7 @@
 require_once __DIR__ . '/upload_limits.php';
 require_once __DIR__ . '/schema.php';
 require_once __DIR__ . '/request_scheme.php';
+require_once __DIR__ . '/install_paths.php';
 
 class ServerReport
 {
@@ -96,6 +97,28 @@ class ServerReport
         $out['PHP version'] = [PHP_VERSION, self::phpVersionNote(PHP_VERSION_ID)];
 
         $out['MySQL version'] = [$this->mysqlVersion(), ''];
+
+        // Which install this is, and which database it is talking to. Together these
+        // are the only place a person can *see* that a rehearsal copy is isolated,
+        // and they exist because the alternative is finding out by publishing.
+        //
+        // Two folders of this app on one account walk up to the same `private/`
+        // directory, so a copy that has not been given its own credentials file
+        // connects to the live database and behaves perfectly while doing it
+        // (lib/install_paths.php). Nothing downstream can notice: the schema
+        // converges, the Displays are all there, a publish succeeds. So the check is
+        // a fact on a screen — open this card on the copy, read the name, and if it
+        // is the live database you have found that out before overwriting a sign
+        // rather than after.
+        //
+        // The name is not a credential. The host, the user and the password are not
+        // reported, and a database name is already in `HANDOFF.md`.
+        $out['This install'] = [InstallPaths::installName(dirname(__DIR__)), ''];
+
+        $dbName = defined('DB_NAME') ? (string)DB_NAME : '';
+        $out['Database'] = [$dbName !== '' ? $dbName : 'unknown',
+            $dbName === '' ? 'No DB_NAME is defined, so this cannot say which database '
+                             . 'the app is using.' : ''];
 
         // The store is in Washington; a server left on UTC prints every "editing
         // since" time seven or eight hours out. The lock's own arithmetic is UTC
