@@ -376,7 +376,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_assets') {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'upload_file') {
     // All roles, but not all accounts: an upload is a file on the server for as long
     // as the server lives, and one from an account holding no sign can never appear on
-    // one (#33, invariant 28). The same predicate gates crud.php's add form.
+    // one (#33, invariant 29). The same predicate gates crud.php's add form.
     //
     // This endpoint names no Display, so DisplayRequest — which answers every other
     // "may they?" on this page — has nothing to resolve and cannot cover it. Hence the

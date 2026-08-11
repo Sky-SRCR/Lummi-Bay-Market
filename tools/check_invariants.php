@@ -122,7 +122,7 @@ $rules = [
         'why'    => 'a shared library and an uploads folder are the two things in this app '
                   . 'nothing else scopes to a sign, so an account holding no sign wrote to '
                   . 'both from a page that had just told it there was nothing to edit '
-                  . '(#33, invariant 28)',
+                  . '(#33, invariant 29)',
     ],
     [
         'name'   => '`password_resets` has one writer, and the guess budget is not in a session',
@@ -242,6 +242,54 @@ $rules = [
         'why'    => 'these land in a <style> block, where there is no delimiter to escape '
                   . 'and a value that is not a colour is CSS — Color::read() is what makes '
                   . 'them safe, and it is called once (§4ai)',
+    ],
+    [
+        'name'   => 'one module reads a stored moment',
+        'regex'  => '/strtotime\s*\(/',
+        'in'     => '',
+        // The self-test calls it directly on purpose, and in both directions: with the
+        // ' UTC' suffix to assert a stamp is absolute, and *without* it to assert that
+        // reading the same string as local time is hours out — which is the mutation
+        // this rule exists to keep dead. That second form is the defect, so it may only
+        // live in a file whose job is to fail when it comes back.
+        'expect' => ['lib/store_clock.php', 'tools/selftest_layout.php'],
+        'why'    => 'every stamp this app stores is UTC and strtotime() reads a bare '
+                  . 'Y-m-d H:i:s in the process zone, so the suffix is the whole rule — '
+                  . 'it was written out three times and the third copy left it off, and '
+                  . 'nothing could see the difference (invariant 28, §4ap). Ask '
+                  . 'StoreClock::epochOf()',
+    ],
+    [
+        'name'   => 'no statement asks the database what time it is',
+        // Case-sensitive, and that is not laziness: `builder.php` has a `now()` helper in
+        // its own JavaScript, six calls of it, and an insensitive pattern reads all six as
+        // SQL. Every keyword in this repo's SQL is upper case, and the reason a lower-case
+        // one could not hide anyway is the module rules — SQL lives in `lib/`, which is
+        // where the two allowed matches are.
+        'regex'  => '/CURRENT_TIMESTAMP|\bNOW\s*\(\s*\)/',
+        'in'     => '',
+        // The two that may match are column *defaults* in a CREATE TABLE — a property
+        // of the schema, which PHP cannot write and which db_connect.php puts in the
+        // right frame by asking the connection for +00:00. What is forbidden is an
+        // INSERT or UPDATE taking the time from MySQL, because that is MySQL's session
+        // zone: a third clock beside PHP's and the store's, and the one nobody could see.
+        'expect' => ['lib/schema.php', 'tools/test_fixture.php'],
+        'why'    => 'recordPublish() wrote last_published_at this way and '
+                  . 'lastPublishDescription() read it as though PHP had, so a refused '
+                  . 'publish named an hour off by the difference between two zones nobody '
+                  . 'had set (invariant 28, §4ap). Bind a gmdate() instead',
+    ],
+    [
+        'name'   => 'one module decides which zone a person reads a time in',
+        'regex'  => '/date_default_timezone_set\s*\(/',
+        'in'     => '',
+        // config.php calls StoreClock::apply(); it does not name the underlying function,
+        // which is the shape of the rule. tools/ moves the process clock about on purpose,
+        // to prove that what is *stored* does not depend on where it is set.
+        'expect' => ['lib/store_clock.php', 'tools/selftest_layout.php'],
+        'why'    => 'a second file setting the process zone is a second answer to "what '
+                  . 'time is it in the shop", and the pages that disagree are the ones '
+                  . 'nobody compares side by side (§4ap)',
     ],
     [
         'name'   => 'the lock columns are read and written in one place',
@@ -723,6 +771,9 @@ foreach ([
         . 'before any transaction exists (invariant 21)',
     'grants_accounts / grants_displays — both names must appear twice each, which is '
         . 'about the form\'s shape rather than about which files match',
+    'STORE_TIMEZONE — lib/store_clock.php is the only reader, and admin_panel.php names '
+        . 'it as the key of a save. A key and a read look identical to a pattern '
+        . '(invariant 28)',
     'schema.sql against lib/schema.php — now covered instead by the MySQL self-test '
         . 'run, which asserts convergence has nothing left to do (#48)',
 ] as $note) {

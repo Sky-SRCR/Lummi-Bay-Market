@@ -36,6 +36,9 @@
 // hand over what was typed, and either start a session or print the sentence.
 
 require_once __DIR__ . '/accounts.php';
+// For one line: reading `last_failed_at` and `locked_until`, which are UTC. Not a
+// database dependency — StoreClock holds no PDO either.
+require_once __DIR__ . '/store_clock.php';
 
 /**
  * What happened, in a form a page can act on without re-deriving it.
@@ -281,12 +284,20 @@ class LoginAttempt
      * second pass compares as older than one stamped in the first while
      * `strtotime()` resolves the repeated hour to its first occurrence. Fifteen
      * minutes of brute-force protection, once a year, in the dark.
+     *
+     * The `' UTC'` used to be appended here. It is `StoreClock::epochOf()`'s now, for
+     * the reason invariant 28 states: this file and `LockState` each wrote that line
+     * correctly and `lastPublishDescription()` wrote it without the suffix, and three
+     * copies of a rule is where the third one gets to be wrong on its own (#44).
+     * 0 means unreadable there, which is a real moment in 1970 rather than "no
+     * lockout", so it is folded back to null — a caller here asks whether there *is*
+     * a stamp before asking when.
      */
     private function stamp(array $account, $key)
     {
         if (!isset($account[$key]) || $account[$key] === null || $account[$key] === '') { return null; }
-        $when = strtotime((string)$account[$key] . ' UTC');
-        return ($when === false) ? null : $when;
+        $when = StoreClock::epochOf((string)$account[$key]);
+        return ($when === 0) ? null : $when;
     }
 
     /** Rounded up, and never "0 minute(s)" for the last few seconds of a lockout. */

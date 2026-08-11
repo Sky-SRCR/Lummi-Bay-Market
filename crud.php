@@ -30,7 +30,7 @@ $signs   = new DisplayStore($pdo);
 $layouts = new LayoutStore($pdo, $signs);
 
 // This library is shared by every sign, so adding to it needs a sign to add for
-// (#33, invariant 28). One predicate, `Actor::holdsASign()`, answers that here and at
+// (#33, invariant 29). One predicate, `Actor::holdsASign()`, answers that here and at
 // api.php's upload — an account with no grant reached both, and the Builder had
 // already told it there was nothing here to edit.
 //

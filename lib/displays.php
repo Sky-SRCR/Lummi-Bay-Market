@@ -21,6 +21,11 @@
 // a Display's elements are not this file's to touch.
 
 require_once __DIR__ . '/schema.php';
+// Two stored moments become sentences here — when the holder took the edit lock, and
+// when this Display was last published — and both are UTC in the row. StoreClock is
+// the one place that knows that, and the one place that knows which zone a person in
+// the shop reads them in (#44).
+require_once __DIR__ . '/store_clock.php';
 
 /**
  * What a publish should do with the Display's background — an admin sending
@@ -280,9 +285,14 @@ class LockState
         $this->holderActive = (bool)$holderActive;
         // Both sides of this subtraction are PHP's clock — see DisplayStore's lock
         // statements, which bind a PHP-formatted timestamp for exactly that reason.
+        //
+        // Read through StoreClock, which is the one place that knows a stored stamp is
+        // UTC (invariant 28). A row written before §4t stored local time and reads up to
+        // a few hours stale here, which errs towards "lapsed": the lock frees early
+        // rather than sticking, and one heartbeat rewrites it correctly.
         $this->idleSeconds = $this->activityAt === null
             ? self::IDLE_LAPSE_SECONDS
-            : max(0, time() - self::toEpoch($this->activityAt));
+            : max(0, time() - StoreClock::epochOf($this->activityAt));
     }
 
     /**
@@ -324,21 +334,6 @@ class LockState
         return $this->isHeld() && $this->holderId !== intval($accountId);
     }
 
-    /**
-     * A stored lock timestamp as an epoch second.
-     *
-     * The stored form is UTC (see DisplayStore's lock statements), and strtotime
-     * reads a bare 'Y-m-d H:i:s' in the *server's* zone — so it has to be told.
-     * A row written before this build stored local time and will read up to a few
-     * hours stale here, which errs towards "lapsed": the lock frees early rather
-     * than sticking, and one heartbeat rewrites it correctly.
-     */
-    private static function toEpoch($stamp)
-    {
-        $epoch = strtotime($stamp . ' UTC');
-        return $epoch === false ? 0 : $epoch;
-    }
-
     /** How long since the holder's last real interaction. Seconds. */
     public function idleSeconds() { return $this->idleSeconds; }
 
@@ -346,9 +341,12 @@ class LockState
     public function takenAtLabel()
     {
         if (!$this->isHeld() || $this->takenAt === null) { return ''; }
-        // Stored in UTC, shown in the server's local time — the one place the two
-        // are allowed to meet, because this string is only ever read by a person.
-        return date('g:ia', self::toEpoch($this->takenAt));
+        // Stored in UTC, shown in the *store's* zone — the one place the two are
+        // allowed to meet, because this string is only ever read by a person. It used
+        // to be shown in the server's zone, which on the live host is UTC because
+        // nothing sets `date.timezone`, so this was the sentence #44 was filed about:
+        // 2:15pm printed as 9:15pm to somebody standing next to the sign.
+        return StoreClock::label($this->takenAt, 'g:ia');
     }
 
     /** "sky, editing since 2:04pm" — the material for a refused publish. Empty when free. */
@@ -480,14 +478,26 @@ class Display
              . ($since !== '' ? ' since ' . $since : '') . '.';
     }
 
-    /** "sky, Aug 5 at 2:04pm" — the material for a refused-publish message. Empty when never published. */
+    /**
+     * "sky, Aug 5 at 2:04pm" — the material for a refused-publish message. Empty when
+     * never published.
+     *
+     * This line was `date('M j \a\t g:ia', strtotime($at))`, and it was wrong twice
+     * over in a way neither half could show on its own (#44). `strtotime()` with no
+     * `' UTC'` read a UTC stamp as local, and `recordPublish()` was writing that stamp
+     * with MySQL's `CURRENT_TIMESTAMP`, which is in MySQL's session zone rather than
+     * PHP's — so the sentence a refused publish printed was off by two different
+     * offsets that happened to cancel out on a host where MySQL and PHP agreed, and by
+     * their difference where they did not. Both ends are fixed: the stamp is written in
+     * UTC by PHP, and read back by the one thing that knows it is UTC.
+     */
     public function lastPublishDescription()
     {
         $at = $this->lastPublishedAt();
         if (!$at) { return ''; }
         $who  = $this->lastPublishedByName() !== '' ? $this->lastPublishedByName() : 'someone else';
-        $when = date('M j \a\t g:ia', strtotime($at));
-        return $who . ', ' . $when;
+        $when = StoreClock::label($at, 'M j \a\t g:ia');
+        return $when === '' ? $who : $who . ', ' . $when;
     }
 
     /**
@@ -721,18 +731,37 @@ class DisplayStore
         }
     }
 
-    /** Advance the stamp, record who published and when, and return the new stamp. */
+    /**
+     * Advance the stamp, record who published and when, and return the new stamp.
+     *
+     * The moment is bound as a PHP-formatted UTC string, for the reason the lock
+     * statements below give at length and this one used to be the exception to. It was
+     * `CURRENT_TIMESTAMP`, whose value is MySQL's *session* zone — a third clock beside
+     * PHP's process zone and the store's own, and the one nobody could see (#44).
+     * `lastPublishDescription()` then read it as though PHP had written it, so the
+     * sentence was right only on a host where the two zones happened to agree.
+     *
+     * The two engines hid it from each other rather than from us: SQLite's
+     * `CURRENT_TIMESTAMP` is UTC by definition, so the fixture agreed with the reader
+     * no matter what, and on MySQL the suite runs wherever the host is set — which for
+     * a CI container is usually UTC as well. A bound `gmdate()` is the same string on
+     * both, which is what makes it assertable at all.
+     *
+     * Every `last_published_at` already on the live database was written the old way
+     * and will read shifted by the host's offset until that Display is next published.
+     * Bounded and self-correcting, the same shape as §4v's `locked_until` migration:
+     * the value appears in one sentence, on a publish that was refused, and one publish
+     * replaces it.
+     */
     public function recordPublish(Display $display, $actorId)
     {
         $this->pdo->prepare(
-            // CURRENT_TIMESTAMP rather than NOW(): identical in MySQL, and it
-            // keeps this statement runnable by the self-test's SQLite fixture.
             "UPDATE displays
                 SET layout_revision = layout_revision + 1,
-                    last_published_at = CURRENT_TIMESTAMP,
+                    last_published_at = ?,
                     last_published_by = ?
               WHERE id = ?"
-        )->execute([intval($actorId) ?: null, $display->id()]);
+        )->execute([gmdate('Y-m-d H:i:s'), intval($actorId) ?: null, $display->id()]);
 
         $stmt = $this->pdo->prepare("SELECT layout_revision FROM displays WHERE id = ?");
         $stmt->execute([$display->id()]);
@@ -846,7 +875,12 @@ class DisplayStore
     // hour so nothing was read-only and no publish was refused, and afterwards a
     // free Display could be claimed by nobody. UTC has no repeated hour. The only
     // local time in this file is what a human reads, and that is formatted on the
-    // way out, not stored.
+    // way out by StoreClock, not stored.
+    //
+    // `recordPublish()` above was the one statement in this file that did *not* follow
+    // this paragraph, and #44 is what that cost: it took its moment from MySQL, which is
+    // a third clock again (§4ap). It binds a gmdate() now, so every stamp this file
+    // writes comes from the same clock.
 
     /**
      * Take the lock, keep it, or take it back — one statement for all three.

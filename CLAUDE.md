@@ -168,6 +168,23 @@ layout, drawn on the board a customer reads prices off.
   class constant whose declaration is a number), which is what makes *forgetting* to
   escape a failing check rather than something noticed later. There is no allow-list: a
   new line either says which shape it is or converts.
+- **A stored moment is UTC; one place reads it, and the store's zone is what a person
+  sees.** Three rules that are one, because separating them is how #44 survived a year.
+  Written with `gmdate()`, never `date()` — local wall-clock is not monotonic and the
+  autumn fall-back replays an hour — and never by asking the *database* for the time,
+  because `CURRENT_TIMESTAMP` is MySQL's session zone, which is a third clock beside
+  PHP's and the store's and the one no screen showed. Read by `StoreClock::epochOf()`
+  and nowhere else: a bare `strtotime()` on a `Y-m-d H:i:s` uses the process zone, so
+  the `' UTC'` suffix *is* the rule, and it was written out three times with the third
+  copy missing it — the two that were right are exactly what made the third invisible,
+  because a stamp stored in the wrong frame and one read in the wrong frame produce the
+  same sentence, and on a host where the frames agree they produce the *right* one.
+  Shown through `StoreClock::label()`, in the zone `STORE_TIMEZONE` names, and **a fixed
+  offset is not a timezone** — `+08:00` and `PST` both build a valid `DateTimeZone` and
+  are both wrong for half the year, so only the identifiers PHP lists will do. The
+  process default is set once, in `config.php`, so a bare `date()` added later agrees
+  with the door rather than being seven hours from it — and is deliberately not what the
+  door depends on, since `viewer.php` loads neither `config.php` nor `auth.php`.
 - **A colour in a `<style>` block is validated, never escaped.** Escaping is for a
   delimiter and a stylesheet has none — `#fff; } body { … }` survives `Markup::text()`
   intact and is a closed rule and a new one. The store's brand colours go through
