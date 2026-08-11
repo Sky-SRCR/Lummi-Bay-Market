@@ -155,5 +155,8 @@ afternoon rather than a bisect.
   and a decision the owner has not asked for.
 - **Automating the mutation runs.** #49's numbers were measured by hand, one file at a
   time. Making that repeatable is inside #50's scope, not beside it.
-- **Deleting the retired branches.** One command, no code, and it needs rights this
-  repo's automation does not have. Both lists of shas are in `reviewed-decisions.md`.
+- **Deleting the retired branches.** No code, and it needs rights this repo's automation
+  does not have — the delete has been attempted and refused with `HTTP 403`.
+  `reviewed-decisions.md` holds the shas and, more usefully, the one-liner that asks git
+  which refs add anything to `main` instead of trusting a list of names. Nine of sixteen
+  added nothing.

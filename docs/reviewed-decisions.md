@@ -245,17 +245,36 @@ a commit leaves it danglable, so a bare sha in a document is a promise that expi
 **The `claude/` branches are still there.** Retiring them was meant to be a rename, and
 only the first half of it could be done from the session that wrote this: these
 credentials may create `refs/heads/*` but not delete a ref, and not create
-`refs/tags/*` at all. So each of the three currently exists twice, which is worse than
-either intended state. Finishing it is one command with rights this session lacks:
+`refs/tags/*` at all. So each of the three with a twin currently exists twice, which is
+worse than either intended state. The delete has since been attempted from a later
+session and refused the same way — `HTTP 403`, nothing removed — so this is a standing
+limit of the automation rather than one session's bad luck. It needs a terminal with the
+owner's own credentials, or the branch list in the GitHub web UI, which offers a Restore
+button afterwards.
+
+**Don't work from a list of names here; ask git.** The list this section carried for its
+first two revisions named three branches, and by the time anybody read it there were
+sixteen `claude/*` refs. A written list of branches goes stale the week it is written,
+and the stale version reads exactly like the current one. The mechanical question is
+whether a ref adds anything to `main`:
 
 ```
-git push origin --delete claude/issue-28-l1comq \
-                         claude/open-issues-count-hub0pv \
-                         claude/app-db-domain-testing-h0ulyg
+for b in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
+           | grep -v 'origin/main$'); do
+  git merge-base --is-ancestor "$b" origin/main \
+    && echo "MERGED   $b" \
+    || echo "ahead by $(git rev-list --count origin/main..$b)   $b"
+done
 ```
+
+Anything it prints `MERGED` for is an ancestor of `main` — its every commit is already
+reachable, and deleting the ref removes nothing. **Nine of the sixteen were in that
+state** when this was written, which is why counting branches had made the cleanup look
+larger than it was. What is left over needs a reason, and every one of them has a row
+below or in the section after it.
 
 A tag would say "not a line of development" more clearly than a branch does. Convert
-the three `retired/*` refs if you have the rights; the shas above are what they point
+the `retired/*` refs if you have the rights; the shas in the table are what they point
 at either way.
 
 | Branch | Tip | Why it was closed |
@@ -264,13 +283,22 @@ at either way.
 | `claude/open-issues-count-hub0pv` | `4214f2b` | #29–#32 in four commits where the sweep did it in one. Read closely because of that; see below. The sweep's `lib/layout_rules.php` was kept — it is a pure module, so every shape can be put through it in a test, where this branch's rules are private statics inside `LayoutStore` reachable only by attempting a publish (§4o's reason). It also reports every problem in a payload rather than the first. |
 | `claude/start-38-ysumzb` | `4822e11` | #38, both halves — a competing implementation of what `claude/issue-38-7uky0k` landed. Same two defects found, same conclusions, different modules: `LoginGate` where `main` has `LoginAttempt`, and its own `RequestScheme`, ADR-0008 and ADR-0009. `main`'s line is the pick because the work built on top of it is not on this branch — the soft CSRF check, the removal of the three `ALTER`s a bot could reach without an account, and roughly six hundred more self-test checks. Its ADR-0008 is `main`'s ADR-0008 under a different title, which is worth knowing: three branches have now claimed that number. See below for the one thing it found that `main` did not. |
 | `claude/app-db-domain-testing-h0ulyg` | `1526023` | **It was right about the floor, and the floor it argued for is now the rule.** Recorded here as closed for raising it to 8.2 on a decision rather than a measurement — its own message says so plainly — and that reasoning was rejected while the version was unverified. The owner then supplied the version and the same conclusion followed, so the disagreement was about evidence, not about the answer. Still closed rather than merged: what it did *around* the floor is not wanted. It uses `session_set_cookie_params()`'s array form alone, which below 7.3 sets nothing at all and silently drops `HttpOnly`, `Secure` and `SameSite` — `auth.php` guards that call by version instead — and it deletes `.htaccess`'s `mod_php7` hardening blocks, which is a separate decision that was not being made. Its `phpVersionNote()` design, "make a wrong floor say so", is the one on `main`. It is also the branch whose reading surfaced the both-floors-at-once contradiction. |
+| `claude/project-handoff-review-wd557c` | `bf26346` | Nothing to close and nothing to port: its one contribution is vendoring the 22 `mattpocock/skills` entries into `.claude/skills/`, and that is already on `main` byte for byte — `git diff origin/main bf26346 -- .claude/` is empty. Listed because it was on a cleanup list for weeks as a branch nobody had read, which is the same cost as a branch holding something. The commit touches no application file. |
+| `claude/remaining-issues-list-hsk3rv` | `151b2c9` | **Superseded by `docs/work-lanes.md`, and the successor disagrees with it on the one thing that matters.** A single docs-only commit, 2026-08-07, adding a seven-lane parallel map to this file. Its lane table is over items now closed and its tally (22 done, 27 open) was overtaken inside a week, so nothing in it is portable — which is itself worth noting, because it is a document that went stale in four days. Worth knowing *why* it was replaced rather than extended: it grouped by which files an item touches and concluded five of seven lanes shared no file at all. That is true of the application files, and the application files are not what decides it. `work-lanes.md` reaches the opposite conclusion about #50 for exactly that reason: #50's deliverable *is* `tools/selftest_layout.php`, the file every other lane appends to, so it is a measurement problem rather than a merge one and reads go after writes. This branch's own text saw the conflict ("every lane will also append checks… they resolve mechanically") and read it as merge friction. It is the near-miss that makes the later file's rule worth stating. |
 
 **Three things were on those branches and were not on `main`. All three have now been
 ported.** None was a competing answer to something already solved, so none was covered
-by picking. That every one of the four branches turned out to hold something is the
+by picking. That every one of the first four branches turned out to hold something is the
 finding worth carrying forward: "its items are already closed" was true each time and
 was never the same question as "it has nothing `main` lacks". If a superseded branch is
-ever closed again, read it first — this is four for four.
+ever closed again, read it first.
+
+The two rows added later are the counter-example that keeps that rule honest rather than
+superstitious: read for the same reason, both held nothing, and one of them could be
+settled by `git diff` in a second. **Six read, four held something.** The rule is "read
+it", not "expect to find something" — and the cheap mechanical checks come first, because
+an ancestor of `main` and an empty diff against `main` are both answers no reading
+improves on.
 
 - ~~**A sign-in refusal still arrives a bcrypt early.**~~ **Ported.** ADR-0008 closed the *message*
   oracle: a suspended account is refused in the same words whether or not the password
