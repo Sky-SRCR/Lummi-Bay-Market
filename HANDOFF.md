@@ -93,7 +93,8 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/branding.php` | `BrandingConfig` / `BrandingWrite` — the **only** writer of `branding_config.php`, which every page of the app requires. Renders it, parses it, writes a temporary copy, reads that back byte for byte, and swaps it in with one `rename()`, so a reader gets the whole old file or the whole new one and a failed save leaves the site on exactly what it had |
 | `lib/install_paths.php` | Which install this folder is, and whose credentials it uses. Pure. One account can hold the live app and a rehearsal copy at the same depth, so a single shared credentials path made an unmodified copy connect to the **live** database in silence — the folder's own name selects `private/db_credentials_<folder>.php` when it exists, and the shared file otherwise, so no tracked file has to differ between the two |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **1634 checks** — and the same suite against real MySQL when `SELFTEST_MYSQL_DSN` is set, where it runs 1657. Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **1778 checks** — and the same suite against real MySQL when `SELFTEST_MYSQL_DSN` is set, where it runs 1801. Run before pushing |
+| `tools/mutate.php` | `php tools/mutate.php lib/whatever.php` — breaks that file one way at a time and runs the suite each time, to answer whether the checks over it *can* fail (#50, invariant 30, §4aq). Minutes rather than seconds, so it is a tool to run over what you changed rather than a gate. `--list` shows what it would break without running anything |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **45 checks** |
 | `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit, and that each of the page's two opening reads reports its own failure rather than sharing one sentence, and that Publish cannot be fired twice), **93 checks** |
 | `tools/selftest_builder_colors.js` | `node tools/selftest_builder_colors.js` — the same JS again with the inspector open on stored values the CSSOM cannot parse, which it discards without saying so; the publish payload used to turn that silence into black, **43 checks** |
@@ -315,8 +316,8 @@ merged after it does not get renumbered into that list, so anything a later chan
 needs at deploy time is a row here. Read both before going to the server.
 
 **When a PR changes what a deploy has to do, add a row.** One line, with the
-decision number and the write-up it comes from. Two of them below are "nothing to
-do" — they are here because they will be noticed and are not faults.
+decision number and the write-up it comes from. Several of them below are "nothing
+to do" — they are here because they will be noticed and are not faults.
 
 | Since | At deploy time | Why |
 |-------|----------------|-----|
@@ -325,7 +326,10 @@ do" — they are here because they will be noticed and are not faults.
 | **#38** · §4v | **Nothing to do.** Any login lockout in force at the moment of the deploy is released — the store is west of UTC. | `locked_until` moved to UTC and old rows read earlier from here. Bounded: a lockout is never more than 15 minutes out, and the failure counter beside it is untouched. §4v has the east-of-UTC case, which does not apply to this store. |
 | **#38** · §4u | **Nothing new to do** — step 4 of the checklist already covers it. The three lockout columns are now added by schema convergence on the first authenticated request rather than by `login.php`. On this installation they are already there. | `ensureLockoutColumns()` was the one piece of DDL in the app a bot could reach with no account. |
 | **#46** · §4z | **Upload by [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md), not by dragging the tree over.** Four things on the server are not in the repo or differ from it, and a mirroring client reverts or deletes them silently. Do not upload the repo's `branding_config.php` or `setup.php`; do not let the client delete `uploads/` or the log folder. That file also lists the five checks to run afterwards. | The step that needed these facts did not carry them — every one was already in this repo, in a file the person at the FTP client was not reading. |
+| **#33** · §4ao | **Nothing to do**, unless an account is meant to be adding to the library without holding a sign — check the grant matrix if so. An account with no display assigned now sees the Asset Library with an explanation where the add form was, and its uploads from the Builder are refused. Admins are unaffected, including on an installation with no Displays yet. | The library is shared by every sign and `uploads/` sits behind it, so neither is scoped to a Display and neither went through the check every other write does. A grant is what makes the library somebody's — a Display merely being switched off does not take it away. |
+| **#44** · §4ap | **Check it once, and read the card under it.** The store's time zone is a setting — Admin Panel → **Settings** → Store Time Zone — and every time on every page is drawn in it. The default is `America/Los_Angeles`, so a deploy that never touches it is already right for this store. Then read the three time-zone rows on **Settings → This Server**: the one to look at is the **database's session zone**, which nothing had ever shown. Anything other than a zero offset means the host refused the app's request for UTC. | `db_connect.php` now asks every connection for `+00:00`, suppressed rather than fatal, because a protection that cannot apply is reported and not applied — and that card is the only place it is reported. What a refusal costs is bounded: a creation date reading a few hours out. Separately, `last_published_at` is a DATETIME already written in the old frame, so one sentence per Display reads wrong until its next publish. |
 | **#46** · §4z | **Nothing to do**, twice over. `setup.php` deletes itself the moment the first admin exists, so the old "remember to delete it" step is no longer a step — it only needs *not re-uploading*. And `.htaccess` now denies `.md`, so a docs file that reaches the server is unreadable rather than serving `HANDOFF.md` and the paths in it. | Both are backstops for the upload that forgets, not instructions. A host that forbids the self-delete says so on the page instead of alerting. |
+| **#50** · §4aq | **Nothing to do, and nothing to upload.** Every file it added or changed is under `tools/`, which goes to the server only with its own `.htaccess` and is never reached from a browser. No page, no query and no schema statement changed, so nothing on any sign moves. | It is a measuring instrument, not a feature: `tools/mutate.php` breaks a `lib/` file one way at a time and reports whether any check notices. The one thing worth carrying to the server visit is unrelated to this row — a *check* that could not fail was found in #44's own section, and the lesson is that a page which prints the right sentence in this process may be printing it for the wrong reason. |
 
 ## 6. The multi-display build (this branch)
 
@@ -364,7 +368,7 @@ staleness check, no version history), 0007 (one editor per Display).
   widget. Steps 15–21 need a second account, two browsers, and one unavoidable
   15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 1634 self-test checks against SQLite, 546 node checks over `builder.php`'s and `viewer.php`'s
+  `php -l`, 1778 self-test checks against SQLite, 546 node checks over `builder.php`'s and `viewer.php`'s
   own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare
@@ -378,13 +382,61 @@ content per ADR-0002, session cookie flags, reset enumeration), the Asset Librar
 SVG/non-image block, the new-text-block highlight, and the viewer framing +
 kiosk scroll lock. `git log origin/main` has the detail.
 
-**What is left, and what can run beside what:**
-[`docs/work-lanes.md`](docs/work-lanes.md). Three audit items are open — #33, #44 and
-#50 — and the first thing on that list is not a code change: four commits of
-`builder.php` changes have never been rendered by a browser, and `lbm-test/` exists so
-they can be. It also allocates the section letter and invariant number each lane may
-use, because four branches once asked `check_doc_numbering.php` the same question at
-the same time and all got the same answer.
+**What is left:** [`docs/work-lanes.md`](docs/work-lanes.md), and it is one thing.
+**Every numbered item in `reviewed-decisions.md` is now Done — 50 of 50** — and what
+remains was never on that list: **four commits of `builder.php` have never been rendered
+by a browser**, and `lbm-test/` exists so they can be. `interact.js` is still un-run by
+any suite, and #44 added two live checks to make on the same visit (§5's deploy-notes
+table has them). A closed audit list is not a walked application, and three branches have
+now landed in front of this one.
+
+Read `work-lanes.md`'s items 1–4 before starting a branch beside another one. It allocates
+the section letter and invariant number rather than leaving them to be discovered, because
+four branches once asked `check_doc_numbering.php` the same question at the same time and
+all got the same answer. Two things it corrected the hard way:
+
+- **Invariant numbers cannot be reserved the way letters can.** #33 and #44 were cut from
+  the same base and both wrote invariant 28 — correctly, because the checker requires the
+  list to run unbroken from 1, so neither could have written 29. #44 kept 28 and #33
+  renumbered to 29. The rule is that every branch writes the next free number *in its own
+  tree* and the reservation only settles who renumbers at the merge. **31 is next, and
+  `4ar` is the next free letter** — written without a `§` on purpose, since a citation of
+  a write-up nobody has written is what `check_doc_numbering.php` fails on, and it does.
+- **The count line does not conflict when it should.** Both branches wrote the same wrong
+  total against a base that could only see its own item close, and git merged it clean.
+  Recount from the table with the one-liner in item 4 on every merge.
+
+And #50 left a tool worth knowing about before you write a check: **`php tools/mutate.php
+lib/whatever.php`** breaks that file one way at a time and tells you whether any check
+notices. Invariant 30 is that a check ships having been *seen* to fail, and the reason it
+is a rule is that this suite has shipped the other kind more than once.
+
+**What the host actually is, observed 2026-08-11** on Settings → This Server in the
+`lbm-test/` folder — the first time anything in this project has read these rather than
+assumed them:
+
+| Row | Value |
+|-----|-------|
+| PHP version | **8.2.33** |
+| MySQL version | 5.7.23-23 |
+| Server time zone | **`America/Chicago`** |
+| Session cookie | HttpOnly yes, Secure yes, SameSite Lax |
+| Largest upload | 50 MB |
+
+Two of those settle standing questions. The PHP version **agrees with the owner's stated
+8.2** (#51, §4k) — that item's deploy-day confirmation step, though the docs still describe
+the floor as unobserved and have not been updated for this. And `America/Chicago` is not a
+fallback: PHP's fallback for an unset `date.timezone` is UTC, so the host sets it, and
+nothing in this repo does (the tracked `.htaccess` sets session flags and no `date.` value).
+§4ap had asserted UTC and is corrected. Before #44 that made every time a person read two
+hours ahead of store time, not seven or eight.
+
+**And one thing that reading found the hard way:** `Database` on that same card read
+`silverad_lummi_market_drive_thru` — the **live** database, from the `lbm-test/` folder.
+`This install` correctly read `lbm-test`, so the folder-name logic worked and the file it
+looks for was missing: `/home/ACCOUNT/private/db_credentials_lbm-test.php` has to exist, or
+the rehearsal copy is the live sign with a different URL. This is the check
+`docs/DEPLOY-SKIP.md` exists for, firing for real on the first attempt.
 
 ## 8. Conventions / gotchas for the next session
 

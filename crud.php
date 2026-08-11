@@ -12,6 +12,7 @@ require_once 'auth.php';
 require_once 'db_connect.php';
 require_once __DIR__ . '/lib/schema.php';
 require_once __DIR__ . '/lib/displays.php';
+require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/layout_store.php';
 require_once __DIR__ . '/lib/assets.php';
 requireCurrentAccount($pdo);   // all roles can access; delete is admin-only below
@@ -27,6 +28,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') { verifyCsrf(); }
 $library = new AssetLibrary($pdo);
 $signs   = new DisplayStore($pdo);
 $layouts = new LayoutStore($pdo, $signs);
+
+// This library is shared by every sign, so adding to it needs a sign to add for
+// (#33, invariant 29). One predicate, `Actor::holdsASign()`, answers that here and at
+// api.php's upload — an account with no grant reached both, and the Builder had
+// already told it there was nothing here to edit.
+//
+// The form is left out below when this is false, which is the §4j shape: a control
+// somebody may not use is not sent, rather than sent and refused. That is not the
+// check, though. The check is the refusal in the create branch, because a POST does
+// not have to come from a form this page drew (invariant 8).
+$actor  = Actor::signedIn($me, new GrantStore($pdo));
+$mayAdd = $actor->holdsASign($signs->all());
 
 // ---- File upload validation ----
 // The extension allow-list belongs to the module that owns the table: an image
@@ -70,6 +83,14 @@ $msgClass = 'success';
 // CREATE
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create'])) {
+    // First, and above the file handling on purpose: move_uploaded_file() cannot be
+    // rolled back, so a refusal that arrives after it has run leaves a file in
+    // `uploads/` that nothing references and no sweep removes — the whole of what
+    // this gate is meant to prevent, minus the row.
+    if (!$mayAdd) {
+        $message  = Actor::NO_SIGN_REFUSAL;
+        $msgClass = 'error';
+    } else {
     $type    = $_POST['type']    ?? '';
     $label   = trim($_POST['label']   ?? '');
     $content = '';
@@ -113,6 +134,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action_create'])) {
         $message  = 'No content provided. Please enter text or choose an image.';
         $msgClass = 'error';
     }
+    } // end $mayAdd check
 }
 
 // ============================================================
@@ -292,8 +314,13 @@ foreach ($assets as $row) {
 $referencedNow = isAdmin() ? $layouts->referencedAssetIds() : [];
 $tidyCount     = ($referencedNow === null) ? null : count($library->pooledNotIn($referencedNow));
 
-// Pre-fill edit form if an edit is requested via GET
-$editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
+// Pre-fill edit form if an edit is requested via GET. Only for an admin, who is the
+// only account the save below will accept — the Edit links were already admin-only,
+// but the form itself was drawn for anybody who typed `?edit_id=`, which is a form
+// that exists in order to be refused (§4j). It also decided which panel this page
+// shows, so without this the "no sign assigned" notice was one query parameter away
+// from being replaced by an editor.
+$editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edit_id']) : null;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -415,13 +442,28 @@ $editAsset = isset($_GET['edit_id']) ? $library->forId($_GET['edit_id']) : null;
 
     <!-- ======================= ADD FORM ======================= -->
     <div class="form-panel">
-        <h2><?= $editAsset ? '&#9998; Edit Asset' : '&#10010; Add New Asset' ?></h2>
+        <h2><?php if ($editAsset): ?>&#9998; Edit Asset<?php elseif ($mayAdd): ?>&#10010; Add New Asset<?php else: ?>&#128274; Nothing to add to yet<?php endif; ?></h2>
 
         <?php if ($message): ?>
             <div class="msg <?= Markup::text($msgClass) ?>"><?= Markup::text($message) ?></div>
         <?php endif; ?>
 
-        <?php if ($editAsset): ?>
+        <?php if (!$editAsset && !$mayAdd): ?>
+        <!-- No sign assigned, so no add form (#33). The whole library is still listed:
+             this account can be asked to look something up, and a page that refuses to
+             say what is in it cannot explain why it refused. What it cannot do is put
+             anything into it, and the refusal in the create branch above is what
+             enforces that — this panel only stops the form being offered. -->
+        <p style="font-size:13px; color:#555; line-height:1.7;">
+            This library is shared by every sign, and no display has been assigned to you
+            yet — so there is nothing here for an entry of yours to go on. Ask an admin
+            which display is yours; they assign it in the Admin Panel, under Displays.
+        </p>
+        <p style="font-size:13px; color:#7f8c8d; line-height:1.7; margin-top:12px;">
+            Everything already saved is listed on the right, and you can keep reading it.
+        </p>
+
+        <?php elseif ($editAsset): ?>
         <!-- EDIT FORM -->
         <form method="POST" action="crud.php" enctype="multipart/form-data">
             <input type="hidden" name="action_update" value="1">

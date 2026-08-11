@@ -70,6 +70,7 @@ Design rules, applied to every module added by this build:
 | `request_scheme.php` | `RequestScheme::isSecure(array $server): bool` | Whether the *browser's* leg of a request is HTTPS, asked for exactly one reason: whether the session cookie may carry `Secure`. A flat `true` there is not a hardening on an `http://` deployment, it is a correct password landing back on a blank login form for ever, because the browser discards the cookie and nothing anywhere says so. Believes the forwarded proxy headers, deliberately — refusing them costs a real Cloudflare-fronted deploy its `Secure` flag, while believing a forged one costs only the forger their own sign-in. Says false when the request says nothing. Depends on nothing, reads no superglobal. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. Seven statements whose **order** is the substance (§4am): breaks are rewritten before the strip, or `strip_tags` takes the line break away with the tag; a `<` that cannot open a tag is escaped before the strip, because `strip_tags` is not a parser and deletes from a `<` to the end of the value; and entities are decoded after it, since a browser sends a typed `<` back as `&lt;`. `PLAIN_TEXT_NOT_A_TAG` is the single answer to "is this markup?" and is used in exactly one place. The cost of the order is that encoded markup lands as literal text, inert only because every renderer draws stored text with `textContent`. **The only caller of `strip_tags()` in the repo** — a label or a preview that wants plain text asks this, or it disagrees with the sign. |
 | `branding.php` | `BrandingConfig` — `apply` / `current` / `save` → `BrandingWrite`, plus `path` / `load` and the pure `render` / `parses` | The generated `branding_config.php`: the eight settings it holds, their defaults, and **how a file the whole app requires is replaced while the app is running** (§4y). Nothing writes the live path but one `rename()`, and it is not reached until the replacement has been rendered, parsed, written to a temporary file beside it and read back byte for byte — so a reader gets the whole old file or the whole new one, and every failure leaves the site on exactly what it had and says so. `save()` takes only the settings a form actually edited and applies them over `current()`, which is what the old eight-positional-argument call could not do: each of the two forms passed the other's values back in from page variables. And the read side: `apply()` is one call for what used to be seven lines repeated in `config.php`, `login.php`, `builder.php` and `help.php`, each spelling out the same defaults and two of them guarding the `require` on a different constant from the other two. `config.php` calls it and `auth.php` requires `config.php`, so the eight names exist by the time anything renders; nothing already defined is ever overridden, which is what `config.php` promises about `db_credentials.php`. Defining constants is a global side effect no other module has — the exception is deliberate, because the names are the interface every template already reads. Depends on nothing — no database, no session, no config, because the page that manages this file is also the page that has to work when it is missing. |
+| `store_clock.php` | `StoreClock::zone` / `isZone` / `zones` / `pick` / `unreadable` / `apply`, and the two doors `epochOf` / `label` | Which zone a person in the shop reads a time in, and — the half that had gone wrong on its own — **that every stored moment is UTC**. There were three clocks (§4ap): PHP's process zone, which the live host sets to `America/Chicago`; MySQL's session zone, which `CURRENT_TIMESTAMP` used and nothing had ever set, so the same machine's Central; and the store's, in Washington. Those first two agreeing is what made the missing `' UTC'` below cancel out exactly and therefore stay hidden. `epochOf()` is the only place in the repo that calls `strtotime()` (invariant 28) — that `' UTC'` suffix was written out three times and the third copy left it off, so a refused publish named the wrong hour and nothing could see the difference. `label()` converts through a `DateTimeZone` rather than relying on the process default, so it is right in `viewer.php`, which loads neither `config.php` nor `auth.php`, and its zone is a **parameter** with the setting as its default (§4o) because a `define()` cannot be undone and the property worth testing is that the sentence follows the setting. **A fixed offset is not a timezone**: `+08:00` and `PST` both build a valid `DateTimeZone` and are both wrong for half the year, so the accepted set is the identifiers PHP *lists* — a name is the only thing that knows when daylight saving starts. `unreadable()` names a stored value it will not use rather than substituting in silence (#21). Depends on nothing but `BrandingConfig`, which owns the file the setting lives in, and does not open that file a second way. |
 | `color.php` | `Color::read` / `isColor` / `describe` | What a colour is — `#rrggbb`, and nothing else. One rule, because it used to be written out four times and the four copies disagreed about what to do when a value failed it: `DisplayAdmin` substituted `#1a1a2e`, `BrandStyles` `#ffffff`, the Branding form whatever was already saved, and the Builder's `rgbToHex()` `#000000`. All four then reported success, so "saved" meant four different things and none of them meant "what you typed" (#21, #41). **It never picks a colour.** `read()` answers the colour or `''` and the caller decides what an empty answer means for it — a form refuses and names the field, the publish path refuses and names the block, a caller with a genuine default applies it visibly at the call site. Blank is deliberately *not* a colour: "nothing supplied" and "supplied and unreadable" are different answers and collapsing them is the defect. Not a normaliser either — no trimming, no `#fff` expansion, no `rgb()` — the accepted set is exactly what the three old regexes shared, so nothing that used to be storable stopped being storable. Pure, and depends on nothing. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 | `http_reply.php` | `HttpReply::json(payload[, code])` / `noStore` / `jsValue`, and the pure `reply` / `codeFor` / `codeForPayload` / `codeForResolution` / `cacheHeaders` behind them | The envelope every answer leaves in: the status line, the caching rules, and the bytes of the body. **The encode**, because `json_encode` returns `false` and `echo false` prints nothing — one bad byte sent a zero-length 200 and a sign kept its layout for good (#26). Malformed UTF-8 is repaired and reported; anything else becomes a real 500 with a body that is known to encode, so no JSON request is ever answered with something that is not JSON. **The code**, derived from the payload's own `reason` rather than chosen beside it, because twenty-odd call sites cannot be kept in step by hand and a code that disagrees with a reason disagrees silently (#28). **The caching**, `no-store` everywhere, from one place — needed most by the 404s this module introduced, which are heuristically cacheable where the unlabelled 200 they replaced was not. `jsValue()` is the same encode for a value printed into a page's own `<script>`, where a `false` emits `var X = ;` and takes the whole block down. Pure functions under thin senders, the way `ErrorPolicy::noticeFor()` is, so all of it is testable where `header()` does nothing. Depends only on `ErrorPolicy`, for the sentence. |
@@ -440,6 +441,69 @@ through the app again:
     `loadLayout()` uses, so a block type added later is restorable the day it is
     added; and `serializeCanvas()` has exactly two callers, Publish and the snapshot,
     so what Undo believes a block is and what reaches the sign cannot drift apart.
+28. **A stored moment is UTC, read in one place, and shown in the store's zone.**
+    Three rules that are one rule, because separating them is how #44 survived. *Written*
+    in UTC — `gmdate()`, never `date()`, because local wall-clock is not monotonic and the
+    autumn fall-back replays an hour (§4t, §4v); `displays.last_published_at` was the last
+    exception and asked MySQL for `CURRENT_TIMESTAMP`, whose value is MySQL's session zone
+    and therefore a third clock. *Read* by `StoreClock::epochOf()` and nothing else: a bare
+    `strtotime()` on a `Y-m-d H:i:s` uses the process zone, so the `' UTC'` suffix is the
+    whole rule, and it was written out three times with the third copy missing it — the two
+    that were right could not show that the third was wrong. *Shown* through
+    `StoreClock::label()`, in the zone the `STORE_TIMEZONE` setting names, which is a
+    parameter with the setting as its default so the sentence can be checked against a zone
+    this process is not in. The reason all three belong in one invariant is that each is
+    invisible without the others: a stamp stored in the wrong frame and a stamp read in the
+    wrong frame produce the same sentence, and on a host where the frames happen to agree
+    they produce the *right* sentence, which is how the missing suffix lived for a year. The
+    process default is set once, in `config.php`, so a bare `date()` added to a page later
+    agrees with the door instead of being two hours from it — the live host sets
+    `America/Chicago` (§4ap) — and it is deliberately not what the door depends on, because
+    `viewer.php` loads neither `config.php` nor `auth.php`.
+    Two greps hold it: `strtotime(` outside `lib/store_clock.php`, and
+    `date_default_timezone_set(` outside it.
+29. **An account that has been assigned no sign writes nothing shared** (#33). Almost
+    every write in this app is scoped to a Display, which is what makes the resolution
+    seam (invariant 8) the only place access has to be enforced. Exactly two are not:
+    the **asset library**, one pool behind every sign, and **`uploads/`**, one folder
+    behind every library entry. Nothing resolves a Display for either, so nothing was
+    checking anything — a `basic` account with no grant could fill the library every
+    sign draws from and leave files on the server for good, having just been told by
+    the Builder that no display was assigned to it. `Actor::holdsASign()` is the one
+    predicate and `Actor::NO_SIGN_REFUSAL` the one sentence; `crud.php`'s add form and
+    `api.php`'s `upload_file` are the two doors, and both ask **before**
+    `move_uploaded_file()`, which cannot be rolled back — a gate below it leaves
+    precisely what it exists to prevent, minus the row. It is the grant axis alone and
+    not `openable()`: a sign switched off for the afternoon is still a sign somebody was
+    given, and the refusal's own wording would be a lie to its holder. The doors also
+    stop *drawing* what they will refuse, which is invariant 3's rule, and that is not
+    the check — a POST need not come from a form this app rendered. Anything added later
+    that writes something every sign shares asks the same question; anything scoped to a
+    Display must not, because the seam already answered it and a second opinion is
+    invariant 8's warning.
+30. **A check ships having been seen to fail** (#50). Not "a check was added" — a check
+    that was run against the unfixed code, or against a deliberate break of the line it
+    covers, and observed to go red. The distinction is the whole of decision #50, because
+    the two are indistinguishable from the outside: both read as one more `ok` line, both
+    raise the count anchor, and only one of them will ever tell anybody anything. This
+    suite has shipped the other kind more than once — a check asserting what PHP 8
+    guarantees rather than what a module decides (§4aa), a `setupInteract()` call after a
+    restore that could not fail because interact.js binds by selector (§4an), a
+    `file_put_contents` grep whose stated answer of "exactly one hit" had been
+    unreachable since the day it landed (§5), and an "absent setting is not something to
+    report" that ran in a process where the setting was present and usable (§4aq). None
+    of those was carelessness; each was written by somebody reasoning correctly about
+    code and not measuring the check. `tools/mutate.php` is how it is measured now:
+    break the line, run the suite, and read whether anything noticed —
+    **`php tools/mutate.php <file>`**, one file at a time. A surviving mutant is either a
+    check to write or a reason to write down, and writing the reason down is a real
+    answer: §4am's `flock(LOCK_UN)` survives because the runtime would release the lock
+    anyway, which is the docblock being right. What is *not* an answer is deleting the
+    line because no test covers it — three of #49's survivors were load-bearing. The
+    counterpart rule is that a kill has grades, and only one of them is coverage: a
+    mutant that dies because a PHP warning appeared, or because the count anchor moved,
+    is the harness noticing something moved rather than a check knowing what the line was
+    for.
 
 ---
 
@@ -1122,9 +1186,11 @@ The login lockout columns sat missing on the live database for months and nothin
 said so; the feature simply did not work.
 
 Both are now on one screen: **Admin Panel → Settings → This Server**, admin-only,
-read-only, nothing to submit. It reports the PHP and MySQL versions, the time zone
-(a server left on UTC prints every "editing since" seven hours out for a
-Washington store), whether errors are shown to visitors or written to a log, and
+read-only, nothing to submit. It reports the PHP and MySQL versions, three time
+zones (§4ap — the store's, which is a setting on this same tab and is what every time
+on every page is drawn in; PHP's own, which no longer decides anything; and the
+database's, which is where an account's creation date comes from and which no screen
+showed at all until #44), whether errors are shown to visitors or written to a log, and
 what actually took on the session cookie — read back out of the *path* on a
 pre-7.3 server, where that is where `SameSite` has to live. Below it, one row per
 runtime-added column, green or red, each red one carrying the consequence rather
@@ -2203,14 +2269,18 @@ exact about it rather than repeating the shape of the worry. **Every `locked_unt
 live database is in the old format**, and what happens when one is read as UTC depends on
 which side of UTC the server sits:
 
-- On UTC — which is what PHP falls back to when `date.timezone` is unset, and §4k says the
-  live value is still unknown — nothing happens at all. Old rows and new rows are the same
-  string.
-- **West** of UTC, which is where the store is, an old stamp reads seven or eight hours
-  *earlier*, so any lockout in force at the moment of the deploy is released. Bounded and
-  self-correcting: `locked_until` is never more than fifteen minutes ahead in the first
-  place, so every affected row is gone within fifteen minutes of the deploy, and the
-  failure counter beside it is untouched.
+- On UTC — which is what PHP falls back to when `date.timezone` is unset — nothing happens
+  at all. Old rows and new rows are the same string. *(When this was written §4k said the
+  live value was unknown. It is known now and it is not this case: the host sets
+  `America/Chicago`, observed 2026-08-11 — see §4ap. So the bullet that actually applied to
+  this migration is the next one.)*
+- **West** of UTC, which is where the store is *and where the host turned out to be* —
+  Central, so five or six hours rather than the seven or eight this bullet guessed at from
+  the store's own zone — an old stamp reads that much *earlier*, so any lockout in force at
+  the moment of the deploy is released. Bounded and self-correcting either way, and the
+  bound is what carried the reasoning rather than the number: `locked_until` is never more
+  than fifteen minutes ahead in the first place, so every affected row is gone within
+  fifteen minutes of the deploy, and the failure counter beside it is untouched.
 - **East** of UTC an old stamp reads *later*, and that is the direction that matters: a
   fifteen-minute lockout lasting the rest of the shift, on the one page there is no way
   around.
@@ -4385,6 +4455,830 @@ Left standing, and deliberately:
 
 ---
 
+### 4ao. The two writes no sign scopes (#33)
+
+Every access decision in this app is the same decision: *may this account have this
+Display?* That is ADR-0005's whole point, and it is why the enforcement lives in one
+seam — `DisplayRequest` resolves the Display, `Actor::mayOpen()` answers, and an
+endpoint added later inherits the check by resolving its Display the same way
+(invariant 8). The reasoning holds for as long as every write is *about* a Display.
+
+Two are not.
+
+- **The asset library** is one pool behind every sign. `crud.php` creates entries in
+  it, and the page has been "all roles can access; delete is admin-only below" since
+  before Displays existed.
+- **`uploads/`** is one folder behind every library entry, and `api.php`'s
+  `upload_file` is "images – all roles" for the same reason.
+
+Neither names a Display, so neither goes through the seam, so neither was checking
+anything at all. A `basic` account with no grant could add entries the whole building's
+signs draw from, and put files on the server that nothing ever removes — one screen
+after the Builder had told it, in as many words, *"No displays have been assigned to
+you yet."* That picker page even links to the Library, which is how the dead end got
+built: the link was courtesy, and what it led to was the one page where a person with
+no sign could still change what the shop shows.
+
+Worth being precise about the severity, because it is not "an outsider can write to the
+sign". Everyone this is about is a signed-in member of staff, and nothing they add
+reaches a Screen until somebody who *does* hold that sign places it and publishes. What
+they could do is fill a shared workspace with rows an admin has to scroll past, and
+leave files in a folder with no sweep behind it — and they could do it from an account
+that had been told it holds nothing.
+
+**The rule is one predicate and one sentence.** `Actor::holdsASign()` is the
+predicate — it lives beside `mayEdit()`, `mayOpen()`, `openable()` and `granted()`,
+because the docblock on that class promises every "may they?" question is a method
+there, and a second copy of this one in a page script is how two doors come to disagree.
+`Actor::NO_SIGN_REFUSAL` is the sentence, in one place because both doors refuse for
+the same reason and one refusal met in two wordings reads as two problems. It names
+what did not happen and who to ask, since there is nothing the person at the keyboard
+can do about it themselves.
+
+**The grant axis alone, deliberately not `openable()`.** This is the decision in the
+change worth disagreeing with, so here is the case. `openable()` is the app's usual
+predicate and it folds in a second axis: a Display switched off is not openable by a
+`basic` account. Gating on it would mean turning a sign off for the afternoon also, and
+silently, took its clerk's access to the library on a different page — a change of
+*reach* with a consequence nobody enumerated, which is the family of defect §4s and
+§4t are both about. It would also make the refusal wrong: the sentence says *no display
+has been assigned to you*, which is true of everybody `holdsASign()` refuses, and a lie
+to somebody whose one sign is merely out of service. And there is a working reason —
+getting next week's promo into the library while the sign it is for is off is ordinary.
+So: a grant is a sign, retired or not. That is the same distinction `granted()` versus
+`openable()` was added for in Phase 4, used here for the first time outside the picker.
+
+The predicate takes the Display list rather than reading the grant ids directly,
+because a grant row is a permission only while the Display it names still exists. The
+foreign key's `ON DELETE CASCADE` should make those two impossible to separate — the
+self-test's fixture enforces it, and a stranded row cannot be inserted through
+`GrantStore` at all — but that constraint is added by convergence and invariant 10 says
+assume nothing about the live table. Asking against the list costs one query and makes
+the answer true either way.
+
+**Admins are true whatever the list holds, including empty.** They hold every Display
+by role, and the one case where that differs from "the list is not empty" is a fresh
+installation with no Displays yet — where the admin is the person about to add the
+first one, and refusing them the library on the way in would be this rule aimed at
+nobody.
+
+#### Where the check is, and where it is not
+
+Both doors ask **before** any file is moved. `move_uploaded_file()` cannot be rolled
+back, so a gate below it leaves exactly what this exists to prevent, minus the row —
+and that ordering is asserted, per door, from where the door opens rather than from the
+top of the file. api.php moves an uploaded *background* three hundred lines above this
+endpoint, and that upload is an admin's and is scoped to a Display, so a check
+measuring against the file's first `move_uploaded_file` would be asking about the wrong
+one. Writing that check also caught it being wrong about itself: both doors carry a
+comment explaining that the move cannot be undone, sitting above the gate the comment
+is about, so measured against raw source a correctly ordered file failed. It strips
+comments first now, for the same reason `check_invariants.php` does.
+
+`api.php`'s gate is an endpoint's own `if`, which is the shape invariant 8 warns
+against. It is allowed here precisely because the question is about the account and not
+about a sign: there is no Display to resolve, so there is nothing for the seam to
+answer. The warning stands undiminished for anything that *does* name a Display.
+
+The two doors also stop *drawing* what they will refuse — the Library shows an
+explanation where the add form was, which is invariant 3's rule about a read-only
+Builder applied one page over. **That is not the check.** A POST need not come from a
+form this app rendered, and invariant 8's second paragraph is explicit that access is
+never enforced by something merely being absent from a page. The form's absence is
+courtesy; the refusal in the create branch is enforcement.
+
+Reads are left alone, and that is a decision rather than an oversight. The library page
+still lists everything, and `get_assets` still answers. Everyone concerned is signed-in
+staff who may be asked to look something up, and a page that will not say what is in it
+cannot explain what it just refused. The audit item is about writes; so is the fix.
+
+#### One thing found next door
+
+`crud.php` built its edit form for anybody who typed `?edit_id=`, though the save has
+been admin-only throughout — a form whose only purpose was to be refused. It became
+load-bearing here, because that same variable decides which panel the page draws: the
+"no display assigned" notice was one query parameter away from being replaced by an
+editor. It is `isAdmin() && isset($_GET['edit_id'])` now, which is §4j's rule again —
+don't send a control to somebody who may not use it.
+### 4ap. Three clocks, and the one a person was reading (#44)
+
+Decision #44, in the words it was filed in: nothing set a timezone, so "editing since
+2:15pm" followed whatever the host's `php.ini` happened to say. The store is in
+Washington, and what the banner said was **4:15pm**.
+
+**This paragraph was wrong when it was first written, and the correction is the more
+interesting half.** It said the live host set nothing, so PHP fell back to UTC, so the
+banner read 9:15pm — seven or eight hours out. That was an assertion about a machine
+nobody had looked at, which is the failure #51 is a monument to, made again in the write-up
+of a different item. It has now been looked at:
+
+> **Observed 2026-08-11**, on Settings → This Server in the `lbm-test/` install:
+> PHP **8.2.33**, MySQL **5.7.23-23**, **Server time zone `America/Chicago`**.
+> `America/Chicago` cannot be a fallback — PHP's fallback for an unset `date.timezone`
+> is UTC — so the host sets it explicitly. Nothing in this repo does: the tracked
+> `.htaccess` sets four session flags and no `date.` value, and there is no `.user.ini`.
+
+So the error was **two hours**, Central for Pacific, and that is worse to have shipped
+rather than better. Seven hours is obviously broken and somebody reports it on the first
+afternoon. Two hours reads like a colleague who genuinely started at 4:15pm — which is
+the whole reason a wrong clock is a different kind of defect from a wrong colour, and
+was already the argument for refusing an unusable zone rather than substituting one.
+The magnitude was wrong in the write-up; the reasoning it was supporting was not.
+
+"Set a timezone" sounds like one line. It was not, because there were three clocks and
+only one of them was PHP's:
+
+| Clock | What used it | What it actually was |
+|-------|--------------|----------------------|
+| PHP's process zone | every `date()` that printed a moment for a person | `America/Chicago`, set by the host |
+| MySQL's session zone | `CURRENT_TIMESTAMP`, and every `TIMESTAMP` column on read | never set, so the host's system zone — same machine, so Central too |
+| the store's own | the person standing next to the sign | nowhere in the repo |
+
+**And the two being the same zone is what hid the second defect.** Those middle two
+columns agreeing is not a coincidence — one machine, one system zone — and it meant the
+missing `' UTC'` in `lastPublishDescription()` (below) cancelled the `CURRENT_TIMESTAMP`
+frame *exactly*. A stamp MySQL wrote as `16:15` Central was read by PHP as `16:15`
+Central and printed as `4:15pm`: the right Central time, by two errors that annihilated.
+So that sentence was wrong by the same two hours as every other one, and no worse — it
+was **latent**, not active.
+
+What activates it is a change to either clock. Which is to say: the obvious one-line
+version of this fix — set the process zone, or ask the connection for UTC — would have
+turned a uniform two-hour error into a five-hour one in that one sentence, and only in
+that one sentence. `SET time_zone = '+00:00'` on its own makes MySQL write `21:15` while
+PHP still reads it as Central. That is the clearest possible statement of why "there were
+three clocks" is the finding rather than a framing: fixing one of them is not a partial
+fix, it is a new bug.
+
+**What was already right, and why it is the reason this was safe.** Every moment *PHP*
+writes has been UTC since §4t and §4v — `gmdate()` in, `strtotime($s . ' UTC')` out —
+because local wall-clock is not monotonic and the autumn fall-back replays an hour.
+That work is what made a store zone introducible at all: nothing in this app compares
+two moments in the zone this setting names, so changing it cannot move a lock window,
+expire a lockout early or lengthen one. The only thing it changes is a sentence. The
+suite already asserted that property, from the other direction: two sections set the
+process zone to `America/Los_Angeles` and assert the storage is absolute anyway.
+
+#### The setting
+
+A tenth entry in `BrandingConfig::DEFAULTS`, `STORE_TIMEZONE`, for the reason the
+ninth is there (§4y, ADR-0010): that module is the only writer of
+`branding_config.php`, and a `define()` of this name anywhere else would be dropped
+the next time somebody saved the Branding form — the value gone, the form reporting
+success.
+
+It is on the **Settings** tab rather than beside the four colour pickers, and that is
+a departure from the decision's own wording ("a store timezone setting on the Branding
+page") worth stating rather than hiding. Both tabs write the same file; what separates
+them is that Branding is four `type=color` inputs and a logo, and the two settings
+that are neither — the undo depth and now the zone — are on Settings. It also puts the
+control three inches above the card that reports the server's clock and the database's,
+which is where somebody who has noticed a wrong time will actually be looking.
+
+`StoreClock` in `lib/store_clock.php` is what the string means, and it is shaped like
+`lib/brand.php` on purpose — same problem, same file, same one-way door for a bad
+value:
+
+- **A fixed offset is not a timezone.** `+08:00` and `PST` both construct a perfectly
+  valid `DateTimeZone`, and both are wrong for half the year — which is #44 again with
+  a smaller error bar. So the accepted set is the identifiers PHP *lists*, which are
+  region names and nothing else, because a name is the only thing that knows when
+  daylight saving starts. `US/Pacific` and `EST` are casualties of that rule: they
+  work in PHP and are refused here.
+- **Refused, not substituted.** The form is a `<select>` of those identifiers, so
+  nothing an admin can submit reaches the refusal — the same shape as the colour rule
+  after #21, where the only remaining door is a hand-edited generated file. A value
+  that arrives that way is *named*, on the Settings tab and on the This Server card,
+  together with what is being used instead. It matters more here than for a colour:
+  a sign shows a wrong colour, and a clock two hours out shows a perfectly ordinary
+  time — which is exactly what the host turned out to be doing.
+- **The default is not UTC.** A default of UTC would be "show every time in a zone the
+  store is not in", which is the defect restated as a policy — the fact that the host
+  turned out to be on Central rather than UTC changes the number and not that argument.
+  `America/Los_Angeles` is the store's zone, is what the suite has called "the store's
+  own zone" since §4t, and is the right answer for an installation that has never opened
+  the page.
+
+#### The half nobody had asked about: reading a stamp
+
+The interesting defect was not the zone. It was that **the rule "a stored moment is
+UTC" was written out three times, and one copy left the suffix off**:
+
+```php
+LockState::toEpoch()      strtotime($stamp . ' UTC')            // right
+LoginAttempt::stamp()     strtotime($account[$key] . ' UTC')    // right
+Display::lastPublishDescription()
+                          date('M j \a\t g:ia', strtotime($at)) // wrong, silently
+```
+
+The third is the sentence a refused publish prints — *"sky, Aug 5 at 2:04pm"*, the one
+thing telling an admin whose work they are about to walk over. It read a UTC stamp in the
+process zone. And it was wrong at the *other* end too: `recordPublish()` wrote that stamp
+with `CURRENT_TIMESTAMP`, so the value was in MySQL's session zone rather than PHP's.
+
+On this host the two errors cancelled exactly, because both zones were Central — see the
+observation at the top. That is what made it a **latent** defect rather than a visible
+one, and latent is the harder kind to find: the sentence was wrong by the same two hours
+as every other sentence, so nothing about it stood out, and it would have become five
+hours out the moment anybody moved either clock. Which is exactly what this change does.
+
+Neither engine could show it either. SQLite's `CURRENT_TIMESTAMP` is UTC *by definition*,
+so the fixture always agreed with the reader whatever the process zone was; on MySQL the
+suite runs wherever its host is set, which for a CI container is usually UTC as well. A
+statement that is engine-independent is what made it assertable: `recordPublish()` binds
+a PHP `gmdate()` now, the way every lock statement in that file already did and the way
+its own comment already explained at length.
+
+So the reading moved into one place, `StoreClock::epochOf()`, and invariant 28 is that
+nothing else in the repo calls `strtotime()` at all. Two copies of a rule agree by
+luck; three is where the third gets to be wrong on its own, and the two right ones are
+what make it invisible.
+
+The third frame is closed at the connection: `db_connect.php` asks for
+`SET time_zone = '+00:00'`. It reaches the values PHP cannot write and therefore
+cannot convert — the `created_at`/`updated_at` `TIMESTAMP` defaults — and it makes
+"everything stored in this database is UTC" a whole sentence rather than nearly one. A
+numeric offset and not `'UTC'`, because the named zones need MySQL's `mysql.time_zone`
+tables loaded and a shared host may not have them. Existing `TIMESTAMP` rows are
+unaffected: MySQL stores them as an instant and converts on read, so they start reading
+correctly rather than stop. It is suppressed rather than fatal, and reported instead —
+`ServerReport` prints the session zone the connection actually got, so a host that
+refused it says so on a screen instead of being quietly back to three clocks.
+`ErrorPolicy::report()` would have been the wrong channel: it would fire on every
+request of every page for as long as the host refused it (invariant 20).
+
+#### One migration, bounded the same way §4v's was
+
+Every `last_published_at` already on the live database was written by MySQL in Central
+and will now be read as UTC, so it reads **five hours early** (six in winter) until that
+Display is next published — a known number now rather than "the host's offset", because
+the frame those rows are in is the observation at the top of this write-up. Early rather
+than late, which is the harmless direction: the sentence says a publish happened longer
+ago than it did. It is the same shape as §4v's `locked_until` and is accepted for the same
+reasons: the value appears in exactly one sentence, on a publish that was *refused*, one
+publish replaces it, and nothing decides anything from it. The alternative was a schema
+statement and a backfill, and a backfill needs the old frame to be a fact about every row
+rather than about the host as it stands today.
+
+`users.closed_at` needed nothing: it was already `gmdate()` in and read with the
+suffix. `users.created_at` needed the connection change and nothing else.
+
+The `SET time_zone` is unconditional, including on the path `api.php` serves to every
+Screen every 30 seconds — the one place in this app where an extra statement per request
+deserves a sentence. It is a session variable: no metadata lock, no I/O, nothing like
+the DDL invariant 7 keeps off that path. Making it conditional on the caller would be
+cheaper and would put the third clock back, in the form nothing can report, on the one
+connection nobody ever looks at.
+
+#### One clock deliberately left alone
+
+The error log stamps its lines `gmdate('j M Y, H:i') . ' UTC'`, and it still does.
+`error_policy.php` depends on nothing — no database, no session, no config — and that is
+a stated property rather than an accident: it draws the last thing a request prints when
+everything else has already failed. `StoreClock` reads a setting out of
+`branding_config.php` through `BrandingConfig`, so routing the log through it would put a
+file-read dependency in the one path that must not have any. A stamp that says which zone
+it is in is honest, which is the whole of what #44 was about; a stamp that cannot be
+written because the settings file was the thing that broke is not.
+
+#### The setting cannot be seen by the request that saves it
+
+A `define()` cannot be undone, so the ten constants are fixed at the top of the request
+that writes the file. The Branding form deals with this by patching its own page
+variables by hand — and that does not reach a *module* that reads the constant, which
+`StoreClock::zone()` is. Left alone, saving a zone would have redrawn the dropdown
+showing the new one and the This Server card three inches below it showing the old,
+which is a page contradicting itself about the thing it was just used to change.
+
+So a successful Settings save redirects — `flashMessage()` and
+`Location: admin_panel.php?tab=settings`, the pattern the grant matrix already uses for
+its own reason. A fresh request loads the file that was just written. F5 becoming
+harmless is the other half of it, and comes free.
+
+#### What This Server says now
+
+The row that existed *because* a zone mismatch is otherwise invisible had to name all
+three clocks, since there were three:
+
+- **Store time zone** — the setting, and the time it is in the shop right now. First,
+  because it is the question people actually have.
+- **PHP time zone** — and its note changed direction. It used to warn that an unset
+  `date.timezone` meant times next to an edit lock may be hours out. That is no longer
+  true, and leaving it would send somebody after a problem the setting above has already
+  answered. It now says the host is not set and that it is harmless, because the app sets
+  its own. On this host the note does not render at all: `date.timezone` **is** set, and
+  the row simply reads `America/Chicago`. Which is worth noticing — the row that reads
+  like a plain fact is the one that was quietly deciding every time on every screen.
+- **Database time zone** — new, and the clock no screen had ever shown. Anything other
+  than a zero offset means the `SET time_zone` did not take, and the note says what
+  that costs: a creation date a few hours out, and nothing a sign shows.
+
+`SYSTEM` is not an answer, so it is expanded to `SYSTEM (…)`, and a non-MySQL engine
+reads `not applicable` — SQLite has no session zone and every stamp it writes is UTC by
+definition.
+
+#### Coverage
+
+**Sixty checks.** The ones worth naming are the ones that would have caught the
+original defect, and they are all about a *disagreement* rather than a value:
+
+- One instant, three zones. `2026-08-11 21:15:00` is `2:15pm` in the store and `4:15pm`
+  in Central, which is what the Builder was printing; `9:15pm` in UTC is the third, kept
+  because it is the widest gap and because the zone being a *parameter* is what makes any
+  of these three reachable from a process holding one `define()`. The check that would
+  have caught #44 is not any one of them — it is that they differ.
+- The label does not move when the process clock does. Set the process to
+  `Asia/Tokyo`, ask again, get `2:15pm`. That is what stops `viewer.php` — which loads
+  neither `config.php` nor `auth.php` — from being a fourth clock the day somebody
+  prints a time on it.
+- Both stamp readings, run with the process zone on `America/Los_Angeles`, because on
+  a server that happens to be on UTC every mutation in this area is invisible. That is
+  exactly how the missing suffix survived: `check(abs(strtotime($stored) - time()) >
+  3600)` is the defect written out as an assertion that it is still a defect.
+- The default is asserted **not** to be UTC. The mutation that reintroduces this bug
+  looks like caution.
+- `lastPublishDescription()` on an unreadable stamp answers `sky`, not `sky, ` — a
+  refusal reading short rather than reading wrong.
+
+Two limits, named rather than dressed up. The Settings form's checks read
+`admin_panel.php`'s **source**, which shows the lines are there and not that the page
+behaves — the same weaker instrument §4v's CSRF checks use, and for the same reason: a
+page that prints HTML and opens a real database is not reachable from a CLI suite. And
+the `SET time_zone` statement is asserted to exist, not to have run, because the
+fixture makes its own connection; what the MySQL run *can* say is that a bound
+`gmdate()` publish stamp reads identically on both engines, which is the property the
+old `CURRENT_TIMESTAMP` did not have.
+
+#### One thing found and left for #50
+
+`check_invariants.php` drops **PHP** comments before it greps and says so at length.
+It does not drop **HTML** comments, which are `T_INLINE_HTML` and pass straight
+through — so an `<!-- … -->` on a page explaining why a line no longer calls
+`strtotime()` fails invariant 28 against the very sentence explaining why it holds.
+The note in `admin_panel.php` is a PHP comment for that reason, with a line saying so.
+Fixing the checker is #50's subject, not something to bundle into a rule it is meant to
+be enforcing: `codeWithoutComments()` works on tokens, and stripping HTML comments
+means handling PHP embedded inside one, which changes what every rule sees.
+
+**Fixed in §4aq**, with the decision the note was waiting on: an HTML comment holding
+PHP is code and stays.
+
+---
+
+### 4aq. Which of these checks can fail? (#50)
+
+Decision #50 has two halves and one shape. The halves are *about 29 checks in the suite
+could not fail* and *five invariants had no automated check at all*. The shape is that
+neither can be settled by reading, and one of them cannot honestly be settled by hand
+at all.
+
+**The 29 was never going to be recountable.** It came out of the ten-agent audit (§4g),
+when the suite was about two hundred checks; it is 1778 now, grown by twenty-odd
+branches, and the two immediately before this one added 81 between them. A number
+produced by reading a suite goes stale the week after it is produced — which is exactly
+what happened, and is why the item sat open for a year with the note *"the 29 have not
+been swept."* Any recount done the same way would be stale by the next merge. So the
+deliverable here is not a corrected number. It is the instrument that produces one, on
+demand, for the file you are about to change.
+
+#### `tools/mutate.php`
+
+Break one thing, run the suite, record whether anything noticed. §4am already did this
+by hand for two files, found real gaps — either backfill's `WHERE` clause could be
+deleted, the sanitiser's other five statements could each be removed with the suite
+green — and closed with the honest admission that *"the mutation runs are not
+automated… Decision #50 is where that belongs."* This is that.
+
+```
+php tools/mutate.php lib/grants.php        # break it 55 ways, 55 runs of the suite
+php tools/mutate.php --list lib/color.php  # what it would break, without running
+```
+
+Every operator is a defect somebody could type rather than a mutation a paper would
+list. In three families:
+
+- **A comparison or a connective changed.** `===`→`==` and its four relatives,
+  `<`→`<=` and its three, `&&`↔`||`, a `!` dropped, `true`↔`false`, an integer moved by
+  one, and the bit-or that builds a flag set turned into a bit-and — because
+  `ENT_QUOTES & ENT_SUBSTITUTE` is `0`, and `htmlspecialchars($v, 0)` leaves both quote
+  characters alone.
+- **Something removed.** A whole statement, a one-line guard (`if (!$ok) { return
+  null; }` — the form this repo prefers), or a whole multi-line `if (…) { … }`. This is
+  the family that finds a line nothing stands over, which is what #50 is about.
+- **The scoping predicate dropped from a SQL `WHERE`**, either wholly or one `AND`
+  conjunct at a time. The one operator that reaches inside a string, and it is here
+  because the worst survivor #49 found was exactly that shape and no operator over PHP
+  tokens can produce it: to PHP the entire statement is one string. A query that keeps
+  `WHERE id = ?` and loses `AND display_id = ?` still returns a row, so it fails no test
+  that only asks whether something came back.
+
+Comments never reach any of them, because `token_get_all()` hands a comment back as one
+token — so an `&&` inside one is not an operator, and `true` inside a string is not a
+literal.
+
+**A kill is graded, and only one grade is coverage.**
+
+| | what it means |
+|---|---|
+| `assertion` | a check failed. The suite stands over this line's *behaviour*. |
+| `diagnostic` | only a PHP warning failed it — usually an undefined variable, because the mutant deleted the line that set it. The harness noticed the mutant; no check knew what the line was for. |
+| `count` | the count anchor failed and nothing else: a check *disappeared* rather than failed. |
+| `fatal` / `hang` | the run died or had to be timed out. §4am records one hang on purpose — making the schema-repair lock blocking is caught by the suite never finishing. |
+| `survived` | the finding. This line can be wrong and the suite will say it is fine. |
+
+The grades matter because the four weak ones are easy to read as coverage. `lib/grants.php`
+scores 52 of 57 killed, which sounds like a covered module; 32 of those are assertions and
+20 are the harness noticing a variable go missing or the run die. `lib/display_request.php`
+is starker: 37 of 43 killed, and only 13 of them by a check.
+
+One limit on the grades, stated because it was seen: **the grade is the first failure, not
+the worst one.** That is what makes a run cheap — `SELFTEST_STOP_ON_FAIL` leaves on the
+first red line — and it means a mutant whose line is properly covered by an assertion is
+reported as `diagnostic` if any warning fires earlier in the same run. It happened twice
+while this section was being written, in runs launched four at a time against one temp
+directory, and neither reproduced on its own. `survived` is unaffected: nothing failed at
+all, in any order. If a grade is what you are deciding on, run the one file by itself and
+re-check with `--only=N`.
+
+**Why it is affordable.** The suite takes about ten seconds and a mutant needs one bit
+off it, so `SELFTEST_STOP_ON_FAIL` (in `tools/test_fixture.php`) leaves on the first
+failure. Most mutants then cost a fraction of a run and only the survivors — the ones
+worth waiting for — pay in full. There is deliberately **no `--all`**: every `lib/` file
+is thousands of runs and hours of them, and a report nobody reads is the same as no
+report. It is a tool to run over what you changed, not a gate. The tree is copied into a
+sandbox once and the mutants are written there, so the repo is never touched, and the
+unmutated suite is run first and required to pass — a sandbox whose suite is already
+failing grades every mutant as killed and reports perfect coverage, which is the mistake
+this tool exists to find in other people's tests.
+
+#### What it found
+
+Nine modules, chosen by stake rather than by convenience. Every figure below is a run of
+the tool **as it ships**, after the operator fix at the end of this section — the first
+draft of this table was measured with a version whose `&&` operator silently generated
+nothing, so it was thrown away and re-measured rather than adjusted.
+
+| file | mutants | killed | survived | survivors before this pass |
+|---|---|---|---|---|
+| `lib/plain_text.php` | 11 | 11 | 0 | 0 — #49 had already done this one by hand |
+| `lib/markup.php` | 4 | 4 | 0 | 0 |
+| `lib/color.php` | 19 | 16 | **3** | 10 |
+| `lib/grants.php` | 57 | 52 | **5** | 15 |
+| `lib/store_clock.php` | 30 | 26 | **4** | 13, then 9 — see the second pass below |
+| `lib/display_request.php` | 43 | 37 | **6** | 6 — all six equivalent |
+| `lib/upload_limits.php` | 48 | 38 | **10** | 17 |
+| `lib/http_reply.php` | 69 | 41 | **28** | 35 |
+| `lib/layout_rules.php` | 208 | 155 | **53** | 64 |
+
+Where a "before" figure is larger, the difference is the checks this pass added — and the
+mutant count itself rises as checks are written, because a check written to kill a mutant
+is a line the next run can break.
+
+**`lib/store_clock.php` was measured twice, and the second run is the more useful
+result.** The module landed a day before this tool did (§4ap), so the first run graded
+checks written without it: 36 mutants, 9 surviving, the worst kill rate in the table at
+75%. Four of those nine were in one line — a `!is_string($id) || $id === ''` guard in
+front of `in_array($id, $zones, true)` — and none of them could be killed, because
+**strict comparison already answers false for every shape the guard was refusing**. A
+list, null, a float, `''`: the guard changed no answer for any of them. It was the same
+rule written twice, which is this repo's most-repeated defect in its smallest form —
+three copies of "a stored moment is UTC" (§4ap), four of the branding defaults (§4y) —
+and the tell is exactly what the tool reported: neither statement can be tested while
+the other stands.
+
+Deleting the guard is the fix rather than a dodge, and the tool's own header is the
+reason to be careful about saying so: three of #49's survivors were load-bearing. This
+one is not, and the check that proves it is the one the deletion *makes possible*.
+`in_array(true, $zones, false)` is **true** — every zone name is a non-empty string and
+therefore casts to true — so with the guard gone, the `true` flag is the only thing
+refusing a boolean, and `isZone(true)` fails the moment it is relaxed. With the guard
+there, that mutant was masked and unkillable. **Five survivors closed by removing three
+lines and adding two checks**, and the module is now 30 mutants, 26 killed, 4 surviving.
+
+**The four that remain are equivalent, and provably so rather than plausibly.** All four
+are `===` relaxed to `==`, and each was checked rather than argued:
+
+| line | why it cannot be observed |
+|---|---|
+| `epochOf()`'s `$stamp === ''` | non-strings never reach it — `!is_string()` short-circuits first — and no PHP 8 string satisfies `== ''` but not `=== ''`. The guard itself is *not* redundant here and its mutants die: `strtotime(' UTC')` is **now**, so dropping it makes an empty stamp read as this moment. |
+| `epochOf()`'s `$epoch === false` | `strtotime()` returns `int|false`, and the only int satisfying `== false` is 0 — which is what the true branch returns anyway. Both spellings answer 0. |
+| `label()`'s `$epoch === 0` | `epochOf()` returns an int by construction, and for ints `== 0` and `=== 0` are the same test. |
+| `labelForEpoch()`'s `$zone === null` | `==` would also take the "use the setting" branch for `''`, `0`, `false` and `[]` — and for all four, `pick()` answers `DEFAULT_ZONE`, which **is** the shipped setting. The two branches coincide for as long as the stored zone equals the default. This is the one that becomes testable the day a deployment sets a different zone, and it is worth knowing that a change to the setting is what turns this line from unobservable into checkable. |
+
+That last row is the shape worth naming: not "no test covers it" but "the environment the
+suite can construct cannot tell the branches apart". It is the same class as
+`http_reply.php`'s header block below — unobservable by construction, not by omission —
+and the honest response to both is a sentence rather than a check that cannot fail.
+
+**`lib/http_reply.php`'s 28 are the most honest row in the table**, and they are not all
+the same kind of thing. Eleven are loose-versus-strict comparisons that cannot differ at
+the floor. Twelve are the block that actually sends the reply — `@http_response_code()`,
+the `Content-Type`, the `Retry-After` on a 503, `noStore()` and the `headers_sent()`
+guards around all of it — and those are **unobservable from a CLI suite by construction**:
+`headers_sent()` is false there, `header()` is a no-op, and a check asserting that
+`noStore()` returned true in CLI would itself be a check that cannot fail, which is the
+thing this section exists to object to. They are named here instead. The remaining few are
+a boundary constant nobody pins, `codeForResolution()`'s default for a resolution kind that
+does not exist, and `subjectOf()`'s `&&` — which is a private helper feeding a throttle key.
+That row is what "a module the tool cannot finish for you" looks like, and it stops here
+rather than growing five checks written to move a number.
+
+**`lib/layout_rules.php` is the opposite case: the biggest module and the most survivors,
+and two of them were worth stopping for.** Of its 53, twenty-two are comparison
+relaxations and sixteen are boundary constants nobody pins — `SIZE_MAX` moving from 20000
+to 20001 is true and does not matter. But the publish validator caps five stored strings
+against their column widths, and only `font_family` had a check: **`font_weight` and
+`font_style` could each have lost their cap** with the suite green, which is a
+five-thousand-character value reaching a `VARCHAR(20)` — a publish that fails outright on
+a strict MySQL and truncates in silence on one that is not, which is the exact defect §4ab
+wrote that table for. Two checks, in the same shape as `font_family`'s, verified against
+mutants 95 and 96.
+
+The rest of that module's survivors are named rather than closed, and the four worth a
+future pass are `describeValue()`'s branches, the `!is_finite()` guard on a line height,
+the `db_id` claim's three-part condition, and the `is_bool` guards in the two
+`isTextLike`-style predicates. None of them is a wrong answer today; each is a line that
+could become one without anything saying so.
+
+Where two numbers appear, the second is after the checks written in this pass; the
+mutant count rises because a check written to kill a mutant is itself a line the next
+run can break, and falls once where an operator was corrected (below).
+
+**The most instructive result is `lib/http_reply.php`'s status-code table**, because the
+suite already had a loop over it. Fourteen checks, one per reason the app uses, of the
+form `codeFor($reason, 0) !== 0` — *the map has an answer for this word*. Six of the
+fourteen rows had nothing else standing over them, so `not_found`, `signed_out`,
+`locked`, `busy`, `too_large` and `unencodable` could each be moved to a neighbouring
+code with the suite green: a body too large to arrive answering 414, a session that ended
+answering 404. **A loop over a table that asserts its keys reads from outside exactly like
+one that asserts the table**, and this one had been read that way ever since it was
+written — including by every branch that has added a row to the table since. It is now a
+reason-to-code map in the suite, asserted row by row, with the `0` sentinel kept so an
+unlisted reason still fails — plus three checks about which rows *share* a code, since a
+table where every row happened to be 409 would satisfy fourteen row checks and still be
+wrong.
+
+`HttpReply::jsValue()` had the same shape one layer down. Its flags are a single `|`
+chain, so one character mistyped as `&` collapses two of them, and nothing named the
+characters it escapes — only that the answer parsed. Four checks now, one per character,
+each of which ends something: `<` ends the script element, `'` and `"` end a string
+literal, `&` starts an entity the attribute parser decodes first (§4ah).
+
+`lib/upload_limits.php` gave up both edges of `describeBytes()` — exactly 1048576 bytes
+and exactly 1024 — which is the number printed in the sentence telling somebody what to
+trim their file to. `1024 KB` and `1048575 bytes` are what those mutants produce. Also
+`describeBytes(null)` answering `" bytes"`, and a POST arriving with no `CONTENT_LENGTH`
+header at all being reported as *dropped for its size*, which is the old defect with the
+sentences swapped.
+
+**And the same shape a third time, which is what makes it a shape rather than three
+bugs.** `LayoutRules::describe()` — the part of a publish refusal naming the admin's own
+value — had every branch removable with the suite green, and its 40-character cut movable
+in either direction. `Color::describe()`, `UploadLimit::describeBytes()` and this one are
+all pure functions whose only callers build a sentence around them, and in all three cases
+the sentence was checked and the value was not. Anything that turns a value into words for
+a person to read is worth asking this question about: the check that quotes the wording
+passes whatever the words are about.
+
+**Ten of the fifteen survivors in `lib/grants.php` were real**, and that is the module
+holding the answer to "may this account reach that sign":
+
+- **Both grouped reads could be emptied out.** `displayIdsByAccount()` and
+  `accountIdsByDisplay()` are the two axes of the grant matrix the Admin Panel draws,
+  and the entire body of both loops could be deleted with the suite green. Nothing had
+  ever asserted what either returned — only that access decisions made *elsewhere* came
+  out right. A matrix drawn empty over a full table, and a save from that page reads its
+  own checkboxes.
+- **Granting twice could stop being idempotent.** The docblock says already-granted is
+  success rather than an error; nothing had ever granted the same pair twice. Removing
+  the guard leaves two rows for one permission, which `revoke()` then removes both of —
+  so the defect is invisible from every direction except the matrix's own count.
+- **A session with no id could have become account 1.** `Actor::signedIn()` falls back to
+  `0` for a missing id, and no account has that number. One digit up is the id the
+  installer gives the first admin. The fallback was never asserted.
+- **The actor's own id and username were never read back.** Exercised hard as an input
+  to `mayEdit()`; never checked as an output, and the username is what an edit lock names
+  on a colleague's screen.
+
+**`Color::describe()` had almost nothing on it.** Ten of thirteen mutants survived: the
+whole function could have been reduced to quoting the value back. It is the sentence a
+refused colour actually shows — `DisplayAdmin` quotes it and the Admin Panel prints it
+twice on the unreadable-colours card — so "blank", "nothing", "a list of values" and
+"integer" are four different messages #21 exists to keep apart, and the twenty-character
+cut lands inside a sentence on a page. Pure function of one argument, and it was covered
+by inference from the messages built around it.
+
+#### The one hollow check it found in the suite, and the instrument that fixes it
+
+`checkSame('', StoreClock::unreadable(null), 'an absent setting is not something to
+report')` — from §4ap, the newest section in this file when it was found, and it does not
+test an absent setting. This suite requires `auth.php` at the top, which requires
+`config.php`, which defines all ten branding names with their defaults. `unreadable(null)` means *read the constant*, and in
+this process the constant is present and usable, so the check passes for a different
+reason than its label gives. The mutation runner found it by deleting the branch the
+label claimed to cover and watching nothing happen.
+
+A `define()` cannot be undone, so that branch is unreachable from any check in a process
+that has loaded `config.php` — and it is not a hypothetical branch. Every installation
+whose generated `branding_config.php` predates the setting has no `STORE_TIMEZONE` at
+all, which is all of them until somebody saves the Settings form, which is what the live
+sign is running today.
+
+So `inFreshProcess()` in `tools/test_fixture.php`: run a snippet in a PHP process that
+has loaded nothing, and read what it printed. Three checks that no in-process check could
+make — with nothing configured there is nothing to report and the zone is the documented
+default; `StoreClock::load()` really does read the generated file, which is its only
+statement and was previously unobserved; and the no-argument form really consults the
+constant rather than answering from its own default parameter. The old check keeps its
+place with a label that says what it tests. It is worth having. It was not worth what it
+claimed.
+
+Deliberately narrow: the snippet requires what it needs and echoes one string, and
+nothing in there builds a database. The rules worth reaching this way are the pure ones
+that read a constant.
+
+#### Almost every surviving mutant is `===` → `==`, and that is about the floor
+
+Twenty-three survivors remain across the six modules taken to completion. Sixteen are a
+strict comparison relaxed to a loose one, and they survive because **on PHP 8 the two
+cannot differ** for the values that reach them: `'0' == ''` is false since 8.0, and so is
+`0 == 'admin'`. On 7.x both were true. So `$user['role'] == 'admin'` — with a role column
+that a broken session could deliver as `0` — is an equivalent mutant at the declared floor
+and a privilege escalation one version below it.
+
+That is a cost of the floor resting on a person (§4k, #51) that nothing had priced
+before: **this suite's mutation score is a function of the PHP version, and the lines it
+stops covering if the host moves are comparisons in the access module.** The right
+response is not sixteen checks pinning behaviour the language already guarantees — that
+is manufacturing exactly what #50 objects to. It is that `ServerReport::phpVersionNote()`
+is the alarm, that this paragraph says what the alarm is protecting, and that a host
+moved down to 7.x is a re-run of `tools/mutate.php` over `lib/grants.php` and
+`lib/display_request.php` before anything else.
+
+The other seven are guards whose absence is unobservable because a later line already
+refuses, and four of them are one guard: `isZone()`'s `if (!is_string($id) || $id === '')`
+survives being deleted, having its `||` turned into `&&`, having its `!` dropped and having
+its comparison relaxed — because the strict `in_array()` on the next line rejects a
+non-string and an empty string anyway. Kept for §4am's reason — the mutation surviving *is*
+the reasoning being right — and recorded here rather than left to be rediscovered by
+somebody who then deletes the guard.
+
+#### Five things wrong with the tool, and how each of them looked
+
+Worth writing down because every one reads, from outside, exactly like good news. Four
+were caught by running it. The first was caught by reading it, after four modules had
+been swept and written up — which is the honest note to end a section about measurement
+on, and the reason the table above is a run of the shipped version rather than of the one
+that produced the first draft of these numbers.
+
+- **A whole operator family generated nothing.** The token-swap loop gated on a list of
+  token ids it expected to see, and the list left out `T_BOOLEAN_AND` and
+  `T_BOOLEAN_OR` — so `&&`→`||` produced no mutants at all while sitting in the operator
+  table above, fully implemented, looking present. **A missing operator is invisible from
+  the report**, because a report only ever shows what was generated: a module with no
+  connective mutants reads as a module with no connectives in it. `lib/layout_rules.php`
+  alone has 21 of them. The gate is gone; the swaps match on the token's *text*, which
+  is safe because none of them can be anything else — `and` and `or` are reserved words,
+  and a string holding `&&` carries its quotes in its token text.
+
+- **It graded its own subject's output.** The runner classified a mutant as INVALID by
+  grepping the run's output for "syntax error" — and the suite echoes the label of every
+  check it passes on the way, one of which is about a branding config with a syntax error
+  in it. The fix is to lint the mutant with `php -l` before running it and to anchor the
+  KILLED patterns to the start of a line.
+- **Commenting out a line can close PHP.** The statement-deletion operator originally
+  put `// ` in front of the line. The sanitiser's first statement is a regex matching a
+  `<br />` tag, and a question-mark-greater-than inside it ends the PHP block *from
+  inside a comment* — so that operator graded the one file #49 had measured by hand as
+  INVALID and silently stopped mutating it. The removed line is now replaced by a block
+  comment holding nothing of the file's own. The same trap is why `lib/markup.php`'s
+  header writes short-echo tags as `{{ … }}`, and why this bullet does not spell the
+  sequence out either.
+- **It read English prose as SQL.** The scoping-predicate operator matched ` WHERE `
+  case-insensitively, and `HttpReply`'s message about damaged text contains the sentence
+  *"a replacement character where the bad bytes were"* — so it produced a mutant that
+  mangled an admin's message and filed it on the survivor list as an uncovered scoping
+  predicate. A finding that is the tool's own grammar is worse than no finding: it is a
+  real-looking entry somebody will work through. It now requires upper case *and* a
+  statement keyword beside it, which is the same argument `check_invariants.php` makes
+  about `NOW()`: every SQL keyword in this repo is upper case.
+- **`lib/markup.php` produced no mutants at all.** Every statement in it is a `return`,
+  which the deletion operator excludes on purpose, and its two guards are multi-line
+  blocks rather than the one-line form. A file the tool cannot mutate reads from outside
+  exactly like a file with perfect coverage — #50's own complaint, pointed at the
+  instrument instead of the suite. That is what the whole-`if`-block operator is for, and
+  it immediately produced the mutant worth having: `ENT_QUOTES & ENT_SUBSTITUTE` is `0`,
+  and `htmlspecialchars($v, 0)` leaves both quote characters alone, which is the defect
+  the module exists to prevent written as one character.
+
+#### The other half: five invariants with no automated check
+
+Four are mechanised and the fifth is halved. Each was on that list for a stated reason,
+and three of those reasons turned out to be about the *pattern* rather than about the
+question:
+
+- **`canvas_elements`** was listed as undecidable because the API action
+  `get_canvas_elements` is indistinguishable from the table. It is one lookbehind apart
+  from it. Everything else that made the grep noisy was prose in eight files, which the
+  checker already drops. Now an exact rule over three files: the store that owns every
+  statement, the convergence that shapes the table, and the one catalogue entry naming it
+  as a column this database should have.
+- **`STORE_TIMEZONE`** was listed because a page naming it as the key of a save looks
+  identical to a page reading it. True of the *quoted* name — and the rule is not about
+  the quoted name. One module reads the setting and reads it through
+  `constant(self::SETTING)`, so the **bare** constant is spelled nowhere in the repo at
+  all. That is now a rule expecting no matches anywhere, which is stronger than the
+  by-eye version, plus a second rule holding the quoted spelling to the three files
+  entitled to it. A bare `STORE_TIMEZONE` in an expression is an undefined-constant Error
+  on whichever page did it, on every installation that has not saved the Settings form.
+- **`grants_accounts` / `grants_displays`** was listed because it is about a form's shape
+  rather than about which files match — which is a limit of the checker's rule format, not
+  of pattern matching. Written out longhand instead: each name must appear as a hidden
+  input, which is the declaring, *and* as a `$_POST` read, which is the acting on it, and
+  nowhere outside `admin_panel.php`. One without the other is §4s back — a form declaring
+  an axis nothing reads, or a save trusting an axis nothing drew.
+- **`ensureSignageSchema()`'s position** was listed as a thing a pattern cannot see. The
+  §5 note is right that the position is the invariant and wrong that it is undecidable —
+  though the obvious mechanical form, a line-number bound, would have been wrong too:
+  `api.php` legitimately converges at line 128, after the upload-limit and CSRF gates,
+  because those send a reply and stop. What must hold is that the call comes before any
+  transaction could exist, and every transaction in this app is held by one of three
+  use-case modules reached through a store — so the check is that the call precedes the
+  first *mention* of any store or use case in the file. Decidable, and stricter than
+  counting lines.
+- **`ErrorPolicy::report` callers** keeps the half that is a judgement. Whether a new
+  caller can fire repeatedly on a condition the app expected, and therefore needs a
+  window, is a reading of that call site and no pattern will do it. What was not
+  mechanical and now is: *noticing*. A fourth caller used to be invisible; it now fails a
+  check and has to be read before it lands.
+
+The list printed at the bottom of every run is shorter and deliberately not empty. Five
+entries, three of which are about instruments this repo does not have — a browser, a
+database that lags the repo, an automated sweep — and one of which is the mutation runner
+itself, named there so that "can this check fail?" has a place on the page rather than
+being a thing somebody remembers.
+
+**The two written longhand were held to invariant 30 the way the rest of this pass was**,
+which for a check inside `check_invariants.php` means breaking the app rather than a
+module: renaming `name="grants_accounts[]"` in the grant form fails it with *"never
+declares grants_accounts as a hidden input, so the save cannot know which rows were on the
+page"*; renaming the `$_POST` read fails it the other way; moving `crud.php`'s
+`ensureSignageSchema($pdo)` below its `DisplayStore` fails the position check with the two
+lines and the two line numbers. The two new file-set rules were checked the same way, by
+putting a bare `STORE_TIMEZONE` and a `canvas_elements` query into `help.php` and watching
+both go red. Each break was reverted; the point of doing them is that the alternative is
+five more `ok` lines nobody has seen move.
+
+#### And the HTML comments #44 left behind
+
+`codeWithoutComments()` dropped PHP comments and not HTML ones, so an `<!-- … -->`
+explaining why a line no longer calls `strtotime()` failed invariant 28 against the
+sentence explaining why the rule holds. #44 hit it, wrote its note in the other syntax,
+and left the fix here because what to do about PHP embedded inside an HTML comment
+changes what every rule sees.
+
+**The answer is that an HTML comment holding PHP is code and stays.** A comment is
+dropped only when it opens and closes inside one `T_INLINE_HTML` token, which is exactly
+the case where nothing in it executes. Write `<!-- the price is {{ Markup::text($p) }} -->`
+and the `<!--` and `-->` land in two different tokens with a live call between them: that
+call runs, its output reaches the page inside a comment a browser hides, and a rule about
+it must still see it. Dropping the span between the two tokens would blind every rule to
+whatever a page hid that way, which is the one outcome worse than the false positive this
+fixes. The unterminated halves need no decision — the pattern does not match them, so
+they stay as the HTML they are.
+
+Measured rather than asserted: 93 HTML comments across four files now drop out, and all
+of the rules match exactly the files they matched before. The repo has no HTML comment
+today whose text collides with a rule. The fix is for the next one, and for the note #44
+had to write in the other syntax to avoid it. Three checks in the checker pin all three
+behaviours, because both halves fail silently and the function decides what every rule
+can see.
+
+#### What is left, named rather than left to be assumed
+
+- **Eighteen of twenty-six `lib/` modules have not been swept.** The eight were chosen by
+  stake — the access module, the two escaping doors, the resolution seam, the sanitiser,
+  the reply door, the upload ceiling, the newest module — and the rest are a command each.
+  `lib/layout_rules.php`, `lib/layout_store.php`, `lib/displays.php` and `lib/accounts.php`
+  are the four worth doing next, in that order, because each is a module where a wrong
+  answer empties a sign or hands somebody a Display. This is the one place where "#50 is
+  done" would be an overstatement: the *instrument* is done and the sweep is a standing
+  activity, which is what makes it a rule (invariant 30) rather than a task.
+- **The sweep is not a gate and should not become one.** `lib/layout_rules.php` alone
+  generates 187 mutants, half an hour of runs. CI running that per push would buy less
+  than the ten seconds the suite already costs.
+- **`N → N+1` on a large constant is a weak finding.** `MAX_BYTES` moving by one byte and
+  a canvas limit moving by one pixel survive because nothing pins those boundaries, which
+  is true and nearly always fine. The boundary worth pinning is the small one —
+  `Color::describe()`'s twenty characters, `openable()`'s count of one — and those are now
+  pinned.
+- **The harness cannot see a deprecation.** `error_reporting()` excludes `E_DEPRECATED`,
+  so the `diagnostic` grade is blunter than it looks, and PHP 8.4 raises one in
+  `lib/color_audit.php` that the 8.2 floor does not. Not #50's to fix — recorded because
+  the tool's own grading depends on it.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
@@ -4424,6 +5318,17 @@ node tools/selftest_viewer.js            # viewer.php's poll loop, against a fet
                                          # hour of them (§4af)
 ```
 
+And one that is not a gate, because it takes minutes rather than seconds — run it over
+what you changed, before you decide the checks you wrote are worth their lines:
+
+```
+php tools/mutate.php lib/whatever.php    # break that file one way at a time and run the
+                                         # suite each time. A mutant the suite still
+                                         # passes is a line no test can fail on, which is
+                                         # invariant 30 and §4aq. `--list` shows what it
+                                         # would break without running anything
+```
+
 And, with a MySQL to point at — the same suite, with nothing stubbed:
 
 ```
@@ -4436,16 +5341,34 @@ gone, and twenty-three further checks run that SQLite cannot be asked — see §
 Eight of those are the publish collision (§4ab), which needs two database sessions
 and so cannot exist on an in-memory fixture at all.
 
-**The greps below are what `tools/check_invariants.php` automates.** They are kept
-here because the annotations are the reasoning, and because five of them cannot be
-decided by pattern and are still yours to read: `canvas_elements` (the endpoint
-name `get_canvas_elements` is indistinguishable from the table), `ErrorPolicy::report`
-callers (a new one is allowed but has to be read for whether it can repeat),
-the *position* of `ensureSignageSchema()` calls, and the `grants_accounts` /
-`grants_displays` pairing. The checker prints that list on every run so nobody
-mistakes it for total coverage. `schema.sql` against `lib/schema.php` used to be a
-sixth; the MySQL run now asserts convergence has nothing left to do against a
-database built from that file, which is the same property mechanised.
+**The greps below are what `tools/check_invariants.php` automates.** They are kept here
+because the annotations are the reasoning, not because anybody has to run them.
+
+**Five of them used to be on a by-eye list at the bottom of that file, and four are
+mechanised as of #50** — `canvas_elements` (one lookbehind apart from the API action of
+the same name), `STORE_TIMEZONE` (two rules: the bare constant is read nowhere at all,
+and the quoted name belongs to three files), the `grants_accounts` / `grants_displays`
+pairing (written out longhand, since it is about a form's shape rather than which files
+match), and the *position* of `ensureSignageSchema()` (before the first mention of any
+store or use case, which is stricter than a line-number bound and is why `api.php`
+converging at line 128 is correct). `ErrorPolicy::report` keeps the half that is a
+judgement: the caller *set* is checked, so a fourth cannot land unnoticed, but whether a
+new one can repeat on its own is a reading of that call site. `schema.sql` against
+`lib/schema.php` came off the list earlier — the MySQL run asserts convergence has
+nothing left to do against a database built from that file, which is the same property
+mechanised. §4aq has how each was decided.
+
+The list the checker prints on every run is now five entries of a different kind: things
+no grep settles because the instrument does not exist here — a browser, a database that
+lags the repo — plus the mutation runner, named there so that *can this check fail?* has
+a place on the page.
+
+The checker's own reading of a file gained a rule with #50: it drops **both** kinds of
+comment, having dropped only PHP ones before. An `<!-- … -->` explaining why a line no
+longer calls `strtotime()` used to fail invariant 28 against the sentence explaining why
+the rule holds. An HTML comment holding PHP is code and stays — see §4aq for why that is
+the only safe direction, and for the measurement that all the rules match the same files
+afterwards.
 
 ```
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
@@ -4523,13 +5446,42 @@ grep -rn "csrf_token" login.php               # twice: the hidden input the form
                                               # or a request with no token can still run somebody's
                                               # failed-attempt counter up to the lockout (§4v)
 grep -rEn "\bdate\('Y-m-d" --include=*.php lib/  # must be empty — the word boundary matters, or every
-                                              # gmdate() matches too. Every *stored* moment in lib/ is UTC,
-                                              # written with gmdate() and read back with a ' UTC' suffix.
-                                              # Local wall-clock is not monotonic: the autumn fall-back
-                                              # replays an hour, and both the edit lock (§4t) and the login
-                                              # lockout (§4v) compare stored moments as absolute. Plain
-                                              # date() is fine for *printing* one — `\bdate(` alone finds
-                                              # the three that do, and all three are words for a person
+                                              # gmdate() matches too. Every *stored* moment is UTC,
+                                              # written with gmdate() and read back through
+                                              # StoreClock::epochOf(). Local wall-clock is not monotonic:
+                                              # the autumn fall-back replays an hour, and both the edit
+                                              # lock (§4t) and the login lockout (§4v) compare stored
+                                              # moments as absolute
+grep -rn "strtotime(" --include=*.php .        # lib/store_clock.php and the self-test, and nothing else —
+                                              # invariant 28. A bare 'Y-m-d H:i:s' is read in the *process*
+                                              # zone, so the ' UTC' suffix is the whole rule; it was written
+                                              # out three times and the third copy left it off, and the two
+                                              # that were right are what made the third invisible (§4ap).
+                                              # The suite calls it both ways on purpose, the second to
+                                              # assert reading a stamp as local time is still hours out
+grep -rn "date_default_timezone_set(" --include=*.php .  # lib/store_clock.php and the self-test.
+                                              # config.php calls StoreClock::apply() and does not name the
+                                              # function, which is the shape of the rule; tools/ moves the
+                                              # process clock about to prove that what is *stored* does not
+                                              # depend on where it is set. A second file setting it is a
+                                              # second answer to "what time is it in the shop", and the
+                                              # pages that disagree are the ones nobody compares side by side
+grep -rn "CURRENT_TIMESTAMP\|NOW()" --include=*.php .   # the created_at/updated_at column DEFAULTS in
+                                              # lib/schema.php and the fixture, plus prose in four files.
+                                              # **No statement may ask the database for the time**: that is
+                                              # MySQL's session zone, a third clock beside PHP's and the
+                                              # store's, and recordPublish() was the one that did — so a
+                                              # refused publish named an hour off by the difference between
+                                              # two zones nobody had set (§4ap). db_connect.php asks the
+                                              # connection for +00:00 so the column defaults above land in
+                                              # the frame everything else is written in
+grep -rn "STORE_TIMEZONE" --include=*.php .   # lib/branding.php holds the name and its default;
+                                              # lib/store_clock.php is the only *reader*, through
+                                              # StoreClock::SETTING, so even that is one spelling;
+                                              # admin_panel.php names it as the key of a save, not as a
+                                              # value it draws with, which is exactly the distinction §4ai
+                                              # draws for the BRAND_* names. A page *reading* it has its own
+                                              # opinion about what an unusable stored zone means
 grep -rn "closed_at" --include=*.php .        # lib/accounts.php, schema.sql's DDL, the fixture,
                                               # lib/schema.php's ALTER (§4v — it used to be an ungated
                                               # one on every admin-panel load), lib/server_report.php
@@ -4540,6 +5492,15 @@ grep -rn "closed_at" --include=*.php .        # lib/accounts.php, schema.sql's D
                                               # AccountStore::isClosed() instead
 grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?displays`?" --include=*.php .  # lib/displays.php + schema.php's ALTERs
 grep -rn "INTO display_permissions\|FROM display_permissions" --include=*.php .  # only lib/grants.php, plus tools/
+grep -rn "holdsASign(\|NO_SIGN_REFUSAL" --include=*.php .  # lib/grants.php declares both — the
+                                              # predicate and the one sentence its refusal is worded
+                                              # in — and crud.php and api.php are the two doors, which
+                                              # must BOTH appear and appear together. A door holding
+                                              # the predicate and wording its own refusal is one rule
+                                              # met twice in different English, which reads as two
+                                              # different problems. These two writes are the only ones
+                                              # in the app that no Display scopes, so they are the only
+                                              # ones the resolution seam cannot cover — invariant 29
 grep -rn "grants_accounts\|grants_displays" --include=*.php .  # admin_panel.php only, and BOTH names must
                                               # appear twice — once as a hidden input in the grant form,
                                               # once being read. The form declares both axes of the matrix
@@ -4731,42 +5692,46 @@ grep -rn "BRAND_NAV_BG\|BRAND_NAV_BORDER\|BRAND_ACCENT\|BRAND_TEXT" --include=*.
                                               # a value safe — §4ai
 ```
 
-**Three of the checks are not greps and cannot be written as one**, so they live only
-in `tools/check_invariants.php`: whether an escaped value lands inside a `<script>`
-(the same call is right or wrong depending on the element, and a regex looking for
-`<script` is fooled by `admin_panel.php` mentioning one in a PHP comment — only
-`T_INLINE_HTML` may move that state); whether every echo on a page is one of the five
-shapes safe by construction; and whether a class constant's *declared value* is a
-number. All three read the token stream.
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3500 lines of it.
-Anything touching that file needs reading, not linting. `node --check` over the
-extracted `<script>` body proves it parses; the three node suites go further and *run*
-it, each under a different premise about who is at the keyboard.
-`selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only page
-emits, which is the only automated way to catch a lookup reaching for a control the
-lock took away. `selftest_builder_uploads.js` takes the opposite premise — an admin
-who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the only
-way to see a missing `.catch()`: the file parses perfectly without one.
-`selftest_builder_editing.js` takes the third and least dramatic — an ordinary good
-day — and is where a control that quietly does less than it says gets caught, because
-nothing about that shows up as an error anywhere (§4x). Its DOM is the one that has to
-genuinely work: `classList`, `appendChild` and `querySelector` are all real, since a
-no-op `classList` passes every check about a class without the code existing.
+**Six of the checks are not greps and cannot be written as one**, so they live only in
+`tools/check_invariants.php`: whether an escaped value lands inside a `<script>` (the
+same call is right or wrong depending on the element, and a regex looking for `<script`
+is fooled by `admin_panel.php` mentioning one in a PHP comment — only `T_INLINE_HTML`
+may move that state); whether every echo on a page is one of the five shapes safe by
+construction; whether a class constant's *declared value* is a number; whether the grant
+matrix declares both of its axes and saves by the ones it declared; whether every entry
+point converges before anything that could hold a transaction is so much as named; and
+three that are about the checker's own reading of a file rather than about the app —
+what `codeWithoutComments()` drops decides what all the other rules can see, so both
+directions of that are asserted (§4aq).
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3400 lines of it.
-Anything touching that file needs reading, not linting. `node --check` over the
-extracted `<script>` body proves it parses; the three node suites go further and
-*run* it. `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only
-page emits, which is the only automated way to catch a lookup reaching for a control
-the lock took away. `selftest_builder_uploads.js` takes the opposite premise — an
-admin who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the
-only way to see a missing `.catch()`: the file parses perfectly without one.
-`selftest_builder_colors.js` takes a third — an admin opening a Display whose stored
-data is already wrong — and is the one place where the *stub itself* is load-bearing:
-its `style` is a Proxy that discards an unparseable colour and normalises a parseable
-one, exactly as the CSSOM does. A stub that stored whatever it was given would make
-that whole suite pass against the defect it exists for, so the fidelity of the stub
-is asserted before anything is asserted through it.
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3100 lines of it inside a
+4100-line file. Anything touching that file needs reading, not linting. `node --check`
+over the extracted `<script>` body proves it parses; the **five** builder suites go
+further and *run* it, each under a premise the others cannot hold.
+
+- `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only page
+  emits, which is the only automated way to catch a lookup reaching for a control the
+  lock took away.
+- `selftest_builder_uploads.js` takes the opposite premise — an admin who can edit
+  everything — and drives a stubbed `XMLHttpRequest`, which is the only way to see a
+  missing `.catch()`: the file parses perfectly without one.
+- `selftest_builder_colors.js` takes an admin opening a Display whose stored data is
+  already wrong, and is the one place where the *stub itself* is load-bearing: its
+  `style` is a Proxy that discards an unparseable colour and normalises a parseable one,
+  exactly as the CSSOM does. A stub that stored whatever it was given would make that
+  whole suite pass against the defect it exists for, so the fidelity of the stub is
+  asserted before anything is asserted through it.
+- `selftest_builder_editing.js` takes the least dramatic premise — an ordinary good day
+  — and is where a control that quietly does less than it says gets caught, because
+  nothing about that shows up as an error anywhere (§4x). Its DOM is the one that has to
+  genuinely work: `classList`, `appendChild` and `querySelector` are all real, since a
+  no-op `classList` passes every check about a class without the code existing.
+- `selftest_builder_undo.js` takes the fourth: the last thing they did was not what they
+  meant. It round-trips the canvas through snapshot and restore and drives every
+  mutating control to prove each one leaves a step (invariant 27).
+
+`selftest_viewer.js` is the sixth suite and is not about the Builder at all — it is a
+Screen whose server has stopped answering, or whose blocks have nothing in them.
 
 `schema.sql` has no automated check at all — nothing reads it, so a column missing
 from it fails silently on a future rebuild and nowhere else. Diff it against

@@ -70,7 +70,7 @@ written down rather than remembered:
 | 30 | Wrong-shaped and absurd values were coerced and written rather than refused. | Refuse the publish. | **Done** | §4ab |
 | 31 | Two blocks sharing a temporary id silently reparented one of them into the wrong section. | Refuse the publish. | **Done** | §4ab |
 | 32 | Line height was stored with a thousands separator, so some values could not be read back. *(First framed as a prices problem. It never touched prices — no sign has ever shown a stray comma.)* | Clamp it to 0.5–5 and store it plain. | **Done** | §4ab |
-| 33 | An account with no signs assigned could still write the shared asset library and upload files. | Nothing until it has a sign. | Open | — |
+| 33 | An account with no signs assigned could still write the shared asset library and upload files. | Nothing until it has a sign. | **Done** — one predicate (`Actor::holdsASign()`) and one sentence, on the two doors that no Display scopes: the Library's add form and the API's image upload. Both refuse before `move_uploaded_file()`, which cannot be undone. It is the **grant** axis and not `openable()`, so a sign switched off for the afternoon does not quietly take its clerk's library access away on another page — and the refusal's wording stays true of everybody it refuses. Reads are deliberately untouched: the library still lists, because staff get asked to look things up and a page that will not say what is in it cannot explain what it refused. Found next door and fixed with it: the edit form was drawn for anybody who typed `?edit_id=`, which put the new notice one query parameter away from an editor. | §4ao |
 | 34 | A file bigger than the server's real limit was reported as a security problem. | Detect it and say so plainly. | **Done** | §4n |
 | 35 | A publish that collided with another died as a PHP timeout before it could reach its own clean message. | Give up on the collision sooner, and report it properly. | **Done** | §4ab |
 | 36 | The branding file was written in place with no locking, so a short write took the whole app down. | Write a temporary file, then swap it in. | **Done** | §4y |
@@ -81,12 +81,12 @@ written down rather than remembered:
 | 41 | An unreadable stored colour round-tripped through the colour picker and published back as black. | Validate on the way in and on the way out. | **Done** — taken with #21. Out: the Builder keeps a stored colour it cannot read instead of publishing `#000000` over it, and says so in the inspector. In: the publish path refuses one and names the block. **Since:** refusing at the door made the rows already stored worse to hold — one of them makes its Display refuse every publish — so `tools/audit_colors.php` finds them, read-only, against the live database. It also turned up a third case with no refusal in front of it at all: a hand-edited `block_styles` colour renders on every sign, because BrandStyles cleans on the way in and not on the way out. | §4ac |
 | 42 | Six smaller Builder rough edges: section minimum size measured in screen pixels, Fit cannot fit a very large canvas, no way to unhide a section, deleting a slide field cannot be undone, marquee "Transparent" loses the colour, and dead code. | All six. | **Done** | §4al |
 | 43 | Deleting an account wrote to three tables with no transaction, going around the owning module. | All-or-nothing, through the module. | **Done** — settled by #20: closing is one transaction in `AccountAdmin`, and no `DELETE FROM users` exists anywhere. | §4l |
-| 44 | Nothing set a timezone, so "editing since 2:15pm" followed whatever the host's `php.ini` happened to say. | A store timezone setting on the Branding page. | Open | — |
+| 44 | Nothing set a timezone, so "editing since 2:15pm" followed whatever the host's `php.ini` happened to say. | A store timezone setting on the Branding page. | **Done** — the setting is a tenth `branding_config.php` entry, on the Settings tab rather than beside the four colour pickers, and it takes a zone *name*: `+08:00` and `PST` both build a valid `DateTimeZone` and are both wrong for half the year, which is this same defect with a smaller error bar. There were **three** clocks, not one — PHP's process zone, which the host sets to `America/Chicago`; MySQL's session zone, which `CURRENT_TIMESTAMP` used and nothing had ever set, so the same machine's Central; and the store's, nowhere in the repo. **Fixing one of them is not a partial fix, it is a new bug:** the first two agreeing is what made the missing `' UTC'` in `lastPublishDescription()` cancel out exactly, so setting either clock alone turns a uniform two-hour error into a five-hour one in the sentence a refused publish prints. That missing suffix is the defect nobody had asked about — the rule "a stored moment is UTC" was written out three times and the third copy left it off, latent, in the one sentence that names whose work is about to be walked over. Reading a stamp is one place now (invariant 28). **Corrected after the fact:** the write-up first said the host set nothing and therefore ran on UTC, making the error seven hours. It was two. That was an assertion about a machine nobody had looked at, which is #51's lesson recurring in a different item's write-up; the host was read on 2026-08-11 and §4ap records it with its provenance. | §4ap |
 | 45 | The sign itself printed "Carousel — no slides added yet" where a customer could read it. | Draw nothing. | **Done** — and it was two blocks, not one: `renderTable()` printed "Table — no data" over a grey panel drawn to hold it, and both are closed. Drawing nothing loses no warning, because the Builder already labels the same blocks `↻ Carousel — 0 slides` and `⋞ Table — 0 cols, 0 rows` on its own canvas — the surface the author is actually looking at. A second pass then took the two cases that are the same defect in colour rather than in English: a marquee with no text painted a solid `#c0392b` bar and scrolled an empty span along it, and a carousel slide with no image filled its image well with `#1a1a2e`. A third took the last two, where the ink was the browser's rather than the page's — an **image** with no file is a *broken* image, not an absent one, and an empty `<video>` is a rectangle whose colour the browser picks. All five block types draw nothing now. The Builder gained a `'Video'` placeholder in the same pass, because that block had nothing on either surface. | §4ag |
 | 46 | Deployment step 3 had no do-not-overwrite list, so re-uploading reverted live branding and restored `setup.php`. | Write down what to skip. | **Done** | §4z |
 | 48 | The test database differs from MySQL in twelve ways, including row locking stubbed out entirely. | Test against real MySQL as well. | **Done** | §4aa |
 | 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | **Done** — measured rather than asserted, which was the whole of the item. `plain_text.php` went from 2 of 17 mutations killed to **17 of 17**; `schema.php` from 43 of 67 to **65 of 67**, the two survivors being equivalent mutants named in §4am. Most of what lived was in the four convergence *steps*, the only part that touches rows rather than structure: either backfill's `WHERE` clause could be deleted in silence, and one of those hands every sign's layout to the drive-thru Display. Writing the checks also turned up a live bug, and once it was somebody's to decide it was fixed: `strip_tags()` deleted from a typed `<` to the end of a value, so `Kids <12 eat free` was stored as `Kids` (§4am). `schema.php`'s MySQL-only statements are covered by **#48's** second leg rather than by a mutant of their own. | §4o, §4aa, §4am |
-| 50 | About 29 checks in the suite could not fail, and five invariants had no automated check at all. | Replace the hollow ones, and cover the missing rules. | Open — the harness itself was hardened so a suite that stops early now fails, but the 29 have not been swept. | — |
+| 50 | About 29 checks in the suite could not fail, and five invariants had no automated check at all. | Replace the hollow ones, and cover the missing rules. | **Done**, and the first half deliberately not as written. The 29 was a hand count from a two-hundred-check suite that is 1778 checks now, so a recount by hand would have been stale by the next merge — what shipped is `tools/mutate.php`, which breaks one line of a file at a time and reports whether any check notices, plus **invariant 30**: a check ships having been *seen* to fail. Nine modules swept so far, of twenty-six. `lib/grants.php` — the module answering "may this account reach that sign" — had ten lines nothing stood over, including a session with no id falling back to a number one digit away from the admin's, and both axes of the grant matrix returning whatever they liked; `Color::describe()`, the sentence a refused colour shows, had ten of thirteen mutants survive. One genuinely hollow check was found and corrected rather than deleted: §4ap's "an absent setting is not something to report" ran in a process where the setting was present, because a `define()` cannot be undone — `inFreshProcess()` is the instrument that reaches the other branch. The five by-eye invariants: four mechanised, the fifth halved (a new `ErrorPolicy::report` caller can no longer land unnoticed; whether it can repeat is still a reading). Also fixed the thing #44 left here — the checker now drops HTML comments, and an HTML comment holding PHP is code and stays. | §4aq, §4am |
 | 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | **Done** — both halves, the version one on the third attempt. *Running:* CI now runs the greps (`tools/check_invariants.php`), the rehearsal, all six node suites and the MySQL self-test, so three of §5's four pre-push steps no longer depend on somebody remembering. *Version:* **the store owner stated it — PHP 8.2, 2026-08-10** — and the floor is 8.2 on that basis, so CI's pin enforces the target instead of accepting everything the target forbids. Twice before, this was recorded as closed on evidence that could not exist: a branch cited Settings → This Server, which ships with the undeployed build (#46's probe found `lib/` answering 404), and Cloudflare hides the version from every header. The difference now is a source — a person, dated — rather than a screen that does not run. Still not something this repo has *observed*, so confirming it on that screen is a deploy-day step and `ServerReport::phpVersionNote()` is the alarm if the host is moved or downgraded. Note the risk changed direction: guessing low only forwent syntax, where a declared floor that is wrong is a parse error, and that is a blank sign rather than a message. | §4aa, §4k |
 
 The **`<` bug** (§4am) has no number either, because the audit did not find it —
@@ -108,13 +108,39 @@ on it was reopened: what changed is the premise, not any item's status.
 
 ## Where this stands
 
-**47 done, 3 open** — counted off the Status column above, which
+**50 done, 0 open** — counted off the Status column above, which
 is 50 rows because there is no #47. The 51st item is the unnumbered policy named at
 the top; it has no row and therefore no status, and two branches counting the same
 table have each quietly folded it into a different total. It is counted here as
-neither. The count was recounted from the table at the merge rather than carried
-across from either side: both branches had been adding to it independently, and
-both totals were right about their own half and wrong about the whole.
+neither. The count is recounted from the table on every merge rather than carried
+across from either side: when #33 and #44 merged, both totals were right about their
+own half and wrong about the whole.
+
+**The list is closed, which is a smaller claim than it sounds and worth stating in the
+smaller form.** Every numbered item from the adversarial audit has been answered. What
+that does *not* mean:
+
+- **Nothing on this list was ever the browser.** `docs/work-lanes.md` lane 0 is still
+  first and still cannot be done from here: four commits of `builder.php` have never been
+  rendered by one, `interact.js` is un-run by any suite (§4al), and #44 added two things
+  only a live page can confirm. A list of closed audit items is not a walked application.
+- **#50 closed by becoming a rule.** Its first half asked for a hand count to be swept,
+  and what shipped is the instrument that makes the question answerable per file, plus
+  invariant 30. Six of twenty-six `lib/` modules have been swept; the other twenty are a
+  command each, and running that command is now part of writing a check rather than a
+  task somebody finishes. Reading this line as "coverage is done" is the exact mistake
+  #50 was filed about.
+- **The two-numbering traps and the merge rules above still apply**, because the next
+  change to this app is not an audit item and will still touch the three files every
+  branch touches.
+
+**The #33/#44 merge is why that last sentence is now a rule and not just good practice.**
+Both branches were cut from a base with three items open and each closed one, so each
+correctly wrote `48 done, 2 open` — and an identical change on both sides of a merge is
+not a conflict, it is agreement. Git merged the line clean, and nothing in the standing
+gates reads it. A wrong total here does not announce itself the way a wrong invariant
+number does, so recount from the table on **every** merge, whether or not this file
+conflicted. `docs/work-lanes.md` item 4 holds the one-liner.
 
 #48 and #51 were taken together because they are the same subject — what the tests run
 against, and whether anybody runs them. Both are Done, and **#51's version half is the
@@ -245,17 +271,36 @@ a commit leaves it danglable, so a bare sha in a document is a promise that expi
 **The `claude/` branches are still there.** Retiring them was meant to be a rename, and
 only the first half of it could be done from the session that wrote this: these
 credentials may create `refs/heads/*` but not delete a ref, and not create
-`refs/tags/*` at all. So each of the three currently exists twice, which is worse than
-either intended state. Finishing it is one command with rights this session lacks:
+`refs/tags/*` at all. So each of the three with a twin currently exists twice, which is
+worse than either intended state. The delete has since been attempted from a later
+session and refused the same way — `HTTP 403`, nothing removed — so this is a standing
+limit of the automation rather than one session's bad luck. It needs a terminal with the
+owner's own credentials, or the branch list in the GitHub web UI, which offers a Restore
+button afterwards.
+
+**Don't work from a list of names here; ask git.** The list this section carried for its
+first two revisions named three branches, and by the time anybody read it there were
+sixteen `claude/*` refs. A written list of branches goes stale the week it is written,
+and the stale version reads exactly like the current one. The mechanical question is
+whether a ref adds anything to `main`:
 
 ```
-git push origin --delete claude/issue-28-l1comq \
-                         claude/open-issues-count-hub0pv \
-                         claude/app-db-domain-testing-h0ulyg
+for b in $(git for-each-ref --format='%(refname:short)' refs/remotes/origin \
+           | grep -v 'origin/main$'); do
+  git merge-base --is-ancestor "$b" origin/main \
+    && echo "MERGED   $b" \
+    || echo "ahead by $(git rev-list --count origin/main..$b)   $b"
+done
 ```
+
+Anything it prints `MERGED` for is an ancestor of `main` — its every commit is already
+reachable, and deleting the ref removes nothing. **Nine of the sixteen were in that
+state** when this was written, which is why counting branches had made the cleanup look
+larger than it was. What is left over needs a reason, and every one of them has a row
+below or in the section after it.
 
 A tag would say "not a line of development" more clearly than a branch does. Convert
-the three `retired/*` refs if you have the rights; the shas above are what they point
+the `retired/*` refs if you have the rights; the shas in the table are what they point
 at either way.
 
 | Branch | Tip | Why it was closed |
@@ -264,13 +309,22 @@ at either way.
 | `claude/open-issues-count-hub0pv` | `4214f2b` | #29–#32 in four commits where the sweep did it in one. Read closely because of that; see below. The sweep's `lib/layout_rules.php` was kept — it is a pure module, so every shape can be put through it in a test, where this branch's rules are private statics inside `LayoutStore` reachable only by attempting a publish (§4o's reason). It also reports every problem in a payload rather than the first. |
 | `claude/start-38-ysumzb` | `4822e11` | #38, both halves — a competing implementation of what `claude/issue-38-7uky0k` landed. Same two defects found, same conclusions, different modules: `LoginGate` where `main` has `LoginAttempt`, and its own `RequestScheme`, ADR-0008 and ADR-0009. `main`'s line is the pick because the work built on top of it is not on this branch — the soft CSRF check, the removal of the three `ALTER`s a bot could reach without an account, and roughly six hundred more self-test checks. Its ADR-0008 is `main`'s ADR-0008 under a different title, which is worth knowing: three branches have now claimed that number. See below for the one thing it found that `main` did not. |
 | `claude/app-db-domain-testing-h0ulyg` | `1526023` | **It was right about the floor, and the floor it argued for is now the rule.** Recorded here as closed for raising it to 8.2 on a decision rather than a measurement — its own message says so plainly — and that reasoning was rejected while the version was unverified. The owner then supplied the version and the same conclusion followed, so the disagreement was about evidence, not about the answer. Still closed rather than merged: what it did *around* the floor is not wanted. It uses `session_set_cookie_params()`'s array form alone, which below 7.3 sets nothing at all and silently drops `HttpOnly`, `Secure` and `SameSite` — `auth.php` guards that call by version instead — and it deletes `.htaccess`'s `mod_php7` hardening blocks, which is a separate decision that was not being made. Its `phpVersionNote()` design, "make a wrong floor say so", is the one on `main`. It is also the branch whose reading surfaced the both-floors-at-once contradiction. |
+| `claude/project-handoff-review-wd557c` | `bf26346` | Nothing to close and nothing to port: its one contribution is vendoring the 22 `mattpocock/skills` entries into `.claude/skills/`, and that is already on `main` byte for byte — `git diff origin/main bf26346 -- .claude/` is empty. Listed because it was on a cleanup list for weeks as a branch nobody had read, which is the same cost as a branch holding something. The commit touches no application file. |
+| `claude/remaining-issues-list-hsk3rv` | `151b2c9` | **Superseded by `docs/work-lanes.md`, and the successor disagrees with it on the one thing that matters.** A single docs-only commit, 2026-08-07, adding a seven-lane parallel map to this file. Its lane table is over items now closed and its tally (22 done, 27 open) was overtaken inside a week, so nothing in it is portable — which is itself worth noting, because it is a document that went stale in four days. Worth knowing *why* it was replaced rather than extended: it grouped by which files an item touches and concluded five of seven lanes shared no file at all. That is true of the application files, and the application files are not what decides it. `work-lanes.md` reaches the opposite conclusion about #50 for exactly that reason: #50's deliverable *is* `tools/selftest_layout.php`, the file every other lane appends to, so it is a measurement problem rather than a merge one and reads go after writes. This branch's own text saw the conflict ("every lane will also append checks… they resolve mechanically") and read it as merge friction. It is the near-miss that makes the later file's rule worth stating. |
 
 **Three things were on those branches and were not on `main`. All three have now been
 ported.** None was a competing answer to something already solved, so none was covered
-by picking. That every one of the four branches turned out to hold something is the
+by picking. That every one of the first four branches turned out to hold something is the
 finding worth carrying forward: "its items are already closed" was true each time and
 was never the same question as "it has nothing `main` lacks". If a superseded branch is
-ever closed again, read it first — this is four for four.
+ever closed again, read it first.
+
+The two rows added later are the counter-example that keeps that rule honest rather than
+superstitious: read for the same reason, both held nothing, and one of them could be
+settled by `git diff` in a second. **Six read, four held something.** The rule is "read
+it", not "expect to find something" — and the cheap mechanical checks come first, because
+an ancestor of `main` and an empty diff against `main` are both answers no reading
+improves on.
 
 - ~~**A sign-in refusal still arrives a bcrypt early.**~~ **Ported.** ADR-0008 closed the *message*
   oracle: a suspended account is refused in the same words whether or not the password

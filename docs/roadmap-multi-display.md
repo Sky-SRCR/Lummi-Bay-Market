@@ -207,6 +207,15 @@ One with more than one returns to whatever it last opened, remembered for the
 session (BUILD-REFERENCE §3). Deleting a Display or an account takes its grants
 with it explicitly, for the same reason elements are deleted explicitly.
 
+**Where "an endpoint added later inherits it" stops, found by #33 (§4ao).** The
+sentence above is true and it has a boundary the phase never stated: an endpoint
+inherits the check *by resolving a Display*, so one that names no Display inherits
+nothing. Two writes are like that, and both predate Displays — adding to the asset
+library and uploading an image, the two things the "Shared" row in Decisions above is
+about. Neither went through the seam, so neither was checked at all, and an account
+with no grant could reach both. `Actor::holdsASign()` is that question's predicate,
+beside `mayOpen()` for the same reason: one place answers "may they?".
+
 The planned `DisplayStore::editableBy()` became `Actor::openable()` instead, and
 `DisplayStore::sole()` is gone; see BUILD-REFERENCE §4d for both and the rest of
 the phase's decisions. 193 self-test checks pass, including the forged publish.

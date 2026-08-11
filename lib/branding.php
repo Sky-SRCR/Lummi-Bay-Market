@@ -2,8 +2,9 @@
 // ============================================================
 // BRANDING CONFIG — the one file this app rewrites while it is running
 // ============================================================
-// `branding_config.php` is generated PHP: eight `define()` calls holding the logo
-// path, four nav colours, the site name and the two mail-from fields. `config.php`
+// `branding_config.php` is generated PHP: ten `define()` calls holding the logo path,
+// four nav colours, the site name, the two mail-from fields, the Builder's undo depth
+// and the store's time zone. `config.php`
 // requires it and `auth.php` requires `config.php`, so it is loaded at the top of
 // every page in the app — which makes it the only file here whose *contents* are
 // edited by the running application and whose *syntax* the whole application
@@ -97,7 +98,7 @@ class BrandingWrite
 /**
  * The only writer of `branding_config.php`.
  *
- * A caller says what it is changing and nothing else. The eight settings and their
+ * A caller says what it is changing and nothing else. The ten settings and their
  * defaults live here, so the two forms in the Admin Panel — branding, and site and
  * email — no longer hand each other five values back that neither of them edited.
  */
@@ -107,8 +108,8 @@ class BrandingConfig
 
     /**
      * Every setting the generated file holds, and what the app uses when it does
-     * not hold one. The same eight names and the same eight fallbacks are spelled
-     * used to be spelled out again in `login.php`, `builder.php`, `help.php` and
+     * not hold one. The same names and the same fallbacks used to be spelled
+     * out again in `login.php`, `builder.php`, `help.php` and
      * `config.php` — four copies of one list, which is four things to change and
      * three chances to forget. `apply()` is what those four became. A name absent
      * from here cannot be stored, and does not exist as far as this app knows.
@@ -131,6 +132,17 @@ class BrandingConfig
         // `config.php` is what turns it into a number the Builder can act on, and
         // clamps it, so a hand-edit to 500 or to "five" still lands somewhere sane.
         'UNDO_STEPS'       => '5',
+        // The tenth, and here for the same reason the ninth is: it is a setting the
+        // Settings page writes, so it belongs in the file this module owns rather
+        // than in a `define()` somewhere that the next Branding save would drop.
+        //
+        // Which zone a person in the shop reads a time in (#44). Nothing set one, so
+        // every "editing since 2:15pm" followed whatever `date.timezone` the host
+        // held — nothing, on the live host, which is UTC. `StoreClock` in
+        // `lib/store_clock.php` is what turns this string into a zone, validates it,
+        // and says so when it cannot; the default there is this same value, so a
+        // config that has never held the name behaves identically to one that does.
+        'STORE_TIMEZONE'   => 'America/Los_Angeles',
     ];
 
     private $dir;
@@ -164,7 +176,7 @@ class BrandingConfig
     }
 
     /**
-     * Load the file and make sure all eight names exist.
+     * Load the file and make sure every one of the names exists.
      *
      * This is the read side, and it is one call because it used to be seven lines
      * repeated in four files — `config.php`, `login.php`, `builder.php` and
@@ -241,7 +253,7 @@ class BrandingConfig
      * `define()` of a name that is already taken raises a warning and then keeps the
      * first value — so the documented override worked while complaining about
      * itself. The guard makes it silent, and makes this file safe to load after
-     * anything else that has an opinion about the same eight names.
+     * anything else that has an opinion about the same names.
      */
     public static function render(array $values)
     {

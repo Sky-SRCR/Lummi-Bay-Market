@@ -1196,6 +1196,88 @@ checkSame(1, $grants->revokeAllForAccount($janeId), 'closing an account revokes 
 checkSame([], (new GrantStore($pdo))->displayIdsFor($janeId), 'leaving it holding nothing');
 
 // ─────────────────────────────────────────────────────────────
+section('The same grants read three ways, and the actor built from them (#50)');
+
+// Everything above this line is about whether an account may reach a sign, and it is
+// thorough about it. What `tools/mutate.php` found is that the module answering that
+// question has ten lines the suite could not fail on, and they are not the obscure
+// ones: both grouped reads could be emptied out, granting twice could stop being
+// idempotent, and a session arriving with no id could become **account 1** — which is
+// the admin. Each check here was written against a mutant and verified to fail on it,
+// which is the whole distinction #50 is about (§4aq).
+//
+// A database of its own, because the first four checks need a grant table with
+// nothing in it, and every section above has left rows in the one it was using.
+$gPdo    = newTestDb();
+$gStore  = new DisplayStore($gPdo);
+$gGrants = new GrantStore($gPdo);
+$gLobby  = makeTestDisplay($gPdo, 'lobby', 'Lobby');
+$gDeli   = makeTestDisplay($gPdo, 'deli', 'Deli Case');
+$gJane   = makeTestAccount($gPdo, 'jane', 'basic');
+
+// The two grouped reads on an installation with no grants. This is a fresh install
+// with the matrix page open, and it is the state where the *shape* of the answer
+// matters most: the panel iterates whatever comes back, so `null` and `[]` are the
+// difference between an empty table and a diagnostic above the document.
+checkSame([], $gGrants->displayIdsByAccount(), 'no grants groups by account as an empty list, not as nothing');
+checkSame([], $gGrants->accountIdsByDisplay(), 'and by Display the same way');
+
+$gGrants->grant($gLobby->id(), 2);
+$gGrants->grant($gDeli->id(), 2);
+$gGrants->grant($gLobby->id(), $gJane);
+
+// Grouped by row and by column — the two axes of the matrix the panel draws. Nothing
+// had ever asserted the contents of either, so the whole body of both loops could be
+// deleted and the suite still passed: the admin panel would have drawn an empty
+// matrix over a full table, and a save from that page reads its own checkboxes.
+$byAccount = $gGrants->displayIdsByAccount();
+checkSame([2, $gJane], array_keys($byAccount), 'every account holding a grant is a row, in account order');
+checkSame([$gLobby->id(), $gDeli->id()], $byAccount[2], 'with the Displays it holds under it');
+checkSame([$gLobby->id()], $byAccount[$gJane], 'and an account holding one holds exactly one');
+
+$byDisplay = $gGrants->accountIdsByDisplay();
+checkSame([$gLobby->id(), $gDeli->id()], array_keys($byDisplay), 'and every granted Display is a column');
+checkSame([2, $gJane], $byDisplay[$gLobby->id()], 'listing everyone who may edit that sign');
+checkSame([2], $byDisplay[$gDeli->id()], 'which is not everyone who may edit another');
+
+// The docblock on grant() says already-granted is success rather than an error, and
+// until now nothing had ever granted the same pair twice. Removing that guard leaves
+// two rows for one permission — which revoke() then removes both of, so the bug is
+// invisible from every direction except the matrix's own count.
+$gGrants->grant($gLobby->id(), 2);
+checkSame(3, count(allGrants($gPdo)), 'granting a Display an account already holds adds no second row');
+checkSame([$gLobby->id(), $gDeli->id()], $gGrants->displayIdsFor(2), 'and does not list it twice either');
+
+// ---- The actor's own fields ---------------------------------------------------
+// Who is asking, which the lock then names on a colleague's screen. `mayEdit()` and
+// `openable()` are exercised hard above; the three lines that *build* the object were
+// not exercised at all.
+$gClerk = Actor::signedIn(['id' => '2', 'username' => 'sam', 'role' => 'basic'], $gGrants);
+checkSame(2, $gClerk->id(), 'the actor carries the account id, as an int');
+checkSame('sam', $gClerk->username(), 'and the username, which is what a lock names on somebody else\'s screen');
+checkSame(false, $gClerk->isAdmin(), 'and the role it was given');
+
+// The one that would have hurt. A session missing its id falls back to a literal, and
+// the literal is 0 — no account has that number. One digit up is the id the installer
+// creates the first admin with, so the fallback would have handed a malformed session
+// the account that holds every Display by role.
+$gNoId = Actor::signedIn(['username' => 'sam', 'role' => 'basic'], $gGrants);
+checkSame(0, $gNoId->id(), 'a session with no id is account 0, which is nobody');
+checkSame(false, $gNoId->isAdmin(), 'and is not an admin');
+checkSame([], $gNoId->granted($gStore->all()), 'and holds nothing, because no grant names account 0');
+checkSame(false, $gNoId->holdsASign($gStore->all()), 'so the shared writes refuse it (#33)');
+
+// withGrants() with an empty list — the shape #33 is about, built the other way. The
+// list is normalised into a fresh array, and on an empty input that line is the only
+// thing standing between this constructor and a TypeError.
+$gEmpty = Actor::withGrants(7, 'nobody', false, []);
+checkSame([], $gEmpty->openable($gStore->all()), 'an actor built with no grants opens nothing');
+checkSame(false, $gEmpty->holdsASign($gStore->all()), 'and holds no sign');
+$gTyped = Actor::withGrants(7, 'nobody', false, [(string)$gLobby->id()]);
+checkSame(1, count($gTyped->granted($gStore->all())),
+          'and a grant list arriving as strings is folded to ints, which is what makes the strict in_array safe');
+
+// ─────────────────────────────────────────────────────────────
 section('One editor per Display: the edit lock');
 
 // Note: this section calls $layouts->publish() directly rather than publishAs(),
@@ -1940,6 +2022,371 @@ $claimed = $store->claimLock($atBoundary, 1);
 checkSame(true, $claimed->lockState()->heldBy(1), 'and it can actually be claimed at that same moment');
 
 date_default_timezone_set($tzWas);
+
+// ─────────────────────────────────────────────────────────────
+section('And a person reads it in the store\'s zone, not the server\'s (#44)');
+
+// The other half of the section above, and the half that was still open. Storage
+// being absolute is what makes the lock work; it says nothing about the sentence a
+// person reads, and that sentence followed `date.timezone` — `America/Chicago` on the
+// live host, while the store is in Washington. "editing since 2:15pm" printed 4:15pm.
+//
+// Two hours, and the checks below are deliberately not written against that number.
+// This write-up first said seven, from an assumption that the host set nothing and fell
+// back to UTC, and the host had never been looked at (§4ap). What the checks assert is
+// that three zones *disagree* about one instant and that the label follows the setting;
+// none of them would change if the host moved again, which is the only property a suite
+// can honestly hold when the machine is somebody else's.
+//
+// The whole of it is now one module, so the rules are asserted on the module rather
+// than through the four callers. The zone is a parameter with the setting as its
+// default (§4o): a `define()` cannot be undone, so the property worth checking —
+// the sentence follows the *setting* — is unreachable through the constant.
+
+// ---- What counts as a zone ------------------------------------------------------
+// A name, and only a name. The two refusals below are the substance: both build a
+// perfectly valid DateTimeZone and both are wrong for half the year, which is this
+// same defect with a smaller error bar.
+checkSame(true,  StoreClock::isZone('America/Los_Angeles'), 'a region name is a zone');
+checkSame(true,  StoreClock::isZone('UTC'),                 'and so is UTC, for a store that wants it');
+checkSame(true,  StoreClock::isZone('Pacific/Honolulu'),    'and one that has never had daylight saving');
+checkSame(false, StoreClock::isZone('+08:00'),  'a fixed offset is not — it is right for half the year');
+checkSame(false, StoreClock::isZone('PST'),     'nor an abbreviation, for the same reason');
+checkSame(false, StoreClock::isZone('America/Los Angeles'), 'nor a near miss');
+checkSame(false, StoreClock::isZone(''),        'nor nothing');
+checkSame(false, StoreClock::isZone(null),      'nor null');
+checkSame(false, StoreClock::isZone(['UTC']),   'nor a list, which is what #27 was about');
+// The one that pins the `true` flag on isZone()'s in_array, and the reason it needs its
+// own line rather than joining the four above: `in_array(true, $zones, false)` is
+// **true**, because every zone name is a non-empty string and therefore casts to true.
+// So a loose comparison would accept a boolean as a time zone. Nothing else in this
+// group can see that — null, '', a list and a float are all false under either flag —
+// which is why relaxing the flag survived every check the first pass wrote (#50, §4aq).
+checkSame(false, StoreClock::isZone(true),      'nor true, which a loose comparison would have taken');
+checkSame(false, StoreClock::isZone(1.5),       'nor a number');
+
+// ---- What a stored value means --------------------------------------------------
+checkSame('America/Los_Angeles', StoreClock::pick('America/Los_Angeles'), 'a stored zone is used');
+checkSame('Europe/London',       StoreClock::pick('Europe/London'),       'whichever one it is');
+checkSame(StoreClock::DEFAULT_ZONE, StoreClock::pick('+08:00'), 'one that is not a zone falls back');
+checkSame(StoreClock::DEFAULT_ZONE, StoreClock::pick(null),     'and so does an absent setting');
+// The default is load-bearing rather than arbitrary. UTC is exactly what an unset
+// date.timezone already gave, so a default of UTC would be this bug with a comment
+// beside it — the mutation to check is the one that looks like caution.
+checkSame(false, StoreClock::DEFAULT_ZONE === 'UTC',
+          'and the default is not UTC, which is the value the defect already had');
+checkSame(true, StoreClock::isZone(StoreClock::DEFAULT_ZONE), 'the default is itself a zone');
+
+// ---- Which values get reported ---------------------------------------------------
+// Absent is not unreadable: a config written before this setting existed simply does
+// not define it, and a notice on every screen about nothing is a notice nobody reads.
+//
+// `unreadable(null)` means "read the constant", and this process has one — `auth.php`
+// is required at the top of this file and pulls in `config.php`, which defines all ten
+// branding names with their defaults. So this check is about a *present and usable*
+// setting reporting nothing, which is worth having and is not what its label used to
+// claim. The absent case is below, in a process that has loaded nothing: it is the one
+// branch no check in here can reach, because a `define()` cannot be undone (#50, §4aq).
+checkSame('', StoreClock::unreadable(null),                  'a setting this process can use is not something to report');
+checkSame('', StoreClock::unreadable('Europe/Berlin'),       'nor is a usable one passed in');
+checkSame('+08:00', StoreClock::unreadable('+08:00'),        'a stored offset is named exactly as stored');
+checkSame('a array', StoreClock::unreadable(['UTC']),        'and a value with no sentence in it is named by type');
+checkSame('', StoreClock::unreadable(''),                    'a setting stored blank reads short rather than quoting nothing');
+checkSame('a integer', StoreClock::unreadable(0),            'and a number is named by type, like every other value with no sentence in it');
+
+// ---- The three answers a process with no config gets -----------------------------
+// Everything above runs with the constant defined, which leaves the module's other
+// branch — nothing configured at all — unreachable. That is the state of every
+// installation whose `branding_config.php` predates this setting, which is all of them
+// until somebody saves the Settings form, so it is not a hypothetical: it is what the
+// live sign is running today.
+checkSame('|America/Los_Angeles|no', inFreshProcess('
+        require LBM_ROOT . "/lib/store_clock.php";
+        echo StoreClock::unreadable() . "|" . StoreClock::zone() . "|"
+           . (defined("STORE_TIMEZONE") ? "yes" : "no");
+    '), 'with nothing configured there is nothing to report, and the zone is the default');
+
+// What `load()` is for, and its only statement. It reads the generated file for a
+// caller with no app around it — a CLI tool, a report — and until now nothing observed
+// that it did anything at all. Note what it does *not* do: the tracked config file was
+// written before this setting existed, so reading it defines the eight branding names
+// and leaves the zone absent, which is the line above still holding afterwards.
+checkSame('no|yes|', inFreshProcess('
+        require LBM_ROOT . "/lib/store_clock.php";
+        $before = defined("BRAND_ACCENT") ? "yes" : "no";
+        StoreClock::load();
+        echo $before . "|" . (defined("BRAND_ACCENT") ? "yes" : "no") . "|" . StoreClock::unreadable();
+    '), 'load() reads the generated file, which is the whole of what it promises');
+
+// And the no-argument form really does consult the constant, rather than answering
+// from its own default parameter — the two are indistinguishable in a process where
+// the constant is absent, which is every process this suite can otherwise build.
+checkSame('+08:00|America/Los_Angeles', inFreshProcess('
+        define("STORE_TIMEZONE", "+08:00");
+        require LBM_ROOT . "/lib/store_clock.php";
+        echo StoreClock::unreadable() . "|" . StoreClock::zone();
+    '), 'a stored offset is reported by the no-argument form, and the clock falls back past it');
+
+// ---- A stored stamp is UTC, and one place knows it -------------------------------
+// The rule was written out three times and the third copy left the ' UTC' off, which
+// is the defect this consolidation exists for. Asserted with the process clock moved
+// off UTC, because on a server that happens to be on it the mutation is invisible —
+// which is exactly how the missing suffix survived.
+$tzWas = date_default_timezone_get();
+date_default_timezone_set('America/Los_Angeles');
+
+$stamp = gmdate('Y-m-d H:i:s');
+check(abs(StoreClock::epochOf($stamp) - time()) <= 5,
+      'a stamp written by gmdate reads back as this moment, whatever zone the server is on');
+check(abs(strtotime($stamp) - time()) > 3600,
+      'read without the UTC suffix that same string is hours out — the line that got forgotten');
+checkSame(0, StoreClock::epochOf('not a date'), 'a stamp that will not read is 0, not a warning');
+checkSame(0, StoreClock::epochOf(''),           'and neither is an empty one');
+checkSame(0, StoreClock::epochOf(null),         'nor a null column');
+
+// ---- The sentence follows the setting, not the process ---------------------------
+// One instant, three zones. 2026-08-11 21:15 UTC is 2:15pm in Washington — the very
+// sentence #44 was filed about.
+$instant = '2026-08-11 21:15:00';
+checkSame('2:15pm', StoreClock::label($instant, 'g:ia', 'America/Los_Angeles'),
+          'the moment a lock was taken reads as 2:15pm in the store');
+checkSame('4:15pm', StoreClock::label($instant, 'g:ia', 'America/Chicago'),
+          'and as 4:15pm in the zone the live host is set to, which is what was on the screen');
+checkSame('9:15pm', StoreClock::label($instant, 'g:ia', 'UTC'),
+          'and as 9:15pm in UTC, which is the widest of the three and none of the others');
+checkSame('5:15pm', StoreClock::label($instant, 'g:ia', 'America/New_York'),
+          'and as something else again three time zones east');
+checkSame('Aug 11 at 2:15pm', StoreClock::label($instant, 'M j \a\t g:ia', 'America/Los_Angeles'),
+          'the publish sentence uses the same door and the same zone');
+
+// Not a function of the process clock. This is why label() converts explicitly
+// instead of relying on what config.php set: viewer.php loads neither, and a
+// formatter that depends on a global is one a caller cannot see being wrong about.
+date_default_timezone_set('Asia/Tokyo');
+checkSame('2:15pm', StoreClock::label($instant, 'g:ia', 'America/Los_Angeles'),
+          'and it does not move when the process clock does');
+date_default_timezone_set('America/Los_Angeles');
+
+// A zone that is not one falls back rather than throwing, on the one path whose
+// whole job is that an unconfigured clock does not break a screen.
+checkSame('9:15pm', StoreClock::label($instant, 'g:ia', 'UTC'), 'a good zone is honoured');
+checkSame(StoreClock::label($instant, 'g:ia', StoreClock::DEFAULT_ZONE),
+          StoreClock::label($instant, 'g:ia', '+08:00'),
+          'and a bad one is the documented default, not an exception on the page');
+checkSame('', StoreClock::label('not a date', 'g:ia'),
+          'an unreadable stamp is no words at all, so a refusal reads short rather than wrong');
+
+// ---- Through the callers ---------------------------------------------------------
+// The suite's own zone is the setting's default, so these assert the store's answer
+// rather than the server's — and would have read two hours out before this landed.
+$pdo   = newTestDb();
+$store = newTestDisplayStore($pdo);
+$zoned = makeTestDisplay($pdo, 'zoned', 'Zoned');
+
+$store->claimLock($zoned, 1);
+$held = $store->forId($zoned->id())->lockState();
+checkSame(StoreClock::labelForEpoch(time(), 'g:ia'), $held->takenAtLabel(),
+          'the edit-lock banner says the time it is where the sign is');
+checkMentions($store->forId($zoned->id())->editingSentence(),
+              'since ' . StoreClock::labelForEpoch(time(), 'g:ia'),
+              'and so does the sentence a refused publish prints');
+
+// Fix the stamp to a known instant rather than "now", so the assertion is about the
+// conversion and not about the two calls landing in the same minute.
+$pdo->prepare("UPDATE displays SET lock_taken_at = ? WHERE id = ?")
+    ->execute([$instant, $zoned->id()]);
+checkSame('2:15pm', $store->forId($zoned->id())->lockState()->takenAtLabel(),
+          'a lock taken at 21:15 UTC is a lock taken at 2:15pm on the shop floor');
+
+// ---- The publish stamp was the third clock ---------------------------------------
+// last_published_at was written with CURRENT_TIMESTAMP, which is MySQL's *session*
+// zone — a clock neither PHP nor this store had any opinion about — and read back
+// with a bare strtotime() as though PHP had written it. The two engines hid it from
+// each other: SQLite's CURRENT_TIMESTAMP is UTC by definition, so the fixture always
+// agreed with the reader. A bound gmdate() is the same string on both.
+$layoutsZ = newTestLayoutStore($pdo);
+$store->claimLock($zoned, 1);
+$layoutsZ->publish($zoned, new PublishRequest([], Background::unchanged(), 1, true, $zoned->layoutStamp()));
+$publishedAt = $pdo->query("SELECT last_published_at FROM displays WHERE id = " . $zoned->id())->fetchColumn();
+check(abs(StoreClock::epochOf($publishedAt) - time()) <= 5,
+      'a publish records the moment in UTC, bound by PHP rather than asked of the database');
+check(abs(strtotime((string)$publishedAt) - time()) > 3600,
+      'so reading it as local time is hours out — which is what the old sentence did');
+
+$pdo->prepare("UPDATE displays SET last_published_at = ?, last_published_by = 1 WHERE id = ?")
+    ->execute([$instant, $zoned->id()]);
+checkSame('sky, Aug 11 at 2:15pm', $store->forId($zoned->id())->lastPublishDescription(),
+          'and the refusal names the moment in the store\'s zone');
+$pdo->prepare("UPDATE displays SET last_published_at = 'nonsense' WHERE id = ?")
+    ->execute([$zoned->id()]);
+checkSame('sky', $store->forId($zoned->id())->lastPublishDescription(),
+          'a stamp that will not read leaves the name rather than a half-written sentence');
+
+date_default_timezone_set($tzWas);
+
+// ---- Where it is set, and where it is not ----------------------------------------
+// Every page a person reads loads config.php through auth.php, so that is where the
+// process clock is pointed at the store. Source checks, because what they are about
+// is a line existing on a page rather than a decision a module makes.
+$configSrc = file_get_contents(__DIR__ . '/../config.php');
+checkMentions($configSrc, 'StoreClock::apply()',
+              'config.php points the process clock at the store, once, for every page');
+checkMentions(file_get_contents(__DIR__ . '/../db_connect.php'), "SET time_zone = '+00:00'",
+              'and db_connect.php asks the database for UTC, which was the clock no screen showed');
+checkSame('America/Los_Angeles', StoreClock::apply(),
+          'apply() answers with the zone it set, so a caller can say which one it was');
+checkSame('America/Los_Angeles', date_default_timezone_get(),
+          'and the process is actually on it afterwards — config.php ran this on the way in');
+
+// ---- The Settings form ------------------------------------------------------------
+$panelTz = file_get_contents(__DIR__ . '/../admin_panel.php');
+checkMentions($panelTz, 'name="store_timezone"', 'the Settings tab offers the setting');
+checkMentions($panelTz, 'StoreClock::zones()',
+              'as a list of the zones this app will accept, so nothing typeable can be wrong');
+checkMentions($panelTz, 'StoreClock::isZone($_POST[\'store_timezone\'])',
+              'and a submitted value is refused rather than substituted (#21)');
+checkSame(1, preg_match('/\$curZone\s*=\s*StoreClock::zone\(\)/', $panelTz),
+          'the form offers the zone the clock is actually using, not the raw stored string');
+checkMentions($panelTz, "header('Location: admin_panel.php?tab=settings')",
+              'and a saved setting redirects, since this request is still running on the old define()');
+checkSame(0, preg_match('/date\(\s*.M j, Y.\s*,\s*strtotime/', $panelTz),
+          'neither date printed on this page still reads a stamp for itself');
+
+// ---- The report ------------------------------------------------------------------
+// The card whose whole job was that a zone mismatch is otherwise invisible. It has
+// to name all three clocks now, because there were three.
+$tzReport = (new ServerReport($pdo, ['HTTPS' => 'on']))->runtime();
+check(isset($tzReport[StoreClock::LABEL]), 'This Server reports the zone the app shows times in');
+checkMentions($tzReport[StoreClock::LABEL][0], 'America/Los_Angeles', 'and says which one that is');
+check(isset($tzReport['PHP time zone']), 'and the server\'s own, which no longer decides anything');
+check(isset($tzReport['Database time zone']),
+      'and the database\'s, which is where an account\'s creation date comes from');
+checkSame('not applicable', $tzReport['Database time zone'][0],
+          'SQLite has no session zone at all — every stamp it writes is UTC by definition');
+checkSame('', $tzReport['Database time zone'][1],
+          'so there is nothing to warn about, rather than a warning about the wrong engine');
+checkSame('', $tzReport[StoreClock::LABEL][1],
+          'and nothing to say about a setting this app can read');
+// The note is the whole point of the row: a stored value nobody can use has to be
+// named on the screen somebody would go looking at, or the setting and the clock
+// disagree with no explanation anywhere (#21).
+checkMentions((new ServerReport($pdo))->storeZoneNoteFor('+08:00'), '+08:00',
+              'while one it cannot read is named exactly as stored');
+checkMentions((new ServerReport($pdo))->storeZoneNoteFor('+08:00'), 'America/Los_Angeles',
+              'together with what is being used instead of it');
+
+// ─────────────────────────────────────────────────────────────
+section('An account with no sign may read the shared library, not write it (#33)');
+
+// The library is one pool behind every sign, and `uploads/` is one folder behind
+// every library entry — neither is scoped to a Display, so neither is covered by the
+// resolution seam that answers every other "may they?" in this app. A `basic` account
+// with no grant could therefore add entries and upload files after the Builder had
+// told it, in as many words, that no display was assigned to it.
+$pdo   = newTestDb();
+$store = newTestDisplayStore($pdo);
+$deli  = makeTestDisplay($pdo, 'deli', 'Deli Case');
+$lobby = makeTestDisplay($pdo, 'lobby', 'Lobby');
+$all   = $store->all();
+
+// Accounts 1 (admin) and 2 (clerk) are the fixture's.
+checkSame(true, newTestActor($pdo, 1, 'admin')->holdsASign($all),
+          'an admin holds every sign, so the library is theirs');
+checkSame(false, newTestActor($pdo, 2, 'basic')->holdsASign($all),
+          'a basic account with no grant holds none of them');
+
+grantTestAccess($pdo, $lobby->id(), 2);
+checkSame(true, newTestActor($pdo, 2, 'basic')->holdsASign($all),
+          'one grant is enough — the library is a pool, not a per-sign store');
+
+// A Display switched off is the case this predicate deliberately does *not* cover.
+// Somebody whose one sign is out of service cannot open it, and can perfectly well be
+// getting next week's promo into the library ready for it coming back — and the
+// refusal's own wording ("no display has been assigned to you") would be a lie to
+// them. Gating on openable() would also make turning a sign off silently take away a
+// second thing on another page.
+$pdo->exec("UPDATE displays SET is_active = 0 WHERE tag = 'lobby'");
+$clerk = newTestActor($pdo, 2, 'basic');
+$off   = $store->all();
+checkSame(0, count($clerk->openable($off)), 'their only sign is turned off, so there is nothing to open');
+checkSame(true, $clerk->holdsASign($off),   'and the library is still theirs, because the sign still is');
+$pdo->exec("UPDATE displays SET is_active = 1 WHERE tag = 'lobby'");
+
+// A grant row pointing at a Display that is gone is not a sign. Two things stand
+// between the app and that state and only one of them is in this repo: the foreign key
+// with its cascade, which this fixture does enforce — the insert below cannot be made
+// through GrantStore at all — and the predicate reading the Display list rather than
+// the grant list. Invariant 10 is why the second one is worth having: the constraint
+// is added by convergence and may never have applied to the live table.
+$stranded = Actor::withGrants(9, 'clerk', false, [4242]);
+checkSame(false, $stranded->holdsASign($store->all()),
+          'a grant naming a Display that is not there is not a sign');
+checkSame([], $stranded->granted($store->all()),
+          'because the Display list is what answers, not the grant row');
+
+// A fresh installation, where an admin holds every Display and there are none. The
+// one case where "holds every sign" and "the list is not empty" differ, and refusing
+// there would aim the rule at the person about to add the first Display.
+$empty = newTestDb();
+checkSame([], newTestDisplayStore($empty)->all(), 'a fresh install has no Displays at all');
+checkSame(true, newTestActor($empty, 1, 'admin')->holdsASign([]),
+          'an admin may still add to the library there');
+checkSame(false, newTestActor($empty, 2, 'basic')->holdsASign([]),
+          'and a basic account still may not');
+
+// ---- The two doors ------------------------------------------------------------
+// Both are page-level gates and neither can be driven from here, so what is asserted
+// is that both ask the one predicate, word the refusal from the one sentence, and ask
+// before any file is moved. `move_uploaded_file()` cannot be rolled back, so a gate
+// below it leaves exactly what it exists to prevent, minus the row.
+//
+// Each door is read from where it opens, not from the top of the file: api.php moves
+// an uploaded background hundreds of lines above this endpoint, and that upload is an
+// admin's and is scoped to a Display, so a check measuring against the file's first
+// `move_uploaded_file` would be asking about the wrong one. The gate token differs
+// too — crud.php asks the predicate once at the top, because the page needs the answer
+// to decide whether to draw the form at all, and carries it into the branch as
+// `$mayAdd`; api.php has only the one use and asks it there.
+$doors = [
+    'crud.php' => ['opens' => "isset(\$_POST['action_create'])", 'gate' => '$mayAdd'],
+    'api.php'  => ['opens' => "\$action === 'upload_file'",      'gate' => 'holdsASign('],
+];
+foreach ($doors as $door => $where) {
+    // Comments dropped first, and this check needed it to be right about itself: both
+    // doors carry a comment saying `move_uploaded_file()` cannot be undone, sitting
+    // *above* the gate that comment is explaining — so measured against raw source, a
+    // correctly ordered file failed, for the same reason check_invariants.php strips
+    // comments before it greps anything.
+    $src = '';
+    foreach (token_get_all(file_get_contents(__DIR__ . '/../' . $door)) as $token) {
+        if (is_array($token) && ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT)) { continue; }
+        $src .= is_array($token) ? $token[1] : $token;
+    }
+    checkMentions($src, 'holdsASign(', $door . ' asks the one predicate');
+    checkMentions($src, 'Actor::NO_SIGN_REFUSAL', 'and refuses in the one wording');
+
+    $opens = strpos($src, $where['opens']);
+    check($opens !== false, 'and the write it guards is still where this check looks for it');
+    $gate  = $opens === false ? false : strpos($src, $where['gate'], $opens);
+    $moves = $opens === false ? false : strpos($src, 'move_uploaded_file', $opens);
+    check($gate !== false && $moves !== false && $gate < $moves,
+          'and refuses before that door moves an uploaded file, which cannot be undone');
+}
+
+// The sentence itself has to survive rewording without losing either half: what did
+// not happen, and who can change it.
+checkMentions(Actor::NO_SIGN_REFUSAL, 'assigned to you',   'the refusal says why it refused');
+checkMentions(Actor::NO_SIGN_REFUSAL, 'Ask an admin',      'and who to ask, since nothing here helps');
+checkMentions(Actor::NO_SIGN_REFUSAL, 'nothing was saved', 'and that nothing was written');
+
+// The Library's edit form is drawn for an admin only now — it always saved for an
+// admin only, and drawing it for anybody who typed `?edit_id=` was a form that
+// existed in order to be refused (§4j). It also chose which panel the page shows, so
+// leaving it would have put the "no sign assigned" notice one query parameter away
+// from an editor.
+$crudSource = file_get_contents(__DIR__ . '/../crud.php');
+check(preg_match('/\$editAsset\s*=\s*\(isAdmin\(\)\s*&&/', $crudSource) === 1,
+      'and the edit form is built for whoever the save will accept, nobody else');
 
 // ─────────────────────────────────────────────────────────────
 section('An Asset Library entry knows which signs depend on it');
@@ -4542,6 +4989,23 @@ checkSame('20 MB',   UploadLimit::describeBytes(21915238), 'rounded down, so the
 checkSame('512 KB',  UploadLimit::describeBytes(524288),   'a smaller one as kilobytes');
 checkSame('900 bytes', UploadLimit::describeBytes(900),    'and a tiny one in bytes');
 
+// Both boundaries, at the value itself and one below (#50). These read as pedantry and
+// are not: the number this function returns is the number in the sentence somebody is
+// told to trim their file to, so a unit that changes one byte early prints "1024 KB" and
+// one that changes one byte late prints "1048575 bytes". Nothing pinned either edge, so
+// both comparisons could be relaxed and both constants moved with the suite green.
+checkSame('1 MB',      UploadLimit::describeBytes(1048576), 'exactly a megabyte is one megabyte');
+checkSame('1023 KB',   UploadLimit::describeBytes(1048575), 'and one byte under it is still kilobytes');
+checkSame('1 KB',      UploadLimit::describeBytes(1024),    'exactly a kilobyte is one kilobyte');
+checkSame('1023 bytes', UploadLimit::describeBytes(1023),   'and one byte under it is bytes');
+checkSame('0 bytes',   UploadLimit::describeBytes(null),    'and a column with nothing in it is 0 bytes, not " bytes"');
+
+// The ceiling is the app's own promise, quoted verbatim in the refusal a person reads,
+// so the number is asserted rather than only compared against itself.
+checkSame(52428800, UploadLimit::APP_MAX_BYTES, 'the app ceiling is 50 MB, to the byte');
+checkSame('50 MB', UploadLimit::describeBytes(UploadLimit::APP_MAX_BYTES),
+          'and says so in the words the refusal uses');
+
 // The silent case, detected from the only symptom it has.
 checkSame(true, UploadLimit::bodyWasDropped(
     ['REQUEST_METHOD' => 'POST', 'CONTENT_LENGTH' => '41943040'], [], []),
@@ -4560,6 +5024,11 @@ checkSame(false, UploadLimit::bodyWasDropped(
     'and a GET is never this');
 checkSame(false, UploadLimit::bodyWasDropped([], [], []),
     'a request with no method at all is not either');
+// A POST with nothing in it and no content length announced. The absence has to read as
+// zero rather than as something, or every empty POST on a host that omits the header is
+// answered "that file was too large" — which is the old defect with the sentences swapped.
+checkSame(false, UploadLimit::bodyWasDropped(['REQUEST_METHOD' => 'POST'], [], []),
+    'and neither is a POST that announced no length at all');
 
 checkMentions(UploadLimit::droppedBodyMessage(), 'too large',
               'and what the user is told names the problem');
@@ -4589,11 +5058,13 @@ chdir($brandDir);
 
 checkSame($brandDir . '/branding_config.php', $brandCfg->path(),
           'the module owns the filename, so no page has to spell it');
-checkSame(9, count(BrandingConfig::DEFAULTS), 'nine settings live in the file');
+checkSame(10, count(BrandingConfig::DEFAULTS), 'ten settings live in the file');
 checkSame(array_keys(BrandingConfig::DEFAULTS), array_keys($brandCfg->current()),
-          'and current() answers about all nine');
+          'and current() answers about all ten');
 check(array_key_exists('UNDO_STEPS', BrandingConfig::DEFAULTS),
       'the Builder\'s undo depth is one of them, not a define() of its own');
+check(array_key_exists('STORE_TIMEZONE', BrandingConfig::DEFAULTS),
+      'and so is the store time zone, for the same reason — a second writer of this file\n      would drop it on the next Branding save (#44)');
 
 // ── What a stored undo depth means, once ─────────────────────
 // The value in the file is a string somebody may have typed, and the Builder acts on
@@ -4656,7 +5127,7 @@ check(!BrandingConfig::parses($truncated),
 
 // Anti-injection. A site name is free text an admin types; it reaches a file the
 // app executes. var_export is the entire defence, so count the calls: an escape
-// that let a value close its own string would show up as a ninth.
+// that let a value close its own string would show up as an eleventh.
 $evil = "'); echo 'pwned'; define('X', '";
 checkSame(BrandingWrite::OK, $brandCfg->save(['SITE_NAME' => $evil])->kind(),
           'a site name full of quotes and semicolons still saves');
@@ -4666,7 +5137,7 @@ $defineCalls = 0;
 foreach (token_get_all($written) as $token) {
     if (is_array($token) && $token[0] === T_STRING && $token[1] === 'define') { $defineCalls++; }
 }
-checkSame(9, $defineCalls, 'with exactly nine define() calls — nothing was injected');
+checkSame(10, $defineCalls, 'with exactly ten define() calls — nothing was injected');
 checkMentions($written, var_export($evil, true), 'the value is stored as one escaped literal');
 
 // A backslash is the other half of it: var_export doubles it, and a naive escape
@@ -4776,10 +5247,10 @@ foreach ((array)glob(__DIR__ . '/../*.php') as $page) {
 checkSame([], $pagesWithTheirOwn, 'no page declares a branding constant of its own');
 checkSame([], $pagesLoadingItThemselves, 'and none of them reaches for the file directly');
 checkMentions(file_get_contents(__DIR__ . '/../config.php'), '->apply()',
-              'config.php is the one place the nine names are brought into being');
+              'config.php is the one place the ten names are brought into being');
 
 // Every one of them is defined in this process — config.php did it on the way in —
-// so `apply()` here must be a silent no-op rather than nine warnings and an
+// so `apply()` here must be a silent no-op rather than ten warnings and an
 // argument about who was right.
 $siteBefore = SITE_NAME;
 $brandCfg->apply();
@@ -4787,7 +5258,7 @@ $defined = 0;
 foreach (BrandingConfig::DEFAULTS as $name => $unusedDefault) {
     if (defined($name)) { $defined++; }
 }
-checkSame(9, $defined, 'apply() leaves all nine names defined');
+checkSame(10, $defined, 'apply() leaves all ten names defined');
 checkSame($siteBefore, SITE_NAME, 'and overrides nothing that was already set');
 
 // The same promise for the generated file itself, which is the half that a bare
@@ -4795,7 +5266,7 @@ checkSame($siteBefore, SITE_NAME, 'and overrides nothing that was already set');
 // any of these, and a `define()` of a name already taken warns and then keeps the
 // first value — the documented override worked while complaining about itself. Any
 // unsuppressed warning is a failed check in this harness, so loading it below is
-// the assertion: nine of them would show up as nine failures.
+// the assertion: ten of them would show up as ten failures.
 $reloadPath = $brandDir . '/reload_test.php';
 file_put_contents($reloadPath, BrandingConfig::render(['SITE_NAME' => 'Something Else']));
 include $reloadPath;
@@ -4859,6 +5330,33 @@ check(refuses([['type' => '']]), 'or is empty');
 check(refuses([['type' => ['section']]]), 'or is not even a string');
 checkMentions(LayoutRules::check([['type' => 'script']])->message(), 'carousel',
               'and the refusal lists the types that would have worked');
+
+// ---- And it says what arrived, in words (#50) -----------------------------------
+// The refusal is a sentence an admin has to match against their own canvas, and the
+// only part of it naming *their* value is `describe()`. Every branch of that function
+// could be removed with the suite green: nothing had asserted the described value,
+// only the wording built around it. This is the same defect `Color::describe()` had —
+// a description function covered by inference from the messages that quote it.
+$typeMsg = function ($type) {
+    return LayoutRules::check([['temp_id' => 's1', 'type' => $type]])->problems()[0];
+};
+checkMentions($typeMsg(['section']), '(a list of 1 things)',
+              'a value that arrived as a list is named as one, with its size');
+checkMentions($typeMsg(new stdClass), '(an object)',
+              'and an object by its shape, since printing one is a warning and the word Object');
+checkMentions($typeMsg(''), '(an empty value)',
+              'and a field submitted blank is named as blank, not quoted as nothing');
+checkMentions($typeMsg(true), '(true)',
+              'and a boolean by value, because "1" would read as something somebody typed');
+checkMentions($typeMsg('carousell'), '("carousell")',
+              'while an ordinary near miss is quoted back, which is the whole point of the sentence');
+
+// The cut, at both edges. 40 characters of a pasted value belongs in a refusal; a
+// screenful does not, and the ellipsis is what tells an admin the rest is theirs.
+checkMentions($typeMsg(str_repeat('q', 40)), '("' . str_repeat('q', 40) . '")',
+              'forty characters is quoted whole');
+checkMentions($typeMsg(str_repeat('q', 41)), '("' . str_repeat('q', 37) . '…")',
+              'forty-one is cut to thirty-seven and an ellipsis, so the sentence stays a sentence');
 
 // A casing variant is the one that mattered most: `insertContent` skips a section
 // with `!==`, so 'Section' slipped past the skip and was inserted as content — at
@@ -4973,6 +5471,12 @@ check(LayoutRules::check(layoutWithField(1, 'font_family', str_repeat('A', 100))
       'and one exactly at it is not');
 check(refuses(layoutWithField(1, 'text_align', str_repeat('x', 17))), 'so is an alignment');
 check(refuses(layoutWithField(1, 'font_color', str_repeat('x', 51))), 'and a colour');
+// The two rows of that table nothing stood over (#50). Five string fields are capped
+// here and only `font_family` had a check, so those two lines could be deleted and a
+// five-thousand-character font weight would reach a VARCHAR(20) — which is the whole
+// defect this section exists for, on the two fields nobody thought to name.
+check(refuses(layoutWithField(1, 'font_weight', str_repeat('b', 21))), 'and a font weight');
+check(refuses(layoutWithField(1, 'font_style',  str_repeat('i', 21))), 'and a font style');
 check(refuses(layoutWithField(0, 'section_bg', str_repeat('p', 256))),
       'and a section background path');
 check(refuses(layoutWithField(1, 'manual_content', str_repeat('t', 65536))),
@@ -5346,6 +5850,34 @@ restore_error_handler();
 checkSame('', $listAnswer, 'a list is not a colour');
 checkSame(false, $warned,  'and saying so emits no "Array to string conversion" warning');
 
+// ---- What the refusal is allowed to say the value was (#50) --------------------
+// `Color::describe()` is the other half of not guessing: a refusal that does not name
+// what was wrong leaves an admin unable to tell a typo from a stale form, so
+// `DisplayAdmin` quotes this in its message and the Admin Panel prints it twice on the
+// unreadable-colours card. Ten of its thirteen mutants survived — the whole function
+// could be reduced to quoting the value back, and the two checks that touched it were
+// about the message around it rather than about this. It is a pure function of one
+// argument, so there is no reason for it to be covered by inference.
+checkSame('"#1a2b3c"', Color::describe('#1a2b3c'), 'a value that is a string is quoted');
+checkSame('blank', Color::describe(''),            'blank is named, not quoted as nothing');
+checkSame('nothing', Color::describe(null),        'and absent is named as nothing, which is a different sentence');
+checkSame('a list of values', Color::describe(['#fff']), 'a list is named by shape');
+checkSame('true', Color::describe(true),           'and a boolean by value, because "1" would read as a colour attempt');
+checkSame('false', Color::describe(false),         'both of them');
+checkSame('integer', Color::describe(7),           'a number is named by type — it went through no field that could hold one');
+checkSame('double', Color::describe(7.5),          'and so is a float');
+
+// The cut, at both edges. Twenty characters is a swatch value with a typo; a hundred
+// is a paste, and it lands inside a sentence on a page. The boundary is `> 20`, so a
+// value of exactly twenty is short enough to show whole — the off-by-one either
+// truncates a value that fits or quotes one that does not.
+checkSame('"' . str_repeat('a', 20) . '"', Color::describe(str_repeat('a', 20)),
+          'twenty characters is quoted whole');
+checkSame('"' . str_repeat('a', 20) . '…"', Color::describe(str_repeat('a', 21)),
+          'twenty-one is cut to twenty with an ellipsis');
+checkSame('"abcdefghijklmnopqrst…"', Color::describe('abcdefghijklmnopqrstuvwxyz'),
+          'and the twenty kept are the first twenty, from the start of the value');
+
 // ---- A background colour is refused, not replaced -------------------------------
 $cPdo   = newTestDb();
 $cStore = new DisplayStore($cPdo);
@@ -5604,6 +6136,30 @@ check(HttpReply::jsValue("\xB1") !== '',       'and a tag that will not encode i
 check(json_decode(HttpReply::jsValue("\xB1")) !== null,
       'that a JavaScript parser can read, rather than a gap in the statement');
 
+// All four characters, one check each (#50). The flags are a single `|` chain, so one
+// character mistyped as `&` collapses two of them to nothing — and the suite could not
+// tell, because nothing named the characters. Each of the four ends something: `<`
+// ends the script element as far as the HTML parser is concerned, `'` and `"` end a
+// string literal, and `&` starts an entity the attribute parser will decode before the
+// JavaScript parser ever looks (§4ah).
+checkSame('"\u003Cb\u003E"', HttpReply::jsValue('<b>'),
+          'an angle bracket cannot end the script element it is inside');
+checkSame('"o\u0027brien"', HttpReply::jsValue("o'brien"),
+          'a single quote cannot end the string literal — the username #15 is named after');
+checkSame('"say \u0022hi\u0022"', HttpReply::jsValue('say "hi"'),
+          'nor can a double quote, whichever kind the call site used');
+checkSame('"a\u0026b"', HttpReply::jsValue('a&b'),
+          'and an ampersand cannot start an entity for the attribute parser to decode first');
+
+// The floor under all four. `JSON_INVALID_UTF8_SUBSTITUTE` means almost anything encodes,
+// so what still cannot is a float with no JSON spelling — and the answer then has to be a
+// literal the parser accepts, because it is being printed into the middle of somebody's
+// statement. `false` would echo as the empty string and take the whole script block down,
+// which is §4af's shape at the smallest scale there is.
+checkSame('null', HttpReply::jsValue(INF),
+          'a value with no JSON spelling at all is the literal null, not nothing');
+checkSame('null', HttpReply::jsValue(NAN), 'and so is the other one');
+
 // ---- #28: the status line ------------------------------------------------------
 // Missing, unknown and switched-off signs all answered 200. Anything that does not
 // read the body — a proxy, an uptime check, curl after typing a tag onto a new
@@ -5630,17 +6186,46 @@ checkSame(404, HttpReply::codeForPayload(['status' => 'error', 'reason' => 'unkn
 checkSame(400, HttpReply::codeForPayload(['status' => 'error', 'message' => 'no reason given']),
           'and a refusal that did not say why is still not a 200');
 
-// Every word the app actually uses has to be in the map. A reason added to a module
-// and not listed would leave as a 400 — better than a 200, and still wrong.
-foreach ([DisplayResolution::NO_TAG, DisplayResolution::UNKNOWN, DisplayResolution::INACTIVE,
-          DisplayResolution::FORBIDDEN, DisplayResolution::MISMATCH,
-          'stale', 'locked', 'invalid', 'busy', 'failed',     // PublishResult
-          'not_found',                                        // ElementResult
-          'signed_out', 'too_large',                          // api.php's own
-         ] as $reason) {
-    checkSame(true, HttpReply::codeFor($reason, 0) !== 0,
-              'the map has an answer for "' . $reason . '"');
+// Every word the app actually uses, and which code it maps to (#50).
+//
+// This used to assert only that the map *had* an answer for each — `codeFor($reason, 0)
+// !== 0` — and six of the fourteen rows had nothing else standing over them:
+// `not_found`, `signed_out`, `locked`, `busy`, `too_large` and `unencodable` could each
+// be moved to a neighbouring code with the suite green. A loop over a table that
+// asserts its keys reads from the outside exactly like one that asserts the table, and
+// that is the shape decision #50 is about. The `0` default is kept as the sentinel, so a
+// reason added to a module and never listed here still fails rather than quietly
+// becoming a 400.
+$expectedCodes = [
+    DisplayResolution::NO_TAG    => 400,   // nothing named a sign
+    DisplayResolution::UNKNOWN   => 404,   // named one that is not here
+    DisplayResolution::INACTIVE  => 503,   // here, and deliberately not serving (#28)
+    DisplayResolution::FORBIDDEN => 403,
+    DisplayResolution::MISMATCH  => 409,
+    'stale'       => 409,                  // PublishResult: somebody published first
+    'locked'      => 409,                  // somebody else holds the sign
+    'busy'        => 409,                  // two publishes at once (#35)
+    'invalid'     => 422,                  // read, understood, refused
+    'failed'      => 500,                  // ours
+    'not_found'   => 404,                  // ElementResult, about one block
+    'signed_out'  => 403,                  // api.php's own
+    'too_large'   => 413,
+    'unencodable' => 500,                  // the reply itself would not encode
+];
+foreach ($expectedCodes as $reason => $expected) {
+    checkSame($expected, HttpReply::codeFor($reason, 0),
+              'the map answers ' . $expected . ' for "' . $reason . '"');
 }
+
+// The three that share a code are sharing it on purpose, and the two that must never
+// share one are the whole of #28. Written as comparisons because that is the property —
+// a table where every row happened to be 409 would pass the loop above.
+check(HttpReply::codeFor('locked') === HttpReply::codeFor('stale'),
+      'a held sign and a moved stamp are the same kind of answer: two truths that cannot both hold');
+check(HttpReply::codeFor('too_large') !== HttpReply::codeFor('invalid'),
+      'while a body too big to arrive and one read and refused are not — only the second was read');
+check(HttpReply::codeFor('signed_out') === HttpReply::codeFor(DisplayResolution::FORBIDDEN),
+      'and a session that ended is the same answer as a sign that is not yours: ask again with credentials');
 
 // The two entry points that answer in HTML rather than JSON ask the same question of
 // the same map, through the resolution they already hold.
@@ -6179,10 +6764,22 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
 //
-// The SQLite figure is the two sides of this merge added together and then counted,
-// not added up on paper: this branch and `main` had each grown the suite from the
-// same base, and one section here changed shape because the behaviour it describes
-// did (#21 closed while it was open, so three checks that asserted the coercion now
-// assert the refusal). The MySQL figure is the SQLite one plus the 23 checks in the
-// engine-only section below, which is the same difference it has always been.
-reportChecks(testIsMysql() ? 1657 : 1634);
+// Both figures are what the suite reported when it was run, never a delta added on
+// paper — `docs/work-lanes.md` item 3 is about this exact line, because every branch
+// that adds a check changes it and so it conflicts on every merge. This number is the
+// first one settled that way rather than by argument: #33 and #44 grew the suite from
+// the same base of 1634, by +22 and +59, and 1634 + 22 + 59 is exactly what the run
+// then reported. **The sum being right is not a reason to sum.** It was right because
+// neither branch changed the *shape* of a section the other had counted, and that is a
+// property of those two diffs rather than of arithmetic — the same addition was wrong
+// the last time this line was merged, when #21 closed while a section describing the
+// coercion it removed was still open. A sum is a prediction that can be checked in one
+// command; check it. The MySQL figure is the SQLite one plus the 23 checks in the
+// engine-only section below, which is the same difference it has always been — if that
+// section did not change, the difference did not either.
+//
+// Checked once more on the next merge, which was #44's own correction coming across
+// (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
+// check added, so 1779 was a confident prediction — and it was run anyway, because a
+// prediction that turns out right is exactly what the paragraph above is warning about.
+reportChecks(testIsMysql() ? 1804 : 1781);

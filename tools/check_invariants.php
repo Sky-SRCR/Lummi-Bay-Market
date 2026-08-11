@@ -109,6 +109,22 @@ $rules = [
         'why'    => 'a grant is the row\'s existence; GrantStore decides what that means',
     ],
     [
+        'name'   => 'an account with no sign is refused the shared writes by one predicate',
+        'regex'  => '/holdsASign\s*\(|NO_SIGN_REFUSAL/',
+        'in'     => '',
+        // lib/grants.php declares both — the predicate and the one sentence the refusal
+        // is worded in. crud.php and api.php are the two doors: the Library's add form
+        // and the image upload, the only writes a `basic` account can reach that are not
+        // scoped to a Display by DisplayRequest. Both must appear, and appear together:
+        // a door holding the predicate but wording its own refusal is the same rule met
+        // twice in different English, which reads as two different problems.
+        'expect' => ['api.php', 'crud.php', 'lib/grants.php', 'tools/selftest_layout.php'],
+        'why'    => 'a shared library and an uploads folder are the two things in this app '
+                  . 'nothing else scopes to a sign, so an account holding no sign wrote to '
+                  . 'both from a page that had just told it there was nothing to edit '
+                  . '(#33, invariant 29)',
+    ],
+    [
         'name'   => '`password_resets` has one writer, and the guess budget is not in a session',
         'regex'  => '/(INTO|UPDATE|FROM|TABLE)\s+`?password_resets`?\b|reset_attempts/i',
         'in'     => '',
@@ -228,6 +244,54 @@ $rules = [
                   . 'them safe, and it is called once (§4ai)',
     ],
     [
+        'name'   => 'one module reads a stored moment',
+        'regex'  => '/strtotime\s*\(/',
+        'in'     => '',
+        // The self-test calls it directly on purpose, and in both directions: with the
+        // ' UTC' suffix to assert a stamp is absolute, and *without* it to assert that
+        // reading the same string as local time is hours out — which is the mutation
+        // this rule exists to keep dead. That second form is the defect, so it may only
+        // live in a file whose job is to fail when it comes back.
+        'expect' => ['lib/store_clock.php', 'tools/selftest_layout.php'],
+        'why'    => 'every stamp this app stores is UTC and strtotime() reads a bare '
+                  . 'Y-m-d H:i:s in the process zone, so the suffix is the whole rule — '
+                  . 'it was written out three times and the third copy left it off, and '
+                  . 'nothing could see the difference (invariant 28, §4ap). Ask '
+                  . 'StoreClock::epochOf()',
+    ],
+    [
+        'name'   => 'no statement asks the database what time it is',
+        // Case-sensitive, and that is not laziness: `builder.php` has a `now()` helper in
+        // its own JavaScript, six calls of it, and an insensitive pattern reads all six as
+        // SQL. Every keyword in this repo's SQL is upper case, and the reason a lower-case
+        // one could not hide anyway is the module rules — SQL lives in `lib/`, which is
+        // where the two allowed matches are.
+        'regex'  => '/CURRENT_TIMESTAMP|\bNOW\s*\(\s*\)/',
+        'in'     => '',
+        // The two that may match are column *defaults* in a CREATE TABLE — a property
+        // of the schema, which PHP cannot write and which db_connect.php puts in the
+        // right frame by asking the connection for +00:00. What is forbidden is an
+        // INSERT or UPDATE taking the time from MySQL, because that is MySQL's session
+        // zone: a third clock beside PHP's and the store's, and the one nobody could see.
+        'expect' => ['lib/schema.php', 'tools/test_fixture.php'],
+        'why'    => 'recordPublish() wrote last_published_at this way and '
+                  . 'lastPublishDescription() read it as though PHP had, so a refused '
+                  . 'publish named an hour off by the difference between two zones nobody '
+                  . 'had set (invariant 28, §4ap). Bind a gmdate() instead',
+    ],
+    [
+        'name'   => 'one module decides which zone a person reads a time in',
+        'regex'  => '/date_default_timezone_set\s*\(/',
+        'in'     => '',
+        // config.php calls StoreClock::apply(); it does not name the underlying function,
+        // which is the shape of the rule. tools/ moves the process clock about on purpose,
+        // to prove that what is *stored* does not depend on where it is set.
+        'expect' => ['lib/store_clock.php', 'tools/selftest_layout.php'],
+        'why'    => 'a second file setting the process zone is a second answer to "what '
+                  . 'time is it in the shop", and the pages that disagree are the ones '
+                  . 'nobody compares side by side (§4ap)',
+    ],
+    [
         'name'   => 'the lock columns are read and written in one place',
         'regex'  => '/(SET|WHERE|SELECT|,)\s*`?lock_(holder_id|activity_at|taken_at)`?\s*(=|,|\s|$)/i',
         'in'     => 'lib',
@@ -237,6 +301,79 @@ $rules = [
         'expect' => ['lib/displays.php', 'lib/schema.php'],
         'why'    => 'a read and a write that disagree about who holds a sign disagree silently '
                   . '(§4t)',
+    ],
+
+    // ---- Four that used to be on the by-eye list (#50) --------------------------
+    // Each was listed at the bottom of this file, and in §5, as something no pattern
+    // could decide. Three of the four reasons turned out to be about the *pattern*
+    // rather than about the question, and the fourth was about this file's rule format
+    // rather than either. What decided each one is in its own comment, because
+    // "mechanised" is not a thing to take on trust from a list that just got shorter.
+    [
+        'name'   => '`canvas_elements` has one writer, and the endpoint of that name is not it',
+        // The stated obstacle was that `get_canvas_elements` — an API action, a string
+        // in three files — is indistinguishable from the table. It is one lookbehind
+        // apart from it. Everything else that used to make this grep noisy was prose,
+        // which this file already drops: eight files explain what the table is for.
+        'regex'  => '/(?<!get_)canvas_elements/',
+        'in'     => '',
+        'skip'   => ['tools/'],
+        // layout_store.php owns every statement. schema.php converges its structure —
+        // the columns, the two widened ENUMs, the display_id tighten and its backfill.
+        // server_report.php names it once, in the list of columns this database should
+        // have, which is a catalogue entry rather than a read (the same distinction the
+        // lock-column rule above draws).
+        'expect' => ['lib/layout_store.php', 'lib/schema.php', 'lib/server_report.php'],
+        'why'    => 'the table every sign\'s layout lives in has one writer, so an '
+                  . 'unscoped statement cannot be written twice — invariant 1',
+    ],
+    [
+        'name'   => 'the admin alert has three callers, and a fourth is a decision',
+        'regex'  => '/ErrorPolicy::report/',
+        'in'     => '',
+        'skip'   => ['tools/'],
+        // The judgement §5 asks for — can this fire repeatedly on a condition the app
+        // expected? — is still a person's, and it stays on the by-eye list below for
+        // that reason. What is mechanical is *noticing*: a fourth caller used to be
+        // invisible, and now it fails this check and has to be read before it lands.
+        // db_connect.php mentions it in a comment saying why it does NOT report there,
+        // which is exactly the kind of hit that made this look undecidable.
+        'expect' => ['api.php', 'lib/http_reply.php', 'lib/schema.php'],
+        'why'    => 'a new caller is a new thing an admin gets emailed about, and one that '
+                  . 'can repeat on its own needs a window — invariant 20',
+    ],
+    [
+        'name'   => 'the store\'s zone is named as a key in three files and read as a constant in none',
+        // The stated obstacle was that a page naming the setting as the key of a save
+        // looks identical to a page reading it. True of the quoted name — and the rule
+        // is not about the quoted name. It is that one module reads the setting, and
+        // that module reads it through `constant(self::SETTING)`, so the *bare* constant
+        // is spelled nowhere in the repo at all. That is the rule below; this one is its
+        // other half, holding the quoted spelling to the three files entitled to it:
+        // branding.php declares the default, store_clock.php names it once as SETTING,
+        // and admin_panel.php passes it as the key of a save.
+        'regex'  => '/[\'"]STORE_TIMEZONE[\'"]/',
+        'in'     => '',
+        'skip'   => ['tools/'],
+        'expect' => ['admin_panel.php', 'lib/branding.php', 'lib/store_clock.php'],
+        'why'    => 'a fourth file spelling the name is a fourth opinion about where the '
+                  . 'store\'s zone comes from (invariant 28, §4ap)',
+    ],
+    [
+        'name'   => 'nothing reads STORE_TIMEZONE as a constant, not even its own module',
+        // The strong form, and the one worth having: `constant(self::SETTING)` behind
+        // `defined()` is how StoreClock reads it, which is what makes "absent" a value
+        // the module can answer for rather than a fatal. A bare `STORE_TIMEZONE` in an
+        // expression is a page reading the setting directly — and on an installation
+        // whose generated config predates the setting, that is an undefined-constant
+        // Error on whichever page did it.
+        'regex'  => '/(?<![\'"\w])STORE_TIMEZONE(?![\'"\w])/',
+        'in'     => '',
+        'skip'   => ['tools/'],
+        'expect' => [],
+        'why'    => 'the setting is absent on every installation that has not saved the '
+                  . 'Settings form, so reading it directly is an Error on that page — ask '
+                  . 'StoreClock::zone(), which answers the documented default',
     ],
 ];
 
@@ -268,6 +405,32 @@ function phpFilesUnder($root, $sub, array $skip = [])
 /**
  * The file's source with every comment removed and each one replaced by a newline,
  * so reported line numbers still mean something.
+ *
+ * Both kinds of comment, since #50. It used to drop only the PHP ones, and said so at
+ * length — which meant an `<!-- … -->` on a page explaining why a line no longer calls
+ * `strtotime()` failed invariant 28 against the very sentence explaining why the rule
+ * holds. #44 found that while adding those greps, wrote the note it needed as a PHP
+ * comment instead, and left the checker alone on purpose: what to do about PHP embedded
+ * inside an HTML comment changes what all twenty-six rules see, which is a measurement
+ * question rather than a fix to bundle into a rule.
+ *
+ * **The answer is that an HTML comment with PHP in it is code and stays.** A comment is
+ * dropped only when it opens and closes inside one `T_INLINE_HTML` token, which is
+ * exactly the case where nothing in it executes. Write
+ *
+ *     <!-- the price is <?= Markup::text($p) ?> -->
+ *
+ * and the `<!--` and `-->` land in two different tokens with a live call between them:
+ * that call runs, its output reaches the page inside a comment a browser hides, and a
+ * rule about it must still see it. Dropping the span between the two tokens would blind
+ * every rule to whatever a page hid that way, which is the one outcome worse than the
+ * false positive this fixes. Nothing has to be decided about the unterminated halves —
+ * the pattern simply does not match them, so they stay as the HTML they are.
+ *
+ * Measured rather than assumed: with this in place all twenty-six rules match exactly
+ * the files they matched before, and the five by-eye entries below are unchanged. The
+ * repo has no HTML comment today whose text collides with a rule — the fix is for the
+ * next one, and for the note #44 had to write in the other syntax to avoid it.
  */
 function codeWithoutComments($source)
 {
@@ -276,6 +439,12 @@ function codeWithoutComments($source)
         if (is_array($token)) {
             if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
                 $out .= str_repeat("\n", substr_count($token[1], "\n"));
+                continue;
+            }
+            if ($token[0] === T_INLINE_HTML) {
+                $out .= preg_replace_callback('/<!--.*?-->/s', function ($m) {
+                    return str_repeat("\n", substr_count($m[0], "\n"));
+                }, $token[1]);
                 continue;
             }
             $out .= $token[1];
@@ -696,19 +865,143 @@ if (!$unaccounted) {
     $failures[] = 'an echo on a page is unaccounted for';
 }
 
+// ---- The grant form declares both of its axes -----------------------------------
+// §5 listed this as undecidable because a rule here is "which files match", and the
+// question is about a *shape* inside one file. That was a limit of the rule format, not
+// of pattern matching — so it is written out longhand instead, which is what the three
+// checks above this one already do.
+//
+// The defect (§4s) is that a browser posts only the ticked checkboxes, so an unticked
+// box and a row or column that was never on the page are the same silence, and reading
+// that silence as "remove it" is how the matrix saved over grants it had never shown.
+// The fix is that both axes are declared by the form and the save only changes what it
+// was told was on screen. So each name has to appear twice, in two different roles: as
+// a hidden input, which is the declaring, and as a `$_POST` read, which is the acting
+// on it. One without the other is the defect back — a form that declares an axis
+// nothing reads, or a save that trusts an axis nothing drew.
+$axisProblems = [];
+$axes  = ['grants_accounts' => 'rows', 'grants_displays' => 'columns'];
+$panel = codeWithoutComments(file_get_contents($root . '/admin_panel.php'));
+foreach ($axes as $axis => $what) {
+    if (strpos($panel, 'name="' . $axis . '[]"') === false) {
+        $axisProblems[] = "admin_panel.php never declares $axis as a hidden input, so the "
+                        . "save cannot know which $what were on the page";
+    }
+    if (strpos($panel, '$_POST[\'' . $axis . '\']') === false) {
+        $axisProblems[] = "admin_panel.php never reads \$_POST['$axis'], so the axis it "
+                        . "declares is not the one it saves by";
+    }
+}
+foreach (phpFilesUnder($root, '', ['tools/']) as $rel) {
+    if ($rel === 'admin_panel.php') { continue; }
+    $other = codeWithoutComments(file_get_contents($root . '/' . $rel));
+    foreach (array_keys($axes) as $axis) {
+        if (strpos($other, $axis) !== false) {
+            $axisProblems[] = "$rel names $axis, and the grant matrix has one page";
+        }
+    }
+}
+$checked++;
+if (!$axisProblems) {
+    echo "  ok   the grant matrix declares both axes and saves by the ones it declared (§4s)\n";
+} else {
+    echo "  FAIL the grant matrix's axes and its save do not agree (§4s)\n";
+    foreach ($axisProblems as $problem) { echo "       $problem\n"; }
+    $failures[] = 'the grant matrix axes';
+}
+
+// ---- Convergence runs before anything that could hold a transaction --------------
+// The §5 note on this one is right that the *position* is the invariant and not the
+// call, and wrong that a pattern cannot decide it. DDL commits an open transaction in
+// MySQL and says nothing about it, so what must be true is that the call comes before
+// any transaction exists — and every transaction in this app is held by one of three
+// use-case modules, reached through a store, so "before the first store or use case is
+// so much as named" is both decidable and stricter than counting lines. api.php is why
+// the line-number form would not have worked: its call is legitimately at line 128,
+// after the upload-limit and CSRF gates, because those send a reply and stop.
+$positions = [];
+foreach (['admin_panel.php', 'api.php', 'builder.php', 'crud.php'] as $entry) {
+    $code = codeWithoutComments(file_get_contents($root . '/' . $entry));
+    $call = strpos($code, 'ensureSignageSchema($pdo)');
+    if ($call === false) {
+        $positions[] = "$entry does not converge at all, and it is an entry point";
+        continue;
+    }
+    foreach (['beginTransaction', 'DisplayStore', 'LayoutStore', 'DisplayAdmin',
+              'AccountAdmin', 'PasswordResetCompletion'] as $holder) {
+        $at = strpos($code, $holder);
+        if ($at !== false && $at < $call) {
+            $positions[] = "$entry names $holder on line "
+                         . (substr_count(substr($code, 0, $at), "\n") + 1)
+                         . ', before it converges on line '
+                         . (substr_count(substr($code, 0, $call), "\n") + 1);
+        }
+    }
+}
+$checked++;
+if (!$positions) {
+    echo "  ok   every entry point converges before a transaction could exist (invariant 21)\n";
+} else {
+    echo "  FAIL an entry point converges after something that can open a transaction (invariant 21)\n";
+    foreach ($positions as $problem) { echo "       $problem\n"; }
+    echo "       DDL commits an open transaction in MySQL silently, so a converge from\n";
+    echo "       deeper in would commit half a publish and then report it failed. Anything\n";
+    echo "       converging off a failure asks repairSchemaAfterFailure() instead.\n";
+    $failures[] = 'convergence position in an entry point';
+}
+
+// ---- The instrument itself -------------------------------------------------------
+// Every rule above is read through codeWithoutComments(), so what that function drops
+// decides what all thirty-two of them can see. It gained HTML comments in #50, and the
+// decision it embodies — a comment holding PHP is code and stays — is worth an
+// assertion rather than a paragraph, because both halves fail silently: dropping too
+// little is the false positive #44 hit, and dropping too much blinds every rule to
+// whatever a page hid inside a comment.
+$commentProbes = [
+    ["<?php \$a = 1; ?>\n<!-- no strtotime() here -->\n",
+     'strtotime', false, 'an HTML comment is prose, and a rule does not match inside it'],
+    ["<?php \$a = 1; ?>\n<!-- <?= strtotime('x') ?> -->\n",
+     'strtotime', true, 'but one holding PHP is code, and that PHP still runs'],
+    ["<?php // no strtotime() here\n\$a = 1;\n",
+     'strtotime', false, 'and a PHP comment is dropped as it always was'],
+];
+foreach ($commentProbes as $probe) {
+    list($source, $needle, $shouldMatch, $label) = $probe;
+    $checked++;
+    $found = strpos(codeWithoutComments($source), $needle) !== false;
+    if ($found === $shouldMatch) {
+        echo "  ok   $label\n";
+    } else {
+        echo "  FAIL $label\n";
+        echo "       expected " . ($shouldMatch ? 'a match' : 'no match') . " for `$needle`\n";
+        $failures[] = 'codeWithoutComments: ' . $label;
+    }
+}
+
 // ---- What this does not cover ---------------------------------------------------
-echo "\nStill by eye — §5 greps this cannot decide:\n";
+// The five §5 greps that used to be listed here are checked above as of #50. Four were
+// mechanised outright; the fifth kept the half of itself that is a judgement. What is
+// left below is deliberately shorter and deliberately not empty — a checker that
+// quietly covers half of §5 reads like one that covers all of it, and that is the shape
+// #50 was filed about, so this list going empty would need to be true rather than tidy.
+echo "\nStill by eye — what running these greps cannot settle:\n";
 foreach ([
-    'canvas_elements — the endpoint NAME get_canvas_elements is indistinguishable '
-        . 'from the table by pattern alone',
-    'ErrorPolicy::report callers — a new one is allowed, but has to be read for '
-        . 'whether it can repeat (invariant 20)',
-    'ensureSignageSchema() call POSITION — within the first lines of an entry point, '
-        . 'before any transaction exists (invariant 21)',
-    'grants_accounts / grants_displays — both names must appear twice each, which is '
-        . 'about the form\'s shape rather than about which files match',
-    'schema.sql against lib/schema.php — now covered instead by the MySQL self-test '
-        . 'run, which asserts convergence has nothing left to do (#48)',
+    'ErrorPolicy::report — the caller SET is now checked, so a fourth cannot land '
+        . 'unnoticed. Whether a new one can fire repeatedly on a condition the app '
+        . 'expected, and therefore needs a window, is a reading of that call site '
+        . '(invariant 20)',
+    'schema.sql against lib/schema.php — covered instead by the MySQL self-test run, '
+        . 'which asserts convergence has nothing left to do against a database built '
+        . 'from that file (#48). A column missing from both is still invisible',
+    'the rehearsal against a database that genuinely LAGS the repo — schema.sql '
+        . 'produces one that is already converged, so the statements only have '
+        . 'something to do on a copy of live data (§5, and a deploy-day step)',
+    'anything a browser draws — interact.js is un-run by any suite (§4al), and a CSS '
+        . 'rule that does not apply or a button that overlaps another at 1080p is '
+        . 'invisible to all six of them',
+    'whether a check can fail at all — `php tools/mutate.php <file>` answers that one '
+        . 'file at a time, and is the thing #50 was filed about (§4aq). It is a tool to '
+        . 'run, not a gate, because a full sweep is hours',
 ] as $note) {
     echo "  · $note\n";
 }

@@ -1,25 +1,50 @@
 # What can be worked on at the same time
 
-Three audit items are open — **#33**, **#44** and **#50** — plus a browser pass that
-nothing in this repo can do. This file says which of them can run in parallel, which
-cannot, and what the ones that do run in parallel have to agree about before they
-start.
+**All three lanes have landed** — #33 as §4ao, #44 as §4ap, #50 as §4aq — and with #50
+the numbered audit list is closed. **What is left is lane 0, the browser pass, and
+nothing in this repo can do it.**
 
-It exists because the last round of parallel work produced four branches that each
-solved something and each had to be adjudicated afterwards, and because the collisions
-were not where anybody expected. They were not in the app. They were in three files
-every branch touches.
+So this file has stopped being a plan and become the thing it was always more useful as:
+what a branch cut beside another one has to agree about before it starts. The round of
+parallel work before this one produced four branches that each solved something and each
+had to be adjudicated afterwards, and the collisions were not where anybody expected.
+They were not in the app. They were in the files every branch touches.
+
+**Read items 2 and 4 below before starting a branch beside another one.** They are the
+two the A/B round corrected, and both were corrected by something going wrong rather
+than by argument: an invariant number cannot be reserved the way a section letter can,
+and the count line in `reviewed-decisions.md` does not conflict when it should.
 
 ## The short version
 
 | Lane | Item | Run it | Why |
 |------|------|--------|-----|
-| **0** | Browser pass on `lbm-test/` | **First, before any of the below** | Four commits of Builder changes have never run in a browser. Nothing here can do it. |
-| **A** | #33 — an account with no signs can still write the shared library | In parallel with B | Touches `crud.php`, `api.php`, `lib/assets.php`. Nothing B touches. |
-| **B** | #44 — no timezone, so "editing since 2:15pm" follows the host's `php.ini` | In parallel with A | Touches `lib/branding.php`, `admin_panel.php`, `lib/displays.php`. Nothing A touches. |
-| **C** | #50 — 29 checks that cannot fail, 5 invariants with no automated check | **Alone, after A and B have landed** | Its whole subject *is* the file A and B are both editing. |
+| **0** | Browser pass on `lbm-test/` | **The only thing left, and it was never an audit item** | Four commits of Builder changes have never run in a browser, and #44 added two things only a live page can confirm. Nothing here can do it. |
+| ~~**A**~~ | ~~#33 — an account with no signs can still write the shared library~~ | **Landed** — §4ao, invariant 29 | Touched `crud.php`, `api.php`, `lib/grants.php` — not `lib/assets.php`, which is what this table predicted. |
+| ~~**B**~~ | ~~#44 — no timezone, so "editing since 2:15pm" followed the host's `php.ini`~~ | **Landed** — §4ap, invariant 28 | Touched `lib/branding.php`, `admin_panel.php`, `lib/displays.php`, `config.php`, and — beyond what was predicted — `db_connect.php`, `lib/login_attempt.php`, `lib/server_report.php` and the new `lib/store_clock.php`. Still nothing A touched. |
+| ~~**C**~~ | ~~#50 — 29 checks that cannot fail, 5 invariants with no automated check~~ | **Landed** — §4aq, invariant 30 | Ran alone, and the sequencing below was the reason: its whole subject was the two files A and B were both adding to. It ended up rewriting neither of them much and adding a third tool, `tools/mutate.php`. |
 
-## Lane 0 first, and it is not optional
+## What lane C confirmed about this file's one real prediction
+
+C was ordered last on the argument that it *reads* the suite while A and B *write* it, so
+running it in parallel would not have been a merge problem but a measurement one: the
+count of hollow checks would have been stale before it was written down. That held, and
+more sharply than expected — because the answer C arrived at is that **the count was
+never recountable by hand at all.** It came from a two-hundred-check suite and the suite
+is 1778 checks. What shipped instead is an instrument that answers the question per file,
+on demand, which is the form a measurement has to take when the thing being measured
+grows every week.
+
+So the rule generalises past this round: **a lane whose deliverable is a number about
+another lane's output should be asked whether the number is the deliverable.** Usually
+the instrument is.
+
+One thing C did *not* need, which was predicted: it barely touched
+`tools/selftest_layout.php`'s existing sections. It added two new ones, corrected the
+label on one check, and left the rest alone. The collision this file spent three
+paragraphs on would have been the anchor line and nothing else.
+
+## Lane 0, and it is the only thing left
 
 `https://www.srcresort.com/lbm-test/` exists precisely so this can happen without
 risking the live sign (`DEPLOY-SKIP.md` §E). Since the last deploy, `builder.php` has
@@ -34,96 +59,169 @@ purpose is to *change* the canvas out from under whoever is looking at it. A rou
 that is byte-identical in a stub and wrong on screen is exactly the shape a harness
 cannot catch.
 
+None of the three lanes touched `builder.php`, so that list is the same four commits it
+was — but **#44 added two things to look at on the same visit**, and both are things only
+a live page can answer:
+
+- **Admin Panel → Settings → Store Time Zone.** The default is `America/Los_Angeles`,
+  so a deploy that never touches it is already right for this store. Check it once, and
+  read the three time-zone rows on **This Server** while you are there.
+- **The database's session zone**, on the same card, which nothing had ever shown.
+  `db_connect.php` now asks every connection for `+00:00` and the request is suppressed
+  rather than fatal, so a host that refused it says so *there and nowhere else*.
+  Anything other than a zero offset means the app is back to two clocks, and what it
+  costs is a creation date reading a few hours out.
+
 Read **Settings → This Server** before signing in a second time. It must say
 `lbm-test` and `silverad_lummi_market_drive_thru_2`. That check is the whole isolation
 guarantee, and the sign-in that shows it to you is also the one that converges schema
 on whatever database it found.
 
-## Why A and B really are disjoint, and C really is not
+## What the A/B round proved, and what it did not
 
 The test was footprint, not subject:
 
 | File | A (#33) | B (#44) | C (#50) |
 |------|:-------:|:-------:|:-------:|
-| `crud.php`, `api.php`, `lib/assets.php` | ● | | |
+| `crud.php`, `api.php`, `lib/grants.php` | ● | | |
 | `lib/branding.php`, `admin_panel.php`, `lib/displays.php` | | ● | |
-| `config.php` | | ● | |
-| `tools/selftest_layout.php` | ● | ● | ●●● |
-| `tools/check_invariants.php` | ● | | ●●● |
+| `config.php`, `db_connect.php`, `lib/login_attempt.php`, `lib/server_report.php`, `lib/store_clock.php` | | ● | |
+| `tools/selftest_layout.php` | ● | ● | ● |
+| `tools/check_invariants.php` | ● | ● | ● |
+| `tools/test_fixture.php`, `tools/mutate.php` | | | ● |
 | `docs/BUILD-REFERENCE.md` | ● | ● | ● |
 | `docs/reviewed-decisions.md` | ● | ● | ● |
 
-A and B share no application file at all. C shares no application file with either —
-and that is the trap, because C's *deliverable* is `tools/selftest_layout.php` and
-`tools/check_invariants.php`, which is where A and B both add their coverage.
+**The conclusion held: A and B shared no application file.** Both ended up outside the
+footprint this table predicted — A landed in `lib/grants.php` rather than
+`lib/assets.php`, B in four files more than were listed — and neither drifted into the
+other's. So the useful part is not the accuracy of the rows. It is that **a footprint
+guessed from an item's subject is a guess**, twice over, and the guesses happened to be
+safe. A predicts where a rule *belongs*, not where the item *is about*: #33's rule
+belongs beside the other `Actor` predicates, and #44's belongs in a module of its own.
 
-Running C beside A and B is not a merge problem, it is a measurement problem. C has to
-decide which of 29 checks cannot fail. Doing that against a suite two other branches
-are adding to means the count is stale before it is written down, and a check A added
-last night is a check C never looked at. **C reads the suite. A and B write it. Reads
-go after writes.**
+**What the table cannot predict at all is the last five rows.** All three lanes touched
+`tools/check_invariants.php`, because adding an invariant means adding its mechanical
+check, and all three touched the same two docs, because that is where a write-up goes.
+Those rows are not a function of the subject, so no footprint table drawn from
+application files will ever get them right. They are what items 1–4 are for.
 
-C also has the one dependency that is not about files: its second half is *five
-invariants with no automated check*, and §5 names them. Two of that list moved this
-month — the `schema.sql`-versus-`lib/schema.php` grep became a MySQL assertion, and the
-sanitiser grep became mechanical. A and B may each add or retire a grep. C should read
-the list it is actually meant to close, not the one that was there when #50 was filed.
+**The A/B merge is where all four collisions actually appeared**, and three of them were
+already wrong on paper before it: two branches claiming invariant 28, an anchor with two
+values, and a count line that read `48 done, 2 open` in both trees when the truth after
+the merge was `49 done, 1 open`. None of that is a mistake either branch made; each
+counted correctly against a base that could only see its own item close.
 
-## What A and B have to agree before they start
+C ran alone and so collided with nothing, which is the sequencing above working rather
+than luck: it was ordered last because it reads the suite the other two were writing, and
+what it found is that the number it had been sent to produce was not producible by hand at
+all. The one shared line it did have to settle was the anchor, which is item 3.
 
-Three files are shared. Each has a specific way of going wrong that has already
-happened at least once.
+## What a lane has to agree before it starts
+
+The audit list is closed, so nothing here is allocated to a lane any more. It is kept
+because the next change to this app will still touch these four things, and each has a
+specific way of going wrong that has now happened at least once.
 
 ### 1. Section letters — assigned here, not discovered
 
 `check_doc_numbering.php` prints the next free letter, and four branches cut from one
 base all asked it and all got the same answer. Asking is right; asking *at the same
-time* is the failure. So they are allocated in advance. Phase 4 currently runs to
-§4an, so the next three are:
+time* is the failure. So they are allocated in advance. Phase 4 now runs to §4aq, and
+**`4ar` is the next free letter** — ask the tool rather than counting, and if two branches
+start at once, write the allocation down here before either of them writes prose.
 
-- **Lane A (#33) writes `4ao`.**
-- **Lane B (#44) writes `4ap`.**
-- **Lane C (#50) writes `4aq`.**
+- ~~**Lane A (#33) wrote `4ao`.**~~ ~~**B (#44) wrote `4ap`.**~~ ~~**C (#50) wrote `4aq`.**~~
 
-Written without the `§` on purpose: a reservation is not a citation, and
+**This scheme worked exactly as designed, and it is the only one of the four that did.**
+B wrote `4ap` while `4ao` was still unwritten and its push passed, because
+`check_doc_numbering.php` checks letters for duplication and for dangling citations, not
+for an unbroken run. A gap is harmless here. That asymmetry with the invariant numbers is
+the whole of item 2.
+
+A reservation is written without the `§` on purpose: a reservation is not a citation, and
 `check_doc_numbering.php` reads every `§`-reference in every doc and fails on one that
 points at a write-up which does not exist yet. That is the check doing its job — a
-citation of a section nobody has written is what a guess looks like from outside — so
-this file does not pretend to cite them. Add the `§` when the write-up exists.
+citation of a section nobody has written is what a guess looks like from outside. Add the
+`§` when the write-up exists, which is why `4ao`, `4ap` and `4aq` carry one and `4ar`
+does not.
 
-Whoever lands second will find the letter after theirs unused, which is correct and
-costs nothing. Run `php tools/check_doc_numbering.php` anyway.
+### 2. Invariant numbers — reserving them does not work, and here is what does
 
-### 2. Invariant numbers — likewise
+**Corrected by the A/B merge.** The plan was A takes 28, B takes 29, C takes 30 and up.
+Both branches wrote **28**, and both were right to: `check_doc_numbering.php` requires the
+list to run **unbroken from 1**, so writing 29 into a tree whose list ends at 27 is not a
+deferred conflict, it is an immediate failure of your own push. A gap in the section
+letters is harmless; a gap here is not. **A number cannot be reserved across a base that
+does not contain the number before it.**
 
-The list runs unbroken 1–27 and the checker enforces that, so two branches both adding
-"28" is a guaranteed conflict and a guaranteed renumber.
+So the rule that actually works: **every lane writes the next free number in its own tree,
+and the reservation only settles who renumbers on the merge.** As settled:
 
-- **Lane A takes 28** if it adds one (it probably does: "an account with no grant
-  writes nothing" is a rule with more than one enforcement point).
-- **Lane B takes 29** if it adds one.
-- **Lane C takes 30 and up**, and is the lane most likely to add several.
+- **Lane B kept 28** — a stored moment is UTC, read in one place, shown in the store's
+  zone (§4ap).
+- **Lane A renumbered to 29** — an account that has been assigned no sign writes nothing
+  shared (§4ao).
+- **Lane C took 30**, and only 30 — a check ships having been seen to fail (§4aq). It was
+  expected to add several; what it actually needed was one rule about how a check earns
+  its line, because the four mechanised greps are rules the *checker* enforces rather than
+  invariants a reader has to hold. **31 is the next free number.**
+
+B renumbered nothing and A renumbered everything, and the tie was broken by counting:
+`invariant 28` appeared 15 times across 7 files on B's side and 7 times across 6 on A's,
+so moving A's was the smaller edit. **That is the tiebreak — cost, not seniority.** Note
+what it implies: the write-ups now read `§4ao` → invariant 29 and `§4ap` → invariant 28,
+out of order with each other. That is fine and it is not worth a renumber to fix; the
+invariant list is ordered by when a rule was written, and the letters by when a write-up
+was.
 
 ### 3. `reportChecks()` — the anchor conflicts every time, and adding is wrong
 
 `tools/selftest_layout.php` ends with one line holding two numbers:
 
 ```php
-reportChecks(testIsMysql() ? 1657 : 1634);
+reportChecks(testIsMysql() ? 1804 : 1781);
 ```
 
 Every branch that adds a check changes it, so it conflicts on every merge. **Resolve it
-by running the suite and using what it reports, never by adding the two branches'
-deltas together.** The comment above that line already says why: a section can change
-shape as well as size when the behaviour it describes changes, and two deltas summed on
-paper give a number that never existed. The MySQL figure is the SQLite one plus the
-engine-only section (23 today) — if that section did not change, the difference is the
-same difference.
+by running the suite and using what it reports, never by adding the two branches' deltas
+together.** The A/B merge is the first time that instruction was tested, and the
+interesting part is that **the sum was right**: from a shared base of `1657 : 1634`, A
+reported `1679 : 1656` and B `1716 : 1693` — deltas of +22 and +59 — and 1634 + 22 + 59
+is 1715, which is what the merged run then reported.
 
-### 4. `reviewed-decisions.md` — recount, never carry across
+That is not a reason to start summing. It was right because neither branch changed the
+*shape* of a section the other had counted, which is a property of those two diffs and
+not of arithmetic; the same addition was wrong the last time this line was merged, when
+#21 closed while a section describing the coercion it removed was still open. A sum is a
+prediction you can check in one command. Check it. The MySQL figure is the SQLite one plus
+the engine-only section (23 today) — if that section did not change, the difference is
+the same difference.
 
-The count line and the table have disagreed twice, both times because a branch carried
-its own total across a merge. Recount from the Status column mechanically:
+**And this line has a second reader now.** `tools/mutate.php` runs the suite once per
+mutant and requires the unmutated run to pass first, so an anchor left stale does not
+produce a wrong number — it produces a tool that refuses to start, saying the baseline
+failed. Which is the right failure, and it is how the anchor got caught mid-pass in C:
+every mutant was being graded "killed by the count anchor" until the baseline guard said
+so.
+
+### 4. `reviewed-decisions.md` — recount, and the merge will not warn you
+
+The count line and the table have now disagreed three times. The first two were a branch
+carrying its own total across a merge. **The third is worse and is the reason this item
+moved up the list: two branches wrote the *same* wrong line, so git merged it with no
+conflict at all.** A and B each closed one item against a base with three open, so both
+wrote `48 done, 2 open`, and an identical change on both sides is not a conflict — it is
+agreement. The file merged clean and said 48 when it was 49. Nothing in the standing gates
+reads that line, so it would have shipped.
+
+It now reads **50 done, 0 open**, which is a state worth being careful about rather than a
+reason to stop recounting: a table with nothing open is one where the next status change
+is somebody re-opening a row or adding a 52nd, and the same silent-merge shape applies to
+both.
+
+Recount from the Status column mechanically, on every merge, whether or not the file
+conflicted:
 
 ```
 awk -F'|' '/^\| *[0-9]+ *\|/ {st=$5; gsub(/^ +| +$/,"",st);
@@ -136,15 +234,17 @@ counted as neither — two branches have each quietly folded it into a different
 
 ## Sequencing, in one line each
 
-1. **Lane 0** — deploy to `lbm-test/`, read the isolation card, then walk the Builder:
-   drag, resize, hide, unhide, edit a price, Undo it, publish, and look at the sign.
-2. **Lanes A and B** — in parallel, on their own branches, each with its letter and
-   invariant number from above.
-3. **Lane C** — after both have landed, against the suite as it then is.
+1. **Lane 0** — deploy to `lbm-test/`, read the isolation card, check the two things #44
+   added, then walk the Builder: drag, resize, hide, unhide, edit a price, Undo it,
+   publish, and look at the sign. **This is the only one left, and it has now had three
+   branches land in front of it.**
+2. ~~**Lanes A and B**~~ — landed, §4ao/invariant 29 and §4ap/invariant 28.
+3. ~~**Lane C**~~ — landed, §4aq/invariant 30, alone and against a suite that held still.
 
-Nothing in lanes A–C is blocked by lane 0. But a browser defect found after three more
-branches have landed is a defect in a bigger diff, and finding it now costs an
-afternoon rather than a bisect.
+Nothing was blocked by lane 0, and it stayed last three times running because it needs a
+person, a deploy and a screen. The cost is now visible rather than theoretical: a browser
+defect found today is a defect in a diff four commits deep in `builder.php` plus everything
+since, which is an afternoon of bisecting rather than an afternoon of looking.
 
 ## What is deliberately not a lane
 
@@ -153,7 +253,12 @@ afternoon rather than a bisect.
   asset rows an old layout referenced, so a snapshot stored by asset id restores into
   blank blocks. It is a table with its gate, an interaction with the stamp and the lock,
   and a decision the owner has not asked for.
-- **Automating the mutation runs.** #49's numbers were measured by hand, one file at a
-  time. Making that repeatable is inside #50's scope, not beside it.
+- ~~**Automating the mutation runs.**~~ **Done in #50** — `tools/mutate.php`, one file at
+  a time and deliberately not a gate, because `lib/layout_rules.php` alone is 187 mutants
+  and half an hour of runs. What is *not* done is the sweep: six of twenty-six `lib/`
+  modules, and the remaining twenty are a command each rather than a lane.
 - **Deleting the retired branches.** One command, no code, and it needs rights this
-  repo's automation does not have. Both lists of shas are in `reviewed-decisions.md`.
+  repo's automation does not have — the delete has been attempted and refused with
+  `HTTP 403`. `reviewed-decisions.md` holds the shas and, more usefully, the one-liner
+  that asks git which refs add anything to `main` instead of trusting a list of names.
+  Nine of sixteen added nothing.

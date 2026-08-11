@@ -11,7 +11,7 @@ edited in place and every change reaches the sign by hand.
 | [`docs/BUILD-REFERENCE.md`](docs/BUILD-REFERENCE.md) | **The standing build contract.** Module map, the invariants every phase must preserve, and where later phases attach. **Re-read it after finishing each module.** |
 | [`CONTEXT.md`](CONTEXT.md) | The domain language. Use these words — Display, Viewer, Screen, screen name tag, canvas, grant, edit lock — in code, comments and UI copy. |
 | [`docs/roadmap-multi-display.md`](docs/roadmap-multi-display.md) | The phased plan and its current status. |
-| [`docs/reviewed-decisions.md`](docs/reviewed-decisions.md) | **The 51-item list from the adversarial audit, with what was decided and what is left.** The numbering the owner uses. Two numbering traps are documented there; read them before quoting an issue number. |
+| [`docs/reviewed-decisions.md`](docs/reviewed-decisions.md) | **The 51-item list from the adversarial audit, with what each was decided to be.** All 50 numbered items are now Done — which closes the audit, not the app: nothing on that list was ever the browser pass. The numbering the owner uses. Two numbering traps are documented there; read them before quoting an issue number. |
 | [`docs/adr/`](docs/adr/) | Decisions with their rejected alternatives. Don't re-litigate one without reading it. |
 | [`HANDOFF.md`](HANDOFF.md) | Deployment facts: live URLs, credentials layout, what is and isn't in the repo. |
 | [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) | **What not to overwrite, upload or delete when files go to the server.** Read before any upload — the repo and the server hold different files, and uploading the tree reverts live branding and restores `setup.php` silently. |
@@ -62,6 +62,17 @@ edited in place and every change reaches the sign by hand.
   holds a sign disagree silently. Then make sure the Builder *says so*: `applyLockAnswer()`
   ignores a failed heartbeat on purpose, and `LOCK_TERMINAL` is the fixed list of refusals
   that never come back — each with its own sentence, because what to do next differs.
+- **Two writes are not about a Display, and they are the two that had no check.** The
+  access rule above works because almost everything is scoped to a sign, so the resolution
+  seam can answer once for all of it. The asset library is one pool behind every sign and
+  `uploads/` is one folder behind every library entry — nothing resolves a Display for
+  either, so an account with no grant could fill both, one screen after the Builder told it
+  no display was assigned to it. `Actor::holdsASign()` is the predicate and
+  `Actor::NO_SIGN_REFUSAL` the sentence; `crud.php` and `api.php` are the doors, and both
+  ask **before** `move_uploaded_file()`, which cannot be rolled back. It is the grant axis
+  and not `openable()` on purpose: a sign switched off for the afternoon is still a sign
+  somebody was given, and the refusal's wording has to stay true of everyone it refuses.
+  Not sending a form somebody may not use is courtesy; the refusal behind it is the check.
 - **The front door answers before it reads the password.** Closed, suspended and
   locked-out are properties of the *account*, so `LoginAttempt` settles all three
   before `password_verify()` runs — otherwise the sentence a person reads is a
@@ -114,13 +125,32 @@ node tools/selftest_builder_undo.js        # if builder.php was touched
 node tools/selftest_viewer.js              # if viewer.php was touched
 ```
 
+And one that is not a gate, because it takes minutes rather than seconds:
+
+```
+php tools/mutate.php lib/whatever.php      # over each lib/ file you changed
+```
+
+It breaks that file one way at a time and runs the suite each time, so a check you
+just wrote is *seen* to fail rather than assumed to. That is invariant 30 and it is a
+rule because the alternative has shipped here more than once: a check asserting what
+PHP 8 guarantees, a `setupInteract()` call that could not fail, a grep whose stated
+answer had been unreachable since the day it landed, and an "absent setting" check
+running in a process where the setting was present. All four read as one more `ok`
+line. A surviving mutant is a check to write **or a reason to write down** — §4am's
+`flock(LOCK_UN)` survives because the runtime would release the lock anyway, which is
+the docblock being right. It is never a reason to delete the line: three of #49's
+survivors were load-bearing. And a kill has grades — only the `assertion` grade is a
+check knowing what the line was for; `diagnostic`, `count` and `fatal` are the harness
+noticing something moved.
+
 `check_doc_numbering.php` also prints the next free section letter. That is the
 question every branch cut from the same base has to answer before it writes a
 write-up, and four of them once answered it with the same letter — ask the tool
 rather than counting, and note that it will not let a document cite a section
 that does not exist yet, which is what a guess looks like from the outside.
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it —
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3100 lines of it —
 which is why the standing gate is not enough on its own. Extract the `<script>`
 block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
@@ -157,6 +187,25 @@ layout, drawn on the board a customer reads prices off.
   class constant whose declaration is a number), which is what makes *forgetting* to
   escape a failing check rather than something noticed later. There is no allow-list: a
   new line either says which shape it is or converts.
+- **A stored moment is UTC; one place reads it, and the store's zone is what a person
+  sees.** Three rules that are one, because separating them is how #44 survived a year.
+  Written with `gmdate()`, never `date()` — local wall-clock is not monotonic and the
+  autumn fall-back replays an hour — and never by asking the *database* for the time,
+  because `CURRENT_TIMESTAMP` is MySQL's session zone, which is a third clock beside
+  PHP's and the store's and the one no screen showed. Read by `StoreClock::epochOf()`
+  and nowhere else: a bare `strtotime()` on a `Y-m-d H:i:s` uses the process zone, so
+  the `' UTC'` suffix *is* the rule, and it was written out three times with the third
+  copy missing it — the two that were right are exactly what made the third invisible,
+  because a stamp stored in the wrong frame and one read in the wrong frame produce the
+  same sentence, and on a host where the frames agree they produce the *right* one.
+  Shown through `StoreClock::label()`, in the zone `STORE_TIMEZONE` names, and **a fixed
+  offset is not a timezone** — `+08:00` and `PST` both build a valid `DateTimeZone` and
+  are both wrong for half the year, so only the identifiers PHP lists will do. The
+  process default is set once, in `config.php`, so a bare `date()` added later agrees
+  with the door rather than being two hours from it — the live host sets
+  `America/Chicago`, observed 2026-08-11 after this repo had asserted UTC without looking
+  (§4ap) — and is deliberately not what the door depends on, since `viewer.php` loads
+  neither `config.php` nor `auth.php`.
 - **A colour in a `<style>` block is validated, never escaped.** Escaping is for a
   delimiter and a stylesheet has none — `#fff; } body { … }` survives `Markup::text()`
   intact and is a closed rule and a new one. The store's brand colours go through

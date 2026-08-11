@@ -99,4 +99,45 @@ try {
         'Database unreachable'
     );
 }
+
+// ── The database's own clock ──────────────────────────────────
+// Every moment PHP writes is UTC (§4t, §4v). Every moment *MySQL* writes was in
+// MySQL's session zone, which defaults to the host's system zone and which nothing
+// here had ever set — a third clock beside PHP's process zone and the store's own,
+// and the only one no screen could show (#44). It reaches two values: the
+// `created_at`/`updated_at` TIMESTAMP defaults, which PHP cannot write and so cannot
+// convert, and `displays.last_published_at`, which used to be `CURRENT_TIMESTAMP` and
+// is now a bound `gmdate()`. Setting the session to UTC makes "everything stored in
+// this database is UTC" a whole sentence rather than nearly one, so
+// `StoreClock::epochOf()` is right about every stamp it is handed instead of most of
+// them.
+//
+// A numeric offset, not `'UTC'`: the named zones need MySQL's `mysql.time_zone`
+// tables loaded, which a shared host may not have, and `+00:00` is always understood.
+//
+// TIMESTAMP columns already written are unaffected — MySQL stores them as an instant
+// and converts on read, so old rows start reading correctly rather than stop. The one
+// migration is `last_published_at`, which is a DATETIME and therefore stored as the
+// wall clock it was written in; §4ap and `recordPublish()` say what that costs, which
+// is one sentence per Display until its next publish.
+//
+// Suppressed rather than fatal, and reported instead: a protection that cannot apply
+// is reported, not applied. `ServerReport` prints the session zone the connection
+// actually ended up with, so a host that refused this says so on Settings → This
+// Server rather than being silently back to three clocks.
+//
+// Unconditional, including on the path `api.php` serves to every Screen every 30
+// seconds — which is the one place in this app where an extra statement per request
+// deserves a sentence. It is a session variable: no metadata lock, no I/O, and nothing
+// like the DDL invariant 7 keeps off that path. The alternative is worse than the cost:
+// a connection whose time frame depends on which page opened it is the third clock all
+// over again, in a form nothing could report, and the public poll is the one caller that
+// would never be looked at.
+try {
+    $pdo->exec("SET time_zone = '+00:00'");
+} catch (Throwable $e) {
+    // Deliberately nothing. ErrorPolicy::report() here would fire on every request of
+    // every page for as long as the host refused it (invariant 20), and the honest
+    // channel for a standing configuration fact is the report that reads it back.
+}
 ?>
