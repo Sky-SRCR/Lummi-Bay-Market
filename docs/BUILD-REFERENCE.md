@@ -70,7 +70,7 @@ Design rules, applied to every module added by this build:
 | `request_scheme.php` | `RequestScheme::isSecure(array $server): bool` | Whether the *browser's* leg of a request is HTTPS, asked for exactly one reason: whether the session cookie may carry `Secure`. A flat `true` there is not a hardening on an `http://` deployment, it is a correct password landing back on a blank login form for ever, because the browser discards the cookie and nothing anywhere says so. Believes the forwarded proxy headers, deliberately — refusing them costs a real Cloudflare-fronted deploy its `Secure` flag, while believing a forged one costs only the forger their own sign-in. Says false when the request says nothing. Depends on nothing, reads no superglobal. |
 | `plain_text.php` | `toPlainText(string): string` | ADR-0002's sanitising, in a file with no session side effects so the store can include it. Seven statements whose **order** is the substance (§4am): breaks are rewritten before the strip, or `strip_tags` takes the line break away with the tag; a `<` that cannot open a tag is escaped before the strip, because `strip_tags` is not a parser and deletes from a `<` to the end of the value; and entities are decoded after it, since a browser sends a typed `<` back as `&lt;`. `PLAIN_TEXT_NOT_A_TAG` is the single answer to "is this markup?" and is used in exactly one place. The cost of the order is that encoded markup lands as literal text, inert only because every renderer draws stored text with `textContent`. **The only caller of `strip_tags()` in the repo** — a label or a preview that wants plain text asks this, or it disagrees with the sign. |
 | `branding.php` | `BrandingConfig` — `apply` / `current` / `save` → `BrandingWrite`, plus `path` / `load` and the pure `render` / `parses` | The generated `branding_config.php`: the eight settings it holds, their defaults, and **how a file the whole app requires is replaced while the app is running** (§4y). Nothing writes the live path but one `rename()`, and it is not reached until the replacement has been rendered, parsed, written to a temporary file beside it and read back byte for byte — so a reader gets the whole old file or the whole new one, and every failure leaves the site on exactly what it had and says so. `save()` takes only the settings a form actually edited and applies them over `current()`, which is what the old eight-positional-argument call could not do: each of the two forms passed the other's values back in from page variables. And the read side: `apply()` is one call for what used to be seven lines repeated in `config.php`, `login.php`, `builder.php` and `help.php`, each spelling out the same defaults and two of them guarding the `require` on a different constant from the other two. `config.php` calls it and `auth.php` requires `config.php`, so the eight names exist by the time anything renders; nothing already defined is ever overridden, which is what `config.php` promises about `db_credentials.php`. Defining constants is a global side effect no other module has — the exception is deliberate, because the names are the interface every template already reads. Depends on nothing — no database, no session, no config, because the page that manages this file is also the page that has to work when it is missing. |
-| `store_clock.php` | `StoreClock::zone` / `isZone` / `zones` / `pick` / `unreadable` / `apply`, and the two doors `epochOf` / `label` | Which zone a person in the shop reads a time in, and — the half that had gone wrong on its own — **that every stored moment is UTC**. There were three clocks (§4ap): PHP's process zone, unset on the live host and therefore UTC; MySQL's session zone, which `CURRENT_TIMESTAMP` used and nothing had ever set; and the store's, in Washington. `epochOf()` is the only place in the repo that calls `strtotime()` (invariant 28) — that `' UTC'` suffix was written out three times and the third copy left it off, so a refused publish named the wrong hour and nothing could see the difference. `label()` converts through a `DateTimeZone` rather than relying on the process default, so it is right in `viewer.php`, which loads neither `config.php` nor `auth.php`, and its zone is a **parameter** with the setting as its default (§4o) because a `define()` cannot be undone and the property worth testing is that the sentence follows the setting. **A fixed offset is not a timezone**: `+08:00` and `PST` both build a valid `DateTimeZone` and are both wrong for half the year, so the accepted set is the identifiers PHP *lists* — a name is the only thing that knows when daylight saving starts. `unreadable()` names a stored value it will not use rather than substituting in silence (#21). Depends on nothing but `BrandingConfig`, which owns the file the setting lives in, and does not open that file a second way. |
+| `store_clock.php` | `StoreClock::zone` / `isZone` / `zones` / `pick` / `unreadable` / `apply`, and the two doors `epochOf` / `label` | Which zone a person in the shop reads a time in, and — the half that had gone wrong on its own — **that every stored moment is UTC**. There were three clocks (§4ap): PHP's process zone, which the live host sets to `America/Chicago`; MySQL's session zone, which `CURRENT_TIMESTAMP` used and nothing had ever set, so the same machine's Central; and the store's, in Washington. Those first two agreeing is what made the missing `' UTC'` below cancel out exactly and therefore stay hidden. `epochOf()` is the only place in the repo that calls `strtotime()` (invariant 28) — that `' UTC'` suffix was written out three times and the third copy left it off, so a refused publish named the wrong hour and nothing could see the difference. `label()` converts through a `DateTimeZone` rather than relying on the process default, so it is right in `viewer.php`, which loads neither `config.php` nor `auth.php`, and its zone is a **parameter** with the setting as its default (§4o) because a `define()` cannot be undone and the property worth testing is that the sentence follows the setting. **A fixed offset is not a timezone**: `+08:00` and `PST` both build a valid `DateTimeZone` and are both wrong for half the year, so the accepted set is the identifiers PHP *lists* — a name is the only thing that knows when daylight saving starts. `unreadable()` names a stored value it will not use rather than substituting in silence (#21). Depends on nothing but `BrandingConfig`, which owns the file the setting lives in, and does not open that file a second way. |
 | `color.php` | `Color::read` / `isColor` / `describe` | What a colour is — `#rrggbb`, and nothing else. One rule, because it used to be written out four times and the four copies disagreed about what to do when a value failed it: `DisplayAdmin` substituted `#1a1a2e`, `BrandStyles` `#ffffff`, the Branding form whatever was already saved, and the Builder's `rgbToHex()` `#000000`. All four then reported success, so "saved" meant four different things and none of them meant "what you typed" (#21, #41). **It never picks a colour.** `read()` answers the colour or `''` and the caller decides what an empty answer means for it — a form refuses and names the field, the publish path refuses and names the block, a caller with a genuine default applies it visibly at the call site. Blank is deliberately *not* a colour: "nothing supplied" and "supplied and unreadable" are different answers and collapsing them is the defect. Not a normaliser either — no trimming, no `#fff` expansion, no `rgb()` — the accepted set is exactly what the three old regexes shared, so nothing that used to be storable stopped being storable. Pure, and depends on nothing. |
 | `display_request.php` | `DisplayRequest::forViewing/forEditing(...)` → `DisplayResolution` | Which Display an HTTP request means and whether the account asking may have it, the ADR-0003 notice wording per failure case, and the editing entry rule. The one place grants are enforced. |
 | `http_reply.php` | `HttpReply::json(payload[, code])` / `noStore` / `jsValue`, and the pure `reply` / `codeFor` / `codeForPayload` / `codeForResolution` / `cacheHeaders` behind them | The envelope every answer leaves in: the status line, the caching rules, and the bytes of the body. **The encode**, because `json_encode` returns `false` and `echo false` prints nothing — one bad byte sent a zero-length 200 and a sign kept its layout for good (#26). Malformed UTF-8 is repaired and reported; anything else becomes a real 500 with a body that is known to encode, so no JSON request is ever answered with something that is not JSON. **The code**, derived from the payload's own `reason` rather than chosen beside it, because twenty-odd call sites cannot be kept in step by hand and a code that disagrees with a reason disagrees silently (#28). **The caching**, `no-store` everywhere, from one place — needed most by the 404s this module introduced, which are heuristically cacheable where the unlabelled 200 they replaced was not. `jsValue()` is the same encode for a value printed into a page's own `<script>`, where a `false` emits `var X = ;` and takes the whole block down. Pure functions under thin senders, the way `ErrorPolicy::noticeFor()` is, so all of it is testable where `header()` does nothing. Depends only on `ErrorPolicy`, for the sentence. |
@@ -457,8 +457,9 @@ through the app again:
     wrong frame produce the same sentence, and on a host where the frames happen to agree
     they produce the *right* sentence, which is how the missing suffix lived for a year. The
     process default is set once, in `config.php`, so a bare `date()` added to a page later
-    agrees with the door instead of being seven hours from it — and it is deliberately not
-    what the door depends on, because `viewer.php` loads neither `config.php` nor `auth.php`.
+    agrees with the door instead of being two hours from it — the live host sets
+    `America/Chicago` (§4ap) — and it is deliberately not what the door depends on, because
+    `viewer.php` loads neither `config.php` nor `auth.php`.
     Two greps hold it: `strtotime(` outside `lib/store_clock.php`, and
     `date_default_timezone_set(` outside it.
 
@@ -2226,14 +2227,18 @@ exact about it rather than repeating the shape of the worry. **Every `locked_unt
 live database is in the old format**, and what happens when one is read as UTC depends on
 which side of UTC the server sits:
 
-- On UTC — which is what PHP falls back to when `date.timezone` is unset, and §4k says the
-  live value is still unknown — nothing happens at all. Old rows and new rows are the same
-  string.
-- **West** of UTC, which is where the store is, an old stamp reads seven or eight hours
-  *earlier*, so any lockout in force at the moment of the deploy is released. Bounded and
-  self-correcting: `locked_until` is never more than fifteen minutes ahead in the first
-  place, so every affected row is gone within fifteen minutes of the deploy, and the
-  failure counter beside it is untouched.
+- On UTC — which is what PHP falls back to when `date.timezone` is unset — nothing happens
+  at all. Old rows and new rows are the same string. *(When this was written §4k said the
+  live value was unknown. It is known now and it is not this case: the host sets
+  `America/Chicago`, observed 2026-08-11 — see §4ap. So the bullet that actually applied to
+  this migration is the next one.)*
+- **West** of UTC, which is where the store is *and where the host turned out to be* —
+  Central, so five or six hours rather than the seven or eight this bullet guessed at from
+  the store's own zone — an old stamp reads that much *earlier*, so any lockout in force at
+  the moment of the deploy is released. Bounded and self-correcting either way, and the
+  bound is what carried the reasoning rather than the number: `locked_until` is never more
+  than fifteen minutes ahead in the first place, so every affected row is gone within
+  fifteen minutes of the deploy, and the failure counter beside it is untouched.
 - **East** of UTC an old stamp reads *later*, and that is the direction that matters: a
   fifteen-minute lockout lasting the rest of the shift, on the one page there is no way
   around.
@@ -4411,20 +4416,52 @@ Left standing, and deliberately:
 ### 4ap. Three clocks, and the one a person was reading (#44)
 
 Decision #44, in the words it was filed in: nothing set a timezone, so "editing since
-2:15pm" followed whatever the host's `php.ini` happened to say. On the live host it
-says nothing at all, and PHP's fallback for an unset `date.timezone` is UTC. The store
-is in Washington. So the banner a colleague read off the Builder when they found a
-sign already open said **9:15pm**, and the only thing anywhere that hinted at why was
-one row on Settings → This Server reading `UTC`.
+2:15pm" followed whatever the host's `php.ini` happened to say. The store is in
+Washington, and what the banner said was **4:15pm**.
+
+**This paragraph was wrong when it was first written, and the correction is the more
+interesting half.** It said the live host set nothing, so PHP fell back to UTC, so the
+banner read 9:15pm — seven or eight hours out. That was an assertion about a machine
+nobody had looked at, which is the failure #51 is a monument to, made again in the write-up
+of a different item. It has now been looked at:
+
+> **Observed 2026-08-11**, on Settings → This Server in the `lbm-test/` install:
+> PHP **8.2.33**, MySQL **5.7.23-23**, **Server time zone `America/Chicago`**.
+> `America/Chicago` cannot be a fallback — PHP's fallback for an unset `date.timezone`
+> is UTC — so the host sets it explicitly. Nothing in this repo does: the tracked
+> `.htaccess` sets four session flags and no `date.` value, and there is no `.user.ini`.
+
+So the error was **two hours**, Central for Pacific, and that is worse to have shipped
+rather than better. Seven hours is obviously broken and somebody reports it on the first
+afternoon. Two hours reads like a colleague who genuinely started at 4:15pm — which is
+the whole reason a wrong clock is a different kind of defect from a wrong colour, and
+was already the argument for refusing an unusable zone rather than substituting one.
+The magnitude was wrong in the write-up; the reasoning it was supporting was not.
 
 "Set a timezone" sounds like one line. It was not, because there were three clocks and
 only one of them was PHP's:
 
-| Clock | What used it | Was it set? |
-|-------|--------------|-------------|
-| PHP's process zone | every `date()` that printed a moment for a person | no — so UTC |
-| MySQL's session zone | `CURRENT_TIMESTAMP`, and every `TIMESTAMP` column on read | no — so the host's |
+| Clock | What used it | What it actually was |
+|-------|--------------|----------------------|
+| PHP's process zone | every `date()` that printed a moment for a person | `America/Chicago`, set by the host |
+| MySQL's session zone | `CURRENT_TIMESTAMP`, and every `TIMESTAMP` column on read | never set, so the host's system zone — same machine, so Central too |
 | the store's own | the person standing next to the sign | nowhere in the repo |
+
+**And the two being the same zone is what hid the second defect.** Those middle two
+columns agreeing is not a coincidence — one machine, one system zone — and it meant the
+missing `' UTC'` in `lastPublishDescription()` (below) cancelled the `CURRENT_TIMESTAMP`
+frame *exactly*. A stamp MySQL wrote as `16:15` Central was read by PHP as `16:15`
+Central and printed as `4:15pm`: the right Central time, by two errors that annihilated.
+So that sentence was wrong by the same two hours as every other one, and no worse — it
+was **latent**, not active.
+
+What activates it is a change to either clock. Which is to say: the obvious one-line
+version of this fix — set the process zone, or ask the connection for UTC — would have
+turned a uniform two-hour error into a five-hour one in that one sentence, and only in
+that one sentence. `SET time_zone = '+00:00'` on its own makes MySQL write `21:15` while
+PHP still reads it as Central. That is the clearest possible statement of why "there were
+three clocks" is the finding rather than a framing: fixing one of them is not a partial
+fix, it is a new bug.
 
 **What was already right, and why it is the reason this was safe.** Every moment *PHP*
 writes has been UTC since §4t and §4v — `gmdate()` in, `strtotime($s . ' UTC')` out —
@@ -4466,13 +4503,14 @@ value:
   after #21, where the only remaining door is a hand-edited generated file. A value
   that arrives that way is *named*, on the Settings tab and on the This Server card,
   together with what is being used instead. It matters more here than for a colour:
-  a sign shows a wrong colour, and a clock seven hours out shows a perfectly ordinary
-  time.
-- **The default is not UTC.** UTC is exactly what the unset `date.timezone` already
-  gave, so a default of UTC is this defect with a comment beside it.
+  a sign shows a wrong colour, and a clock two hours out shows a perfectly ordinary
+  time — which is exactly what the host turned out to be doing.
+- **The default is not UTC.** A default of UTC would be "show every time in a zone the
+  store is not in", which is the defect restated as a policy — the fact that the host
+  turned out to be on Central rather than UTC changes the number and not that argument.
   `America/Los_Angeles` is the store's zone, is what the suite has called "the store's
-  own zone" since §4t, and is the right answer for an installation that has never
-  opened the page.
+  own zone" since §4t, and is the right answer for an installation that has never opened
+  the page.
 
 #### The half nobody had asked about: reading a stamp
 
@@ -4487,18 +4525,22 @@ Display::lastPublishDescription()
 ```
 
 The third is the sentence a refused publish prints — *"sky, Aug 5 at 2:04pm"*, the one
-thing telling an admin whose work they are about to walk over. It read a UTC stamp in
-the process zone. And it was wrong at the *other* end too, in a way that cancelled out
-on some hosts: `recordPublish()` wrote that stamp with `CURRENT_TIMESTAMP`, so the
-value was in MySQL's session zone rather than PHP's. Two frames, two offsets, and on a
-host where MySQL and PHP agreed the two errors summed to the right answer.
+thing telling an admin whose work they are about to walk over. It read a UTC stamp in the
+process zone. And it was wrong at the *other* end too: `recordPublish()` wrote that stamp
+with `CURRENT_TIMESTAMP`, so the value was in MySQL's session zone rather than PHP's.
 
-Neither engine could show it. SQLite's `CURRENT_TIMESTAMP` is UTC *by definition*, so
-the fixture always agreed with the reader whatever the process zone was; on MySQL the
-suite runs wherever its host is set, which for a CI container is UTC as well. A
-statement that is engine-independent is what made it assertable: `recordPublish()`
-binds a PHP `gmdate()` now, the way every lock statement in that file already did and
-the way its own comment already explained at length.
+On this host the two errors cancelled exactly, because both zones were Central — see the
+observation at the top. That is what made it a **latent** defect rather than a visible
+one, and latent is the harder kind to find: the sentence was wrong by the same two hours
+as every other sentence, so nothing about it stood out, and it would have become five
+hours out the moment anybody moved either clock. Which is exactly what this change does.
+
+Neither engine could show it either. SQLite's `CURRENT_TIMESTAMP` is UTC *by definition*,
+so the fixture always agreed with the reader whatever the process zone was; on MySQL the
+suite runs wherever its host is set, which for a CI container is usually UTC as well. A
+statement that is engine-independent is what made it assertable: `recordPublish()` binds
+a PHP `gmdate()` now, the way every lock statement in that file already did and the way
+its own comment already explained at length.
 
 So the reading moved into one place, `StoreClock::epochOf()`, and invariant 28 is that
 nothing else in the repo calls `strtotime()` at all. Two copies of a rule agree by
@@ -4520,13 +4562,16 @@ request of every page for as long as the host refused it (invariant 20).
 
 #### One migration, bounded the same way §4v's was
 
-Every `last_published_at` already on the live database was written by MySQL in its
-session zone, and will now be read as UTC — shifted by the host's offset until that
-Display is next published. That is the same shape as §4v's `locked_until` and is
-accepted for the same reasons: the value appears in exactly one sentence, on a publish
-that was *refused*, one publish replaces it, and nothing decides anything from it. The
-alternative was a schema statement and a backfill against a column whose old frame
-nothing in the repo actually knows.
+Every `last_published_at` already on the live database was written by MySQL in Central
+and will now be read as UTC, so it reads **five hours early** (six in winter) until that
+Display is next published — a known number now rather than "the host's offset", because
+the frame those rows are in is the observation at the top of this write-up. Early rather
+than late, which is the harmless direction: the sentence says a publish happened longer
+ago than it did. It is the same shape as §4v's `locked_until` and is accepted for the same
+reasons: the value appears in exactly one sentence, on a publish that was *refused*, one
+publish replaces it, and nothing decides anything from it. The alternative was a schema
+statement and a backfill, and a backfill needs the old frame to be a fact about every row
+rather than about the host as it stands today.
 
 `users.closed_at` needed nothing: it was already `gmdate()` in and read with the
 suffix. `users.created_at` needed the connection change and nothing else.
@@ -4572,9 +4617,11 @@ three clocks, since there were three:
   because it is the question people actually have.
 - **PHP time zone** — and its note changed direction. It used to warn that an unset
   `date.timezone` meant times next to an edit lock may be hours out. That is no longer
-  true, and leaving it would send somebody after a problem the setting above has
-  already answered. It now says the host is not set and that it is harmless, because
-  the app sets its own.
+  true, and leaving it would send somebody after a problem the setting above has already
+  answered. It now says the host is not set and that it is harmless, because the app sets
+  its own. On this host the note does not render at all: `date.timezone` **is** set, and
+  the row simply reads `America/Chicago`. Which is worth noticing — the row that reads
+  like a plain fact is the one that was quietly deciding every time on every screen.
 - **Database time zone** — new, and the clock no screen had ever shown. Anything other
   than a zero offset means the `SET time_zone` did not take, and the note says what
   that costs: a creation date a few hours out, and nothing a sign shows.
@@ -4585,13 +4632,14 @@ definition.
 
 #### Coverage
 
-**Fifty-nine checks.** The ones worth naming are the ones that would have caught the
+**Sixty checks.** The ones worth naming are the ones that would have caught the
 original defect, and they are all about a *disagreement* rather than a value:
 
-- One instant, three zones. `2026-08-11 21:15:00` is `2:15pm` in the store, `9:15pm`
-  in UTC — literally the sentence #44 was filed about, and the reason the zone is a
-  parameter is that this assertion is otherwise unreachable from a process holding one
-  `define()`.
+- One instant, three zones. `2026-08-11 21:15:00` is `2:15pm` in the store and `4:15pm`
+  in Central, which is what the Builder was printing; `9:15pm` in UTC is the third, kept
+  because it is the widest gap and because the zone being a *parameter* is what makes any
+  of these three reachable from a process holding one `define()`. The check that would
+  have caught #44 is not any one of them — it is that they differ.
 - The label does not move when the process clock does. Set the process to
   `Asia/Tokyo`, ask again, get `2:15pm`. That is what stops `viewer.php` — which loads
   neither `config.php` nor `auth.php` — from being a fourth clock the day somebody

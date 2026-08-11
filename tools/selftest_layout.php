@@ -1946,8 +1946,15 @@ section('And a person reads it in the store\'s zone, not the server\'s (#44)');
 
 // The other half of the section above, and the half that was still open. Storage
 // being absolute is what makes the lock work; it says nothing about the sentence a
-// person reads, and that sentence followed `date.timezone` — unset on the live host,
-// so UTC, while the store is in Washington. "editing since 2:15pm" printed 9:15pm.
+// person reads, and that sentence followed `date.timezone` — `America/Chicago` on the
+// live host, while the store is in Washington. "editing since 2:15pm" printed 4:15pm.
+//
+// Two hours, and the checks below are deliberately not written against that number.
+// This write-up first said seven, from an assumption that the host set nothing and fell
+// back to UTC, and the host had never been looked at (§4ap). What the checks assert is
+// that three zones *disagree* about one instant and that the label follows the setting;
+// none of them would change if the host moved again, which is the only property a suite
+// can honestly hold when the machine is somebody else's.
 //
 // The whole of it is now one module, so the rules are asserted on the module rather
 // than through the four callers. The zone is a parameter with the setting as its
@@ -2011,8 +2018,10 @@ checkSame(0, StoreClock::epochOf(null),         'nor a null column');
 $instant = '2026-08-11 21:15:00';
 checkSame('2:15pm', StoreClock::label($instant, 'g:ia', 'America/Los_Angeles'),
           'the moment a lock was taken reads as 2:15pm in the store');
+checkSame('4:15pm', StoreClock::label($instant, 'g:ia', 'America/Chicago'),
+          'and as 4:15pm in the zone the live host is set to, which is what was on the screen');
 checkSame('9:15pm', StoreClock::label($instant, 'g:ia', 'UTC'),
-          'and as 9:15pm on a server nobody configured, which is what was on the screen');
+          'and as 9:15pm in UTC, which is the widest of the three and none of the others');
 checkSame('5:15pm', StoreClock::label($instant, 'g:ia', 'America/New_York'),
           'and as something else again three time zones east');
 checkSame('Aug 11 at 2:15pm', StoreClock::label($instant, 'M j \a\t g:ia', 'America/Los_Angeles'),
@@ -2037,7 +2046,7 @@ checkSame('', StoreClock::label('not a date', 'g:ia'),
 
 // ---- Through the callers ---------------------------------------------------------
 // The suite's own zone is the setting's default, so these assert the store's answer
-// rather than the server's — and would have read seven hours out before this landed.
+// rather than the server's — and would have read two hours out before this landed.
 $pdo   = newTestDb();
 $store = newTestDisplayStore($pdo);
 $zoned = makeTestDisplay($pdo, 'zoned', 'Zoned');
@@ -6381,4 +6390,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // deltas summed give a number that never existed. The MySQL figure is the SQLite one
 // plus the 23 checks in the engine-only section below, which is the same difference it
 // has always been — if that section did not change, the difference did not either.
-reportChecks(testIsMysql() ? 1716 : 1693);
+reportChecks(testIsMysql() ? 1717 : 1694);

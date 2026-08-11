@@ -71,7 +71,7 @@ Running C beside A and B is not a merge problem, it is a measurement problem. C 
 decide which of 29 checks cannot fail. Doing that against a suite two other branches
 are adding to means the count is stale before it is written down, and a check A added
 last night is a check C never looked at. **C reads the suite. A and B write it. Reads
-go after writes.** B has now written 59 checks into it, so the 29 were already going to
+go after writes.** B has now written 60 checks into it, so the 29 were already going to
 need recounting before A lands.
 
 C also has the one dependency that is not about files: its second half is *five
@@ -143,7 +143,7 @@ and the reservation only settles who renumbers.** As it stands:
 `tools/selftest_layout.php` ends with one line holding two numbers:
 
 ```php
-reportChecks(testIsMysql() ? 1716 : 1693);
+reportChecks(testIsMysql() ? 1717 : 1694);
 ```
 
 Every branch that adds a check changes it, so it conflicts on every merge. **Resolve it

@@ -172,8 +172,10 @@ layout, drawn on the board a customer reads prices off.
   offset is not a timezone** — `+08:00` and `PST` both build a valid `DateTimeZone` and
   are both wrong for half the year, so only the identifiers PHP lists will do. The
   process default is set once, in `config.php`, so a bare `date()` added later agrees
-  with the door rather than being seven hours from it — and is deliberately not what the
-  door depends on, since `viewer.php` loads neither `config.php` nor `auth.php`.
+  with the door rather than being two hours from it — the live host sets
+  `America/Chicago`, observed 2026-08-11 after this repo had asserted UTC without looking
+  (§4ap) — and is deliberately not what the door depends on, since `viewer.php` loads
+  neither `config.php` nor `auth.php`.
 - **A colour in a `<style>` block is validated, never escaped.** Escaping is for a
   delimiter and a stylesheet has none — `#fff; } body { … }` survives `Markup::text()`
   intact and is a closed rule and a new one. The store's brand colours go through

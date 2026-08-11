@@ -2,23 +2,37 @@
 // ============================================================
 // WHAT TIME IT IS IN THE SHOP
 // ============================================================
-// Decision #44. Nothing in this app ever set a timezone, so every time a person
-// read came out of whatever `date.timezone` the host happened to hold — and on the
-// live host it holds nothing, which means PHP falls back to UTC. The store is in
-// Washington. "Dana has been editing Drive-Thru since 2:15pm" was printed at
-// 9:15pm, and the only thing on any screen that hinted at it was one line on
-// Settings → This Server saying the server's zone was UTC.
+// Decision #44. Nothing in this app ever set a timezone, so every time a person read
+// came out of whatever `date.timezone` the host happened to hold. The store is in
+// Washington; the host holds `America/Chicago` (observed on Settings → This Server,
+// 2026-08-11 — see §4ap, and note that this repo asserted UTC here for a day before
+// anybody looked). So "Dana has been editing Drive-Thru since 2:15pm" printed 4:15pm,
+// and the only thing on any screen that hinted at it was one row saying the server's
+// zone was Central.
+//
+// Two hours is worse to have shipped than seven would have been. Seven is obviously
+// broken; two reads like a colleague who really did start at 4:15pm. That is the whole
+// reason a clock in the wrong zone is a different kind of defect from a colour in the
+// wrong hex, and it is why `unreadable()` below names a value it will not use instead
+// of quietly picking one.
 //
 // It is worth being exact about how many clocks were involved, because "set a
 // timezone" sounds like one line and was not:
 //
-//   1. **PHP's process zone.** Unset on the live host, so UTC. Every `date()` call
-//      that printed a moment for a person used it.
-//   2. **MySQL's session zone.** `CURRENT_TIMESTAMP` and every `TIMESTAMP` column
-//      read use it, and it is the host's system zone unless somebody says
-//      otherwise. Nobody did. `displays.last_published_at` was written with it and
-//      `users.created_at` still is.
+//   1. **PHP's process zone.** `America/Chicago`, set by the host — not by anything in
+//      this repo, whose `.htaccess` sets session flags and no `date.` value. Every
+//      `date()` call that printed a moment for a person used it.
+//   2. **MySQL's session zone.** `CURRENT_TIMESTAMP` and every `TIMESTAMP` column read
+//      use it, and it is the host's system zone unless somebody says otherwise. Nobody
+//      did — so the same machine's Central. `displays.last_published_at` was written
+//      with it and `users.created_at` still is.
 //   3. **The store's own.** What the person reading the screen is standing in.
+//
+// **Those first two being the same zone is what hid the second defect below.** One
+// machine, one system zone, so the missing `' UTC'` cancelled the `CURRENT_TIMESTAMP`
+// frame exactly and that sentence was wrong by the same two hours as every other one.
+// Setting either clock on its own turns that into five. A one-line fix here is not a
+// partial fix, it is a new bug.
 //
 // Storage was already settled and is not what this module changes: §4t and §4v made
 // every moment PHP writes UTC — `gmdate()` in, `strtotime($s . ' UTC')` out — because
@@ -33,11 +47,11 @@
 //   · **A stored stamp is UTC.** `epochOf()` is the one place that knows it. That
 //     rule was written out in three places and two of them had it right: the edit
 //     lock and the login lockout appended `' UTC'`, and `lastPublishDescription()`
-//     did not — so "sky, Aug 5 at 2:04pm" was already the wrong moment on any host
-//     not on UTC, in the one sentence a refused publish shows. Invariant 28 is that
-//     this file is the only place `strtotime()` is called.
+//     did not — a latent error in the one sentence a refused publish shows, waiting
+//     for either clock above to move. Invariant 28 is that this file is the only
+//     place `strtotime()` is called.
 //   · **"Now" is store time too.** `apply()` sets the process default, so a bare
-//     `date()` on a page agrees with `label()` instead of being seven hours from it.
+//     `date()` on a page agrees with `label()` instead of being two hours from it.
 //     Nothing in the app relies on it today — every render goes through the door —
 //     and that is the point: the cheap call and the correct call give the same
 //     answer, so the next line somebody adds is right by default.
@@ -64,12 +78,11 @@ class StoreClock
      * The zone when the config does not name one, or names something that is not a
      * zone.
      *
-     * Not UTC. UTC is what an unset `date.timezone` already gave and is the whole
-     * defect — a default that reproduces the bug is not a default, it is the bug
-     * with a comment beside it. The store is in Washington (CONTEXT.md), the suite
-     * has used `America/Los_Angeles` as "the store's own zone" since §4t, and an
-     * installation that has never opened the Settings page is far likelier to be
-     * this store than to be on Greenwich.
+     * Not UTC, and not the host's. A default of either is "show every time in a zone
+     * the store is not in", which is the defect restated as a policy. The store is in
+     * Washington (CONTEXT.md), the suite has used `America/Los_Angeles` as "the store's
+     * own zone" since §4t, and an installation that has never opened the Settings page
+     * is far likelier to be this store than to be anywhere else.
      */
     const DEFAULT_ZONE = 'America/Los_Angeles';
 
