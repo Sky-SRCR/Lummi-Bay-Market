@@ -62,6 +62,17 @@ edited in place and every change reaches the sign by hand.
   holds a sign disagree silently. Then make sure the Builder *says so*: `applyLockAnswer()`
   ignores a failed heartbeat on purpose, and `LOCK_TERMINAL` is the fixed list of refusals
   that never come back — each with its own sentence, because what to do next differs.
+- **Two writes are not about a Display, and they are the two that had no check.** The
+  access rule above works because almost everything is scoped to a sign, so the resolution
+  seam can answer once for all of it. The asset library is one pool behind every sign and
+  `uploads/` is one folder behind every library entry — nothing resolves a Display for
+  either, so an account with no grant could fill both, one screen after the Builder told it
+  no display was assigned to it. `Actor::holdsASign()` is the predicate and
+  `Actor::NO_SIGN_REFUSAL` the sentence; `crud.php` and `api.php` are the doors, and both
+  ask **before** `move_uploaded_file()`, which cannot be rolled back. It is the grant axis
+  and not `openable()` on purpose: a sign switched off for the afternoon is still a sign
+  somebody was given, and the refusal's wording has to stay true of everyone it refuses.
+  Not sending a form somebody may not use is courtesy; the refusal behind it is the check.
 - **The front door answers before it reads the password.** Closed, suspended and
   locked-out are properties of the *account*, so `LoginAttempt` settles all three
   before `password_verify()` runs — otherwise the sentence a person reads is a

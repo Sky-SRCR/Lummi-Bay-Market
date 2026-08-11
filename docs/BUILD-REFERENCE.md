@@ -440,6 +440,25 @@ through the app again:
     `loadLayout()` uses, so a block type added later is restorable the day it is
     added; and `serializeCanvas()` has exactly two callers, Publish and the snapshot,
     so what Undo believes a block is and what reaches the sign cannot drift apart.
+28. **An account that has been assigned no sign writes nothing shared** (#33). Almost
+    every write in this app is scoped to a Display, which is what makes the resolution
+    seam (invariant 8) the only place access has to be enforced. Exactly two are not:
+    the **asset library**, one pool behind every sign, and **`uploads/`**, one folder
+    behind every library entry. Nothing resolves a Display for either, so nothing was
+    checking anything — a `basic` account with no grant could fill the library every
+    sign draws from and leave files on the server for good, having just been told by
+    the Builder that no display was assigned to it. `Actor::holdsASign()` is the one
+    predicate and `Actor::NO_SIGN_REFUSAL` the one sentence; `crud.php`'s add form and
+    `api.php`'s `upload_file` are the two doors, and both ask **before**
+    `move_uploaded_file()`, which cannot be rolled back — a gate below it leaves
+    precisely what it exists to prevent, minus the row. It is the grant axis alone and
+    not `openable()`: a sign switched off for the afternoon is still a sign somebody was
+    given, and the refusal's own wording would be a lie to its holder. The doors also
+    stop *drawing* what they will refuse, which is invariant 3's rule, and that is not
+    the check — a POST need not come from a form this app rendered. Anything added later
+    that writes something every sign shares asks the same question; anything scoped to a
+    Display must not, because the seam already answered it and a second opinion is
+    invariant 8's warning.
 
 ---
 
@@ -4385,6 +4404,114 @@ Left standing, and deliberately:
 
 ---
 
+### 4ao. The two writes no sign scopes (#33)
+
+Every access decision in this app is the same decision: *may this account have this
+Display?* That is ADR-0005's whole point, and it is why the enforcement lives in one
+seam — `DisplayRequest` resolves the Display, `Actor::mayOpen()` answers, and an
+endpoint added later inherits the check by resolving its Display the same way
+(invariant 8). The reasoning holds for as long as every write is *about* a Display.
+
+Two are not.
+
+- **The asset library** is one pool behind every sign. `crud.php` creates entries in
+  it, and the page has been "all roles can access; delete is admin-only below" since
+  before Displays existed.
+- **`uploads/`** is one folder behind every library entry, and `api.php`'s
+  `upload_file` is "images – all roles" for the same reason.
+
+Neither names a Display, so neither goes through the seam, so neither was checking
+anything at all. A `basic` account with no grant could add entries the whole building's
+signs draw from, and put files on the server that nothing ever removes — one screen
+after the Builder had told it, in as many words, *"No displays have been assigned to
+you yet."* That picker page even links to the Library, which is how the dead end got
+built: the link was courtesy, and what it led to was the one page where a person with
+no sign could still change what the shop shows.
+
+Worth being precise about the severity, because it is not "an outsider can write to the
+sign". Everyone this is about is a signed-in member of staff, and nothing they add
+reaches a Screen until somebody who *does* hold that sign places it and publishes. What
+they could do is fill a shared workspace with rows an admin has to scroll past, and
+leave files in a folder with no sweep behind it — and they could do it from an account
+that had been told it holds nothing.
+
+**The rule is one predicate and one sentence.** `Actor::holdsASign()` is the
+predicate — it lives beside `mayEdit()`, `mayOpen()`, `openable()` and `granted()`,
+because the docblock on that class promises every "may they?" question is a method
+there, and a second copy of this one in a page script is how two doors come to disagree.
+`Actor::NO_SIGN_REFUSAL` is the sentence, in one place because both doors refuse for
+the same reason and one refusal met in two wordings reads as two problems. It names
+what did not happen and who to ask, since there is nothing the person at the keyboard
+can do about it themselves.
+
+**The grant axis alone, deliberately not `openable()`.** This is the decision in the
+change worth disagreeing with, so here is the case. `openable()` is the app's usual
+predicate and it folds in a second axis: a Display switched off is not openable by a
+`basic` account. Gating on it would mean turning a sign off for the afternoon also, and
+silently, took its clerk's access to the library on a different page — a change of
+*reach* with a consequence nobody enumerated, which is the family of defect §4s and
+§4t are both about. It would also make the refusal wrong: the sentence says *no display
+has been assigned to you*, which is true of everybody `holdsASign()` refuses, and a lie
+to somebody whose one sign is merely out of service. And there is a working reason —
+getting next week's promo into the library while the sign it is for is off is ordinary.
+So: a grant is a sign, retired or not. That is the same distinction `granted()` versus
+`openable()` was added for in Phase 4, used here for the first time outside the picker.
+
+The predicate takes the Display list rather than reading the grant ids directly,
+because a grant row is a permission only while the Display it names still exists. The
+foreign key's `ON DELETE CASCADE` should make those two impossible to separate — the
+self-test's fixture enforces it, and a stranded row cannot be inserted through
+`GrantStore` at all — but that constraint is added by convergence and invariant 10 says
+assume nothing about the live table. Asking against the list costs one query and makes
+the answer true either way.
+
+**Admins are true whatever the list holds, including empty.** They hold every Display
+by role, and the one case where that differs from "the list is not empty" is a fresh
+installation with no Displays yet — where the admin is the person about to add the
+first one, and refusing them the library on the way in would be this rule aimed at
+nobody.
+
+#### Where the check is, and where it is not
+
+Both doors ask **before** any file is moved. `move_uploaded_file()` cannot be rolled
+back, so a gate below it leaves exactly what this exists to prevent, minus the row —
+and that ordering is asserted, per door, from where the door opens rather than from the
+top of the file. api.php moves an uploaded *background* three hundred lines above this
+endpoint, and that upload is an admin's and is scoped to a Display, so a check
+measuring against the file's first `move_uploaded_file` would be asking about the wrong
+one. Writing that check also caught it being wrong about itself: both doors carry a
+comment explaining that the move cannot be undone, sitting above the gate the comment
+is about, so measured against raw source a correctly ordered file failed. It strips
+comments first now, for the same reason `check_invariants.php` does.
+
+`api.php`'s gate is an endpoint's own `if`, which is the shape invariant 8 warns
+against. It is allowed here precisely because the question is about the account and not
+about a sign: there is no Display to resolve, so there is nothing for the seam to
+answer. The warning stands undiminished for anything that *does* name a Display.
+
+The two doors also stop *drawing* what they will refuse — the Library shows an
+explanation where the add form was, which is invariant 3's rule about a read-only
+Builder applied one page over. **That is not the check.** A POST need not come from a
+form this app rendered, and invariant 8's second paragraph is explicit that access is
+never enforced by something merely being absent from a page. The form's absence is
+courtesy; the refusal in the create branch is enforcement.
+
+Reads are left alone, and that is a decision rather than an oversight. The library page
+still lists everything, and `get_assets` still answers. Everyone concerned is signed-in
+staff who may be asked to look something up, and a page that will not say what is in it
+cannot explain what it just refused. The audit item is about writes; so is the fix.
+
+#### One thing found next door
+
+`crud.php` built its edit form for anybody who typed `?edit_id=`, though the save has
+been admin-only throughout — a form whose only purpose was to be refused. It became
+load-bearing here, because that same variable decides which panel the page draws: the
+"no display assigned" notice was one query parameter away from being replaced by an
+editor. It is `isAdmin() && isset($_GET['edit_id'])` now, which is §4j's rule again —
+don't send a control to somebody who may not use it.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
@@ -4540,6 +4667,15 @@ grep -rn "closed_at" --include=*.php .        # lib/accounts.php, schema.sql's D
                                               # AccountStore::isClosed() instead
 grep -rEn "(INTO|UPDATE|FROM|JOIN|TABLE) +`?displays`?" --include=*.php .  # lib/displays.php + schema.php's ALTERs
 grep -rn "INTO display_permissions\|FROM display_permissions" --include=*.php .  # only lib/grants.php, plus tools/
+grep -rn "holdsASign(\|NO_SIGN_REFUSAL" --include=*.php .  # lib/grants.php declares both — the
+                                              # predicate and the one sentence its refusal is worded
+                                              # in — and crud.php and api.php are the two doors, which
+                                              # must BOTH appear and appear together. A door holding
+                                              # the predicate and wording its own refusal is one rule
+                                              # met twice in different English, which reads as two
+                                              # different problems. These two writes are the only ones
+                                              # in the app that no Display scopes, so they are the only
+                                              # ones the resolution seam cannot cover — invariant 28
 grep -rn "grants_accounts\|grants_displays" --include=*.php .  # admin_panel.php only, and BOTH names must
                                               # appear twice — once as a hidden input in the grant form,
                                               # once being read. The form declares both axes of the matrix

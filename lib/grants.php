@@ -164,6 +164,20 @@ class GrantStore
  */
 class Actor
 {
+    /**
+     * What an account holding no sign is told when it tries to write something
+     * shared.
+     *
+     * One sentence in one place, because two doors refuse for this reason — the
+     * Library's add form and the API's image upload — and one refusal met in two
+     * wordings reads as two different problems. It names what did not happen and who
+     * to ask, because there is nothing the person at the keyboard can do about it
+     * themselves.
+     */
+    const NO_SIGN_REFUSAL = 'No display has been assigned to you yet, so there is no sign'
+                          . ' for this to go on. Ask an admin which display is yours —'
+                          . ' nothing was saved.';
+
     private $id;
     private $username;
     private $isAdmin;
@@ -272,5 +286,44 @@ class Actor
             if ($this->mayEdit($display)) { $out[] = $display; }
         }
         return $out;
+    }
+
+    /**
+     * Has a sign been assigned to this account at all? (#33)
+     *
+     * The question the shared writes ask — the Asset Library and the image upload —
+     * because until the answer is yes, there is nothing an entry could be put on. A
+     * `basic` account with no grant could fill the library every sign draws from, and
+     * drop files into `uploads/`, having just been told by the Builder that there was
+     * nothing here for it to edit.
+     *
+     * **The grant axis on its own, deliberately not `openable()`.** This is "is there
+     * a sign this account is here to work on", which a Display switched off for the
+     * afternoon does not change: somebody holding one retired sign cannot open it, and
+     * can perfectly well be getting next week's promo into the library ready for it
+     * coming back. Gating on `openable()` would also make turning a Display off take
+     * away a second thing, on another page, with nothing saying so. The refusal's
+     * wording rests on the same choice — it says *no display has been assigned to
+     * you*, which is true of everyone this returns false for and would be a lie to the
+     * account whose one sign is merely off.
+     *
+     * It takes the Display list rather than reading `grantedIds` alone, because a
+     * grant row is a permission only while the Display it names is still there. The
+     * `ON DELETE CASCADE` should mean the two can never differ; invariant 10 says
+     * assume nothing about a database behind the repo, which is the same reason
+     * `revokeAllForDisplay()` exists.
+     *
+     * Admins are true whatever the list holds, including empty. They hold every
+     * Display by role (ADR-0005), and the one case where that differs from "the list
+     * is not empty" is a fresh install with no Displays yet — where the admin is the
+     * person about to add the first one, and refusing them the library on the way in
+     * would be this rule aimed at nobody.
+     *
+     * @param Display[] $displays every Display in the installation
+     */
+    public function holdsASign(array $displays)
+    {
+        if ($this->isAdmin) { return true; }
+        return $this->granted($displays) !== [];
     }
 }

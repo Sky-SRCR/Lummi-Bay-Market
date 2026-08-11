@@ -1942,6 +1942,119 @@ checkSame(true, $claimed->lockState()->heldBy(1), 'and it can actually be claime
 date_default_timezone_set($tzWas);
 
 // ─────────────────────────────────────────────────────────────
+section('An account with no sign may read the shared library, not write it (#33)');
+
+// The library is one pool behind every sign, and `uploads/` is one folder behind
+// every library entry — neither is scoped to a Display, so neither is covered by the
+// resolution seam that answers every other "may they?" in this app. A `basic` account
+// with no grant could therefore add entries and upload files after the Builder had
+// told it, in as many words, that no display was assigned to it.
+$pdo   = newTestDb();
+$store = newTestDisplayStore($pdo);
+$deli  = makeTestDisplay($pdo, 'deli', 'Deli Case');
+$lobby = makeTestDisplay($pdo, 'lobby', 'Lobby');
+$all   = $store->all();
+
+// Accounts 1 (admin) and 2 (clerk) are the fixture's.
+checkSame(true, newTestActor($pdo, 1, 'admin')->holdsASign($all),
+          'an admin holds every sign, so the library is theirs');
+checkSame(false, newTestActor($pdo, 2, 'basic')->holdsASign($all),
+          'a basic account with no grant holds none of them');
+
+grantTestAccess($pdo, $lobby->id(), 2);
+checkSame(true, newTestActor($pdo, 2, 'basic')->holdsASign($all),
+          'one grant is enough — the library is a pool, not a per-sign store');
+
+// A Display switched off is the case this predicate deliberately does *not* cover.
+// Somebody whose one sign is out of service cannot open it, and can perfectly well be
+// getting next week's promo into the library ready for it coming back — and the
+// refusal's own wording ("no display has been assigned to you") would be a lie to
+// them. Gating on openable() would also make turning a sign off silently take away a
+// second thing on another page.
+$pdo->exec("UPDATE displays SET is_active = 0 WHERE tag = 'lobby'");
+$clerk = newTestActor($pdo, 2, 'basic');
+$off   = $store->all();
+checkSame(0, count($clerk->openable($off)), 'their only sign is turned off, so there is nothing to open');
+checkSame(true, $clerk->holdsASign($off),   'and the library is still theirs, because the sign still is');
+$pdo->exec("UPDATE displays SET is_active = 1 WHERE tag = 'lobby'");
+
+// A grant row pointing at a Display that is gone is not a sign. Two things stand
+// between the app and that state and only one of them is in this repo: the foreign key
+// with its cascade, which this fixture does enforce — the insert below cannot be made
+// through GrantStore at all — and the predicate reading the Display list rather than
+// the grant list. Invariant 10 is why the second one is worth having: the constraint
+// is added by convergence and may never have applied to the live table.
+$stranded = Actor::withGrants(9, 'clerk', false, [4242]);
+checkSame(false, $stranded->holdsASign($store->all()),
+          'a grant naming a Display that is not there is not a sign');
+checkSame([], $stranded->granted($store->all()),
+          'because the Display list is what answers, not the grant row');
+
+// A fresh installation, where an admin holds every Display and there are none. The
+// one case where "holds every sign" and "the list is not empty" differ, and refusing
+// there would aim the rule at the person about to add the first Display.
+$empty = newTestDb();
+checkSame([], newTestDisplayStore($empty)->all(), 'a fresh install has no Displays at all');
+checkSame(true, newTestActor($empty, 1, 'admin')->holdsASign([]),
+          'an admin may still add to the library there');
+checkSame(false, newTestActor($empty, 2, 'basic')->holdsASign([]),
+          'and a basic account still may not');
+
+// ---- The two doors ------------------------------------------------------------
+// Both are page-level gates and neither can be driven from here, so what is asserted
+// is that both ask the one predicate, word the refusal from the one sentence, and ask
+// before any file is moved. `move_uploaded_file()` cannot be rolled back, so a gate
+// below it leaves exactly what it exists to prevent, minus the row.
+//
+// Each door is read from where it opens, not from the top of the file: api.php moves
+// an uploaded background hundreds of lines above this endpoint, and that upload is an
+// admin's and is scoped to a Display, so a check measuring against the file's first
+// `move_uploaded_file` would be asking about the wrong one. The gate token differs
+// too — crud.php asks the predicate once at the top, because the page needs the answer
+// to decide whether to draw the form at all, and carries it into the branch as
+// `$mayAdd`; api.php has only the one use and asks it there.
+$doors = [
+    'crud.php' => ['opens' => "isset(\$_POST['action_create'])", 'gate' => '$mayAdd'],
+    'api.php'  => ['opens' => "\$action === 'upload_file'",      'gate' => 'holdsASign('],
+];
+foreach ($doors as $door => $where) {
+    // Comments dropped first, and this check needed it to be right about itself: both
+    // doors carry a comment saying `move_uploaded_file()` cannot be undone, sitting
+    // *above* the gate that comment is explaining — so measured against raw source, a
+    // correctly ordered file failed, for the same reason check_invariants.php strips
+    // comments before it greps anything.
+    $src = '';
+    foreach (token_get_all(file_get_contents(__DIR__ . '/../' . $door)) as $token) {
+        if (is_array($token) && ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT)) { continue; }
+        $src .= is_array($token) ? $token[1] : $token;
+    }
+    checkMentions($src, 'holdsASign(', $door . ' asks the one predicate');
+    checkMentions($src, 'Actor::NO_SIGN_REFUSAL', 'and refuses in the one wording');
+
+    $opens = strpos($src, $where['opens']);
+    check($opens !== false, 'and the write it guards is still where this check looks for it');
+    $gate  = $opens === false ? false : strpos($src, $where['gate'], $opens);
+    $moves = $opens === false ? false : strpos($src, 'move_uploaded_file', $opens);
+    check($gate !== false && $moves !== false && $gate < $moves,
+          'and refuses before that door moves an uploaded file, which cannot be undone');
+}
+
+// The sentence itself has to survive rewording without losing either half: what did
+// not happen, and who can change it.
+checkMentions(Actor::NO_SIGN_REFUSAL, 'assigned to you',   'the refusal says why it refused');
+checkMentions(Actor::NO_SIGN_REFUSAL, 'Ask an admin',      'and who to ask, since nothing here helps');
+checkMentions(Actor::NO_SIGN_REFUSAL, 'nothing was saved', 'and that nothing was written');
+
+// The Library's edit form is drawn for an admin only now — it always saved for an
+// admin only, and drawing it for anybody who typed `?edit_id=` was a form that
+// existed in order to be refused (§4j). It also chose which panel the page shows, so
+// leaving it would have put the "no sign assigned" notice one query parameter away
+// from an editor.
+$crudSource = file_get_contents(__DIR__ . '/../crud.php');
+check(preg_match('/\$editAsset\s*=\s*\(isAdmin\(\)\s*&&/', $crudSource) === 1,
+      'and the edit form is built for whoever the save will accept, nobody else');
+
+// ─────────────────────────────────────────────────────────────
 section('An Asset Library entry knows which signs depend on it');
 
 $pdo     = newTestDb();
@@ -6185,4 +6298,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // did (#21 closed while it was open, so three checks that asserted the coercion now
 // assert the refusal). The MySQL figure is the SQLite one plus the 23 checks in the
 // engine-only section below, which is the same difference it has always been.
-reportChecks(testIsMysql() ? 1657 : 1634);
+reportChecks(testIsMysql() ? 1679 : 1656);

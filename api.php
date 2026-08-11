@@ -374,6 +374,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_assets') {
 // POST: upload_file  (images – all roles)
 // ============================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'upload_file') {
+    // All roles, but not all accounts: an upload is a file on the server for as long
+    // as the server lives, and one from an account holding no sign can never appear on
+    // one (#33, invariant 28). The same predicate gates crud.php's add form.
+    //
+    // This endpoint names no Display, so DisplayRequest — which answers every other
+    // "may they?" on this page — has nothing to resolve and cannot cover it. Hence the
+    // explicit `if`, which is the shape invariant 8 warns about; it is allowed here
+    // because the question is about the account rather than about a sign. `forbidden`
+    // is already a reason word, so HttpReply derives the 403 rather than being told.
+    //
+    // Above the $_FILES read, so a refusal happens before a temporary file is moved
+    // anywhere: move_uploaded_file() cannot be undone.
+    if (!$actor->holdsASign($displays->all())) {
+        HttpReply::json(['status'=>'error','reason'=>'forbidden','message'=>Actor::NO_SIGN_REFUSAL]);
+        exit;
+    }
     if (!isset($_FILES['file'])) { HttpReply::json(['status'=>'error','message'=>'No file.'], 400); exit; }
     $check = validateFile($_FILES['file'], IMG_EXT, IMG_MIME);
     if (!$check['ok']) { HttpReply::json(['status'=>'error','message'=>$check['msg']], $check['code']); exit; }

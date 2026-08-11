@@ -325,6 +325,7 @@ do" — they are here because they will be noticed and are not faults.
 | **#38** · §4v | **Nothing to do.** Any login lockout in force at the moment of the deploy is released — the store is west of UTC. | `locked_until` moved to UTC and old rows read earlier from here. Bounded: a lockout is never more than 15 minutes out, and the failure counter beside it is untouched. §4v has the east-of-UTC case, which does not apply to this store. |
 | **#38** · §4u | **Nothing new to do** — step 4 of the checklist already covers it. The three lockout columns are now added by schema convergence on the first authenticated request rather than by `login.php`. On this installation they are already there. | `ensureLockoutColumns()` was the one piece of DDL in the app a bot could reach with no account. |
 | **#46** · §4z | **Upload by [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md), not by dragging the tree over.** Four things on the server are not in the repo or differ from it, and a mirroring client reverts or deletes them silently. Do not upload the repo's `branding_config.php` or `setup.php`; do not let the client delete `uploads/` or the log folder. That file also lists the five checks to run afterwards. | The step that needed these facts did not carry them — every one was already in this repo, in a file the person at the FTP client was not reading. |
+| **#33** · §4ao | **Nothing to do**, unless an account is meant to be adding to the library without holding a sign — check the grant matrix if so. An account with no display assigned now sees the Asset Library with an explanation where the add form was, and its uploads from the Builder are refused. Admins are unaffected, including on an installation with no Displays yet. | The library is shared by every sign and `uploads/` sits behind it, so neither is scoped to a Display and neither went through the check every other write does. A grant is what makes the library somebody's — a Display merely being switched off does not take it away. |
 | **#46** · §4z | **Nothing to do**, twice over. `setup.php` deletes itself the moment the first admin exists, so the old "remember to delete it" step is no longer a step — it only needs *not re-uploading*. And `.htaccess` now denies `.md`, so a docs file that reaches the server is unreadable rather than serving `HANDOFF.md` and the paths in it. | Both are backstops for the upload that forgets, not instructions. A host that forbids the self-delete says so on the page instead of alerting. |
 
 ## 6. The multi-display build (this branch)
@@ -379,7 +380,7 @@ SVG/non-image block, the new-text-block highlight, and the viewer framing +
 kiosk scroll lock. `git log origin/main` has the detail.
 
 **What is left, and what can run beside what:**
-[`docs/work-lanes.md`](docs/work-lanes.md). Three audit items are open — #33, #44 and
+[`docs/work-lanes.md`](docs/work-lanes.md). Two audit items are open — #44 and
 #50 — and the first thing on that list is not a code change: four commits of
 `builder.php` changes have never been rendered by a browser, and `lbm-test/` exists so
 they can be. It also allocates the section letter and invariant number each lane may

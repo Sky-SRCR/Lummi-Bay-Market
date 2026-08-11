@@ -70,7 +70,7 @@ written down rather than remembered:
 | 30 | Wrong-shaped and absurd values were coerced and written rather than refused. | Refuse the publish. | **Done** | §4ab |
 | 31 | Two blocks sharing a temporary id silently reparented one of them into the wrong section. | Refuse the publish. | **Done** | §4ab |
 | 32 | Line height was stored with a thousands separator, so some values could not be read back. *(First framed as a prices problem. It never touched prices — no sign has ever shown a stray comma.)* | Clamp it to 0.5–5 and store it plain. | **Done** | §4ab |
-| 33 | An account with no signs assigned could still write the shared asset library and upload files. | Nothing until it has a sign. | Open | — |
+| 33 | An account with no signs assigned could still write the shared asset library and upload files. | Nothing until it has a sign. | **Done** — one predicate (`Actor::holdsASign()`) and one sentence, on the two doors that no Display scopes: the Library's add form and the API's image upload. Both refuse before `move_uploaded_file()`, which cannot be undone. It is the **grant** axis and not `openable()`, so a sign switched off for the afternoon does not quietly take its clerk's library access away on another page — and the refusal's wording stays true of everybody it refuses. Reads are deliberately untouched: the library still lists, because staff get asked to look things up and a page that will not say what is in it cannot explain what it refused. Found next door and fixed with it: the edit form was drawn for anybody who typed `?edit_id=`, which put the new notice one query parameter away from an editor. | §4ao |
 | 34 | A file bigger than the server's real limit was reported as a security problem. | Detect it and say so plainly. | **Done** | §4n |
 | 35 | A publish that collided with another died as a PHP timeout before it could reach its own clean message. | Give up on the collision sooner, and report it properly. | **Done** | §4ab |
 | 36 | The branding file was written in place with no locking, so a short write took the whole app down. | Write a temporary file, then swap it in. | **Done** | §4y |
@@ -108,7 +108,7 @@ on it was reopened: what changed is the premise, not any item's status.
 
 ## Where this stands
 
-**47 done, 3 open** — counted off the Status column above, which
+**48 done, 2 open** — counted off the Status column above, which
 is 50 rows because there is no #47. The 51st item is the unnumbered policy named at
 the top; it has no row and therefore no status, and two branches counting the same
 table have each quietly folded it into a different total. It is counted here as

@@ -109,6 +109,22 @@ $rules = [
         'why'    => 'a grant is the row\'s existence; GrantStore decides what that means',
     ],
     [
+        'name'   => 'an account with no sign is refused the shared writes by one predicate',
+        'regex'  => '/holdsASign\s*\(|NO_SIGN_REFUSAL/',
+        'in'     => '',
+        // lib/grants.php declares both — the predicate and the one sentence the refusal
+        // is worded in. crud.php and api.php are the two doors: the Library's add form
+        // and the image upload, the only writes a `basic` account can reach that are not
+        // scoped to a Display by DisplayRequest. Both must appear, and appear together:
+        // a door holding the predicate but wording its own refusal is the same rule met
+        // twice in different English, which reads as two different problems.
+        'expect' => ['api.php', 'crud.php', 'lib/grants.php', 'tools/selftest_layout.php'],
+        'why'    => 'a shared library and an uploads folder are the two things in this app '
+                  . 'nothing else scopes to a sign, so an account holding no sign wrote to '
+                  . 'both from a page that had just told it there was nothing to edit '
+                  . '(#33, invariant 28)',
+    ],
+    [
         'name'   => '`password_resets` has one writer, and the guess budget is not in a session',
         'regex'  => '/(INTO|UPDATE|FROM|TABLE)\s+`?password_resets`?\b|reset_attempts/i',
         'in'     => '',
