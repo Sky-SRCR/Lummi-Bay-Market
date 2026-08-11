@@ -31,7 +31,7 @@ running it in parallel would not have been a merge problem but a measurement one
 count of hollow checks would have been stale before it was written down. That held, and
 more sharply than expected — because the answer C arrived at is that **the count was
 never recountable by hand at all.** It came from a two-hundred-check suite and the suite
-is 1776 checks. What shipped instead is an instrument that answers the question per file,
+is 1778 checks. What shipped instead is an instrument that answers the question per file,
 on demand, which is the form a measurement has to take when the thing being measured
 grows every week.
 
@@ -180,7 +180,7 @@ was.
 `tools/selftest_layout.php` ends with one line holding two numbers:
 
 ```php
-reportChecks(testIsMysql() ? 1799 : 1776);
+reportChecks(testIsMysql() ? 1801 : 1778);
 ```
 
 Every branch that adds a check changes it, so it conflicts on every merge. **Resolve it

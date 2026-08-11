@@ -4785,7 +4785,7 @@ neither can be settled by reading, and one of them cannot honestly be settled by
 at all.
 
 **The 29 was never going to be recountable.** It came out of the ten-agent audit (§4g),
-when the suite was about two hundred checks; it is 1776 now, grown by twenty-odd
+when the suite was about two hundred checks; it is 1778 now, grown by twenty-odd
 branches, and the two immediately before this one added 81 between them. A number
 produced by reading a suite goes stale the week after it is produced — which is exactly
 what happened, and is why the item sat open for a year with the note *"the 29 have not
@@ -4880,7 +4880,7 @@ nothing, so it was thrown away and re-measured rather than adjusted.
 | `lib/display_request.php` | 43 | 37 | **6** | 6 — all six equivalent |
 | `lib/upload_limits.php` | 48 | 38 | **10** | 17 |
 | `lib/http_reply.php` | 69 | 41 | **28** | 35 |
-| `lib/layout_rules.php` | 209 | — | — | 64 |
+| `lib/layout_rules.php` | 208 | 155 | **53** | 64 |
 
 Where a "before" figure is larger, the difference is the checks this pass added — and the
 mutant count itself rises as checks are written, because a check written to kill a mutant
@@ -4898,6 +4898,23 @@ a boundary constant nobody pins, `codeForResolution()`'s default for a resolutio
 does not exist, and `subjectOf()`'s `&&` — which is a private helper feeding a throttle key.
 That row is what "a module the tool cannot finish for you" looks like, and it stops here
 rather than growing five checks written to move a number.
+
+**`lib/layout_rules.php` is the opposite case: the biggest module and the most survivors,
+and two of them were worth stopping for.** Of its 53, twenty-two are comparison
+relaxations and sixteen are boundary constants nobody pins — `SIZE_MAX` moving from 20000
+to 20001 is true and does not matter. But the publish validator caps five stored strings
+against their column widths, and only `font_family` had a check: **`font_weight` and
+`font_style` could each have lost their cap** with the suite green, which is a
+five-thousand-character value reaching a `VARCHAR(20)` — a publish that fails outright on
+a strict MySQL and truncates in silence on one that is not, which is the exact defect §4ab
+wrote that table for. Two checks, in the same shape as `font_family`'s, verified against
+mutants 95 and 96.
+
+The rest of that module's survivors are named rather than closed, and the four worth a
+future pass are `describeValue()`'s branches, the `!is_finite()` guard on a line height,
+the `db_id` claim's three-part condition, and the `is_bool` guards in the two
+`isTextLike`-style predicates. None of them is a wrong answer today; each is a line that
+could become one without anything saying so.
 
 Where two numbers appear, the second is after the checks written in this pass; the
 mutant count rises because a check written to kill a mutant is itself a line the next

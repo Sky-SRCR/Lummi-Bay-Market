@@ -5454,6 +5454,12 @@ check(LayoutRules::check(layoutWithField(1, 'font_family', str_repeat('A', 100))
       'and one exactly at it is not');
 check(refuses(layoutWithField(1, 'text_align', str_repeat('x', 17))), 'so is an alignment');
 check(refuses(layoutWithField(1, 'font_color', str_repeat('x', 51))), 'and a colour');
+// The two rows of that table nothing stood over (#50). Five string fields are capped
+// here and only `font_family` had a check, so those two lines could be deleted and a
+// five-thousand-character font weight would reach a VARCHAR(20) — which is the whole
+// defect this section exists for, on the two fields nobody thought to name.
+check(refuses(layoutWithField(1, 'font_weight', str_repeat('b', 21))), 'and a font weight');
+check(refuses(layoutWithField(1, 'font_style',  str_repeat('i', 21))), 'and a font style');
 check(refuses(layoutWithField(0, 'section_bg', str_repeat('p', 256))),
       'and a section background path');
 check(refuses(layoutWithField(1, 'manual_content', str_repeat('t', 65536))),
@@ -6754,4 +6760,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // command; check it. The MySQL figure is the SQLite one plus the 23 checks in the
 // engine-only section below, which is the same difference it has always been — if that
 // section did not change, the difference did not either.
-reportChecks(testIsMysql() ? 1799 : 1776);
+reportChecks(testIsMysql() ? 1801 : 1778);
