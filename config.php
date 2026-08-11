@@ -6,10 +6,10 @@
 // before this file is loaded.
 // ============================================================
 
-// The nine generated settings — the logo, four nav colours, the site name, the two
-// mail-from fields and the Builder's undo depth — with their defaults, in one call.
-// `auth.php` requires this file at the top of every page, so by the time anything
-// renders they are defined.
+// The ten generated settings — the logo, four nav colours, the site name, the two
+// mail-from fields, the Builder's undo depth and the store's time zone — with their
+// defaults, in one call. `auth.php` requires this file at the top of every page, so by
+// the time anything renders they are defined.
 //
 // This used to be seven lines here and seven more in each of login.php, builder.php
 // and help.php, all spelling out the same defaults, and the guard on the require was
@@ -22,6 +22,22 @@
 // Anything already defined is left as it is, so the override above still works.
 require_once __DIR__ . '/lib/branding.php';
 (new BrandingConfig(__DIR__))->apply();
+
+// ── The clock a person reads ──────────────────────────────────
+// Decision #44. Nothing ever set a timezone, so PHP fell back to whatever
+// `date.timezone` held — nothing, on the live host, which means UTC — and the store
+// is in Washington. Set here because this is the file every page loads through
+// `auth.php` and the file that already turns the generated settings into things the
+// app can act on; a page setting it for itself is nine pages that can disagree.
+//
+// This is not what makes the times on those pages right: `StoreClock::label()`
+// converts explicitly, so it is correct in `viewer.php`, which loads neither this
+// file nor `auth.php`, and in a self-test that moves the process zone about on
+// purpose. What this line does is make the *cheap* call agree with the correct one,
+// so a bare `date()` added to a page later is not seven hours from every other time
+// beside it. See lib/store_clock.php for the three clocks that were involved.
+require_once __DIR__ . '/lib/store_clock.php';
+StoreClock::apply();
 
 // ── Builder undo ──────────────────────────────────────────────
 // UNDO_STEPS is how many steps back the Builder's Undo button can go, set on the

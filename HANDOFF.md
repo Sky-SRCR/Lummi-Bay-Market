@@ -379,12 +379,23 @@ SVG/non-image block, the new-text-block highlight, and the viewer framing +
 kiosk scroll lock. `git log origin/main` has the detail.
 
 **What is left, and what can run beside what:**
-[`docs/work-lanes.md`](docs/work-lanes.md). Three audit items are open — #33, #44 and
-#50 — and the first thing on that list is not a code change: four commits of
-`builder.php` changes have never been rendered by a browser, and `lbm-test/` exists so
-they can be. It also allocates the section letter and invariant number each lane may
-use, because four branches once asked `check_doc_numbering.php` the same question at
-the same time and all got the same answer.
+[`docs/work-lanes.md`](docs/work-lanes.md). Two audit items are open — #33 and #50, with
+#44 landed as §4ap — and the first thing on that list is still not a code change: four
+commits of `builder.php` changes have never been rendered by a browser, and `lbm-test/`
+exists so they can be. It also allocates the section letter and invariant number each
+lane may use, because four branches once asked `check_doc_numbering.php` the same
+question at the same time and all got the same answer. Read its §2 before starting a
+branch: #44 landing showed that the *invariant* reservation cannot survive a gap the way
+the letter reservation can, since the checker requires the list to run unbroken from 1.
+
+**One deploy-day note from #44.** The store's time zone is now a setting —
+Admin Panel → Settings → Store Time Zone — and every time on every page is drawn in it.
+The default is `America/Los_Angeles`, so a deployment that never touches it behaves
+correctly for this store; check it once and read the three time-zone rows on This Server
+while you are there. Settings → This Server also now reports the *database's* session
+zone, which nothing had ever shown: anything other than a zero offset means the host
+refused the app's request for UTC, and the only thing it costs is a creation date reading
+a few hours out.
 
 ## 8. Conventions / gotchas for the next session
 

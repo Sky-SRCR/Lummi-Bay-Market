@@ -1942,6 +1942,199 @@ checkSame(true, $claimed->lockState()->heldBy(1), 'and it can actually be claime
 date_default_timezone_set($tzWas);
 
 // ─────────────────────────────────────────────────────────────
+section('And a person reads it in the store\'s zone, not the server\'s (#44)');
+
+// The other half of the section above, and the half that was still open. Storage
+// being absolute is what makes the lock work; it says nothing about the sentence a
+// person reads, and that sentence followed `date.timezone` — unset on the live host,
+// so UTC, while the store is in Washington. "editing since 2:15pm" printed 9:15pm.
+//
+// The whole of it is now one module, so the rules are asserted on the module rather
+// than through the four callers. The zone is a parameter with the setting as its
+// default (§4o): a `define()` cannot be undone, so the property worth checking —
+// the sentence follows the *setting* — is unreachable through the constant.
+
+// ---- What counts as a zone ------------------------------------------------------
+// A name, and only a name. The two refusals below are the substance: both build a
+// perfectly valid DateTimeZone and both are wrong for half the year, which is this
+// same defect with a smaller error bar.
+checkSame(true,  StoreClock::isZone('America/Los_Angeles'), 'a region name is a zone');
+checkSame(true,  StoreClock::isZone('UTC'),                 'and so is UTC, for a store that wants it');
+checkSame(true,  StoreClock::isZone('Pacific/Honolulu'),    'and one that has never had daylight saving');
+checkSame(false, StoreClock::isZone('+08:00'),  'a fixed offset is not — it is right for half the year');
+checkSame(false, StoreClock::isZone('PST'),     'nor an abbreviation, for the same reason');
+checkSame(false, StoreClock::isZone('America/Los Angeles'), 'nor a near miss');
+checkSame(false, StoreClock::isZone(''),        'nor nothing');
+checkSame(false, StoreClock::isZone(null),      'nor null');
+checkSame(false, StoreClock::isZone(['UTC']),   'nor a list, which is what #27 was about');
+
+// ---- What a stored value means --------------------------------------------------
+checkSame('America/Los_Angeles', StoreClock::pick('America/Los_Angeles'), 'a stored zone is used');
+checkSame('Europe/London',       StoreClock::pick('Europe/London'),       'whichever one it is');
+checkSame(StoreClock::DEFAULT_ZONE, StoreClock::pick('+08:00'), 'one that is not a zone falls back');
+checkSame(StoreClock::DEFAULT_ZONE, StoreClock::pick(null),     'and so does an absent setting');
+// The default is load-bearing rather than arbitrary. UTC is exactly what an unset
+// date.timezone already gave, so a default of UTC would be this bug with a comment
+// beside it — the mutation to check is the one that looks like caution.
+checkSame(false, StoreClock::DEFAULT_ZONE === 'UTC',
+          'and the default is not UTC, which is the value the defect already had');
+checkSame(true, StoreClock::isZone(StoreClock::DEFAULT_ZONE), 'the default is itself a zone');
+
+// ---- Which values get reported ---------------------------------------------------
+// Absent is not unreadable: a config written before this setting existed simply does
+// not define it, and a notice on every screen about nothing is a notice nobody reads.
+checkSame('', StoreClock::unreadable(null),                  'an absent setting is not something to report');
+checkSame('', StoreClock::unreadable('Europe/Berlin'),       'nor a usable one');
+checkSame('+08:00', StoreClock::unreadable('+08:00'),        'a stored offset is named exactly as stored');
+checkSame('a array', StoreClock::unreadable(['UTC']),        'and a value with no sentence in it is named by type');
+
+// ---- A stored stamp is UTC, and one place knows it -------------------------------
+// The rule was written out three times and the third copy left the ' UTC' off, which
+// is the defect this consolidation exists for. Asserted with the process clock moved
+// off UTC, because on a server that happens to be on it the mutation is invisible —
+// which is exactly how the missing suffix survived.
+$tzWas = date_default_timezone_get();
+date_default_timezone_set('America/Los_Angeles');
+
+$stamp = gmdate('Y-m-d H:i:s');
+check(abs(StoreClock::epochOf($stamp) - time()) <= 5,
+      'a stamp written by gmdate reads back as this moment, whatever zone the server is on');
+check(abs(strtotime($stamp) - time()) > 3600,
+      'read without the UTC suffix that same string is hours out — the line that got forgotten');
+checkSame(0, StoreClock::epochOf('not a date'), 'a stamp that will not read is 0, not a warning');
+checkSame(0, StoreClock::epochOf(''),           'and neither is an empty one');
+checkSame(0, StoreClock::epochOf(null),         'nor a null column');
+
+// ---- The sentence follows the setting, not the process ---------------------------
+// One instant, three zones. 2026-08-11 21:15 UTC is 2:15pm in Washington — the very
+// sentence #44 was filed about.
+$instant = '2026-08-11 21:15:00';
+checkSame('2:15pm', StoreClock::label($instant, 'g:ia', 'America/Los_Angeles'),
+          'the moment a lock was taken reads as 2:15pm in the store');
+checkSame('9:15pm', StoreClock::label($instant, 'g:ia', 'UTC'),
+          'and as 9:15pm on a server nobody configured, which is what was on the screen');
+checkSame('5:15pm', StoreClock::label($instant, 'g:ia', 'America/New_York'),
+          'and as something else again three time zones east');
+checkSame('Aug 11 at 2:15pm', StoreClock::label($instant, 'M j \a\t g:ia', 'America/Los_Angeles'),
+          'the publish sentence uses the same door and the same zone');
+
+// Not a function of the process clock. This is why label() converts explicitly
+// instead of relying on what config.php set: viewer.php loads neither, and a
+// formatter that depends on a global is one a caller cannot see being wrong about.
+date_default_timezone_set('Asia/Tokyo');
+checkSame('2:15pm', StoreClock::label($instant, 'g:ia', 'America/Los_Angeles'),
+          'and it does not move when the process clock does');
+date_default_timezone_set('America/Los_Angeles');
+
+// A zone that is not one falls back rather than throwing, on the one path whose
+// whole job is that an unconfigured clock does not break a screen.
+checkSame('9:15pm', StoreClock::label($instant, 'g:ia', 'UTC'), 'a good zone is honoured');
+checkSame(StoreClock::label($instant, 'g:ia', StoreClock::DEFAULT_ZONE),
+          StoreClock::label($instant, 'g:ia', '+08:00'),
+          'and a bad one is the documented default, not an exception on the page');
+checkSame('', StoreClock::label('not a date', 'g:ia'),
+          'an unreadable stamp is no words at all, so a refusal reads short rather than wrong');
+
+// ---- Through the callers ---------------------------------------------------------
+// The suite's own zone is the setting's default, so these assert the store's answer
+// rather than the server's — and would have read seven hours out before this landed.
+$pdo   = newTestDb();
+$store = newTestDisplayStore($pdo);
+$zoned = makeTestDisplay($pdo, 'zoned', 'Zoned');
+
+$store->claimLock($zoned, 1);
+$held = $store->forId($zoned->id())->lockState();
+checkSame(StoreClock::labelForEpoch(time(), 'g:ia'), $held->takenAtLabel(),
+          'the edit-lock banner says the time it is where the sign is');
+checkMentions($store->forId($zoned->id())->editingSentence(),
+              'since ' . StoreClock::labelForEpoch(time(), 'g:ia'),
+              'and so does the sentence a refused publish prints');
+
+// Fix the stamp to a known instant rather than "now", so the assertion is about the
+// conversion and not about the two calls landing in the same minute.
+$pdo->prepare("UPDATE displays SET lock_taken_at = ? WHERE id = ?")
+    ->execute([$instant, $zoned->id()]);
+checkSame('2:15pm', $store->forId($zoned->id())->lockState()->takenAtLabel(),
+          'a lock taken at 21:15 UTC is a lock taken at 2:15pm on the shop floor');
+
+// ---- The publish stamp was the third clock ---------------------------------------
+// last_published_at was written with CURRENT_TIMESTAMP, which is MySQL's *session*
+// zone — a clock neither PHP nor this store had any opinion about — and read back
+// with a bare strtotime() as though PHP had written it. The two engines hid it from
+// each other: SQLite's CURRENT_TIMESTAMP is UTC by definition, so the fixture always
+// agreed with the reader. A bound gmdate() is the same string on both.
+$layoutsZ = newTestLayoutStore($pdo);
+$store->claimLock($zoned, 1);
+$layoutsZ->publish($zoned, new PublishRequest([], Background::unchanged(), 1, true, $zoned->layoutStamp()));
+$publishedAt = $pdo->query("SELECT last_published_at FROM displays WHERE id = " . $zoned->id())->fetchColumn();
+check(abs(StoreClock::epochOf($publishedAt) - time()) <= 5,
+      'a publish records the moment in UTC, bound by PHP rather than asked of the database');
+check(abs(strtotime((string)$publishedAt) - time()) > 3600,
+      'so reading it as local time is hours out — which is what the old sentence did');
+
+$pdo->prepare("UPDATE displays SET last_published_at = ?, last_published_by = 1 WHERE id = ?")
+    ->execute([$instant, $zoned->id()]);
+checkSame('sky, Aug 11 at 2:15pm', $store->forId($zoned->id())->lastPublishDescription(),
+          'and the refusal names the moment in the store\'s zone');
+$pdo->prepare("UPDATE displays SET last_published_at = 'nonsense' WHERE id = ?")
+    ->execute([$zoned->id()]);
+checkSame('sky', $store->forId($zoned->id())->lastPublishDescription(),
+          'a stamp that will not read leaves the name rather than a half-written sentence');
+
+date_default_timezone_set($tzWas);
+
+// ---- Where it is set, and where it is not ----------------------------------------
+// Every page a person reads loads config.php through auth.php, so that is where the
+// process clock is pointed at the store. Source checks, because what they are about
+// is a line existing on a page rather than a decision a module makes.
+$configSrc = file_get_contents(__DIR__ . '/../config.php');
+checkMentions($configSrc, 'StoreClock::apply()',
+              'config.php points the process clock at the store, once, for every page');
+checkMentions(file_get_contents(__DIR__ . '/../db_connect.php'), "SET time_zone = '+00:00'",
+              'and db_connect.php asks the database for UTC, which was the clock no screen showed');
+checkSame('America/Los_Angeles', StoreClock::apply(),
+          'apply() answers with the zone it set, so a caller can say which one it was');
+checkSame('America/Los_Angeles', date_default_timezone_get(),
+          'and the process is actually on it afterwards — config.php ran this on the way in');
+
+// ---- The Settings form ------------------------------------------------------------
+$panelTz = file_get_contents(__DIR__ . '/../admin_panel.php');
+checkMentions($panelTz, 'name="store_timezone"', 'the Settings tab offers the setting');
+checkMentions($panelTz, 'StoreClock::zones()',
+              'as a list of the zones this app will accept, so nothing typeable can be wrong');
+checkMentions($panelTz, 'StoreClock::isZone($_POST[\'store_timezone\'])',
+              'and a submitted value is refused rather than substituted (#21)');
+checkSame(1, preg_match('/\$curZone\s*=\s*StoreClock::zone\(\)/', $panelTz),
+          'the form offers the zone the clock is actually using, not the raw stored string');
+checkMentions($panelTz, "header('Location: admin_panel.php?tab=settings')",
+              'and a saved setting redirects, since this request is still running on the old define()');
+checkSame(0, preg_match('/date\(\s*.M j, Y.\s*,\s*strtotime/', $panelTz),
+          'neither date printed on this page still reads a stamp for itself');
+
+// ---- The report ------------------------------------------------------------------
+// The card whose whole job was that a zone mismatch is otherwise invisible. It has
+// to name all three clocks now, because there were three.
+$tzReport = (new ServerReport($pdo, ['HTTPS' => 'on']))->runtime();
+check(isset($tzReport[StoreClock::LABEL]), 'This Server reports the zone the app shows times in');
+checkMentions($tzReport[StoreClock::LABEL][0], 'America/Los_Angeles', 'and says which one that is');
+check(isset($tzReport['PHP time zone']), 'and the server\'s own, which no longer decides anything');
+check(isset($tzReport['Database time zone']),
+      'and the database\'s, which is where an account\'s creation date comes from');
+checkSame('not applicable', $tzReport['Database time zone'][0],
+          'SQLite has no session zone at all — every stamp it writes is UTC by definition');
+checkSame('', $tzReport['Database time zone'][1],
+          'so there is nothing to warn about, rather than a warning about the wrong engine');
+checkSame('', $tzReport[StoreClock::LABEL][1],
+          'and nothing to say about a setting this app can read');
+// The note is the whole point of the row: a stored value nobody can use has to be
+// named on the screen somebody would go looking at, or the setting and the clock
+// disagree with no explanation anywhere (#21).
+checkMentions((new ServerReport($pdo))->storeZoneNoteFor('+08:00'), '+08:00',
+              'while one it cannot read is named exactly as stored');
+checkMentions((new ServerReport($pdo))->storeZoneNoteFor('+08:00'), 'America/Los_Angeles',
+              'together with what is being used instead of it');
+
+// ─────────────────────────────────────────────────────────────
 section('An Asset Library entry knows which signs depend on it');
 
 $pdo     = newTestDb();
@@ -4589,11 +4782,13 @@ chdir($brandDir);
 
 checkSame($brandDir . '/branding_config.php', $brandCfg->path(),
           'the module owns the filename, so no page has to spell it');
-checkSame(9, count(BrandingConfig::DEFAULTS), 'nine settings live in the file');
+checkSame(10, count(BrandingConfig::DEFAULTS), 'ten settings live in the file');
 checkSame(array_keys(BrandingConfig::DEFAULTS), array_keys($brandCfg->current()),
-          'and current() answers about all nine');
+          'and current() answers about all ten');
 check(array_key_exists('UNDO_STEPS', BrandingConfig::DEFAULTS),
       'the Builder\'s undo depth is one of them, not a define() of its own');
+check(array_key_exists('STORE_TIMEZONE', BrandingConfig::DEFAULTS),
+      'and so is the store time zone, for the same reason — a second writer of this file\n      would drop it on the next Branding save (#44)');
 
 // ── What a stored undo depth means, once ─────────────────────
 // The value in the file is a string somebody may have typed, and the Builder acts on
@@ -4656,7 +4851,7 @@ check(!BrandingConfig::parses($truncated),
 
 // Anti-injection. A site name is free text an admin types; it reaches a file the
 // app executes. var_export is the entire defence, so count the calls: an escape
-// that let a value close its own string would show up as a ninth.
+// that let a value close its own string would show up as an eleventh.
 $evil = "'); echo 'pwned'; define('X', '";
 checkSame(BrandingWrite::OK, $brandCfg->save(['SITE_NAME' => $evil])->kind(),
           'a site name full of quotes and semicolons still saves');
@@ -4666,7 +4861,7 @@ $defineCalls = 0;
 foreach (token_get_all($written) as $token) {
     if (is_array($token) && $token[0] === T_STRING && $token[1] === 'define') { $defineCalls++; }
 }
-checkSame(9, $defineCalls, 'with exactly nine define() calls — nothing was injected');
+checkSame(10, $defineCalls, 'with exactly ten define() calls — nothing was injected');
 checkMentions($written, var_export($evil, true), 'the value is stored as one escaped literal');
 
 // A backslash is the other half of it: var_export doubles it, and a naive escape
@@ -4776,10 +4971,10 @@ foreach ((array)glob(__DIR__ . '/../*.php') as $page) {
 checkSame([], $pagesWithTheirOwn, 'no page declares a branding constant of its own');
 checkSame([], $pagesLoadingItThemselves, 'and none of them reaches for the file directly');
 checkMentions(file_get_contents(__DIR__ . '/../config.php'), '->apply()',
-              'config.php is the one place the nine names are brought into being');
+              'config.php is the one place the ten names are brought into being');
 
 // Every one of them is defined in this process — config.php did it on the way in —
-// so `apply()` here must be a silent no-op rather than nine warnings and an
+// so `apply()` here must be a silent no-op rather than ten warnings and an
 // argument about who was right.
 $siteBefore = SITE_NAME;
 $brandCfg->apply();
@@ -4787,7 +4982,7 @@ $defined = 0;
 foreach (BrandingConfig::DEFAULTS as $name => $unusedDefault) {
     if (defined($name)) { $defined++; }
 }
-checkSame(9, $defined, 'apply() leaves all nine names defined');
+checkSame(10, $defined, 'apply() leaves all ten names defined');
 checkSame($siteBefore, SITE_NAME, 'and overrides nothing that was already set');
 
 // The same promise for the generated file itself, which is the half that a bare
@@ -4795,7 +4990,7 @@ checkSame($siteBefore, SITE_NAME, 'and overrides nothing that was already set');
 // any of these, and a `define()` of a name already taken warns and then keeps the
 // first value — the documented override worked while complaining about itself. Any
 // unsuppressed warning is a failed check in this harness, so loading it below is
-// the assertion: nine of them would show up as nine failures.
+// the assertion: ten of them would show up as ten failures.
 $reloadPath = $brandDir . '/reload_test.php';
 file_put_contents($reloadPath, BrandingConfig::render(['SITE_NAME' => 'Something Else']));
 include $reloadPath;
@@ -6179,10 +6374,11 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Both are anchored: a section deleted from either path has to show up as a failure,
 // which is the whole reason reportChecks() takes a count at all.
 //
-// The SQLite figure is the two sides of this merge added together and then counted,
-// not added up on paper: this branch and `main` had each grown the suite from the
-// same base, and one section here changed shape because the behaviour it describes
-// did (#21 closed while it was open, so three checks that asserted the coercion now
-// assert the refusal). The MySQL figure is the SQLite one plus the 23 checks in the
-// engine-only section below, which is the same difference it has always been.
-reportChecks(testIsMysql() ? 1657 : 1634);
+// Both figures are what the suite reported when it was run, never a delta added on
+// paper — `docs/work-lanes.md` §3 is about this exact line, because every branch that
+// adds a check changes it and so it conflicts on every merge. A section can change
+// *shape* as well as size when the behaviour it describes changes, and two branches'
+// deltas summed give a number that never existed. The MySQL figure is the SQLite one
+// plus the 23 checks in the engine-only section below, which is the same difference it
+// has always been — if that section did not change, the difference did not either.
+reportChecks(testIsMysql() ? 1716 : 1693);

@@ -14,6 +14,10 @@ require_once __DIR__ . '/lib/accounts.php';
 // Explicit, though display_admin.php pulls it in too: this page asks Color directly
 // when it refuses a branding colour, and a transitive include is not a dependency.
 require_once __DIR__ . '/lib/color.php';
+// Same reason: this page asks StoreClock directly — it offers the zone list, refuses a
+// value that is not one, and prints three stored stamps through it — so the include is
+// named here rather than arriving through config.php.
+require_once __DIR__ . '/lib/store_clock.php';
 requireCurrentAccount($pdo);
 requireAdmin();
 
@@ -112,6 +116,16 @@ $curMailN   = $brand['MAIL_FROM_NAME'];
 // that decides what a stored undo depth means, and the Builder reads it the same
 // way — so this form cannot offer a number the editor would not act on.
 $curUndo    = undoStepsSetting();
+
+// And the same rule one setting further, for the same reason (#44): what this form
+// offers as "the zone now" is `StoreClock::zone()`, the answer every time on every page
+// is actually drawn in, not the raw `STORE_TIMEZONE`. A stored value this app will not
+// use would otherwise be shown as selected in a dropdown that is not what the clock is
+// doing, and "keep what is there" would then mean storing it back. `$zoneBad` is what
+// the Settings tab says so with — the same shape as `$brandBad`, and reachable the same
+// one way, by hand-editing the generated file (#21).
+$curZone    = StoreClock::zone();
+$zoneBad    = StoreClock::unreadable();
 
 // ============================================================
 // USER MANAGEMENT ACTIONS
@@ -446,17 +460,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $undoSteps = isset($_POST['undo_steps'])
             ? max(0, min(UNDO_STEPS_MAX, intval($_POST['undo_steps'])))
             : $curUndo;
-        $res = $branding->save([
-            'SITE_NAME'      => $siteName,
-            'MAIL_FROM'      => $mailFrom,
-            'MAIL_FROM_NAME' => $mailName,
-            'UNDO_STEPS'     => (string)$undoSteps,
-        ]);
-        if ($res->isOk()) {
-            $curSite = $siteName; $curMail = $mailFrom; $curMailN = $mailName;
-            $curUndo = $undoSteps;
-            $msg = 'Settings saved.';
+        // A zone that is not one is refused and named, not swapped for something that
+        // is — the #21 rule, and it matters more here than for a colour, because the
+        // wrong answer is not visibly wrong. A sign shows a colour; a clock seven hours
+        // out shows a perfectly ordinary time. A field that was never on the form keeps
+        // what is stored, which is the different case: this form says what it covered.
+        $zoneBadSubmit = '';
+        if (!isset($_POST['store_timezone'])) {
+            $storeZone = $curZone;
+        } elseif (StoreClock::isZone($_POST['store_timezone'])) {
+            $storeZone = (string)$_POST['store_timezone'];
         } else {
+            $zoneBadSubmit = is_string($_POST['store_timezone']) ? $_POST['store_timezone'] : '';
+            $storeZone     = $curZone;
+            $msg     = ($zoneBadSubmit === '' ? 'That' : '"' . $zoneBadSubmit . '"')
+                     . ' is not a time zone this server knows, so nothing was saved.'
+                     . ' Pick one from the list — a name like America/Los_Angeles, not'
+                     . ' an offset, because only a name knows when daylight saving'
+                     . ' starts. Nothing was changed.';
+            $msgType = 'error';
+        }
+        if ($msg === '') {
+            $res = $branding->save([
+                'SITE_NAME'      => $siteName,
+                'MAIL_FROM'      => $mailFrom,
+                'MAIL_FROM_NAME' => $mailName,
+                'UNDO_STEPS'     => (string)$undoSteps,
+                'STORE_TIMEZONE' => $storeZone,
+            ]);
+            if ($res->isOk()) {
+                // Redirect rather than re-render, which the three settings above did
+                // not need and this one does. A `define()` cannot be undone: the ten
+                // constants were fixed at the top of *this* request, so everything
+                // downstream that reads them — `StoreClock::zone()`, and through it the
+                // "This Server" card a few inches below the dropdown — would go on
+                // answering the zone that was there before the save. Patching page
+                // variables by hand is what the branding form does, and it does not
+                // reach a module that reads the constant itself.
+                //
+                // A fresh request loads the file that was just written, so what the
+                // form shows and what the clock is doing cannot disagree. It also makes
+                // F5 harmless, which is the other half of `flashMessage()`'s reason.
+                flashMessage('Settings saved.');
+                header('Location: admin_panel.php?tab=settings');
+                exit;
+            }
             $msg = $res->message(); $msgType = 'error';
         }
         $tab = 'settings';
@@ -784,7 +832,26 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     <td><span class="badge badge-<?= $u['is_active']?'active':'inactive' ?>">
                         <?= $u['is_active'] ? 'Active' : 'Inactive' ?>
                     </span></td>
-                    <td><?= !empty($u['created_at']) ? date('M j, Y', strtotime($u['created_at'])) : '—' ?></td>
+                    <?php
+                    // Through the door rather than reading the stamp here. `created_at`
+                    // is a TIMESTAMP the database fills in, so it is the one moment on
+                    // this page PHP never wrote and could not convert; db_connect.php
+                    // asks the connection for UTC so it arrives in the same frame as
+                    // everything else, and this reads it in that frame (#44).
+                    //
+                    // No `!empty()` guard: `label()` answers '' for a stamp that is null,
+                    // empty *or* unreadable, and all three mean the same thing to a person
+                    // reading this table. The guard covered only the first two, so a stamp
+                    // that would not parse printed a blank cell where the em dash belongs.
+                    // The `??` stays, because an *absent key* is a different thing again —
+                    // a database where the column never landed — and reading one warns.
+                    //
+                    // A PHP comment and not an HTML one on purpose: check_invariants.php
+                    // drops PHP comments before it greps, and an HTML comment naming the
+                    // call this line no longer makes would fail invariant 28 against the
+                    // very sentence explaining why it holds.
+                    ?>
+                    <td><?= Markup::text(StoreClock::label($u['created_at'] ?? '', 'M j, Y') ?: '—') ?></td>
                     <td>
                         <button class="btn btn-blue" style="font-size:11px; padding:5px 10px;"
                                 onclick="toggleEdit(<?= intval($u['id']) ?>)">Edit</button>
@@ -874,7 +941,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     <td><strong><?= Markup::text($c['username']) ?></strong></td>
                     <td><?= Markup::text($c['email']) ?></td>
                     <td><?= Markup::text(strtoupper($c['role'])) ?></td>
-                    <td><?= !empty($c['closed_at']) ? date('M j, Y', strtotime($c['closed_at'] . ' UTC')) : '—' ?></td>
+                    <td><?= Markup::text(StoreClock::label($c['closed_at'] ?? '', 'M j, Y') ?: '—') ?></td>
                 </tr>
             <?php endforeach; ?>
             </tbody>
@@ -1536,6 +1603,59 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                            placeholder="Display System" style="width:100%;">
                 </div>
             </div>
+        </div>
+
+        <div class="card">
+            <h2>Store Time Zone</h2>
+            <?php if ($zoneBad !== ''): ?>
+                <!-- Same door and the same one-way street as $brandBad on the Branding
+                     tab: nothing this form can submit reaches here, because it offers a
+                     list. It arrives from branding_config.php being generated and
+                     documented as hand-editable. Saying which value could not be used
+                     is the whole of #21 — a clock in the wrong zone shows an ordinary
+                     time, so unlike a wrong colour there is nothing about it to
+                     notice. -->
+                <p style="font-size:13px; color:#c0392b; font-weight:600; margin-bottom:10px;">
+                    branding_config.php holds <?= Markup::text('"' . $zoneBad . '"') ?>, which is not a
+                    time zone this server knows — a fixed offset or an abbreviation will not do,
+                    because neither says when daylight saving starts. Every time on every page is
+                    being shown in <?= Markup::text(StoreClock::DEFAULT_ZONE) ?> instead. Saving this
+                    form replaces it with whatever is picked below.
+                </p>
+            <?php endif; ?>
+            <p style="font-size:13px; color:#7f8c8d; margin-bottom:14px;">
+                Which zone the times on these screens are written in — "editing since 2:15pm" on a
+                sign somebody else has open, when an account was created, when a Display was last
+                published. Nothing a customer sees is affected, and nothing stored moves: every
+                moment is recorded in UTC and converted for whoever is reading it.
+            </p>
+            <div class="form-group" style="max-width:340px;">
+                <label>Time zone</label>
+                <select name="store_timezone" style="width:100%;">
+                    <?php
+                    // Grouped by the part before the slash, which is what makes 419
+                    // options usable. The names are PHP's own list — a name and not an
+                    // offset, deliberately (lib/store_clock.php).
+                    $zoneGroups = [];
+                    foreach (StoreClock::zones() as $_z) {
+                        $_slash = strpos($_z, '/');
+                        $_group = $_slash === false ? 'Other' : substr($_z, 0, $_slash);
+                        $zoneGroups[$_group][] = $_z;
+                    }
+                    foreach ($zoneGroups as $_group => $_zones): ?>
+                        <optgroup label="<?= Markup::text($_group) ?>">
+                        <?php foreach ($_zones as $_z): ?>
+                            <option value="<?= Markup::text($_z) ?>"<?= $_z === $curZone ? ' selected' : '' ?>><?= Markup::text($_z) ?></option>
+                        <?php endforeach; ?>
+                        </optgroup>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <p style="font-size:12px; color:#7f8c8d; margin-top:6px;">
+                Showing <strong><?= Markup::text(StoreClock::labelForEpoch(time(), 'D j M Y, g:ia')) ?></strong>
+                in <?= Markup::text($curZone) ?>. This Server below reports the server's own clock
+                and the database's, which no longer have to agree with this one.
+            </p>
         </div>
 
         <div class="card">

@@ -52,6 +52,7 @@ require_once __DIR__ . '/upload_limits.php';
 require_once __DIR__ . '/schema.php';
 require_once __DIR__ . '/request_scheme.php';
 require_once __DIR__ . '/install_paths.php';
+require_once __DIR__ . '/store_clock.php';
 
 class ServerReport
 {
@@ -120,15 +121,42 @@ class ServerReport
             $dbName === '' ? 'No DB_NAME is defined, so this cannot say which database '
                              . 'the app is using.' : ''];
 
-        // The store is in Washington; a server left on UTC prints every "editing
-        // since" time seven or eight hours out. The lock's own arithmetic is UTC
-        // throughout and is not affected — this is about what a person reads.
-        $tz = date_default_timezone_get();
-        $out['Server time zone'] = [$tz . ' — ' . date('D j M Y, g:ia'),
-            ini_get('date.timezone') === ''
-                ? 'Not set in the server configuration, so PHP is falling back to '
-                  . 'a default. Times shown next to an edit lock may be hours out.'
+        // Three clocks, because that is how many there were (#44) and because the
+        // whole reason this row existed was that the mismatch was otherwise invisible.
+        //
+        // The one that answers the question people ask goes first: which zone the
+        // times on these screens are in. It is a setting now, on this same tab, so the
+        // note names the stored value it could not use rather than leaving a person to
+        // wonder why the dropdown and the clock disagree (#21).
+        $out[StoreClock::LABEL] = [
+            StoreClock::zone() . ' — ' . StoreClock::labelForEpoch(time(), 'D j M Y, g:ia'),
+            $this->storeZoneNoteFor(defined(StoreClock::SETTING) ? constant(StoreClock::SETTING) : null)];
+
+        // PHP's process zone. No longer what any time on any page is drawn in —
+        // `config.php` points it at the store and `StoreClock::label()` converts
+        // explicitly either way — so an unset `date.timezone` is a fact about the host
+        // and not a defect any more. Which is exactly why it stays on the card and why
+        // the note changed: it used to say times may be hours out, and saying that now
+        // would send somebody after a problem the setting above has already answered.
+        $php = ini_get('date.timezone');
+        $out['PHP time zone'] = [date_default_timezone_get(),
+            $php === ''
+                ? 'Not set in the server configuration. Harmless — the app sets its own '
+                  . 'from the setting above on every page, which is what stopped this '
+                  . 'from being the reason a time was wrong.'
                 : ''];
+
+        // MySQL's, and the reason it is worth a row of its own: it is where
+        // `created_at` comes from, PHP cannot convert what it did not write, and until
+        // `db_connect.php` set it there was no screen anywhere that showed it. Anything
+        // other than a zero offset means that `SET time_zone` did not take.
+        $dbZone = $this->databaseTimeZone();
+        $out['Database time zone'] = [$dbZone,
+            $this->isUtcOffset($dbZone) ? ''
+                : 'The app asks the database for UTC on every connection and this one '
+                  . 'is not, so this host refused it. Dates recorded by the database '
+                  . 'itself — when an account was created — may read a few hours out. '
+                  . 'Nothing a sign shows is affected.'];
 
         // What happens when something goes wrong is no longer a property of the
         // server: lib/error_policy.php sets it in code on every request, and
@@ -298,6 +326,71 @@ class ServerReport
         } catch (Throwable $e) {
             return 'unknown';
         }
+    }
+
+    /**
+     * What the store time zone row has to say, if anything.
+     *
+     * A stored value this app will not use is the only thing worth a sentence here,
+     * and it can only arrive by hand-editing `branding_config.php` — the form offers a
+     * list. Both halves are said: what is stored, and what is being used instead, so
+     * "the setting says one thing and the clock says another" is answered on the same
+     * screen rather than being the question somebody arrives with (#21).
+     *
+     * Public and pure for the same reason `phpVersionNote()` is: the case it exists for
+     * cannot be reached through the constant, because a `define()` cannot be undone and
+     * a running installation is not in that state.
+     */
+    public function storeZoneNoteFor($stored)
+    {
+        $bad = StoreClock::unreadable($stored);
+        if ($bad === '') { return ''; }
+        return 'The stored setting is "' . $bad . '", which is not a time zone this '
+             . 'server knows — a fixed offset or an abbreviation will not do, because '
+             . 'neither says when daylight saving starts. Times are being shown in '
+             . StoreClock::DEFAULT_ZONE . ' instead. Pick one from the list on this '
+             . 'page to fix it.';
+    }
+
+    /**
+     * The zone this connection is actually in.
+     *
+     * `@@session.time_zone` is `SYSTEM` on a host where nothing set it, and `SYSTEM` is
+     * not an answer — so the system zone is asked for as well, which is the value the
+     * name is standing in for. Configuration, not application data: this module reads
+     * no rows, which is what keeps it outside the one-writer rules.
+     */
+    private function databaseTimeZone()
+    {
+        try {
+            $zone = (string)$this->pdo->query("SELECT @@session.time_zone")->fetchColumn();
+            if (strcasecmp($zone, 'SYSTEM') === 0) {
+                $system = (string)$this->pdo->query("SELECT @@system_time_zone")->fetchColumn();
+                return $system !== '' ? 'SYSTEM (' . $system . ')' : 'SYSTEM';
+            }
+            return $zone !== '' ? $zone : 'unknown';
+        } catch (Throwable $e) {
+            // Neither variable exists on SQLite, which has no session zone at all —
+            // every stamp it produces is UTC by definition. The self-test's fixture
+            // lands here, and so would any engine that is not MySQL.
+            return 'not applicable';
+        }
+    }
+
+    /**
+     * Is this zone a zero offset — i.e. did the `SET time_zone` in `db_connect.php`
+     * take?
+     *
+     * `+00:00` is what is asked for; `UTC` and `+0:00` are the same instant written
+     * differently and a host that normalises the value is not a host that refused it.
+     * `not applicable` is the non-MySQL case and is not a failure either.
+     */
+    private function isUtcOffset($zone)
+    {
+        $zone = trim((string)$zone);
+        if ($zone === 'not applicable') { return true; }
+        if (strcasecmp($zone, 'UTC') === 0) { return true; }
+        return preg_match('/^[+-]0?0:00$/', $zone) === 1;
     }
 
     private function yesNo($ok)
