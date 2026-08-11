@@ -6128,6 +6128,15 @@ checkSame('"say \u0022hi\u0022"', HttpReply::jsValue('say "hi"'),
 checkSame('"a\u0026b"', HttpReply::jsValue('a&b'),
           'and an ampersand cannot start an entity for the attribute parser to decode first');
 
+// The floor under all four. `JSON_INVALID_UTF8_SUBSTITUTE` means almost anything encodes,
+// so what still cannot is a float with no JSON spelling — and the answer then has to be a
+// literal the parser accepts, because it is being printed into the middle of somebody's
+// statement. `false` would echo as the empty string and take the whole script block down,
+// which is §4af's shape at the smallest scale there is.
+checkSame('null', HttpReply::jsValue(INF),
+          'a value with no JSON spelling at all is the literal null, not nothing');
+checkSame('null', HttpReply::jsValue(NAN), 'and so is the other one');
+
 // ---- #28: the status line ------------------------------------------------------
 // Missing, unknown and switched-off signs all answered 200. Anything that does not
 // read the body — a proxy, an uptime check, curl after typing a tag onto a new
@@ -6745,4 +6754,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // command; check it. The MySQL figure is the SQLite one plus the 23 checks in the
 // engine-only section below, which is the same difference it has always been — if that
 // section did not change, the difference did not either.
-reportChecks(testIsMysql() ? 1797 : 1774);
+reportChecks(testIsMysql() ? 1799 : 1776);

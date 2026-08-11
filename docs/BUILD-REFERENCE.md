@@ -4785,7 +4785,7 @@ neither can be settled by reading, and one of them cannot honestly be settled by
 at all.
 
 **The 29 was never going to be recountable.** It came out of the ten-agent audit (§4g),
-when the suite was about two hundred checks; it is 1767 now, grown by twenty-odd
+when the suite was about two hundred checks; it is 1776 now, grown by twenty-odd
 branches, and the two immediately before this one added 81 between them. A number
 produced by reading a suite goes stale the week after it is produced — which is exactly
 what happened, and is why the item sat open for a year with the note *"the 29 have not
@@ -4878,14 +4878,26 @@ nothing, so it was thrown away and re-measured rather than adjusted.
 | `lib/grants.php` | 57 | 52 | **5** | 15 |
 | `lib/store_clock.php` | 36 | 27 | **9** | 13 |
 | `lib/display_request.php` | 43 | 37 | **6** | 6 — all six equivalent |
-| `lib/upload_limits.php` | 48 | — | — | 17 |
-| `lib/http_reply.php` | 69 | — | — | 35 |
+| `lib/upload_limits.php` | 48 | 38 | **10** | 17 |
+| `lib/http_reply.php` | 69 | 41 | **28** | 35 |
 | `lib/layout_rules.php` | 209 | — | — | 64 |
 
-The last three rows' totals land with the re-run; their findings are below and their
-checks are written. Where a "before" figure is larger, the difference is the checks this
-pass added — and the mutant count itself rises as checks are written, because a check
-written to kill a mutant is a line the next run can break.
+Where a "before" figure is larger, the difference is the checks this pass added — and the
+mutant count itself rises as checks are written, because a check written to kill a mutant
+is a line the next run can break.
+
+**`lib/http_reply.php`'s 28 are the most honest row in the table**, and they are not all
+the same kind of thing. Eleven are loose-versus-strict comparisons that cannot differ at
+the floor. Twelve are the block that actually sends the reply — `@http_response_code()`,
+the `Content-Type`, the `Retry-After` on a 503, `noStore()` and the `headers_sent()`
+guards around all of it — and those are **unobservable from a CLI suite by construction**:
+`headers_sent()` is false there, `header()` is a no-op, and a check asserting that
+`noStore()` returned true in CLI would itself be a check that cannot fail, which is the
+thing this section exists to object to. They are named here instead. The remaining few are
+a boundary constant nobody pins, `codeForResolution()`'s default for a resolution kind that
+does not exist, and `subjectOf()`'s `&&` — which is a private helper feeding a throttle key.
+That row is what "a module the tool cannot finish for you" looks like, and it stops here
+rather than growing five checks written to move a number.
 
 Where two numbers appear, the second is after the checks written in this pass; the
 mutant count rises because a check written to kill a mutant is itself a line the next
