@@ -4924,7 +4924,7 @@ nothing, so it was thrown away and re-measured rather than adjusted.
 | `lib/markup.php` | 4 | 4 | 0 | 0 |
 | `lib/color.php` | 19 | 16 | **3** | 10 |
 | `lib/grants.php` | 57 | 52 | **5** | 15 |
-| `lib/store_clock.php` | 36 | 27 | **9** | 13 |
+| `lib/store_clock.php` | 30 | 26 | **4** | 13, then 9 — see the second pass below |
 | `lib/display_request.php` | 43 | 37 | **6** | 6 — all six equivalent |
 | `lib/upload_limits.php` | 48 | 38 | **10** | 17 |
 | `lib/http_reply.php` | 69 | 41 | **28** | 35 |
@@ -4933,6 +4933,42 @@ nothing, so it was thrown away and re-measured rather than adjusted.
 Where a "before" figure is larger, the difference is the checks this pass added — and the
 mutant count itself rises as checks are written, because a check written to kill a mutant
 is a line the next run can break.
+
+**`lib/store_clock.php` was measured twice, and the second run is the more useful
+result.** The module landed a day before this tool did (§4ap), so the first run graded
+checks written without it: 36 mutants, 9 surviving, the worst kill rate in the table at
+75%. Four of those nine were in one line — a `!is_string($id) || $id === ''` guard in
+front of `in_array($id, $zones, true)` — and none of them could be killed, because
+**strict comparison already answers false for every shape the guard was refusing**. A
+list, null, a float, `''`: the guard changed no answer for any of them. It was the same
+rule written twice, which is this repo's most-repeated defect in its smallest form —
+three copies of "a stored moment is UTC" (§4ap), four of the branding defaults (§4y) —
+and the tell is exactly what the tool reported: neither statement can be tested while
+the other stands.
+
+Deleting the guard is the fix rather than a dodge, and the tool's own header is the
+reason to be careful about saying so: three of #49's survivors were load-bearing. This
+one is not, and the check that proves it is the one the deletion *makes possible*.
+`in_array(true, $zones, false)` is **true** — every zone name is a non-empty string and
+therefore casts to true — so with the guard gone, the `true` flag is the only thing
+refusing a boolean, and `isZone(true)` fails the moment it is relaxed. With the guard
+there, that mutant was masked and unkillable. **Five survivors closed by removing three
+lines and adding two checks**, and the module is now 30 mutants, 26 killed, 4 surviving.
+
+**The four that remain are equivalent, and provably so rather than plausibly.** All four
+are `===` relaxed to `==`, and each was checked rather than argued:
+
+| line | why it cannot be observed |
+|---|---|
+| `epochOf()`'s `$stamp === ''` | non-strings never reach it — `!is_string()` short-circuits first — and no PHP 8 string satisfies `== ''` but not `=== ''`. The guard itself is *not* redundant here and its mutants die: `strtotime(' UTC')` is **now**, so dropping it makes an empty stamp read as this moment. |
+| `epochOf()`'s `$epoch === false` | `strtotime()` returns `int|false`, and the only int satisfying `== false` is 0 — which is what the true branch returns anyway. Both spellings answer 0. |
+| `label()`'s `$epoch === 0` | `epochOf()` returns an int by construction, and for ints `== 0` and `=== 0` are the same test. |
+| `labelForEpoch()`'s `$zone === null` | `==` would also take the "use the setting" branch for `''`, `0`, `false` and `[]` — and for all four, `pick()` answers `DEFAULT_ZONE`, which **is** the shipped setting. The two branches coincide for as long as the stored zone equals the default. This is the one that becomes testable the day a deployment sets a different zone, and it is worth knowing that a change to the setting is what turns this line from unobservable into checkable. |
+
+That last row is the shape worth naming: not "no test covers it" but "the environment the
+suite can construct cannot tell the branches apart". It is the same class as
+`http_reply.php`'s header block below — unobservable by construction, not by omission —
+and the honest response to both is a sentence rather than a check that cannot fail.
 
 **`lib/http_reply.php`'s 28 are the most honest row in the table**, and they are not all
 the same kind of thing. Eleven are loose-versus-strict comparisons that cannot differ at

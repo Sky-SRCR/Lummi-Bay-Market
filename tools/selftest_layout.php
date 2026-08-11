@@ -2056,6 +2056,14 @@ checkSame(false, StoreClock::isZone('America/Los Angeles'), 'nor a near miss');
 checkSame(false, StoreClock::isZone(''),        'nor nothing');
 checkSame(false, StoreClock::isZone(null),      'nor null');
 checkSame(false, StoreClock::isZone(['UTC']),   'nor a list, which is what #27 was about');
+// The one that pins the `true` flag on isZone()'s in_array, and the reason it needs its
+// own line rather than joining the four above: `in_array(true, $zones, false)` is
+// **true**, because every zone name is a non-empty string and therefore casts to true.
+// So a loose comparison would accept a boolean as a time zone. Nothing else in this
+// group can see that — null, '', a list and a float are all false under either flag —
+// which is why relaxing the flag survived every check the first pass wrote (#50, §4aq).
+checkSame(false, StoreClock::isZone(true),      'nor true, which a loose comparison would have taken');
+checkSame(false, StoreClock::isZone(1.5),       'nor a number');
 
 // ---- What a stored value means --------------------------------------------------
 checkSame('America/Los_Angeles', StoreClock::pick('America/Los_Angeles'), 'a stored zone is used');
@@ -6774,4 +6782,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1802 : 1779);
+reportChecks(testIsMysql() ? 1804 : 1781);

@@ -108,10 +108,21 @@ class StoreClock
      * `+08:00`, and a value with no daylight-saving rule in it is right for half the
      * year and silently wrong for the other half. Pure, so the shapes worth testing
      * — an offset, an abbreviation, a typo, a list — can all be put through it.
+     *
+     * **The strict flag is the whole rule, and it is stated once.** This began as
+     * `if (!is_string($id) || $id === '') { return false; }` in front of the same
+     * `in_array`, and #50's mutation run is what showed the guard could not be tested:
+     * strict comparison already answers false for a list, for null, for a float and for
+     * `''`, so removing the guard changed no answer for any shape, and the two lines
+     * were a rule written twice. That is the failure this repo keeps finding — three
+     * copies of "a stored moment is UTC" (§4ap), four of the branding defaults (§4y) —
+     * and the tell is the same each time: neither statement can be tested while the
+     * other stands. Four mutants lived in that guard; deleting it left one, on the
+     * `true` flag, and that one is now pinned by `isZone(true)` — because
+     * `in_array(true, …, false)` is **true**, every zone name being a truthy string.
      */
     public static function isZone($id)
     {
-        if (!is_string($id) || $id === '') { return false; }
         return in_array($id, self::zones(), true);
     }
 
