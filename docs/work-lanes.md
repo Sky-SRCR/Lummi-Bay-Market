@@ -180,7 +180,7 @@ was.
 `tools/selftest_layout.php` ends with one line holding two numbers:
 
 ```php
-reportChecks(testIsMysql() ? 1801 : 1778);
+reportChecks(testIsMysql() ? 1802 : 1779);
 ```
 
 Every branch that adds a check changes it, so it conflicts on every merge. **Resolve it

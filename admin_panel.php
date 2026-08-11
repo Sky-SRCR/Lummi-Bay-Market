@@ -462,8 +462,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             : $curUndo;
         // A zone that is not one is refused and named, not swapped for something that
         // is — the #21 rule, and it matters more here than for a colour, because the
-        // wrong answer is not visibly wrong. A sign shows a colour; a clock seven hours
-        // out shows a perfectly ordinary time. A field that was never on the form keeps
+        // wrong answer is not visibly wrong. A sign shows a colour; a clock two hours
+        // out shows a perfectly ordinary time — which is what this host was doing. A field that was never on the form keeps
         // what is stored, which is the different case: this form says what it covered.
         $zoneBadSubmit = '';
         if (!isset($_POST['store_timezone'])) {

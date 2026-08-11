@@ -411,6 +411,33 @@ lib/whatever.php`** breaks that file one way at a time and tells you whether any
 notices. Invariant 30 is that a check ships having been *seen* to fail, and the reason it
 is a rule is that this suite has shipped the other kind more than once.
 
+**What the host actually is, observed 2026-08-11** on Settings → This Server in the
+`lbm-test/` folder — the first time anything in this project has read these rather than
+assumed them:
+
+| Row | Value |
+|-----|-------|
+| PHP version | **8.2.33** |
+| MySQL version | 5.7.23-23 |
+| Server time zone | **`America/Chicago`** |
+| Session cookie | HttpOnly yes, Secure yes, SameSite Lax |
+| Largest upload | 50 MB |
+
+Two of those settle standing questions. The PHP version **agrees with the owner's stated
+8.2** (#51, §4k) — that item's deploy-day confirmation step, though the docs still describe
+the floor as unobserved and have not been updated for this. And `America/Chicago` is not a
+fallback: PHP's fallback for an unset `date.timezone` is UTC, so the host sets it, and
+nothing in this repo does (the tracked `.htaccess` sets session flags and no `date.` value).
+§4ap had asserted UTC and is corrected. Before #44 that made every time a person read two
+hours ahead of store time, not seven or eight.
+
+**And one thing that reading found the hard way:** `Database` on that same card read
+`silverad_lummi_market_drive_thru` — the **live** database, from the `lbm-test/` folder.
+`This install` correctly read `lbm-test`, so the folder-name logic worked and the file it
+looks for was missing: `/home/ACCOUNT/private/db_credentials_lbm-test.php` has to exist, or
+the rehearsal copy is the live sign with a different URL. This is the check
+`docs/DEPLOY-SKIP.md` exists for, firing for real on the first attempt.
+
 ## 8. Conventions / gotchas for the next session
 
 - **Data access lives in `lib/`.** A new query means a new method on the owning

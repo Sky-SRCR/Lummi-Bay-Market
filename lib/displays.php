@@ -342,10 +342,11 @@ class LockState
     {
         if (!$this->isHeld() || $this->takenAt === null) { return ''; }
         // Stored in UTC, shown in the *store's* zone — the one place the two are
-        // allowed to meet, because this string is only ever read by a person. It used
-        // to be shown in the server's zone, which on the live host is UTC because
-        // nothing sets `date.timezone`, so this was the sentence #44 was filed about:
-        // 2:15pm printed as 9:15pm to somebody standing next to the sign.
+        // allowed to meet, because this string is only ever read by a person. It used to
+        // be shown in the server's zone, which the live host sets to `America/Chicago`
+        // (§4ap), so this was the sentence #44 was filed about: 2:15pm printed as 4:15pm
+        // to somebody standing next to the sign. Two hours, not seven — small enough to
+        // read as a colleague who really did start then, which is why it lasted.
         return StoreClock::label($this->takenAt, 'g:ia');
     }
 
