@@ -5389,6 +5389,54 @@ here reads as an all-clear. What makes it worth having anyway is the direction i
 in: it cannot promise the tree is clean, but everything it names would have reached the
 sign.
 
+**Measured, and the measurement corrected two things I had written.** `php tools/mutate.php
+--suite=tools/check_invariants.php tools/check_invariants.php` restricted to the detector's
+own lines: **220 mutants, 80 killed, 139 survived** on the first pass. A 36% kill rate is
+not a number to publish and move past, so the survivors were read rather than summarised,
+and they fell into two clusters that were both real:
+
+| Cluster | Why it survived | What was done |
+|---|---|---|
+| 39 index and line mutants | The probes asserted only *that* a construct was flagged, never what or where. `$ts[$i + 2]` could become `$ts[$i + 3]` with every fixture green. | Probes now assert exactly one hit, on the right line, naming the right construct, with the right `since`. A wrong version sends somebody to read up on the wrong release. |
+| 21 inside the `private(set)` four-token branch | **The line cannot execute on this machine.** 8.4 lexes `private(set)` as one token, so the 8.2 branch is dead code here — and it is the branch CI depends on, CI being the only runner at the floor. | A seam, not a fixture: `aboveFloorUses()` split into `aboveFloorTokens()` and `aboveFloorInTokens()`, so the 8.2 lexing can be handed over as **data**. A recogniser that takes source only ever sees its own version's lexing. |
+
+That took it to **90 killed, 130 survived**. Two corrections belong here, because both were
+mistakes in this write-up's own earlier draft rather than in the code:
+
+- **The line bookkeeping was not "uncovered". It was unobservable.** `$line +=
+  substr_count($text, "\n")` survived, and the reason is not a missing probe: *no finding
+  is anchored to a single-character token.* Every one reports the line of an array token,
+  which `token_get_all()` supplies directly. The carry-forward matters only for the `)` and
+  `]` entries in the list — for the next detector somebody writes — so it earned an
+  assertion rather than a deletion, and the seam above is what made one possible: the
+  tokeniser is now reachable on its own, so the token list can be read instead of inferred
+  from a finding. Its sibling, `$line = 1` removed, **stays alive and is correct**: the
+  first token of any source is an array token — `T_OPEN_TAG`, or `T_INLINE_HTML` for a file
+  opening with text — so the initial value is overwritten before it can be read. Unkillable
+  because PHP's tokeniser guarantees it, which is the docblock being right (§4am's
+  `flock(LOCK_UN)` again).
+- **The grades from this sweep do not exist, and the tool does not say so.** `runSuite()`
+  grades by grepping the suite's output for `^KILLED by assertion` / `diagnostic` / `the
+  count anchor`, and those lines are printed by `tools/test_fixture.php` — which
+  `selftest_layout.php` uses and `check_invariants.php` does not. So through
+  `--suite=tools/check_invariants.php`, every kill falls through to **`fatal`**, whatever it
+  really was. The `$line +=` mutant above was reported `fatal` and, run by hand, produces a
+  clean assertion failure. Survived-versus-killed is still sound, because that comes from
+  the exit code; the *grade* dimension — the thing #50 added, and the one that separates a
+  check knowing what a line was for from the harness noticing a crash — is silently lost
+  for any suite but one. Worth knowing before quoting a grade from a `--suite=` run.
+
+**The remaining 130 are dominated by comparisons that cannot differ**, and this is a class
+claim rather than 130 individual proofs, which is the honest way to state it: 47 are
+`===` → `==` and 9 `!==` → `!=`, almost all comparing a token id (an int) against a `T_`
+constant (an int) or a token's text against a one-character string literal; 16 are
+`||` → `&&` inside the scanners' break guards, where a single token cannot be both `';'`
+and `','`, so the mutated guard is simply never taken and no lexically valid input
+distinguishes it. A token-pattern matcher is mostly guards, and guards over a
+finite alphabet are where equivalent mutants live. What that leaves is a real ceiling on
+this file rather than a to-do list: the detector's *behaviour* is pinned by 20 fixtures, and
+its defensive interior is not, because nothing a lexer can produce reaches it.
+
 **The complete answer is the one CI already gives**, and this check does not replace it:
 run the suite at the floor. CI pins 8.2 for exactly that reason, which is why the floor
 check covers `tools/` as well as the app — a tool that only runs above the floor is a red

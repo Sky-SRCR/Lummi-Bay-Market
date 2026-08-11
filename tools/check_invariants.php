@@ -1273,6 +1273,40 @@ foreach ($floorProbes as $probe) {
     }
 }
 
+// The tokeniser, asserted directly rather than through a finding.
+//
+// A sweep left `$line += substr_count($text, "\n")` standing, and the reason was not a
+// missing probe: **no finding is anchored to a single-character token.** Every one of them
+// reports the line of an array token, which arrives from `token_get_all()` carrying its
+// own line, so the carry-forward could be deleted and every construct would still be
+// reported on the right line. It is load-bearing only for the `)` and `]` entries in the
+// list — which is to say, for the next detector somebody writes. That makes it worth an
+// assertion here rather than a deletion, and the seam above is what allows one: the
+// tokeniser is reachable on its own, so the token list can be read instead of inferred
+// from a finding.
+//
+// The sibling mutant, `$line = 1` removed, stays alive and is not a gap: the first token
+// of any source is an array token — `T_OPEN_TAG`, or `T_INLINE_HTML` for a file that opens
+// with text — so the initial value is overwritten before it can be read. Unkillable
+// because PHP's tokeniser guarantees it, which is the docblock being right.
+$checked++;
+$multi = aboveFloorTokens("<?php\n\$a = [\n    1,\n];\n");
+$closer = null;
+foreach ($multi as $tok) {
+    if ($tok[1] === ']') { $closer = $tok; }
+}
+if ($closer !== null && $closer[2] === 4) {
+    echo "  ok   a single-character token carries the line it is really on, not the last "
+       . "one named\n";
+} else {
+    echo "  FAIL a single-character token is recorded on the wrong line\n";
+    echo "       expected the `]` on line 4; got "
+       . ($closer === null ? 'no `]` at all' : 'line ' . $closer[2]) . "\n";
+    echo "       token_get_all() gives no line for these, so it is carried forward by\n";
+    echo "       hand, and a construct reported on the wrong line cannot be acted on.\n";
+    $failures[] = 'a single-character token records the wrong line';
+}
+
 // And the lexing this runtime never produces. On 8.4 `private(set)` is a single token, so
 // the four-token branch is dead code here — 21 of its mutants survived a sweep, every one
 // of them because the line cannot run on this machine. It is also the branch **CI**
