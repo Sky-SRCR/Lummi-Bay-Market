@@ -504,6 +504,29 @@ through the app again:
     mutant that dies because a PHP warning appeared, or because the count anchor moved,
     is the harness noticing something moved rather than a check knowing what the line was
     for.
+31. **No file uses PHP newer than the floor, and `php -l` is not what decides that**
+    (#51, §4ar). The floor is 8.2, observed twice on 2026-08-11. The container these sessions
+    run in is 8.4, so the first line of §5's gate — `php -l` on every touched file —
+    reports "No syntax errors detected" on a file that cannot parse on the live host.
+    Demonstrated rather than argued: a class with a typed constant and a property hook
+    lints clean here, and both are parse errors at 8.2. A parse error takes the whole
+    file down, so what reaches the shop is a blank board, not a message anybody reads.
+    `tools/check_invariants.php` decides it instead, over real tokens and not text —
+    the hand sweep that cleared the tree produced two false positives in a one-line
+    grep, an HTML `readonly` attribute and a JavaScript `.match(`, because the names
+    involved are ordinary English. Seven constructs are covered: typed class constants
+    and `#[\Override]` (8.3), property hooks, asymmetric visibility, `#[\Deprecated]`
+    and bare-chained `new` (8.4), plus twenty library functions the floor does not have.
+    **It is a denylist and says so on every run**, because a denylist that matches
+    nothing is indistinguishable from a clean tree — it cannot promise the tree is
+    clean, only that what it names would have reached the sign. Two things about it are
+    load-bearing and were both found by its own fixtures rather than by reasoning: the
+    floor is *parsed out of* `ServerReport::ASSUMED_PHP` rather than restated, because a
+    checker with its own copy keeps passing after somebody lowers the floor; and
+    asymmetric visibility is matched in **both** lexings, since 8.4 reads `private(set)`
+    as one token and 8.2 as four — matching only the 8.4 shape would have gone quietly
+    blind in CI, which is the machine pinned to the floor, and would have looked exactly
+    like a pass.
 
 ---
 
@@ -5293,6 +5316,87 @@ can see.
   `lib/color_audit.php` that the 8.2 floor does not. Not #50's to fix — recorded because
   the tool's own grading depends on it.
 
+### 4ar. The gate that could not fail on the thing it was for (#51)
+
+`php -l <every touched .php>` is the first line of §5. It has been there since the
+beginning, and its stated job is to stop a file that will not parse from reaching a
+Screen. **It cannot do that job here, and never could.** The floor is PHP 8.2; the
+container these sessions run in is PHP 8.4. A construct added in 8.3 or 8.4 lints clean
+locally and is a parse error on the live host — and a parse error takes the whole file
+down, so what the shop gets is a blank board rather than a message anybody reads.
+
+Demonstrated rather than argued, because that distinction is the whole of #50:
+
+```
+$ php -l zz.php          # class Zz { const string N = 'x';
+No syntax errors detected #   public string $h { get => 'x'; } ... }
+```
+
+Both of those are parse errors at 8.2. The gate says the file is fine.
+
+**The fact was already written down. The consequence was not.** §4v's floor bullet ended
+with the sentence *"This container has PHP 8.4 for `php -l` only"* — accurate, dated, and
+followed by nothing. Somebody recorded the input to the inference and never drew it. That
+is a distinct failure from not knowing, and worth naming as its own kind: a note that
+tells a later reader everything except what it means. The line now reads as the hole it
+describes.
+
+**Why the check reads tokens and not text.** The hand sweep that cleared the tree on
+2026-08-11 was a one-line grep, and on a clean tree it produced two false positives: a
+`readonly` **HTML attribute** in `admin_panel.php`, and a JavaScript `.match(` in
+`builder.php`. The names these constructs go by are ordinary English and ordinary
+JavaScript, so a text search over a repo that inlines ~3100 lines of JS into a PHP file
+is guaranteed to cry wolf. A rule that cries wolf on a clean tree is a rule somebody
+turns off, and then the rule is worse than nothing. `aboveFloorUses()` runs
+`token_get_all()` and works on real tokens, so a name inside a string, a comment, an HTML
+attribute or a `->method()` call cannot be mistaken for the construct. Nine negative
+fixtures pin that, and two of them are the exact false positives above.
+
+**Seven constructs and twenty functions**, chosen as what somebody might plausibly reach
+for here rather than as a complete grammar: typed class constants and `#[\Override]`
+(8.3); property hooks, asymmetric visibility, `#[\Deprecated]` and bare-chained
+`new Foo()->bar()` (8.4); plus `json_validate()`, `array_find()`, `mb_trim()` and
+seventeen more. Syntax is the dangerous half — the file never starts. The functions are a
+fatal at call time, which is a page that dies where it stood: still a dead sign, still
+invisible to a lint at 8.4.
+
+**Two things about it are load-bearing, and its own fixtures found both — not reasoning.**
+This is the second time on this branch that a fixture has corrected the person writing the
+detector, and it is the argument for invariant 30 in miniature:
+
+- **`private(set)` has two lexings.** PHP 8.4 reads it as a *single* token,
+  `T_PRIVATE_SET`. 8.2 has no such token and reads four: `T_PRIVATE`, `(`, `set`, `)`.
+  The detector was written for the four-token shape, which is the shape that does not
+  occur on the machine it was tested on — so the fixture went red immediately. Had the
+  probe not existed, the natural fix (match the 8.4 token) would have gone **silently
+  blind in CI**, which is the one runner pinned to the floor, and it would have looked
+  exactly like a pass. Both shapes are matched now, and the 8.4 one by *text*, because
+  naming `T_PRIVATE_SET` in the source would itself be a fatal at 8.2 — a floor checker
+  that cannot run at the floor.
+- **The floor is parsed out of `ServerReport::ASSUMED_PHP`, not restated.** The checker
+  loads no app code — requiring `lib/server_report.php` pulls in five modules, and a
+  static analyser that boots app code to learn a constant will eventually boot a side
+  effect — so it reads the declaration and treats *failing to find it* as a failure. A
+  checker holding its own copy of the number keeps passing after somebody lowers the
+  floor, which is the exact moment it is supposed to speak.
+
+**It is a denylist, and it prints that on every run.** It knows what 8.3 and 8.4 added;
+it cannot know what 8.5 will add, and it reads syntax rather than semantics, so a method
+that only exists above the floor or a changed default passes it. That limit is in the
+"still by eye" list rather than left for a reader to infer, because a denylist matching
+nothing is indistinguishable from a clean tree — the failure mode is silence, and silence
+here reads as an all-clear. What makes it worth having anyway is the direction it fails
+in: it cannot promise the tree is clean, but everything it names would have reached the
+sign.
+
+**The complete answer is the one CI already gives**, and this check does not replace it:
+run the suite at the floor. CI pins 8.2 for exactly that reason, which is why the floor
+check covers `tools/` as well as the app — a tool that only runs above the floor is a red
+build. Note the drift runs both ways and the other direction is already recorded: §4aq's
+last bullet has PHP 8.4 raising a deprecation in `lib/color_audit.php` that 8.2 does not,
+which is harmless to the shop and noise to the mutation harness. Same root cause, opposite
+sign, and neither is visible from the other machine.
+
 ---
 
 ## 5. Verification
@@ -5302,15 +5406,22 @@ There is no deploy pipeline — every change reaches the sign by hand — but as
 a copy of live data. It runs on PHP 8.2, against two engines: SQLite and a real
 MySQL 5.7 service. That 8.2 is now also the repo's declared floor — the store owner
 stated the host runs it (§4k) — so the pin enforces the target rather than merely
-accepting everything the target forbids. It remains a *statement*, not something this
-repo has measured; confirming it on Settings → This Server is a deploy-day step. Run
-the suite locally before every push anyway; the loop is faster than a push.
+accepting everything the target forbids. As of 2026-08-11 it is **observed** rather than
+stated: 8.2.33 on the runtime card and `ea-php82` pinned to `srcresort.com` in cPanel
+(HANDOFF §7). **CI is therefore the only place the gate below runs at the floor**, and
+that is not a detail — this container is 8.4, so `php -l` here cannot fail on syntax the
+shop cannot parse (invariant 31). Run the suite locally before every push anyway; the
+loop is faster than a push.
 
 ```
-php -l <every touched .php>              # syntax; also in CI, on 8.2
+php -l <every touched .php>              # syntax — but at 8.4 here, so it CANNOT fail on
+                                         # 8.3/8.4-only syntax that the 8.2 shop rejects.
+                                         # CI's run is the one at the floor (invariant 31)
 php tools/check_invariants.php           # the greps below, run rather than read —
                                          # comment-aware, so a module documenting a
-                                         # rule does not fail it
+                                         # rule does not fail it. Also the above-floor
+                                         # syntax check, which is what covers the hole
+                                         # `php -l` leaves on the line above
 php tools/selftest_layout.php            # the real modules, in-memory SQLite
 node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
                                          # that has only what a read-only page emits

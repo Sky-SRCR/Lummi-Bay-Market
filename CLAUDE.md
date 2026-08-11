@@ -101,8 +101,12 @@ edited in place and every change reaches the sign by hand.
   only forwent syntax; a declared floor that turns out wrong is a parse error, and a parse
   error in a file a Screen loads is a blank sign in the shop. **And `php -l` cannot check
   this for you**: the container these sessions run in has PHP 8.4, so an 8.3-or-8.4-only
-  construct lints clean here and breaks the live sign. Spending the floor means checking
-  by hand which version a construct needs, because the gate agrees with whatever you write. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
+  construct lints clean here and breaks the live sign — demonstrated, not argued. That
+  hole is what invariant 31 covers: `tools/check_invariants.php` reads real tokens and
+  refuses seven above-floor constructs and twenty functions, and prints on every run that
+  it is a denylist. So the gate now disagrees with you when it can — but a denylist cannot
+  know what 8.5 adds, so a construct you have not seen before is still worth looking up
+  rather than trusting the green line. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
   for the reason they always did: they cover a host that moves, and what they prevent
   is silent.
 - **Nothing that has been published can be taken back.** Publishing overwrites; a

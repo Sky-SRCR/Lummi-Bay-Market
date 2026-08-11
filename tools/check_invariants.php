@@ -950,6 +950,318 @@ if (!$positions) {
     $failures[] = 'convergence position in an entry point';
 }
 
+// ---- Nothing uses syntax or a function newer than the PHP floor -----------------
+/**
+ * Every use of PHP syntax or a library function newer than the floor.
+ *
+ * **This is the one check `php -l` cannot be.** The floor is 8.2 (#51, observed twice
+ * on 2026-08-11), and the container these sessions run in has PHP 8.4 — so a construct
+ * added in 8.3 or 8.4 lints clean here and is a **parse error on the live host**. A
+ * parse error takes the whole file down, and a file a Screen loads going down is a
+ * blank board in the shop rather than a message anybody reads. The gate that was
+ * supposed to catch that has never been able to see it, and BUILD-REFERENCE recorded
+ * the 8.4 container for a year without drawing the consequence.
+ *
+ * Token-based rather than grep-based, and that is not tidiness. The hand sweep that
+ * cleared the tree on 2026-08-11 hit two false positives in a one-line grep — an HTML
+ * `readonly` attribute in `admin_panel.php` and a JavaScript `.match(` in
+ * `builder.php` — because the strings this looks for are ordinary English and ordinary
+ * JavaScript. A rule that cries wolf twice on a clean tree is a rule somebody turns
+ * off. Reading real tokens means a name inside a string, a comment, an HTML attribute
+ * or a `->method()` call cannot be mistaken for the construct.
+ *
+ * **It is a denylist, and therefore incomplete by construction.** It knows the
+ * constructs 8.3 and 8.4 added that somebody might plausibly reach for here; it cannot
+ * know what 8.5 will add. That limit is printed on every run rather than left for a
+ * reader to infer, because the failure mode of a denylist is silence, and silence here
+ * reads exactly like a clean tree. What makes it worth having anyway is the direction
+ * it fails in: it cannot promise the tree is clean, but every construct it does name is
+ * one that would have reached the sign.
+ *
+ * @return array of ['line' => int, 'what' => string, 'since' => string]
+ */
+function aboveFloorUses($source)
+{
+    // Significant tokens only, each carrying the line it starts on. Single-character
+    // tokens arrive from token_get_all() without a line number at all, so the count is
+    // carried forward by hand — a `)` on line 40 reported as line 1 is a finding
+    // nobody can act on.
+    $ts   = [];
+    $line = 1;
+    foreach (token_get_all($source) as $t) {
+        if (is_array($t)) {
+            $id = $t[0]; $text = $t[1]; $line = $t[2];
+        } else {
+            $id = null; $text = $t;
+        }
+        if ($id !== T_WHITESPACE && $id !== T_COMMENT
+            && $id !== T_DOC_COMMENT && $id !== T_INLINE_HTML) {
+            $ts[] = [$id, $text, $line];
+        }
+        $line += substr_count($text, "\n");
+    }
+
+    // Functions, not syntax, so these are a fatal at call time rather than a parse
+    // error — a page that dies where it stood instead of never starting. Still a dead
+    // sign, and still invisible to a lint on 8.4.
+    $funcs = [
+        'json_validate' => '8.3', 'mb_str_pad' => '8.3', 'str_increment' => '8.3',
+        'str_decrement' => '8.3', 'stream_context_set_options' => '8.3',
+        'array_find' => '8.4', 'array_find_key' => '8.4', 'array_any' => '8.4',
+        'array_all' => '8.4', 'mb_trim' => '8.4', 'mb_ltrim' => '8.4',
+        'mb_rtrim' => '8.4', 'mb_ucfirst' => '8.4', 'mb_lcfirst' => '8.4',
+        'request_parse_body' => '8.4', 'bcdivmod' => '8.4', 'fpow' => '8.4',
+        'grapheme_str_split' => '8.4', 'http_get_last_response_headers' => '8.4',
+        'http_clear_last_response_headers' => '8.4',
+    ];
+
+    $out = [];
+    $n   = count($ts);
+    for ($i = 0; $i < $n; $i++) {
+        list($id, $text, $at) = $ts[$i];
+        $lower = strtolower($text);
+        $next  = isset($ts[$i + 1]) ? $ts[$i + 1] : [null, '', $at];
+        $prev  = $i > 0 ? $ts[$i - 1] : [null, '', $at];
+
+        // A typed class constant (8.3): `const string N = 'x'`. Two names before the
+        // `=` where an 8.2 constant has one. Stopping at `=` is what keeps
+        // `const A = B|C` out of it, and stopping without one is what keeps
+        // `use const Foo\BAR;` out — an import has no `=` and is not a declaration.
+        if ($id === T_CONST) {
+            $names = 0;
+            $shape = false;
+            for ($j = $i + 1; $j < $n; $j++) {
+                $tok = $ts[$j];
+                if ($tok[1] === '=') {
+                    if ($names >= 2 || $shape) {
+                        $out[] = ['line' => $at, 'since' => '8.3',
+                                  'what' => 'a typed class constant'];
+                    }
+                    break;
+                }
+                if ($tok[1] === ';' || $tok[1] === ',') { break; }
+                if ($tok[0] === T_STRING) { $names++; continue; }
+                // `?string`, `A|B`, `array` and `static` are all type position.
+                if ($tok[1] === '?' || $tok[1] === '|'
+                    || $tok[0] === T_ARRAY || $tok[0] === T_STATIC
+                    || $tok[0] === T_CALLABLE) { $shape = true; continue; }
+                break;
+            }
+        }
+
+        // The two attributes PHP itself added above the floor. Attributes as such are
+        // 8.0 and fine; these two names are not, and an unknown attribute is a fatal
+        // rather than something ignored.
+        if ($id === T_ATTRIBUTE) {
+            for ($j = $i + 1; $j < $n && $j <= $i + 2; $j++) {
+                $name = ltrim($ts[$j][1], '\\');
+                if ($name === 'Override') {
+                    $out[] = ['line' => $at, 'since' => '8.3',
+                              'what' => 'the #[\\Override] attribute'];
+                }
+                if ($name === 'Deprecated') {
+                    $out[] = ['line' => $at, 'since' => '8.4',
+                              'what' => 'the #[\\Deprecated] attribute'];
+                }
+            }
+        }
+
+        // Asymmetric visibility (8.4): `public private(set) string $n`.
+        //
+        // **Two lexings, and both are needed.** PHP 8.4 reads `private(set)` as one
+        // token (T_PRIVATE_SET); 8.2 has no such token and would read four — T_PRIVATE,
+        // `(`, `set`, `)`. This checker runs on both: 8.4 in the session container, 8.2
+        // in CI, which pins the floor. Matching only the 8.4 shape would leave the
+        // detector silently blind on the one machine whose version is the point, and it
+        // would look like a pass. The constant is matched by *text* rather than by name
+        // for the same reason — naming T_PRIVATE_SET here is a fatal on 8.2.
+        $bare = strtolower(preg_replace('/\\s+/', '', $text));
+        if ($bare === 'private(set)' || $bare === 'protected(set)') {
+            $out[] = ['line' => $at, 'since' => '8.4',
+                      'what' => 'asymmetric visibility (`' . $bare . '`)'];
+        }
+        if (($id === T_PRIVATE || $id === T_PROTECTED)
+            && $next[1] === '('
+            && isset($ts[$i + 2]) && strtolower($ts[$i + 2][1]) === 'set'
+            && isset($ts[$i + 3]) && $ts[$i + 3][1] === ')') {
+            $out[] = ['line' => $at, 'since' => '8.4',
+                      'what' => 'asymmetric visibility (`' . $lower . '(set)`)'];
+        }
+
+        // A property hook (8.4): a property whose declaration opens a brace instead of
+        // ending. `(` or T_FUNCTION on the way means this was a method or a promoted
+        // constructor parameter, and `=` or `;` means an ordinary property.
+        if ($id === T_PUBLIC || $id === T_PRIVATE || $id === T_PROTECTED || $id === T_VAR) {
+            for ($j = $i + 1; $j < $n; $j++) {
+                $tok = $ts[$j];
+                if ($tok[0] === T_VARIABLE) {
+                    if (isset($ts[$j + 1]) && $ts[$j + 1][1] === '{') {
+                        $out[] = ['line' => $tok[2], 'since' => '8.4',
+                                  'what' => 'a property hook'];
+                    }
+                    break;
+                }
+                if ($tok[1] === ';' || $tok[1] === '=' || $tok[1] === '('
+                    || $tok[1] === '{' || $tok[0] === T_FUNCTION) { break; }
+            }
+        }
+
+        // `new Foo()->bar()` (8.4). The 8.2 spelling wraps it: `(new Foo())->bar()`.
+        // So the tell is a `(` *before* the `new`, and its absence is the flag. This is
+        // the loosest of the five and the reason is worth stating: it decides on one
+        // preceding token rather than on a parse, so `foo(new Bar())->baz()` reads as
+        // wrapped. That form is legal on 8.2 anyway — chaining off a function call
+        // always was — so the looseness costs a missed case that is not a defect,
+        // rather than a false alarm on a clean tree.
+        if ($id === T_NEW && $prev[1] !== '(') {
+            $j = $i + 1;
+            while ($j < $n && ($ts[$j][0] === T_STRING || $ts[$j][0] === T_VARIABLE
+                   || $ts[$j][0] === T_NAME_QUALIFIED
+                   || $ts[$j][0] === T_NAME_FULLY_QUALIFIED
+                   || $ts[$j][0] === T_STATIC || $ts[$j][1] === '\\')) { $j++; }
+            if ($j < $n && $ts[$j][1] === '(') {
+                $depth = 0;
+                for (; $j < $n; $j++) {
+                    if ($ts[$j][1] === '(') { $depth++; }
+                    elseif ($ts[$j][1] === ')') {
+                        $depth--;
+                        if ($depth === 0) { $j++; break; }
+                    }
+                }
+                if ($j < $n && ($ts[$j][0] === T_OBJECT_OPERATOR
+                    || $ts[$j][0] === T_NULLSAFE_OBJECT_OPERATOR
+                    || $ts[$j][0] === T_DOUBLE_COLON)) {
+                    $out[] = ['line' => $at, 'since' => '8.4',
+                              'what' => '`new` chained without wrapping parentheses'];
+                }
+            }
+        }
+
+        // A function the floor does not have. `->name(` and `::name(` are somebody
+        // else's method and not this, which is the whole reason for reading tokens.
+        if ($id === T_STRING && isset($funcs[$lower]) && $next[1] === '('
+            && $prev[0] !== T_OBJECT_OPERATOR
+            && $prev[0] !== T_NULLSAFE_OBJECT_OPERATOR
+            && $prev[0] !== T_DOUBLE_COLON
+            && $prev[0] !== T_FUNCTION) {
+            $out[] = ['line' => $at, 'since' => $funcs[$lower],
+                      'what' => $text . '()'];
+        }
+    }
+
+    return $out;
+}
+
+// The floor is read out of `lib/server_report.php` rather than written here again, and
+// read rather than *loaded*: requiring that file pulls in five modules, and a static
+// analyser that boots app code to learn a constant will one day boot a side effect. So
+// the declaration is parsed, and failing to find it is a failure — a checker that
+// quietly fell back to a hardcoded 8.2 would keep passing after somebody lowered the
+// floor, which is the one moment it needs to speak up.
+$floorSource = codeWithoutComments(file_get_contents($root . '/lib/server_report.php'));
+$floor = '';
+if (preg_match('/const\s+ASSUMED_PHP\s*=\s*\'([0-9.]+)\'/', $floorSource, $m)) {
+    $floor = $m[1];
+}
+$checked++;
+if ($floor !== '') {
+    echo "  ok   the floor this checks against is read from ServerReport, not restated ($floor)\n";
+} else {
+    echo "  FAIL the ASSUMED_PHP declaration cannot be read, so there is no floor to check\n";
+    echo "       Nothing below this line can mean anything until that declaration is found.\n";
+    $failures[] = 'the PHP floor cannot be read';
+}
+
+// The tree itself. tools/ is included rather than skipped: CI pins the floor, so a tool
+// that only runs above it is a red build, and the self-test is where a new construct is
+// likeliest to be reached for casually.
+$floorProblems = [];
+foreach (phpFilesUnder($root, '') as $rel) {
+    foreach (aboveFloorUses(file_get_contents($root . '/' . $rel)) as $use) {
+        $floorProblems[] = $rel . ':' . $use['line'] . ' uses ' . $use['what']
+                         . ', which needs PHP ' . $use['since'];
+    }
+}
+$checked++;
+if (!$floorProblems) {
+    echo "  ok   no file uses syntax or a function newer than PHP "
+       . "$floor (invariant 31)\n";
+} else {
+    echo "  FAIL a file uses PHP newer than the floor, and php -l here cannot see it "
+       . "(invariant 31)\n";
+    foreach ($floorProblems as $problem) { echo "       $problem\n"; }
+    echo "       The floor is $floor (#51, observed twice). "
+       . "This container is " . PHP_VERSION . ", so\n";
+    echo "       this lints clean here and is a parse error on the live host — which is\n";
+    echo "       a blank sign in the shop, not a message. Rewrite it, or lower the floor\n";
+    echo "       deliberately with the owner's version in hand.\n";
+    $failures[] = 'a file uses PHP newer than the floor';
+}
+
+// ---- And that detector, seen to fail --------------------------------------------
+// Invariant 30: a check ships having been *seen* to go red. A denylist that matches
+// nothing looks identical to a clean tree, so the constructs are put through it here as
+// source strings — never as files, because a fixture file holding 8.4 syntax would be a
+// parse error the moment anything included it, and the lexer reads a string happily
+// without ever agreeing to run it.
+//
+// The negative half is not symmetry for its own sake. Every entry below is a shape that
+// a plain grep for these names *does* hit, and two of them are the exact false positives
+// the hand sweep produced on a clean tree.
+$floorProbes = [
+    ['<?php class A { const string N = "x"; }',              'a typed class constant'],
+    ['<?php class A { #[\Override] function f() {} }',        'the #[\Override] attribute'],
+    ['<?php $ok = json_validate($raw);',                     'json_validate()'],
+    ['<?php $i = array_find($rows, $fn);',                   'array_find()'],
+    ['<?php class A { public string $n { get => "x"; } }',   'a property hook'],
+    ['<?php class A { public private(set) int $n = 1; }',     'asymmetric visibility'],
+    ['<?php $x = new Foo()->bar();',                         '`new` chained bare'],
+];
+foreach ($floorProbes as $probe) {
+    list($source, $label) = $probe;
+    $checked++;
+    if (aboveFloorUses($source)) {
+        echo "  ok   above the floor and caught: $label\n";
+    } else {
+        echo "  FAIL the floor check does not catch $label\n";
+        echo "       A denylist that matches nothing reads exactly like a clean tree.\n";
+        $failures[] = 'the floor check misses ' . $label;
+    }
+}
+$floorClean = [
+    ['<?php $a = 1; ?><input readonly value="x">',
+     'an HTML readonly attribute is markup, not a property hook'],
+    ['<?php $s = "call json_validate($raw) one day";',
+     'a function name inside a string is not a call'],
+    ["<?php // json_validate() would need 8.3\n\$a = 1;\n",
+     'and one in a comment is prose'],
+    ['<?php const A = 1, B = 2;',
+     'an untyped constant list is not a typed constant'],
+    ['<?php use const Foo\BAR;',
+     'and a const import is not a declaration at all'],
+    ['<?php $x = (new Foo())->bar();',
+     'the wrapped form of new is how 8.2 spells it'],
+    ['<?php class A { public $n = 1; public static $m; }',
+     'an ordinary property has no hook'],
+    ['<?php class A { public function f($a) { return $a; } }',
+     'and a method is not a property'],
+    ['<?php $o->json_validate($raw); Foo::array_find($r, $f);',
+     'somebody else\'s method is not the global function'],
+];
+foreach ($floorClean as $probe) {
+    list($source, $label) = $probe;
+    $checked++;
+    $hits = aboveFloorUses($source);
+    if (!$hits) {
+        echo "  ok   at the floor and left alone: $label\n";
+    } else {
+        echo "  FAIL the floor check cries wolf: $label\n";
+        foreach ($hits as $hit) { echo "       flagged " . $hit['what'] . "\n"; }
+        echo "       A rule that fails on a clean tree is a rule somebody turns off.\n";
+        $failures[] = 'the floor check false-positives on ' . $label;
+    }
+}
+
 // ---- The instrument itself -------------------------------------------------------
 // Every rule above is read through codeWithoutComments(), so what that function drops
 // decides what all thirty-two of them can see. It gained HTML comments in #50, and the
@@ -1002,6 +1314,12 @@ foreach ([
     'whether a check can fail at all — `php tools/mutate.php <file>` answers that one '
         . 'file at a time, and is the thing #50 was filed about (§4aq). It is a tool to '
         . 'run, not a gate, because a full sweep is hours',
+    'syntax above the floor that this does not know about (invariant 31) — the floor '
+        . 'check is a denylist of what 8.3 and 8.4 added, so it cannot know what 8.5 '
+        . 'will add, and it reads syntax rather than semantics: a method that only '
+        . 'exists above the floor, or a changed default, passes it. What it does catch '
+        . 'is proven every run by its own fixtures. The only complete answer is running '
+        . 'the suite on ' . 'the version the shop runs, which CI does and this container cannot',
 ] as $note) {
     echo "  · $note\n";
 }
