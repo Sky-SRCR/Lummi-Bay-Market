@@ -480,6 +480,29 @@ through the app again:
     that writes something every sign shares asks the same question; anything scoped to a
     Display must not, because the seam already answered it and a second opinion is
     invariant 8's warning.
+30. **A check ships having been seen to fail** (#50). Not "a check was added" — a check
+    that was run against the unfixed code, or against a deliberate break of the line it
+    covers, and observed to go red. The distinction is the whole of decision #50, because
+    the two are indistinguishable from the outside: both read as one more `ok` line, both
+    raise the count anchor, and only one of them will ever tell anybody anything. This
+    suite has shipped the other kind more than once — a check asserting what PHP 8
+    guarantees rather than what a module decides (§4aa), a `setupInteract()` call after a
+    restore that could not fail because interact.js binds by selector (§4an), a
+    `file_put_contents` grep whose stated answer of "exactly one hit" had been
+    unreachable since the day it landed (§5), and an "absent setting is not something to
+    report" that ran in a process where the setting was present and usable (§4aq). None
+    of those was carelessness; each was written by somebody reasoning correctly about
+    code and not measuring the check. `tools/mutate.php` is how it is measured now:
+    break the line, run the suite, and read whether anything noticed —
+    **`php tools/mutate.php <file>`**, one file at a time. A surviving mutant is either a
+    check to write or a reason to write down, and writing the reason down is a real
+    answer: §4am's `flock(LOCK_UN)` survives because the runtime would release the lock
+    anyway, which is the docblock being right. What is *not* an answer is deleting the
+    line because no test covers it — three of #49's survivors were load-bearing. The
+    counterpart rule is that a kill has grades, and only one of them is coverage: a
+    mutant that dies because a PHP warning appeared, or because the count anchor moved,
+    is the harness noticing something moved rather than a check knowing what the line was
+    for.
 
 ---
 
@@ -4749,6 +4772,398 @@ Fixing the checker is #50's subject, not something to bundle into a rule it is m
 be enforcing: `codeWithoutComments()` works on tokens, and stripping HTML comments
 means handling PHP embedded inside one, which changes what every rule sees.
 
+**Fixed in §4aq**, with the decision the note was waiting on: an HTML comment holding
+PHP is code and stays.
+
+---
+
+### 4aq. Which of these checks can fail? (#50)
+
+Decision #50 has two halves and one shape. The halves are *about 29 checks in the suite
+could not fail* and *five invariants had no automated check at all*. The shape is that
+neither can be settled by reading, and one of them cannot honestly be settled by hand
+at all.
+
+**The 29 was never going to be recountable.** It came out of the ten-agent audit (§4g),
+when the suite was about two hundred checks; it is 1767 now, grown by twenty-odd
+branches, and the two immediately before this one added 81 between them. A number
+produced by reading a suite goes stale the week after it is produced — which is exactly
+what happened, and is why the item sat open for a year with the note *"the 29 have not
+been swept."* Any recount done the same way would be stale by the next merge. So the
+deliverable here is not a corrected number. It is the instrument that produces one, on
+demand, for the file you are about to change.
+
+#### `tools/mutate.php`
+
+Break one thing, run the suite, record whether anything noticed. §4am already did this
+by hand for two files, found real gaps — either backfill's `WHERE` clause could be
+deleted, the sanitiser's other five statements could each be removed with the suite
+green — and closed with the honest admission that *"the mutation runs are not
+automated… Decision #50 is where that belongs."* This is that.
+
+```
+php tools/mutate.php lib/grants.php        # break it 55 ways, 55 runs of the suite
+php tools/mutate.php --list lib/color.php  # what it would break, without running
+```
+
+Every operator is a defect somebody could type rather than a mutation a paper would
+list. In three families:
+
+- **A comparison or a connective changed.** `===`→`==` and its four relatives,
+  `<`→`<=` and its three, `&&`↔`||`, a `!` dropped, `true`↔`false`, an integer moved by
+  one, and the bit-or that builds a flag set turned into a bit-and — because
+  `ENT_QUOTES & ENT_SUBSTITUTE` is `0`, and `htmlspecialchars($v, 0)` leaves both quote
+  characters alone.
+- **Something removed.** A whole statement, a one-line guard (`if (!$ok) { return
+  null; }` — the form this repo prefers), or a whole multi-line `if (…) { … }`. This is
+  the family that finds a line nothing stands over, which is what #50 is about.
+- **The scoping predicate dropped from a SQL `WHERE`**, either wholly or one `AND`
+  conjunct at a time. The one operator that reaches inside a string, and it is here
+  because the worst survivor #49 found was exactly that shape and no operator over PHP
+  tokens can produce it: to PHP the entire statement is one string. A query that keeps
+  `WHERE id = ?` and loses `AND display_id = ?` still returns a row, so it fails no test
+  that only asks whether something came back.
+
+Comments never reach any of them, because `token_get_all()` hands a comment back as one
+token — so an `&&` inside one is not an operator, and `true` inside a string is not a
+literal.
+
+**A kill is graded, and only one grade is coverage.**
+
+| | what it means |
+|---|---|
+| `assertion` | a check failed. The suite stands over this line's *behaviour*. |
+| `diagnostic` | only a PHP warning failed it — usually an undefined variable, because the mutant deleted the line that set it. The harness noticed the mutant; no check knew what the line was for. |
+| `count` | the count anchor failed and nothing else: a check *disappeared* rather than failed. |
+| `fatal` / `hang` | the run died or had to be timed out. §4am records one hang on purpose — making the schema-repair lock blocking is caught by the suite never finishing. |
+| `survived` | the finding. This line can be wrong and the suite will say it is fine. |
+
+The grades matter because the four weak ones are easy to read as coverage. `lib/grants.php`
+scores 52 of 57 killed, which sounds like a covered module; 32 of those are assertions and
+20 are the harness noticing a variable go missing or the run die. `lib/display_request.php`
+is starker: 37 of 43 killed, and only 13 of them by a check.
+
+One limit on the grades, stated because it was seen: **the grade is the first failure, not
+the worst one.** That is what makes a run cheap — `SELFTEST_STOP_ON_FAIL` leaves on the
+first red line — and it means a mutant whose line is properly covered by an assertion is
+reported as `diagnostic` if any warning fires earlier in the same run. It happened twice
+while this section was being written, in runs launched four at a time against one temp
+directory, and neither reproduced on its own. `survived` is unaffected: nothing failed at
+all, in any order. If a grade is what you are deciding on, run the one file by itself and
+re-check with `--only=N`.
+
+**Why it is affordable.** The suite takes about ten seconds and a mutant needs one bit
+off it, so `SELFTEST_STOP_ON_FAIL` (in `tools/test_fixture.php`) leaves on the first
+failure. Most mutants then cost a fraction of a run and only the survivors — the ones
+worth waiting for — pay in full. There is deliberately **no `--all`**: every `lib/` file
+is thousands of runs and hours of them, and a report nobody reads is the same as no
+report. It is a tool to run over what you changed, not a gate. The tree is copied into a
+sandbox once and the mutants are written there, so the repo is never touched, and the
+unmutated suite is run first and required to pass — a sandbox whose suite is already
+failing grades every mutant as killed and reports perfect coverage, which is the mistake
+this tool exists to find in other people's tests.
+
+#### What it found
+
+Nine modules, chosen by stake rather than by convenience. Every figure below is a run of
+the tool **as it ships**, after the operator fix at the end of this section — the first
+draft of this table was measured with a version whose `&&` operator silently generated
+nothing, so it was thrown away and re-measured rather than adjusted.
+
+| file | mutants | killed | survived | survivors before this pass |
+|---|---|---|---|---|
+| `lib/plain_text.php` | 11 | 11 | 0 | 0 — #49 had already done this one by hand |
+| `lib/markup.php` | 4 | 4 | 0 | 0 |
+| `lib/color.php` | 19 | 16 | **3** | 10 |
+| `lib/grants.php` | 57 | 52 | **5** | 15 |
+| `lib/store_clock.php` | 36 | 27 | **9** | 13 |
+| `lib/display_request.php` | 43 | 37 | **6** | 6 — all six equivalent |
+| `lib/upload_limits.php` | 48 | — | — | 17 |
+| `lib/http_reply.php` | 69 | — | — | 35 |
+| `lib/layout_rules.php` | 209 | — | — | 64 |
+
+The last three rows' totals land with the re-run; their findings are below and their
+checks are written. Where a "before" figure is larger, the difference is the checks this
+pass added — and the mutant count itself rises as checks are written, because a check
+written to kill a mutant is a line the next run can break.
+
+Where two numbers appear, the second is after the checks written in this pass; the
+mutant count rises because a check written to kill a mutant is itself a line the next
+run can break, and falls once where an operator was corrected (below).
+
+**The most instructive result is `lib/http_reply.php`'s status-code table**, because the
+suite already had a loop over it. Fourteen checks, one per reason the app uses, of the
+form `codeFor($reason, 0) !== 0` — *the map has an answer for this word*. Six of the
+fourteen rows had nothing else standing over them, so `not_found`, `signed_out`,
+`locked`, `busy`, `too_large` and `unencodable` could each be moved to a neighbouring
+code with the suite green: a body too large to arrive answering 414, a session that ended
+answering 404. **A loop over a table that asserts its keys reads from outside exactly like
+one that asserts the table**, and this one had been read that way ever since it was
+written — including by every branch that has added a row to the table since. It is now a
+reason-to-code map in the suite, asserted row by row, with the `0` sentinel kept so an
+unlisted reason still fails — plus three checks about which rows *share* a code, since a
+table where every row happened to be 409 would satisfy fourteen row checks and still be
+wrong.
+
+`HttpReply::jsValue()` had the same shape one layer down. Its flags are a single `|`
+chain, so one character mistyped as `&` collapses two of them, and nothing named the
+characters it escapes — only that the answer parsed. Four checks now, one per character,
+each of which ends something: `<` ends the script element, `'` and `"` end a string
+literal, `&` starts an entity the attribute parser decodes first (§4ah).
+
+`lib/upload_limits.php` gave up both edges of `describeBytes()` — exactly 1048576 bytes
+and exactly 1024 — which is the number printed in the sentence telling somebody what to
+trim their file to. `1024 KB` and `1048575 bytes` are what those mutants produce. Also
+`describeBytes(null)` answering `" bytes"`, and a POST arriving with no `CONTENT_LENGTH`
+header at all being reported as *dropped for its size*, which is the old defect with the
+sentences swapped.
+
+**And the same shape a third time, which is what makes it a shape rather than three
+bugs.** `LayoutRules::describe()` — the part of a publish refusal naming the admin's own
+value — had every branch removable with the suite green, and its 40-character cut movable
+in either direction. `Color::describe()`, `UploadLimit::describeBytes()` and this one are
+all pure functions whose only callers build a sentence around them, and in all three cases
+the sentence was checked and the value was not. Anything that turns a value into words for
+a person to read is worth asking this question about: the check that quotes the wording
+passes whatever the words are about.
+
+**Ten of the fifteen survivors in `lib/grants.php` were real**, and that is the module
+holding the answer to "may this account reach that sign":
+
+- **Both grouped reads could be emptied out.** `displayIdsByAccount()` and
+  `accountIdsByDisplay()` are the two axes of the grant matrix the Admin Panel draws,
+  and the entire body of both loops could be deleted with the suite green. Nothing had
+  ever asserted what either returned — only that access decisions made *elsewhere* came
+  out right. A matrix drawn empty over a full table, and a save from that page reads its
+  own checkboxes.
+- **Granting twice could stop being idempotent.** The docblock says already-granted is
+  success rather than an error; nothing had ever granted the same pair twice. Removing
+  the guard leaves two rows for one permission, which `revoke()` then removes both of —
+  so the defect is invisible from every direction except the matrix's own count.
+- **A session with no id could have become account 1.** `Actor::signedIn()` falls back to
+  `0` for a missing id, and no account has that number. One digit up is the id the
+  installer gives the first admin. The fallback was never asserted.
+- **The actor's own id and username were never read back.** Exercised hard as an input
+  to `mayEdit()`; never checked as an output, and the username is what an edit lock names
+  on a colleague's screen.
+
+**`Color::describe()` had almost nothing on it.** Ten of thirteen mutants survived: the
+whole function could have been reduced to quoting the value back. It is the sentence a
+refused colour actually shows — `DisplayAdmin` quotes it and the Admin Panel prints it
+twice on the unreadable-colours card — so "blank", "nothing", "a list of values" and
+"integer" are four different messages #21 exists to keep apart, and the twenty-character
+cut lands inside a sentence on a page. Pure function of one argument, and it was covered
+by inference from the messages built around it.
+
+#### The one hollow check it found in the suite, and the instrument that fixes it
+
+`checkSame('', StoreClock::unreadable(null), 'an absent setting is not something to
+report')` — from §4ap, the newest section in this file when it was found, and it does not
+test an absent setting. This suite requires `auth.php` at the top, which requires
+`config.php`, which defines all ten branding names with their defaults. `unreadable(null)` means *read the constant*, and in
+this process the constant is present and usable, so the check passes for a different
+reason than its label gives. The mutation runner found it by deleting the branch the
+label claimed to cover and watching nothing happen.
+
+A `define()` cannot be undone, so that branch is unreachable from any check in a process
+that has loaded `config.php` — and it is not a hypothetical branch. Every installation
+whose generated `branding_config.php` predates the setting has no `STORE_TIMEZONE` at
+all, which is all of them until somebody saves the Settings form, which is what the live
+sign is running today.
+
+So `inFreshProcess()` in `tools/test_fixture.php`: run a snippet in a PHP process that
+has loaded nothing, and read what it printed. Three checks that no in-process check could
+make — with nothing configured there is nothing to report and the zone is the documented
+default; `StoreClock::load()` really does read the generated file, which is its only
+statement and was previously unobserved; and the no-argument form really consults the
+constant rather than answering from its own default parameter. The old check keeps its
+place with a label that says what it tests. It is worth having. It was not worth what it
+claimed.
+
+Deliberately narrow: the snippet requires what it needs and echoes one string, and
+nothing in there builds a database. The rules worth reaching this way are the pure ones
+that read a constant.
+
+#### Almost every surviving mutant is `===` → `==`, and that is about the floor
+
+Twenty-three survivors remain across the six modules taken to completion. Sixteen are a
+strict comparison relaxed to a loose one, and they survive because **on PHP 8 the two
+cannot differ** for the values that reach them: `'0' == ''` is false since 8.0, and so is
+`0 == 'admin'`. On 7.x both were true. So `$user['role'] == 'admin'` — with a role column
+that a broken session could deliver as `0` — is an equivalent mutant at the declared floor
+and a privilege escalation one version below it.
+
+That is a cost of the floor resting on a person (§4k, #51) that nothing had priced
+before: **this suite's mutation score is a function of the PHP version, and the lines it
+stops covering if the host moves are comparisons in the access module.** The right
+response is not sixteen checks pinning behaviour the language already guarantees — that
+is manufacturing exactly what #50 objects to. It is that `ServerReport::phpVersionNote()`
+is the alarm, that this paragraph says what the alarm is protecting, and that a host
+moved down to 7.x is a re-run of `tools/mutate.php` over `lib/grants.php` and
+`lib/display_request.php` before anything else.
+
+The other seven are guards whose absence is unobservable because a later line already
+refuses, and four of them are one guard: `isZone()`'s `if (!is_string($id) || $id === '')`
+survives being deleted, having its `||` turned into `&&`, having its `!` dropped and having
+its comparison relaxed — because the strict `in_array()` on the next line rejects a
+non-string and an empty string anyway. Kept for §4am's reason — the mutation surviving *is*
+the reasoning being right — and recorded here rather than left to be rediscovered by
+somebody who then deletes the guard.
+
+#### Five things wrong with the tool, and how each of them looked
+
+Worth writing down because every one reads, from outside, exactly like good news. Four
+were caught by running it. The first was caught by reading it, after four modules had
+been swept and written up — which is the honest note to end a section about measurement
+on, and the reason the table above is a run of the shipped version rather than of the one
+that produced the first draft of these numbers.
+
+- **A whole operator family generated nothing.** The token-swap loop gated on a list of
+  token ids it expected to see, and the list left out `T_BOOLEAN_AND` and
+  `T_BOOLEAN_OR` — so `&&`→`||` produced no mutants at all while sitting in the operator
+  table above, fully implemented, looking present. **A missing operator is invisible from
+  the report**, because a report only ever shows what was generated: a module with no
+  connective mutants reads as a module with no connectives in it. `lib/layout_rules.php`
+  alone has 21 of them. The gate is gone; the swaps match on the token's *text*, which
+  is safe because none of them can be anything else — `and` and `or` are reserved words,
+  and a string holding `&&` carries its quotes in its token text.
+
+- **It graded its own subject's output.** The runner classified a mutant as INVALID by
+  grepping the run's output for "syntax error" — and the suite echoes the label of every
+  check it passes on the way, one of which is about a branding config with a syntax error
+  in it. The fix is to lint the mutant with `php -l` before running it and to anchor the
+  KILLED patterns to the start of a line.
+- **Commenting out a line can close PHP.** The statement-deletion operator originally
+  put `// ` in front of the line. The sanitiser's first statement is a regex matching a
+  `<br />` tag, and a question-mark-greater-than inside it ends the PHP block *from
+  inside a comment* — so that operator graded the one file #49 had measured by hand as
+  INVALID and silently stopped mutating it. The removed line is now replaced by a block
+  comment holding nothing of the file's own. The same trap is why `lib/markup.php`'s
+  header writes short-echo tags as `{{ … }}`, and why this bullet does not spell the
+  sequence out either.
+- **It read English prose as SQL.** The scoping-predicate operator matched ` WHERE `
+  case-insensitively, and `HttpReply`'s message about damaged text contains the sentence
+  *"a replacement character where the bad bytes were"* — so it produced a mutant that
+  mangled an admin's message and filed it on the survivor list as an uncovered scoping
+  predicate. A finding that is the tool's own grammar is worse than no finding: it is a
+  real-looking entry somebody will work through. It now requires upper case *and* a
+  statement keyword beside it, which is the same argument `check_invariants.php` makes
+  about `NOW()`: every SQL keyword in this repo is upper case.
+- **`lib/markup.php` produced no mutants at all.** Every statement in it is a `return`,
+  which the deletion operator excludes on purpose, and its two guards are multi-line
+  blocks rather than the one-line form. A file the tool cannot mutate reads from outside
+  exactly like a file with perfect coverage — #50's own complaint, pointed at the
+  instrument instead of the suite. That is what the whole-`if`-block operator is for, and
+  it immediately produced the mutant worth having: `ENT_QUOTES & ENT_SUBSTITUTE` is `0`,
+  and `htmlspecialchars($v, 0)` leaves both quote characters alone, which is the defect
+  the module exists to prevent written as one character.
+
+#### The other half: five invariants with no automated check
+
+Four are mechanised and the fifth is halved. Each was on that list for a stated reason,
+and three of those reasons turned out to be about the *pattern* rather than about the
+question:
+
+- **`canvas_elements`** was listed as undecidable because the API action
+  `get_canvas_elements` is indistinguishable from the table. It is one lookbehind apart
+  from it. Everything else that made the grep noisy was prose in eight files, which the
+  checker already drops. Now an exact rule over three files: the store that owns every
+  statement, the convergence that shapes the table, and the one catalogue entry naming it
+  as a column this database should have.
+- **`STORE_TIMEZONE`** was listed because a page naming it as the key of a save looks
+  identical to a page reading it. True of the *quoted* name — and the rule is not about
+  the quoted name. One module reads the setting and reads it through
+  `constant(self::SETTING)`, so the **bare** constant is spelled nowhere in the repo at
+  all. That is now a rule expecting no matches anywhere, which is stronger than the
+  by-eye version, plus a second rule holding the quoted spelling to the three files
+  entitled to it. A bare `STORE_TIMEZONE` in an expression is an undefined-constant Error
+  on whichever page did it, on every installation that has not saved the Settings form.
+- **`grants_accounts` / `grants_displays`** was listed because it is about a form's shape
+  rather than about which files match — which is a limit of the checker's rule format, not
+  of pattern matching. Written out longhand instead: each name must appear as a hidden
+  input, which is the declaring, *and* as a `$_POST` read, which is the acting on it, and
+  nowhere outside `admin_panel.php`. One without the other is §4s back — a form declaring
+  an axis nothing reads, or a save trusting an axis nothing drew.
+- **`ensureSignageSchema()`'s position** was listed as a thing a pattern cannot see. The
+  §5 note is right that the position is the invariant and wrong that it is undecidable —
+  though the obvious mechanical form, a line-number bound, would have been wrong too:
+  `api.php` legitimately converges at line 128, after the upload-limit and CSRF gates,
+  because those send a reply and stop. What must hold is that the call comes before any
+  transaction could exist, and every transaction in this app is held by one of three
+  use-case modules reached through a store — so the check is that the call precedes the
+  first *mention* of any store or use case in the file. Decidable, and stricter than
+  counting lines.
+- **`ErrorPolicy::report` callers** keeps the half that is a judgement. Whether a new
+  caller can fire repeatedly on a condition the app expected, and therefore needs a
+  window, is a reading of that call site and no pattern will do it. What was not
+  mechanical and now is: *noticing*. A fourth caller used to be invisible; it now fails a
+  check and has to be read before it lands.
+
+The list printed at the bottom of every run is shorter and deliberately not empty. Five
+entries, three of which are about instruments this repo does not have — a browser, a
+database that lags the repo, an automated sweep — and one of which is the mutation runner
+itself, named there so that "can this check fail?" has a place on the page rather than
+being a thing somebody remembers.
+
+**The two written longhand were held to invariant 30 the way the rest of this pass was**,
+which for a check inside `check_invariants.php` means breaking the app rather than a
+module: renaming `name="grants_accounts[]"` in the grant form fails it with *"never
+declares grants_accounts as a hidden input, so the save cannot know which rows were on the
+page"*; renaming the `$_POST` read fails it the other way; moving `crud.php`'s
+`ensureSignageSchema($pdo)` below its `DisplayStore` fails the position check with the two
+lines and the two line numbers. The two new file-set rules were checked the same way, by
+putting a bare `STORE_TIMEZONE` and a `canvas_elements` query into `help.php` and watching
+both go red. Each break was reverted; the point of doing them is that the alternative is
+five more `ok` lines nobody has seen move.
+
+#### And the HTML comments #44 left behind
+
+`codeWithoutComments()` dropped PHP comments and not HTML ones, so an `<!-- … -->`
+explaining why a line no longer calls `strtotime()` failed invariant 28 against the
+sentence explaining why the rule holds. #44 hit it, wrote its note in the other syntax,
+and left the fix here because what to do about PHP embedded inside an HTML comment
+changes what every rule sees.
+
+**The answer is that an HTML comment holding PHP is code and stays.** A comment is
+dropped only when it opens and closes inside one `T_INLINE_HTML` token, which is exactly
+the case where nothing in it executes. Write `<!-- the price is {{ Markup::text($p) }} -->`
+and the `<!--` and `-->` land in two different tokens with a live call between them: that
+call runs, its output reaches the page inside a comment a browser hides, and a rule about
+it must still see it. Dropping the span between the two tokens would blind every rule to
+whatever a page hid that way, which is the one outcome worse than the false positive this
+fixes. The unterminated halves need no decision — the pattern does not match them, so
+they stay as the HTML they are.
+
+Measured rather than asserted: 93 HTML comments across four files now drop out, and all
+of the rules match exactly the files they matched before. The repo has no HTML comment
+today whose text collides with a rule. The fix is for the next one, and for the note #44
+had to write in the other syntax to avoid it. Three checks in the checker pin all three
+behaviours, because both halves fail silently and the function decides what every rule
+can see.
+
+#### What is left, named rather than left to be assumed
+
+- **Eighteen of twenty-six `lib/` modules have not been swept.** The eight were chosen by
+  stake — the access module, the two escaping doors, the resolution seam, the sanitiser,
+  the reply door, the upload ceiling, the newest module — and the rest are a command each.
+  `lib/layout_rules.php`, `lib/layout_store.php`, `lib/displays.php` and `lib/accounts.php`
+  are the four worth doing next, in that order, because each is a module where a wrong
+  answer empties a sign or hands somebody a Display. This is the one place where "#50 is
+  done" would be an overstatement: the *instrument* is done and the sweep is a standing
+  activity, which is what makes it a rule (invariant 30) rather than a task.
+- **The sweep is not a gate and should not become one.** `lib/layout_rules.php` alone
+  generates 187 mutants, half an hour of runs. CI running that per push would buy less
+  than the ten seconds the suite already costs.
+- **`N → N+1` on a large constant is a weak finding.** `MAX_BYTES` moving by one byte and
+  a canvas limit moving by one pixel survive because nothing pins those boundaries, which
+  is true and nearly always fine. The boundary worth pinning is the small one —
+  `Color::describe()`'s twenty characters, `openable()`'s count of one — and those are now
+  pinned.
+- **The harness cannot see a deprecation.** `error_reporting()` excludes `E_DEPRECATED`,
+  so the `diagnostic` grade is blunter than it looks, and PHP 8.4 raises one in
+  `lib/color_audit.php` that the 8.2 floor does not. Not #50's to fix — recorded because
+  the tool's own grading depends on it.
+
 ---
 
 ## 5. Verification
@@ -4790,6 +5205,17 @@ node tools/selftest_viewer.js            # viewer.php's poll loop, against a fet
                                          # hour of them (§4af)
 ```
 
+And one that is not a gate, because it takes minutes rather than seconds — run it over
+what you changed, before you decide the checks you wrote are worth their lines:
+
+```
+php tools/mutate.php lib/whatever.php    # break that file one way at a time and run the
+                                         # suite each time. A mutant the suite still
+                                         # passes is a line no test can fail on, which is
+                                         # invariant 30 and §4aq. `--list` shows what it
+                                         # would break without running anything
+```
+
 And, with a MySQL to point at — the same suite, with nothing stubbed:
 
 ```
@@ -4802,27 +5228,34 @@ gone, and twenty-three further checks run that SQLite cannot be asked — see §
 Eight of those are the publish collision (§4ab), which needs two database sessions
 and so cannot exist on an in-memory fixture at all.
 
-**The greps below are what `tools/check_invariants.php` automates.** They are kept
-here because the annotations are the reasoning, and because five of them cannot be
-decided by pattern and are still yours to read: `canvas_elements` (the endpoint
-name `get_canvas_elements` is indistinguishable from the table), `ErrorPolicy::report`
-callers (a new one is allowed but has to be read for whether it can repeat),
-the *position* of `ensureSignageSchema()` calls, the `grants_accounts` /
-`grants_displays` pairing, and `STORE_TIMEZONE` (a page naming it as the key of a save
-and a page *reading* it look identical to a pattern, and only one of them is a second
-opinion about what an unusable stored zone means). The checker prints that list on
-every run so nobody mistakes it for total coverage. `schema.sql` against
-`lib/schema.php` used to be on it; the MySQL run now asserts convergence has nothing
-left to do against a database built from that file, which is the same property
-mechanised.
+**The greps below are what `tools/check_invariants.php` automates.** They are kept here
+because the annotations are the reasoning, not because anybody has to run them.
 
-One limit of the checker itself, found while adding invariant 28's greps and left for
-#50 rather than bundled in: it drops **PHP** comments before matching and says so at
-length, and it does not drop **HTML** ones. An `<!-- … -->` on a page explaining why a
-line no longer calls `strtotime()` therefore fails the rule against the sentence
-explaining why the rule holds. `codeWithoutComments()` works on tokens, and stripping
-HTML comments means deciding what to do about PHP embedded inside one — which changes
-what every rule sees, and is a measurement question rather than a fix.
+**Five of them used to be on a by-eye list at the bottom of that file, and four are
+mechanised as of #50** — `canvas_elements` (one lookbehind apart from the API action of
+the same name), `STORE_TIMEZONE` (two rules: the bare constant is read nowhere at all,
+and the quoted name belongs to three files), the `grants_accounts` / `grants_displays`
+pairing (written out longhand, since it is about a form's shape rather than which files
+match), and the *position* of `ensureSignageSchema()` (before the first mention of any
+store or use case, which is stricter than a line-number bound and is why `api.php`
+converging at line 128 is correct). `ErrorPolicy::report` keeps the half that is a
+judgement: the caller *set* is checked, so a fourth cannot land unnoticed, but whether a
+new one can repeat on its own is a reading of that call site. `schema.sql` against
+`lib/schema.php` came off the list earlier — the MySQL run asserts convergence has
+nothing left to do against a database built from that file, which is the same property
+mechanised. §4aq has how each was decided.
+
+The list the checker prints on every run is now five entries of a different kind: things
+no grep settles because the instrument does not exist here — a browser, a database that
+lags the repo — plus the mutation runner, named there so that *can this check fail?* has
+a place on the page.
+
+The checker's own reading of a file gained a rule with #50: it drops **both** kinds of
+comment, having dropped only PHP ones before. An `<!-- … -->` explaining why a line no
+longer calls `strtotime()` used to fail invariant 28 against the sentence explaining why
+the rule holds. An HTML comment holding PHP is code and stays — see §4aq for why that is
+the only safe direction, and for the measurement that all the rules match the same files
+afterwards.
 
 ```
 grep -rn "canvas_elements" --include=*.php .   # lib/layout_store.php; plus schema.php's DDL,
@@ -5146,42 +5579,46 @@ grep -rn "BRAND_NAV_BG\|BRAND_NAV_BORDER\|BRAND_ACCENT\|BRAND_TEXT" --include=*.
                                               # a value safe — §4ai
 ```
 
-**Three of the checks are not greps and cannot be written as one**, so they live only
-in `tools/check_invariants.php`: whether an escaped value lands inside a `<script>`
-(the same call is right or wrong depending on the element, and a regex looking for
-`<script` is fooled by `admin_panel.php` mentioning one in a PHP comment — only
-`T_INLINE_HTML` may move that state); whether every echo on a page is one of the five
-shapes safe by construction; and whether a class constant's *declared value* is a
-number. All three read the token stream.
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3500 lines of it.
-Anything touching that file needs reading, not linting. `node --check` over the
-extracted `<script>` body proves it parses; the three node suites go further and *run*
-it, each under a different premise about who is at the keyboard.
-`selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only page
-emits, which is the only automated way to catch a lookup reaching for a control the
-lock took away. `selftest_builder_uploads.js` takes the opposite premise — an admin
-who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the only
-way to see a missing `.catch()`: the file parses perfectly without one.
-`selftest_builder_editing.js` takes the third and least dramatic — an ordinary good
-day — and is where a control that quietly does less than it says gets caught, because
-nothing about that shows up as an error anywhere (§4x). Its DOM is the one that has to
-genuinely work: `classList`, `appendChild` and `querySelector` are all real, since a
-no-op `classList` passes every check about a class without the code existing.
+**Six of the checks are not greps and cannot be written as one**, so they live only in
+`tools/check_invariants.php`: whether an escaped value lands inside a `<script>` (the
+same call is right or wrong depending on the element, and a regex looking for `<script`
+is fooled by `admin_panel.php` mentioning one in a PHP comment — only `T_INLINE_HTML`
+may move that state); whether every echo on a page is one of the five shapes safe by
+construction; whether a class constant's *declared value* is a number; whether the grant
+matrix declares both of its axes and saves by the ones it declared; whether every entry
+point converges before anything that could hold a transaction is so much as named; and
+three that are about the checker's own reading of a file rather than about the app —
+what `codeWithoutComments()` drops decides what all the other rules can see, so both
+directions of that are asserted (§4aq).
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3400 lines of it.
-Anything touching that file needs reading, not linting. `node --check` over the
-extracted `<script>` body proves it parses; the three node suites go further and
-*run* it. `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only
-page emits, which is the only automated way to catch a lookup reaching for a control
-the lock took away. `selftest_builder_uploads.js` takes the opposite premise — an
-admin who can edit everything — and drives a stubbed `XMLHttpRequest`, which is the
-only way to see a missing `.catch()`: the file parses perfectly without one.
-`selftest_builder_colors.js` takes a third — an admin opening a Display whose stored
-data is already wrong — and is the one place where the *stub itself* is load-bearing:
-its `style` is a Proxy that discards an unparseable colour and normalises a parseable
-one, exactly as the CSSOM does. A stub that stored whatever it was given would make
-that whole suite pass against the defect it exists for, so the fidelity of the stub
-is asserted before anything is asserted through it.
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3100 lines of it inside a
+4100-line file. Anything touching that file needs reading, not linting. `node --check`
+over the extracted `<script>` body proves it parses; the **five** builder suites go
+further and *run* it, each under a premise the others cannot hold.
+
+- `selftest_builder_readonly.js` stubs a DOM holding only the ids a read-only page
+  emits, which is the only automated way to catch a lookup reaching for a control the
+  lock took away.
+- `selftest_builder_uploads.js` takes the opposite premise — an admin who can edit
+  everything — and drives a stubbed `XMLHttpRequest`, which is the only way to see a
+  missing `.catch()`: the file parses perfectly without one.
+- `selftest_builder_colors.js` takes an admin opening a Display whose stored data is
+  already wrong, and is the one place where the *stub itself* is load-bearing: its
+  `style` is a Proxy that discards an unparseable colour and normalises a parseable one,
+  exactly as the CSSOM does. A stub that stored whatever it was given would make that
+  whole suite pass against the defect it exists for, so the fidelity of the stub is
+  asserted before anything is asserted through it.
+- `selftest_builder_editing.js` takes the least dramatic premise — an ordinary good day
+  — and is where a control that quietly does less than it says gets caught, because
+  nothing about that shows up as an error anywhere (§4x). Its DOM is the one that has to
+  genuinely work: `classList`, `appendChild` and `querySelector` are all real, since a
+  no-op `classList` passes every check about a class without the code existing.
+- `selftest_builder_undo.js` takes the fourth: the last thing they did was not what they
+  meant. It round-trips the canvas through snapshot and restore and drives every
+  mutating control to prove each one leaves a step (invariant 27).
+
+`selftest_viewer.js` is the sixth suite and is not about the Builder at all — it is a
+Screen whose server has stopped answering, or whose blocks have nothing in them.
 
 `schema.sql` has no automated check at all — nothing reads it, so a column missing
 from it fails silently on a future rebuild and nowhere else. Diff it against

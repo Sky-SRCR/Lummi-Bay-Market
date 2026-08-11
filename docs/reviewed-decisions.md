@@ -86,7 +86,7 @@ written down rather than remembered:
 | 46 | Deployment step 3 had no do-not-overwrite list, so re-uploading reverted live branding and restored `setup.php`. | Write down what to skip. | **Done** | §4z |
 | 48 | The test database differs from MySQL in twelve ways, including row locking stubbed out entirely. | Test against real MySQL as well. | **Done** | §4aa |
 | 49 | `plain_text.php` had 20% mutation coverage and `schema.php` had none at all. | Cover both. | **Done** — measured rather than asserted, which was the whole of the item. `plain_text.php` went from 2 of 17 mutations killed to **17 of 17**; `schema.php` from 43 of 67 to **65 of 67**, the two survivors being equivalent mutants named in §4am. Most of what lived was in the four convergence *steps*, the only part that touches rows rather than structure: either backfill's `WHERE` clause could be deleted in silence, and one of those hands every sign's layout to the drive-thru Display. Writing the checks also turned up a live bug, and once it was somebody's to decide it was fixed: `strip_tags()` deleted from a typed `<` to the end of a value, so `Kids <12 eat free` was stored as `Kids` (§4am). `schema.php`'s MySQL-only statements are covered by **#48's** second leg rather than by a mutant of their own. | §4o, §4aa, §4am |
-| 50 | About 29 checks in the suite could not fail, and five invariants had no automated check at all. | Replace the hollow ones, and cover the missing rules. | Open — the harness itself was hardened so a suite that stops early now fails, but the 29 have not been swept. | — |
+| 50 | About 29 checks in the suite could not fail, and five invariants had no automated check at all. | Replace the hollow ones, and cover the missing rules. | **Done**, and the first half deliberately not as written. The 29 was a hand count from a two-hundred-check suite that is 1767 checks now, so a recount by hand would have been stale by the next merge — what shipped is `tools/mutate.php`, which breaks one line of a file at a time and reports whether any check notices, plus **invariant 30**: a check ships having been *seen* to fail. Eight modules swept so far, of twenty-six. `lib/grants.php` — the module answering "may this account reach that sign" — had ten lines nothing stood over, including a session with no id falling back to a number one digit away from the admin's, and both axes of the grant matrix returning whatever they liked; `Color::describe()`, the sentence a refused colour shows, had ten of thirteen mutants survive. One genuinely hollow check was found and corrected rather than deleted: §4ap's "an absent setting is not something to report" ran in a process where the setting was present, because a `define()` cannot be undone — `inFreshProcess()` is the instrument that reaches the other branch. The five by-eye invariants: four mechanised, the fifth halved (a new `ErrorPolicy::report` caller can no longer land unnoticed; whether it can repeat is still a reading). Also fixed the thing #44 left here — the checker now drops HTML comments, and an HTML comment holding PHP is code and stays. | §4aq, §4am |
 | 51 | CI pins PHP 8.2 against a 7.1 target, and runs neither the consistency greps nor the rehearsal. | Match the live version, and run everything. | **Done** — both halves, the version one on the third attempt. *Running:* CI now runs the greps (`tools/check_invariants.php`), the rehearsal, all six node suites and the MySQL self-test, so three of §5's four pre-push steps no longer depend on somebody remembering. *Version:* **the store owner stated it — PHP 8.2, 2026-08-10** — and the floor is 8.2 on that basis, so CI's pin enforces the target instead of accepting everything the target forbids. Twice before, this was recorded as closed on evidence that could not exist: a branch cited Settings → This Server, which ships with the undeployed build (#46's probe found `lib/` answering 404), and Cloudflare hides the version from every header. The difference now is a source — a person, dated — rather than a screen that does not run. Still not something this repo has *observed*, so confirming it on that screen is a deploy-day step and `ServerReport::phpVersionNote()` is the alarm if the host is moved or downgraded. Note the risk changed direction: guessing low only forwent syntax, where a declared floor that is wrong is a parse error, and that is a blank sign rather than a message. | §4aa, §4k |
 
 The **`<` bug** (§4am) has no number either, because the audit did not find it —
@@ -108,13 +108,31 @@ on it was reopened: what changed is the premise, not any item's status.
 
 ## Where this stands
 
-**49 done, 1 open** — counted off the Status column above, which
+**50 done, 0 open** — counted off the Status column above, which
 is 50 rows because there is no #47. The 51st item is the unnumbered policy named at
 the top; it has no row and therefore no status, and two branches counting the same
 table have each quietly folded it into a different total. It is counted here as
-neither. The count was recounted from the table at the merge rather than carried
-across from either side: both branches had been adding to it independently, and
-both totals were right about their own half and wrong about the whole.
+neither. The count is recounted from the table on every merge rather than carried
+across from either side: when #33 and #44 merged, both totals were right about their
+own half and wrong about the whole.
+
+**The list is closed, which is a smaller claim than it sounds and worth stating in the
+smaller form.** Every numbered item from the adversarial audit has been answered. What
+that does *not* mean:
+
+- **Nothing on this list was ever the browser.** `docs/work-lanes.md` lane 0 is still
+  first and still cannot be done from here: four commits of `builder.php` have never been
+  rendered by one, `interact.js` is un-run by any suite (§4al), and #44 added two things
+  only a live page can confirm. A list of closed audit items is not a walked application.
+- **#50 closed by becoming a rule.** Its first half asked for a hand count to be swept,
+  and what shipped is the instrument that makes the question answerable per file, plus
+  invariant 30. Six of twenty-six `lib/` modules have been swept; the other twenty are a
+  command each, and running that command is now part of writing a check rather than a
+  task somebody finishes. Reading this line as "coverage is done" is the exact mistake
+  #50 was filed about.
+- **The two-numbering traps and the merge rules above still apply**, because the next
+  change to this app is not an audit item and will still touch the three files every
+  branch touches.
 
 **The #33/#44 merge is why that last sentence is now a rule and not just good practice.**
 Both branches were cut from a base with three items open and each closed one, so each

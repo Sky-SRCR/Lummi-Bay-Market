@@ -886,6 +886,44 @@ register_shutdown_function(function () {
     }
 });
 
+/**
+ * Run a snippet in a PHP process that has loaded nothing, and return what it printed.
+ *
+ * The one instrument that reaches a rule guarded by `defined()`. A `define()` cannot be
+ * undone, so a module whose behaviour differs between "the constant is set" and "it is
+ * not" has one of those two branches unreachable from any suite running in a single
+ * process — and this suite loads `auth.php` at the top, which loads `config.php`, which
+ * defines all ten branding names. Every check written in here about an *absent* setting
+ * was therefore asserting the present case and passing for the wrong reason. That is
+ * what #50 means by a check that cannot fail, and `tools/mutate.php` found one of them
+ * by deleting the branch it claimed to cover (§4aq).
+ *
+ * Deliberately narrow: the snippet requires what it needs and echoes one string. It is
+ * not a second fixture — nothing here builds a database — because the rules worth
+ * reaching this way are the pure ones that read a constant.
+ *
+ * `LBM_ROOT` is defined for it, since `__DIR__` in a temporary file is the temp
+ * directory. stderr is folded into stdout so a snippet that dies says so in the
+ * failure message rather than answering the empty string.
+ */
+function inFreshProcess($code)
+{
+    // `tempnam()` creates the file it names, and PHP will only run one ending in .php,
+    // so both paths exist and both have to go — the version that removed only the
+    // second left one empty file per call, and `tools/mutate.php` calls this three
+    // times per mutant.
+    $stub = tempnam(sys_get_temp_dir(), 'lbm-sub');
+    $file = $stub . '.php';
+    file_put_contents($file, "<?php\ndefine('LBM_ROOT', "
+                             . var_export(dirname(__DIR__), true) . ");\n" . $code . "\n");
+    $out = array();
+    $status = 0;
+    exec(escapeshellcmd(PHP_BINARY) . ' ' . escapeshellarg($file) . ' 2>&1', $out, $status);
+    @unlink($file);
+    @unlink($stub);
+    return trim(implode("\n", $out));
+}
+
 // ---- Minimal assertions -----------------------------------------------------
 
 $GLOBALS['_checks']   = 0;
@@ -917,8 +955,34 @@ set_error_handler(function ($severity, $message, $file, $line) {
            . basename($file) . ':' . $line;
     $GLOBALS['_fails'][] = $label;
     echo "  FAIL $label\n";
+    stopEarlyIfAsked('diagnostic', $label);
     return true;   // handled; do not also print it through the default handler
 });
+
+/**
+ * Leave on the first failure, when a caller has asked to be told *whether* the suite
+ * fails rather than shown everything that does.
+ *
+ * `tools/mutate.php` runs this suite once per mutant and reads one bit off each run,
+ * so a mutant that dies in the first section must not pay for the other 1700 checks —
+ * at ten seconds a run, the difference is a tool nobody will wait for and one that
+ * answers in a couple of minutes. Off unless `SELFTEST_STOP_ON_FAIL` is set, because
+ * for a person the whole point of the run is the *list*: the first failure of nine is
+ * rarely the one that explains them.
+ *
+ * It prints its own summary and marks the run reported, so the shutdown handler above
+ * does not also call this an early stop. The exit code is the same 1 a full failing
+ * run gives, and the KILLED line names which kind of failure it was — an assertion,
+ * a PHP diagnostic, or the count anchor — because a mutant killed only by a warning
+ * is not the suite standing over that line's behaviour (§4aq).
+ */
+function stopEarlyIfAsked($kind, $label)
+{
+    if (!getenv('SELFTEST_STOP_ON_FAIL')) { return; }
+    $GLOBALS['_reported'] = true;
+    echo "\nKILLED by $kind after " . $GLOBALS['_checks'] . " checks: $label\n";
+    exit(1);
+}
 
 register_shutdown_function(function () {
     if ($GLOBALS['_reported']) { return; }
@@ -937,6 +1001,7 @@ function check($condition, $label)
     } else {
         $GLOBALS['_fails'][] = $label;
         echo "  FAIL $label\n";
+        stopEarlyIfAsked('assertion', $label);
     }
 }
 
@@ -990,6 +1055,7 @@ function reportChecks($expected = null)
     if ($expected !== null && $GLOBALS['_checks'] !== $expected) {
         $fails[] = 'the suite ran every check it is supposed to — expected '
                  . $expected . ' checks, ran ' . $GLOBALS['_checks'];
+        stopEarlyIfAsked('the count anchor', $fails[count($fails) - 1]);
     }
 
     echo "\n" . $GLOBALS['_checks'] . " checks, " . count($fails) . " failed\n";

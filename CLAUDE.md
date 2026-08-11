@@ -11,7 +11,7 @@ edited in place and every change reaches the sign by hand.
 | [`docs/BUILD-REFERENCE.md`](docs/BUILD-REFERENCE.md) | **The standing build contract.** Module map, the invariants every phase must preserve, and where later phases attach. **Re-read it after finishing each module.** |
 | [`CONTEXT.md`](CONTEXT.md) | The domain language. Use these words — Display, Viewer, Screen, screen name tag, canvas, grant, edit lock — in code, comments and UI copy. |
 | [`docs/roadmap-multi-display.md`](docs/roadmap-multi-display.md) | The phased plan and its current status. |
-| [`docs/reviewed-decisions.md`](docs/reviewed-decisions.md) | **The 51-item list from the adversarial audit, with what was decided and what is left.** The numbering the owner uses. Two numbering traps are documented there; read them before quoting an issue number. |
+| [`docs/reviewed-decisions.md`](docs/reviewed-decisions.md) | **The 51-item list from the adversarial audit, with what each was decided to be.** All 50 numbered items are now Done — which closes the audit, not the app: nothing on that list was ever the browser pass. The numbering the owner uses. Two numbering traps are documented there; read them before quoting an issue number. |
 | [`docs/adr/`](docs/adr/) | Decisions with their rejected alternatives. Don't re-litigate one without reading it. |
 | [`HANDOFF.md`](HANDOFF.md) | Deployment facts: live URLs, credentials layout, what is and isn't in the repo. |
 | [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) | **What not to overwrite, upload or delete when files go to the server.** Read before any upload — the repo and the server hold different files, and uploading the tree reverts live branding and restores `setup.php` silently. |
@@ -125,13 +125,32 @@ node tools/selftest_builder_undo.js        # if builder.php was touched
 node tools/selftest_viewer.js              # if viewer.php was touched
 ```
 
+And one that is not a gate, because it takes minutes rather than seconds:
+
+```
+php tools/mutate.php lib/whatever.php      # over each lib/ file you changed
+```
+
+It breaks that file one way at a time and runs the suite each time, so a check you
+just wrote is *seen* to fail rather than assumed to. That is invariant 30 and it is a
+rule because the alternative has shipped here more than once: a check asserting what
+PHP 8 guarantees, a `setupInteract()` call that could not fail, a grep whose stated
+answer had been unreachable since the day it landed, and an "absent setting" check
+running in a process where the setting was present. All four read as one more `ok`
+line. A surviving mutant is a check to write **or a reason to write down** — §4am's
+`flock(LOCK_UN)` survives because the runtime would release the lock anyway, which is
+the docblock being right. It is never a reason to delete the line: three of #49's
+survivors were load-bearing. And a kill has grades — only the `assertion` grade is a
+check knowing what the line was for; `diagnostic`, `count` and `fatal` are the harness
+noticing something moved.
+
 `check_doc_numbering.php` also prints the next free section letter. That is the
 question every branch cut from the same base has to answer before it writes a
 write-up, and four of them once answered it with the same letter — ask the tool
 rather than counting, and note that it will not let a document cite a section
 that does not exist yet, which is what a guess looks like from the outside.
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3300 lines of it —
+`php -l` cannot see inline JavaScript, and `builder.php` is ~3100 lines of it —
 which is why the standing gate is not enough on its own. Extract the `<script>`
 block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
