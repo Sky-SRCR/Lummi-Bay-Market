@@ -577,13 +577,19 @@ decisions already made, not new decisions.
   its lowest row to carry the old background onto the Display that replaces it —
   the one reader, and the reason invariant 2 says "retired to one reader" rather
   than "unread".
-- **PHP 8.2 is the floor** (#51, §4k) — **stated by the store owner, 2026-08-10**, not
-  observed by anything in this repo. It was twice recorded as 8.2 before that on
-  evidence that could not exist: Settings → This Server ships with the undeployed
-  build, #46's probe found `lib/` answering 404 live, and Cloudflare hides the version
-  from every response header. So the floor rests on a person, written down with a date,
-  and confirming it on that screen is a deploy-day step. CI's 8.2 pin now enforces the
-  target rather than accepting everything the target forbids.
+- **PHP 8.2 is the floor** (#51, §4k) — stated by the store owner 2026-08-10 and
+  **observed twice on 2026-08-11** (HANDOFF §7): the runtime card reports 8.2.33, and
+  cPanel → MultiPHP Manager shows `srcresort.com` — the domain this app is served from —
+  pinned explicitly to `ea-php82`, against a **system default of PHP 8.3**. Two
+  independent observations, one runtime and one configuration. It was twice recorded as
+  8.2 before either, on evidence that could not exist: Settings → This Server ships with
+  the undeployed build, #46's probe found `lib/` answering 404 live, and Cloudflare hides
+  the version from every response header. The deploy-day confirmation step is now
+  discharged; CI's 8.2 pin enforces the target rather than accepting everything the target
+  forbids. Because the pin is explicit rather than `inherit`, the floor does not follow a
+  host-wide upgrade, and clearing it would move to 8.3 — upward, which an 8.2 floor
+  survives. The one route below it is a person selecting an older version for this domain,
+  which is what `ServerReport::phpVersionNote()` announces.
   Modern syntax is permitted. As of today **no file uses a typed property, constructor
   promotion, `readonly`, `match` or an arrow function**, which is what keeps the floor
   one line to lower again — check that before assuming it is still true. Spend it
@@ -591,7 +597,17 @@ decisions already made, not new decisions.
   a parse error, and a parse error in a file a Screen loads is a blank sign in the shop.
   The two 7.1-era fallbacks — `.htaccess`'s `mod_php7` blocks and `auth.php`'s pre-7.3
   session-cookie form — stay, because they are free and what they prevent is silent.
-  This container has PHP 8.4 for `php -l` only.
+  **This container has PHP 8.4, and that is a hole in §5 rather than a footnote.** The
+  line above used to read "PHP 8.4 for `php -l` only" and stop there — the fact was
+  recorded and its consequence was never drawn, which is its own kind of defect. The
+  consequence: `php -l`, the first step of the pre-push gate, cannot detect a construct
+  introduced in 8.3 or 8.4. Those lint clean here and are a **parse error on the live
+  host**, so the gate is blind to precisely the failure the floor exists to prevent, and
+  it fails in the direction that blanks a sign rather than printing a message. Checked by
+  hand on 2026-08-11 — no `json_validate()`, typed class constant, `#[\Override]`,
+  property hook or asymmetric visibility anywhere in the tree. By hand, because nothing
+  mechanical enforces it: writing that check is unclaimed work, and until it exists,
+  "the gate passed" is not evidence the floor was respected.
 - **An inactive Display returns no elements from `get_layout`.** The API reports
   `status: "inactive"` and the Phase 2 Viewer renders the notice. A Phase 1
   Viewer would show an empty canvas — unreachable in practice, since nothing can

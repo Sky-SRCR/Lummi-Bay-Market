@@ -90,16 +90,19 @@ edited in place and every change reaches the sign by hand.
   could reach without an account — and it checks a CSRF token before it looks at the
   account, **softly**, because a 403 on the front door answers "your browser is not
   keeping cookies" with the word *security* and no way forward.
-- **PHP 8.2 is the floor** — stated by the store owner, 2026-08-10 (#51, §4k). Nothing
-  in this repo has *observed* it: an earlier branch claimed it from Settings → This
-  Server, which ships with the build #46's probe found undeployed, and Cloudflare hides
-  the version from every header. So the floor rests on a person, and
-  `ServerReport::phpVersionNote()` is the alarm if the host is ever moved or
-  downgraded. Modern syntax is allowed; today no file uses any, which is what keeps the
-  floor one line to lower again. **Be deliberate about spending it** — the failure mode
-  changed direction with the answer. Guessing low only forwent syntax; a declared floor
-  that turns out wrong is a parse error, and a parse error in a file a Screen loads is
-  a blank sign in the shop. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
+- **PHP 8.2 is the floor** — stated by the store owner 2026-08-10, and **observed twice on
+  2026-08-11** (#51, §4k, HANDOFF §7): 8.2.33 on the runtime card, and `ea-php82` pinned
+  explicitly to `srcresort.com` in cPanel's MultiPHP Manager, against a system default of
+  8.3. The pin is explicit rather than `inherit`, so the floor does not drift with the
+  host; `ServerReport::phpVersionNote()` remains the alarm for the one route below it,
+  which is a person choosing an older version by hand. Modern syntax is allowed; today no
+  file uses any, which is what keeps the floor one line to lower again. **Be deliberate
+  about spending it** — the failure mode changed direction with the answer. Guessing low
+  only forwent syntax; a declared floor that turns out wrong is a parse error, and a parse
+  error in a file a Screen loads is a blank sign in the shop. **And `php -l` cannot check
+  this for you**: the container these sessions run in has PHP 8.4, so an 8.3-or-8.4-only
+  construct lints clean here and breaks the live sign. Spending the floor means checking
+  by hand which version a construct needs, because the gate agrees with whatever you write. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
   for the reason they always did: they cover a host that moves, and what they prevent
   is silent.
 - **Nothing that has been published can be taken back.** Publishing overwrites; a

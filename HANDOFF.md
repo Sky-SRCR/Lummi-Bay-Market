@@ -24,8 +24,11 @@ of the system.
   database and behaves perfectly while doing it. Settings → This Server reports **This
   install** and **Database**; that card is the only thing in the app that can tell you.
   See [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) §E.
-- **PHP on this host: 8.2** — the owner's answer to #51, and the reason the repo's floor
-  is 8.2 rather than 7.1.
+- **PHP on this host: 8.2** — and this is now *observed twice*, not stated: the runtime
+  reports **8.2.33**, and cPanel's MultiPHP Manager shows `srcresort.com` pinned
+  explicitly to `ea-php82` (both 2026-08-11, §7). It is the reason the repo's floor is
+  8.2 rather than 7.1. Note the pin is **explicit, not `inherit`** — the system default
+  is PHP 8.3, and this domain does not follow it.
 - **Stack:** vanilla PHP (PDO, `ERRMODE_EXCEPTION`, real prepared statements),
   no framework, inline CSS/JS. Uses `interact.js` in the builder for drag/resize.
 
@@ -424,8 +427,7 @@ assumed them:
 | Largest upload | 50 MB |
 
 Two of those settle standing questions. The PHP version **agrees with the owner's stated
-8.2** (#51, §4k) — that item's deploy-day confirmation step, though the docs still describe
-the floor as unobserved and have not been updated for this. And `America/Chicago` is not a
+8.2** (#51, §4k) — that item's deploy-day confirmation step. And `America/Chicago` is not a
 fallback: PHP's fallback for an unset `date.timezone` is UTC, so the host sets it, and
 nothing in this repo does (the tracked `.htaccess` sets session flags and no `date.` value).
 §4ap had asserted UTC and is corrected. Before #44 that made every time a person read two
@@ -437,6 +439,40 @@ hours ahead of store time, not seven or eight.
 looks for was missing: `/home/ACCOUNT/private/db_credentials_lbm-test.php` has to exist, or
 the rehearsal copy is the live sign with a different URL. This is the check
 `docs/DEPLOY-SKIP.md` exists for, firing for real on the first attempt.
+
+**The PHP floor, observed a second way (2026-08-11).** cPanel → MultiPHP Manager, which
+is the configuration rather than the runtime, so it answers a question the card above
+cannot:
+
+| | |
+|-|-|
+| System PHP version | PHP 8.3 (`ea-php83`) |
+| `srcresort.com` | **PHP 8.2 (`ea-php82`) — set explicitly, not `inherit`** |
+| `golfloomis.com`, `golfloomistrail.com` | PHP 8.2 (`ea-php82`) |
+
+`srcresort.com` is the domain this app is served from, so that middle row *is* the floor.
+Two things follow that the runtime number alone did not give:
+
+- **The floor is no longer resting on one person.** #51 was closed twice on evidence that
+  could not exist and a third time on the owner's word. It now has two independent
+  observations agreeing with that word — a runtime version and a host configuration — and
+  the docs that described it as unobserved are corrected (§4k, §4aa, CLAUDE.md).
+- **An explicit pin does not drift.** The system default is already *above* the floor, and
+  because this domain is set rather than inheriting, a host-wide PHP upgrade does not move
+  it. Clearing the pin back to `inherit` would move it to 8.3 — upward, which an 8.2 floor
+  survives. The only route *below* the floor is somebody deliberately selecting an older
+  version for this domain, which is exactly the case `ServerReport::phpVersionNote()` was
+  built to announce.
+
+**And the gap that reading it exposed, which is a real one.** The container these sessions
+run in has **PHP 8.4.19**, so `php -l` — the first line of §5's pre-push gate — has never
+once checked this code against 8.2. It cannot: a construct added in 8.3 or 8.4 lints
+clean here and is a **parse error on the live host**, which is a blank sign in the shop
+rather than a message anybody reads. Verified today that no file uses one (`json_validate`,
+typed class constants, `#[\Override]`, property hooks, asymmetric visibility — none
+present, and the two greps that hit were an HTML `readonly` attribute and a JavaScript
+`.match()`). So there is no defect today; what there is, is a gate that cannot see the
+one failure the floor exists to prevent. Nothing mechanical enforces it yet.
 
 ## 8. Conventions / gotchas for the next session
 

@@ -3075,18 +3075,25 @@ foreach ($runtime as $fact) {
 }
 check($allStrings, 'every fact is a printable pair, so the panel cannot be handed an object');
 
-// ASSUMED_PHP is the floor the repo is written to — 8.2, on the owner's statement
-// (§4k) rather than on anything this code measured. A server at or above it is told
+// ASSUMED_PHP is the floor the repo is written to — 8.2, stated by the owner (§4k) and
+// since observed twice: 8.2.33 on the runtime card, and `ea-php82` pinned explicitly to
+// srcresort.com in cPanel (2026-08-11, HANDOFF §7). A server at or above it is told
 // nothing; the two bands below it fire on different things and must not print the
 // same sentence, because what to do about them differs. Three bands, and this machine
 // is only ever one of them — which is why phpVersionNote() takes the version id
 // rather than reading PHP_VERSION_ID.
 checkSame('8.2', ServerReport::ASSUMED_PHP,
-          'the floor is the version the store was stated to run');
+          'the floor is the version the store runs, observed twice');
 checkSame('', ServerReport::phpVersionNote(80200),
           'a server on the floor has nothing said about it');
 checkSame('', ServerReport::phpVersionNote(80400),
           'and neither does a newer one — being ahead of the floor is not a problem');
+// 8.3 is not a hypothetical: it is this host's *system* default, and srcresort.com is
+// above it only because the domain is pinned to ea-php82 explicitly. Clear that pin
+// back to `inherit` and the app runs here — so silence at 8.3 is a live configuration
+// this store can reach by an admin ticking one box, not a third arbitrary number.
+checkSame('', ServerReport::phpVersionNote(80300),
+          'and the host\'s own system default is silent, which is where an inherit lands');
 $behind = ServerReport::phpVersionNote(80100);
 check($behind !== '', 'a server below the floor does say so');
 checkMentions($behind, ServerReport::ASSUMED_PHP,
@@ -6782,4 +6789,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1804 : 1781);
+reportChecks(testIsMysql() ? 1805 : 1782);
