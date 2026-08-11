@@ -982,6 +982,22 @@ if (!$positions) {
  */
 function aboveFloorUses($source)
 {
+    return aboveFloorInTokens(aboveFloorTokens($source));
+}
+
+/**
+ * The significant tokens of some source, as [id, text, line] triples.
+ *
+ * Split from the recogniser below so that a **token list can be supplied by hand**, and
+ * that is not a convenience. `private(set)` lexes as one token on 8.4 and as four on
+ * 8.2, so the four-token branch is unreachable on the machine these sessions run on —
+ * 21 of its mutants survived a sweep for exactly that reason, and it is the branch that
+ * matters most, because CI is pinned to the floor and CI is where those four tokens
+ * actually arrive. A recogniser that takes data can be handed the 8.2 lexing on an 8.4
+ * runtime; one that takes source can only ever see its own version's.
+ */
+function aboveFloorTokens($source)
+{
     // Significant tokens only, each carrying the line it starts on. Single-character
     // tokens arrive from token_get_all() without a line number at all, so the count is
     // carried forward by hand — a `)` on line 40 reported as line 1 is a finding
@@ -1000,6 +1016,18 @@ function aboveFloorUses($source)
         }
         $line += substr_count($text, "\n");
     }
+
+    return $ts;
+}
+
+/**
+ * Every above-floor construct in an already-tokenised file.
+ *
+ * @param array $ts [id, text, line] triples, from aboveFloorTokens() or built by hand
+ * @return array of ['line' => int, 'what' => string, 'since' => string]
+ */
+function aboveFloorInTokens(array $ts)
+{
 
     // Functions, not syntax, so these are a fatal at call time rather than a parse
     // error — a page that dies where it stood instead of never starting. Still a dead
@@ -1208,25 +1236,71 @@ if (!$floorProblems) {
 // The negative half is not symmetry for its own sake. Every entry below is a shape that
 // a plain grep for these names *does* hit, and two of them are the exact false positives
 // the hand sweep produced on a clean tree.
+// Each snippet is put on line 2 of a two-line file, so the reported **line** is asserted
+// as well as the construct. A mutation sweep over this detector found the line arithmetic
+// entirely uncovered — `$line = 1` could become `$line = 2` with every probe still green —
+// and a construct reported against the wrong line is a finding nobody can act on, which
+// is a sentence this file's own comments already contained. `what` and `since` are
+// asserted for the same reason: a hit carrying the wrong version sends somebody to read
+// up on the wrong release. Exactly one hit, too, so a detector that fires twice on one
+// construct is a failure rather than a louder pass.
 $floorProbes = [
-    ['<?php class A { const string N = "x"; }',              'a typed class constant'],
-    ['<?php class A { #[\Override] function f() {} }',        'the #[\Override] attribute'],
-    ['<?php $ok = json_validate($raw);',                     'json_validate()'],
-    ['<?php $i = array_find($rows, $fn);',                   'array_find()'],
-    ['<?php class A { public string $n { get => "x"; } }',   'a property hook'],
-    ['<?php class A { public private(set) int $n = 1; }',     'asymmetric visibility'],
-    ['<?php $x = new Foo()->bar();',                         '`new` chained bare'],
+    ['class A { const string N = "x"; }',            'typed class constant',  '8.3'],
+    ['class A { #[\Override] function f() {} }',      '#[\Override]',          '8.3'],
+    ['$ok = json_validate($raw);',                   'json_validate()',       '8.3'],
+    ['$i = array_find($rows, $fn);',                 'array_find()',          '8.4'],
+    ['class A { public string $n { get => "x"; } }', 'property hook',         '8.4'],
+    ['class A { public private(set) int $n = 1; }',   'asymmetric visibility', '8.4'],
+    ['$x = new Foo()->bar();',                       'new` chained',          '8.4'],
 ];
 foreach ($floorProbes as $probe) {
-    list($source, $label) = $probe;
+    list($snippet, $needle, $since) = $probe;
     $checked++;
-    if (aboveFloorUses($source)) {
-        echo "  ok   above the floor and caught: $label\n";
+    $hits = aboveFloorUses("<?php\n" . $snippet . "\n");
+    if (count($hits) === 1 && $hits[0]['line'] === 2
+        && $hits[0]['since'] === $since
+        && strpos($hits[0]['what'], $needle) !== false) {
+        echo "  ok   above the floor, on the right line, as $since: $needle\n";
     } else {
-        echo "  FAIL the floor check does not catch $label\n";
-        echo "       A denylist that matches nothing reads exactly like a clean tree.\n";
-        $failures[] = 'the floor check misses ' . $label;
+        echo "  FAIL the floor check does not report $needle correctly\n";
+        echo "       expected one hit on line 2 naming `$needle`, since $since; got "
+           . count($hits) . "\n";
+        foreach ($hits as $hit) {
+            echo "       line " . $hit['line'] . ' — ' . $hit['what']
+               . ', since ' . $hit['since'] . "\n";
+        }
+        $failures[] = 'the floor check misreports ' . $needle;
     }
+}
+
+// And the lexing this runtime never produces. On 8.4 `private(set)` is a single token, so
+// the four-token branch is dead code here — 21 of its mutants survived a sweep, every one
+// of them because the line cannot run on this machine. It is also the branch **CI**
+// depends on, CI being the only runner pinned to the floor, so leaving it unexercised
+// meant the detector could be broken there while every probe stayed green. Handing the
+// recogniser a token list built by hand is what makes it reachable.
+$checked++;
+$eightTwoLexing = [
+    [T_PUBLIC,   'public',  2],
+    [T_PRIVATE,  'private', 2],
+    [null,       '(',       2],
+    [T_STRING,   'set',     2],
+    [null,       ')',       2],
+    [T_STRING,   'int',     2],
+    [T_VARIABLE, '$n',      2],
+    [null,       '=',       2],
+    [T_LNUMBER,  '1',       2],
+    [null,       ';',       2],
+];
+$hits = aboveFloorInTokens($eightTwoLexing);
+if (count($hits) === 1 && $hits[0]['line'] === 2 && $hits[0]['since'] === '8.4'
+    && strpos($hits[0]['what'], 'asymmetric visibility') !== false) {
+    echo "  ok   and in the 8.2 lexing of it, which is the one CI sees and this cannot\n";
+} else {
+    echo "  FAIL the 8.2 lexing of private(set) goes uncaught\n";
+    echo "       Four tokens on 8.2, one on 8.4. Matching only the shape this machine\n";
+    echo "       produces leaves the check blind exactly where the floor is enforced.\n";
+    $failures[] = 'the 8.2 lexing of asymmetric visibility';
 }
 $floorClean = [
     ['<?php $a = 1; ?><input readonly value="x">',
@@ -1247,6 +1321,12 @@ $floorClean = [
      'and a method is not a property'],
     ['<?php $o->json_validate($raw); Foo::array_find($r, $f);',
      'somebody else\'s method is not the global function'],
+    ['<?php $x = new Foo(); $y = $x->bar();',
+     'a new and a later call on it are two statements, not a bare chain'],
+    ['<?php class A { const N = self::M; }',
+     'a constant whose value is another constant is still untyped'],
+    ['<?php class A { protected static $n = []; }',
+     'a static property with an array default has no hook'],
 ];
 foreach ($floorClean as $probe) {
     list($source, $label) = $probe;
