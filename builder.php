@@ -120,9 +120,33 @@ a.pick:hover { background:#3d566e; }
        not editable by a basic account — ask an admin to turn one back on.</p>
   <?php endif; ?>
 
+  <?php
+  // The Asset Library link below is offered only to an account that holds a sign, which
+  // is the same condition crud.php draws its add form under: `Actor::holdsASign()` —
+  // true for any admin, and for a basic account exactly when it has a grant. `$theirs`
+  // is the grant axis and not `openable()`, deliberately, because a Display switched off
+  // for the afternoon is still a sign somebody was given, and its holder can still be
+  // asked to put an image in the library ready for it coming back on.
+  //
+  // The link is courtesy and not the check. crud.php still refuses the write with
+  // `Actor::NO_SIGN_REFUSAL` to anyone who reaches it another way, and it still *lists*
+  // the library to them, because an account can be asked to look something up and a page
+  // that will not say what is in it cannot explain why it refused.
+  //
+  // The conditional below is written as one open-tag-if-close-tag line rather than as a
+  // block with this reasoning inside it, and that is load-bearing:
+  // selftest_builder_readonly walks this file's conditionals to prove the editing
+  // controls sit inside `if (!$readOnly)`, and its walker only recognises an `if` whose
+  // tag begins with the open tag immediately followed by `if`. A comment in between left
+  // an `endif` it could see and an `if` it could not, so its depth went negative and five
+  // of its checks failed — over markup a thousand lines away that had not changed. A
+  // conditional that walker cannot parse breaks the guarantee for everything after it.
+  // (And this note says "open tag" in words on purpose: a close tag inside a // comment
+  // ends PHP mode, which is a parse error rather than a comment.)
+  ?>
   <p class="foot">
     <?php if ($isAdmin): ?><a href="admin_panel.php?tab=displays">Manage displays</a> &nbsp;·&nbsp; <?php endif; ?>
-    <a href="crud.php">Asset Library</a> &nbsp;·&nbsp;
+    <?php if ($isAdmin || $theirs): ?><a href="crud.php">Asset Library</a> &nbsp;·&nbsp; <?php endif; ?>
     <a href="logout.php">Sign Out</a>
   </p>
 </div>
@@ -1583,6 +1607,18 @@ function createBlock(type, subtype) {
     var def  = BLOCK_DEFAULTS[key] || {w:200,h:100};
     var parent = targetSection || document.getElementById('builder-canvas');
 
+    // The check behind setTargetSection()'s courtesy, and it is not the same check
+    // twice: a section can be locked *after* it was targeted — tick Lock in the
+    // inspector on the section you just clicked — and from there every block button
+    // would still drop into it. Asked of the parent this call is about to use, so it
+    // holds however the parent was arrived at.
+    if (parent && parent.classList && parent.classList.contains('section-block')
+        && parent.dataset.locked === '1') {
+        showToast('That section is locked, so nothing new can be put in it. '
+                + 'Unlock it first if you meant to add to it.', true);
+        return;
+    }
+
     // Carousel / Table width: 90% of section if inside one, otherwise 200px
     if (type === 'carousel' || type === 'table') {
         var _cw = (parent && parent.classList && parent.classList.contains('section-block'))
@@ -2422,7 +2458,26 @@ function showSectionBanner() {
     if (el) { el.style.display = 'block'; }
 }
 
+/**
+ * Aim the next added block at a section — unless that section is locked.
+ *
+ * A locked section refused to be dragged and refused to be resized and then took a
+ * new block without comment, which is the one way of changing it nobody checked. On
+ * a sign it is the way that matters most: the lock exists so an everyday account
+ * editing prices cannot disturb a header or a background that has been positioned,
+ * and dropping a fresh block into it disturbs exactly that.
+ *
+ * Said at the click rather than at the add, because the click is when somebody has a
+ * question. The refusal that *enforces* it is in createBlock() — a section can be
+ * locked after it was targeted, and a check only at this end would not see that.
+ */
 function setTargetSection(sectionEl) {
+    if (sectionEl && sectionEl.dataset && sectionEl.dataset.locked === '1') {
+        clearTargetSection();
+        showToast('That section is locked, so nothing new can be put in it. '
+                + 'Unlock it first if you meant to add to it.', true);
+        return;
+    }
     if (targetSection) targetSection.classList.remove('targeted');
     targetSection = sectionEl;
     if (targetSection) {

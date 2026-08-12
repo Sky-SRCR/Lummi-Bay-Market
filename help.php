@@ -488,6 +488,9 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><span>To unlock, select the block and un-tick the checkbox.</span></li>
     </ol>
     <div class="tip"><strong>Tip:</strong> Lock section backgrounds and header blocks once they are positioned correctly, so everyday users editing prices won't accidentally move them.</div>
+    <h3>Locking a section</h3>
+    <p>A locked <strong>section</strong> also refuses <em>new blocks</em>. Clicking it does not target it, and the block buttons say so rather than dropping something in. That is the point of locking a section: it has been positioned and filled, and it should stay as it is.</p>
+    <p>To add to a locked section, select it, un-tick <strong>Lock this block</strong>, add what you need, and tick it again. Blocks already inside a locked section are unaffected — their own lock decides whether each one can be moved, so prices inside a locked section stay editable.</p>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->

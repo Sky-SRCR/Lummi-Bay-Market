@@ -641,6 +641,88 @@ check(!threwStray, 'and a selection outside any group is left alone rather than 
 activeBlock = null;
 
 // ============================================================
+section('A locked section refuses a new block');
+// ============================================================
+
+// The lock refused to let a section be dragged, refused to let it be resized, and then
+// took a new block without a word — the one way of changing a locked section that
+// nothing checked. On a sign it is the way that matters most: the lock is there so an
+// everyday account editing prices cannot disturb a header or a background somebody
+// positioned, and dropping a fresh block into it disturbs exactly that.
+
+const lockCanvas = byId('builder-canvas');
+const toastText  = () => byId('toast').textContent;
+function clearToast() { byId('toast').textContent = ''; }
+function mentions(hay, needle, label) {
+    check(String(hay).indexOf(needle) >= 0,
+          label + (String(hay).indexOf(needle) >= 0 ? '' : ' — got "' + hay + '"'));
+}
+
+function targetable(locked) {
+    lockCanvas.children.length = 0;
+    const s = el('div', 'editable-block section-block');
+    s.offsetWidth = 600; s.offsetHeight = 400;
+    s.dataset.locked = locked ? '1' : '0';
+    lockCanvas.appendChild(s);
+    return s;
+}
+
+let openSec = targetable(false);
+setTargetSection(openSec);
+checkSame(openSec, targetSection, 'an unlocked section takes the aim');
+check(openSec.classList.contains('targeted'), 'and is marked as the one being aimed at');
+
+// Clicking a locked one aims at nothing rather than leaving the aim where it was: a
+// block added next would otherwise land in whichever section was clicked *before*,
+// which is the section somebody has stopped looking at.
+clearToast();
+const shutSec = el('div', 'editable-block section-block');
+shutSec.offsetWidth = 600; shutSec.offsetHeight = 400;
+shutSec.dataset.locked = '1';
+lockCanvas.appendChild(shutSec);
+setTargetSection(shutSec);
+checkSame(null, targetSection, 'a locked section is not aimed at, and clears the previous aim');
+check(!shutSec.classList.contains('targeted'), 'nor is it marked as though it were');
+mentions(toastText(), 'locked', 'and the click says why');
+mentions(toastText(), 'Unlock it first', 'and what to do about it');
+
+// The other end, and not the same check twice: a section can be locked *after* it was
+// aimed at — tick Lock in the inspector on the section you just clicked — and from
+// there every block button would still have dropped into it.
+const lateLock = targetable(false);
+setTargetSection(lateLock);
+checkSame(lateLock, targetSection, 'a section aimed at while unlocked is aimed at');
+lateLock.dataset.locked = '1';
+clearToast();
+createBlock('text', 'price');
+checkSame(0, lateLock.querySelectorAll('.child-block').length,
+          'and locking it afterwards still refuses the block');
+mentions(toastText(), 'locked', 'with the same sentence, from the other end');
+
+// The refusal has to be about a locked section and not about sections, or the feature
+// it is protecting stops working entirely.
+const stillOpen = targetable(false);
+setTargetSection(stillOpen);
+clearToast();
+createBlock('text', 'price');
+checkSame(1, stillOpen.querySelectorAll('.child-block').length,
+          'an unlocked section still takes a block');
+checkSame('', toastText(), 'and says nothing about locks');
+
+// An admin adding to the canvas itself passes the same line with no section involved.
+// The canvas is not a .section-block, so this must not read as one and refuse.
+clearTargetSection();
+lockCanvas.children.length = 0;
+clearToast();
+createBlock('text', 'price');
+checkSame(1, lockCanvas.querySelectorAll('.root-block').length,
+          'and a block aimed at no section still lands on the canvas');
+
+lockCanvas.children.length = 0;
+clearTargetSection();
+clearToast();
+
+// ============================================================
 section('A hidden section says it is hidden, and can be brought back');
 // ============================================================
 
@@ -868,7 +950,7 @@ check(/function blockContent\(block\)[\s\S]{0,400}?inner\.innerText/.test(php),
 // ============================================================
 // The expected total, for the same reason the other two suites carry one:
 // without it, deleting half this file still reports a clean run.
-const expected = 130;
+const expected = 142;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

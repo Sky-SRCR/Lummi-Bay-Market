@@ -5084,6 +5084,25 @@ checkSame(512, UploadLimit::cappedAt(512), 'a small ceiling is used as it stands
 check(UploadLimit::cappedAt(PHP_INT_MAX) === UploadLimit::bytes(),
       'and one larger than the server allows is cut down to what the server allows');
 
+// That both sinks go *through* cappedAt(), and this one is read from the source rather
+// than measured — deliberately, and it is the weaker grade of check.
+//
+// No comparison of values can hold it. `logoBytes()` rewritten to `return
+// self::LOGO_MAX_BYTES;` is a real defect and it is *invisible* to every value check on
+// any host whose limit is already above 2 MB, because there the cap changes nothing and
+// the two expressions are equal. That was tried: a value check comparing
+// `cappedAt(LOGO_MAX_BYTES)` against `logoBytes()` passes with the cap deleted, being
+// the same coincidence in different clothing. `upload_max_filesize` and `post_max_size`
+// are PHP_INI_PERDIR, so the suite cannot lower the host's limit to make the cap bite —
+// which is why cappedAt() exists as a seam and is pinned by the three checks above,
+// and why the delegation to it is held by reading the file. Same shape as §4as's
+// loadLayout hook, and written down for the same reason.
+$limitSrc = file_get_contents(__DIR__ . '/../lib/upload_limits.php');
+checkMentions($limitSrc, 'imageBytes()    { return self::cappedAt(self::IMAGE_MAX_BYTES); }',
+              'the library ceiling is that cap applied to the library rule');
+checkMentions($limitSrc, 'logoBytes()    { return self::cappedAt(self::LOGO_MAX_BYTES); }',
+              'and the logo ceiling that cap applied to the logo rule');
+
 // ─────────────────────────────────────────────────────────────
 section('The branding file is swapped in, never written in place');
 
@@ -6829,4 +6848,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1818 : 1795);
+reportChecks(testIsMysql() ? 1820 : 1797);

@@ -190,6 +190,24 @@ The lock lapses after **15 minutes** of no real interaction (`IDLE_LAPSE_SECONDS
 - [ ] Have an admin **turn the Display off** while it is held. Terminal, with its own
       sentence.
 
+**Two things here are easy to read as faults and are not** (§4av):
+
+- If more than 15 minutes of *no real interaction* passed between the two sign-ins, the
+  admin's lock had already lapsed, so account 2 gets a **fully editable** Builder and can
+  publish. That is `IDLE_LAPSE_SECONDS` doing its job — the alternative is a Builder left
+  open on a back-office monitor blocking the sign until somebody walks back to it. Check
+  instead that **account 1's tab notices**: its next heartbeat should raise the "lost it"
+  bar and refuse the publish.
+- A basic account being unable to add a block until it clicks a section is the role, not
+  the lock. It should see *"Please click on a section first to add content."*
+
+- [ ] **Lock a section as admin, then try to add a block to it** (either account). Clicking
+      it must not target it, and the block buttons must refuse with a sentence — a locked
+      section takes no new blocks (§4av). Blocks *already* inside it stay editable unless
+      they are locked themselves.
+- [ ] Sign in as a basic account with **no Display assigned**. The footer must offer only
+      **Sign Out** — no Asset Library link, because the Library needs a sign to add to.
+
 ## H. Publish, and the sign
 
 Only now, and only with step A's Database Structure green.

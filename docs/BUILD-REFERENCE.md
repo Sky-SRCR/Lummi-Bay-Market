@@ -5627,6 +5627,72 @@ the abort clears them, and the button lives inside `#upload-status` — which is
 `display:none` until an upload starts, so it exists exactly while there is something to
 cancel.
 
+### 4av. Two doors, one lapse, and a lock that only stopped two of three things
+
+Browser pass step G, reported as three things. **One is a defect, one is a narrowing of
+what a feature means, and one is the feature working exactly as ADR-0007 designed it.**
+Keeping them apart is the whole of this entry, because the fix for the third would be to
+break the lock.
+
+**A link to a page there is nothing to do on.** A basic account with no Display assigned
+lands on builder.php's "no displays have been assigned to you yet" page, whose footer
+offered *Asset Library* and *Sign Out*. The Library needs a sign to add to — `#33`,
+invariant 29 — so that account can reach it, read it, and be refused by
+`Actor::NO_SIGN_REFUSAL` on the only thing it might have gone there to do. The link is now
+drawn under `$isAdmin || $theirs`, which is `Actor::holdsASign()` spelled with the
+variables this page already has: the grant axis, not `openable()`, so an account whose
+only Display is switched off for the afternoon keeps the link — it is still their sign and
+they can still be asked to put an image in the library ready for it coming back.
+
+The link is courtesy. `crud.php` still refuses the write, and still *lists* the library to
+an account with no sign, for the reason its own comment gives: an account can be asked to
+look something up, and a page that will not say what is in it cannot explain why it
+refused.
+
+That one-line change cost five failures in `selftest_builder_readonly`, over markup a
+thousand lines away that had not been touched — worth writing down, because the mechanism
+generalises. That suite proves the editing controls sit inside `if (!$readOnly)` by walking
+this file's conditionals and counting depth, and its walker only recognises an `if` whose
+tag opens straight onto the keyword. Writing the reasoning *inside* the tag left an `endif`
+it could see and an `if` it could not, the depth went negative, and every later guarantee
+collapsed. **A conditional that walker cannot parse breaks the guarantee for everything
+after it.** The reasoning moved to a comment block above; the conditional is one line.
+
+**A locked section took a new block without a word.** The lock refused to let a section be
+dragged and refused to let it be resized, and adding to it was the third way of changing
+it, which nothing checked. That is the way that matters most on a sign: the lock exists so
+an everyday account editing prices cannot disturb a header or a background somebody
+positioned. `setTargetSection()` now refuses to aim at a locked section and says why at the
+click; `createBlock()` refuses on the parent it is about to use, which is not the same
+check twice — a section can be locked *after* it was aimed at, by ticking Lock in the
+inspector on the section you just clicked, and from there every block button still landed
+inside it. Three hand-written mutants, three kills by assertion.
+
+This **narrows what Lock means**, and that is a decision rather than a repair.
+`help.php` documented it as preventing "accidental moves or resizes", and its tip said to
+lock a section so users editing prices would not move it — which reads as leaving the
+contents alone. So help.php gained a *Locking a section* subsection saying what it now
+does: a locked section takes no new blocks, and blocks already inside it are unaffected,
+because each one's own lock decides whether it can be moved. Prices inside a locked section
+stay editable.
+
+**And the third is the lock working.** The report: a basic account signing in more than
+fifteen minutes after an admin can move unlocked blocks and publish. That is
+`LockState::IDLE_LAPSE_SECONDS` — a lock is held by *activity*, not presence, and one whose
+last real interaction is older than fifteen minutes is free, which is the same comparison
+on every read and the reason nothing has to be scheduled to sweep locks on a host with no
+cron. `browser-pass.md` step G states the fifteen minutes itself. The admin's open tab does
+find out: the next heartbeat answers `held_by_other`, `applyLockAnswer()` sets `lockLost`,
+and the publish is refused rather than the canvas being pulled apart. Nothing to fix — and
+"the second account should have been read-only" would mean a Display left open on a
+back-office monitor blocks the sign until somebody walks back to it.
+
+The "but not add new elements" half of that report is the role, not the lock: a basic
+account must aim at a section before it can add, and `createBlock()` says so
+(`builder.php`'s "Please click on a section first to add content"). Worth checking against
+the locked-section change above — if the only section on the sign is locked, a basic
+account now has nowhere to add, which is correct and is a thing an admin has to know.
+
 ---
 
 ## 5. Verification
