@@ -249,6 +249,13 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #top-nav .display-badge .d-dims { color: #8fa6bb; font-size: 11px; }
 #top-nav .display-badge .d-off { background: #c0392b; color: #fff; font-size: 10px; font-weight: bold;
                                  padding: 1px 6px; border-radius: 8px; text-transform: uppercase; }
+/* What the sign is currently showing, and who put it there. The toast that says a
+   publish worked has faded by the time anybody wonders, and it never named the
+   account or the time — so this is the line that answers "is what I'm looking at
+   live, and did somebody else change it?" It is information rather than a control,
+   so a read-only Builder gets it too. */
+#top-nav .display-badge .d-pub { color: #8fa6bb; font-size: 11px; border-left: 1px solid #4a6480;
+                                 padding-left: 8px; }
 
 /* Editing a retired Display is allowed on purpose — but never by accident. */
 #display-off-banner {
@@ -601,6 +608,16 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <span class="d-tag"><?= Markup::text($display->tag()) ?></span>
         <span class="d-dims"><?= Markup::text($display->dimensionsLabel()) ?></span>
         <?php if (!$display->isActive()): ?><span class="d-off">off</span><?php endif; ?>
+        <?php
+        // "who and when" comes from lastPublishDescription(), the same sentence the
+        // admin panel's Displays tab and a refused publish already use — so the three
+        // places that report a publish cannot drift, and the time goes through
+        // StoreClock exactly once (#44). A Display with a revision but no stamp is a
+        // real state, not an error: advanceLayoutRevision() bumps the stamp when an
+        // element is hidden or deleted and deliberately records no publisher, and rows
+        // published before this was stored have no stamp either.
+        ?>
+        <span class="d-pub" id="pub-state"><?php if ($display->lastPublishDescription() === ''): ?>not published yet<?php else: ?>published by <?= Markup::text($display->lastPublishDescription()) ?><?php endif; ?></span>
     </span>
     <?php if ($switchable > 1): ?>
         <a href="builder.php?switch=1" title="Edit a different display">Switch display ⇄</a>
@@ -3389,6 +3406,26 @@ function endPublish() {
     setPublishBusy(false);
 }
 
+/**
+ * The top bar's "published by …" line, after a publish this tab made.
+ *
+ * Given the server's own sentence, or nothing — a reply from a server that predates
+ * the field, or a row written and not read back. Nothing is **not** "never
+ * published": the publish succeeded, so falling back to that wording would be the
+ * one answer available here that is definitely false. The old line is left standing
+ * instead, which is out of date by one publish rather than wrong about whether the
+ * sign has ever been published at all.
+ *
+ * No date arithmetic, deliberately. The store's zone is not the browser's, and a
+ * time formatted here would be the fourth clock in a bug that already had three
+ * (#44) — so the whole sentence arrives finished.
+ */
+function showPublishState(desc) {
+    var line = document.getElementById('pub-state');
+    if (!line || !desc) { return; }
+    line.textContent = 'published by ' + desc;
+}
+
 function publishCanvas() {
     // There is no Publish button on a read-only page. The server refuses this
     // anyway (LayoutStore checks the lock inside the publish transaction) — this is
@@ -3453,8 +3490,13 @@ function publishCanvas() {
 
             if (res.status === 'success') {
                 // Named, because there is more than one sign now and "published!"
-                // does not tell you which one you just changed.
-                showToast('Published to ' + DISPLAY_TITLE + ' (' + DISPLAY_TAG + '). '
+                // does not tell you which one you just changed. And stamped, because
+                // it did not say when or by whom — on a shared machine those are the
+                // two facts somebody comes back for, and the toast is gone by then.
+                // The sentence is the server's; nothing here formats a time.
+                showPublishState(res.published);
+                showToast('Published to ' + DISPLAY_TITLE + ' (' + DISPLAY_TAG + ')'
+                          + (res.published ? ' by ' + res.published : '') + '. '
                           + 'That screen updates within 30 seconds.');
                 loadAssets();
             } else if (res.reason === 'stale' || res.reason === 'locked'

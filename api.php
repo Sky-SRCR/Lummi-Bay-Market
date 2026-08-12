@@ -455,10 +455,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
     $result = $layouts->publish($display, $request);
 
     if ($result->isOk()) {
+        // Re-read rather than compose the sentence here. What the Builder puts on
+        // screen has to be what the row now says, and `lastPublishDescription()` is
+        // where that sentence lives — the admin panel's Displays tab and a refused
+        // publish both use it, and a second copy built out of `time()` and the
+        // current username would be a second opinion about a stored value, which is
+        // the shape #44 was. It also means the time is formatted by StoreClock on
+        // the server: the browser's zone is the one clock nobody wants here.
+        $justPublished = $displays->forId($display->id());
         HttpReply::json([
             'status'       => 'success',
             'display'      => $display->tag(),
             'layout_stamp' => $result->stamp(),
+            'published'    => $justPublished ? $justPublished->lastPublishDescription() : '',
         ]);
     } else {
         HttpReply::json([

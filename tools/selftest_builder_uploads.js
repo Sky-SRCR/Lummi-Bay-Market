@@ -569,6 +569,51 @@ checkSame(2, f.publishes, 'once the first has landed, Publish works again');
 f.reply({ status: 'success', layout_stamp: 'stamp-3' });
 await settle();
 
+section('A publish says who did it and when, and the line outlives the toast');
+
+// Browser pass step H.1: the publish said "Published to Drive-Thru (drive-thru)" and
+// nothing else. The app has recorded who published and when since the multi-display
+// build — displays.last_published_at / _by, joined on every read — and no page in the
+// Builder had ever shown it. Only the admin panel's Displays tab and a refused
+// publish did, which is to say: you could find out only by leaving, or by failing.
+//
+// The sentence is the server's, always. A time formatted in the browser would be in
+// the browser's zone, and the store's zone is the whole subject of #44.
+
+const pubLine = () => document.getElementById('pub-state').textContent;
+
+reset();
+document.getElementById('pub-state').textContent = 'not published yet';
+publishCanvas();
+f.reply({ status: 'success', layout_stamp: 'stamp-4', published: 'sky, Aug 12 at 3:42pm' });
+await settle();
+checkSame('published by sky, Aug 12 at 3:42pm', pubLine(),
+          'a successful publish puts who and when in the top bar');
+checkMentions(toast(), 'by sky, Aug 12 at 3:42pm', 'and the toast carries the same words');
+checkMentions(toast(), 'Published to Deli Board', 'without losing which sign it went to');
+
+// A reply with no sentence in it must not be read as "never published". That is the
+// one wording available here that would be flatly false — the publish just worked.
+reset();
+publishCanvas();
+f.reply({ status: 'success', layout_stamp: 'stamp-5' });
+await settle();
+checkSame('published by sky, Aug 12 at 3:42pm', pubLine(),
+          'a reply carrying no sentence leaves the old one standing, rather than saying never');
+checkMentions(toast(), 'Published to Deli Board', 'and the publish is still reported as the success it was');
+check(toast().indexOf(' by .') < 0 && toast().indexOf('by undefined') < 0,
+      'with no dangling "by" where the sentence would have been');
+
+// A refused publish must not stamp the line: nothing was written, so the sign is
+// still showing what it was showing.
+reset();
+publishCanvas();
+f.reply({ status: 'error', reason: 'stale', message: 'Somebody else published first.',
+          published: 'someone else, Aug 12 at 4:00pm' });
+await settle();
+checkSame('published by sky, Aug 12 at 3:42pm', pubLine(),
+          'a refused publish leaves the line alone — nothing was published');
+
 section('Every way a publish ends puts the button back');
 
 // A guard that is not released is worse than no guard: it takes Publish away for
@@ -636,7 +681,7 @@ loadAssets = realLoadAssets;
 function finish() {
     // Counted rather than trusted, for the same reason the other suites carry a total:
     // without it, deleting half this file still reports a clean run.
-    const expected = 93;
+    const expected = 100;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

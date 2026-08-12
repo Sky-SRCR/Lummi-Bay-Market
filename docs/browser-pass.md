@@ -238,8 +238,18 @@ and the layer numbers of its *siblings* moving when one of them is re-layered.
 
 Only now, and only with step A's Database Structure green.
 
-- [ ] Press **Publish**. It reports success with a revision, and the Builder says who
-      published and when.
+- [ ] Press **Publish**. The green note names the sign **and** who published it and when
+      ("…by sky, Aug 12 at 3:42pm"), and the top bar's **published by** line — beside the
+      canvas size — says the same thing and stays there after the note fades (§4ax).
+- [ ] Reload the Builder. That line is still there, read from the row rather than from
+      the publish you just made. On a Display nothing has been published to it reads
+      **not published yet**.
+- [ ] The time is the **store's** clock, not this browser's — see step J. This is the same
+      sentence the Admin Panel's Displays tab shows, so the two must agree to the minute.
+
+  *This step used to ask for "a revision" as well. It should not: the publish stamp is
+  opaque by design (ADR-0006) — callers compare it, nobody reads it — so who and when is
+  the answer, and a revision number on screen would invite somebody to quote it.*
 - [ ] Open the Viewer for that Display in another tab:
       `lbm-test/viewer.php?display=<tag>`. The layout matches the Builder.
 - [ ] A **hidden** block from step D is absent from the Viewer.

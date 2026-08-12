@@ -5795,6 +5795,59 @@ alongside the code, and the way to tell them apart is to ask what a browser woul
 
 ---
 
+### 4ax. Recorded for a year, shown nowhere anybody was standing
+
+Browser pass step H.1: *"does not say who published or the time."* The publish toast read
+**"Published to Drive-Thru (drive-thru). That screen updates within 30 seconds."** and that
+was the whole of it.
+
+The interesting part is that nothing was missing from the *model*. `displays` has carried
+`last_published_at` and `last_published_by` since the multi-display build; every read of a
+Display joins the publisher's username (`DisplayStore::rows()`); `Display::lastPublishDescription()`
+turns the pair into "sky, Aug 12 at 3:42pm" through `StoreClock`; and
+`selftest_layout.php` has asserted both columns for as long as they have existed. It was
+being **recorded correctly and displayed in two places, neither of which is the Builder**:
+the Admin Panel's Displays tab, and the message a *refused* publish prints. So you could
+find out who last changed the sign by leaving the page, or by failing to publish.
+
+That is a different kind of gap from the rest of §4 and worth naming as its own shape: not
+a fact the app got wrong, and not a check that could not fail — a fact the app had, kept
+right, and never put where the question gets asked.
+
+**The fix is a line in the top bar, beside the canvas size, and one field on the publish
+reply.** Three decisions in it:
+
+- **The sentence is the server's, whole.** `api.php` re-reads the Display after the publish
+  and sends `lastPublishDescription()` — it does not compose "by <current user> at
+  <time()>" beside the write. Two copies of a stored value is precisely the shape #44 was,
+  and the reply would have been the copy nobody could see was drifting. It also keeps the
+  formatting on the server: a time rendered in JavaScript is in the *browser's* zone, which
+  would be a fourth clock in a bug that already had three.
+- **An empty sentence is not "never published".** `showPublishState()` leaves the old line
+  standing when the reply carries nothing, because the publish just succeeded — falling
+  back to *not published yet* is the one wording available at that moment that is certainly
+  false. Out of date by one publish beats wrong about whether the sign has ever been
+  published.
+- **A refused publish does not touch the line.** Nothing was written, so the sign is still
+  showing what it was showing. Checked, because the toast branch and the refusal branch sit
+  four lines apart.
+
+**And the step asked for something the app should not do.** `browser-pass.md` H.1 said the
+publish "reports success with a revision". The stamp is opaque by design (ADR-0006 —
+callers compare it, they don't interpret it), so putting a revision number on screen invites
+somebody to quote it in a conversation where it means nothing. The step now asks for who and
+when, and says why it no longer asks for a revision.
+
+*On the grades of what verifies this (invariant 30):* seven hand-written mutants, all
+killed. Five die on behaviour — the top-bar update, the toast wording, the fall-back to
+"never", and the two page-load renders. Two die only on a **source read**, because there is
+no HTTP in the suite to ask `api.php` a question: deleting the reply field, and swapping the
+fresh re-read for the stale `$display` already in hand. That second one is the weaker grade
+by some distance — a source check pins the line, not the behaviour — and it is recorded here
+rather than papered over, the same way §4as's `loadLayout` hook is.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of

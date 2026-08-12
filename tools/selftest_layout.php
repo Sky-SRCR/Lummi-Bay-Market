@@ -307,6 +307,17 @@ checkSame($res->stamp(), $driveT->layoutStamp(), 'the returned stamp is the Disp
 checkSame('sky', $driveT->lastPublishedByName(), 'the Display records who published');
 check($driveT->lastPublishedAt() !== null, 'the Display records when it was published');
 
+// …and a read straight after the publish can turn both into the sentence a page
+// shows, which is what the publish reply now sends back to the Builder. Recorded and
+// shown are two different claims: this was recorded for a year and shown nowhere in
+// the Builder, which is browser pass step H.1 (§4ax).
+$freshlyPublished = $store->forId($driveT->id());
+check($freshlyPublished !== null, 'the Display can be read back straight after a publish');
+checkMentions($freshlyPublished->lastPublishDescription(), 'sky',
+              'and the sentence for the page names who published');
+check($freshlyPublished->lastPublishDescription() !== '',
+      'so the publish reply has something to send, rather than an empty line');
+
 // ─────────────────────────────────────────────────────────────
 section('A basic account keeps sections and cannot reach another Display');
 
@@ -4038,6 +4049,22 @@ check(strpos($wJs, 'signed_out:') !== false,
 check(strpos(file_get_contents(__DIR__ . '/../api.php'), "'reason'  => 'signed_out'") !== false,
       'which is the reason api.php sends when the account behind a request went inactive');
 
+// The publish reply's "who and when", read out of the source because there is no HTTP
+// here to ask. Weaker than a behaviour check and stated as such (§4as's grade): what it
+// pins is that both ends still name the same field and that the sentence is the stored
+// one rather than a second copy built from time() and the session's username.
+$apiSrc = file_get_contents(__DIR__ . '/../api.php');
+checkMentions($apiSrc, "'published'    => \$justPublished ? \$justPublished->lastPublishDescription() : ''",
+              'a successful publish sends back the sentence the row now holds');
+checkMentions($apiSrc, '$justPublished = $displays->forId($display->id());',
+              'read fresh after the publish, not composed beside it');
+checkMentions($wJs, "showPublishState(res.published);",
+              'and the Builder puts that sentence in its top bar');
+checkMentions($wJs, '<span class="d-pub" id="pub-state">',
+              'which is a line the page renders on load as well, so it is there before any publish');
+checkMentions($wJs, 'published by <?= Markup::text($display->lastPublishDescription()) ?>',
+              'from the same method, through the one escaping door');
+
 // ─────────────────────────────────────────────────────────────
 section('What a visitor is told when something breaks');
 
@@ -6848,4 +6875,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1820 : 1797);
+reportChecks(testIsMysql() ? 1828 : 1805);
