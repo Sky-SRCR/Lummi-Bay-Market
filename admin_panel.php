@@ -18,6 +18,10 @@ require_once __DIR__ . '/lib/color.php';
 // value that is not one, and prints three stored stamps through it — so the include is
 // named here rather than arriving through config.php.
 require_once __DIR__ . '/lib/store_clock.php';
+// Same reason again: this page has a logo upload, so it asks UploadLimit for its own
+// ceiling and for the sentence a dropped request body gets. server_report.php pulls
+// the file in as well, and a transitive include is not a dependency.
+require_once __DIR__ . '/lib/upload_limits.php';
 requireCurrentAccount($pdo);
 requireAdmin();
 
@@ -130,7 +134,17 @@ $zoneBad    = StoreClock::unreadable();
 // ============================================================
 // USER MANAGEMENT ACTIONS
 // ============================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+// Before the CSRF gate below, for the reason api.php and crud.php both check it there:
+// a POST whose body PHP dropped for exceeding `post_max_size` carries no token either,
+// so verifyCsrf() answered a logo that was too big with a bare 403 about a security
+// token — and the Brand tab is the one place on this page a large file can be picked.
+// Nothing else on this request is readable in that state, so no handler below can run;
+// the sentence is all there is to give.
+if (UploadLimit::bodyWasDropped($_SERVER, $_POST, $_FILES)) {
+    http_response_code(413);
+    $msg     = UploadLimit::droppedBodyMessage();
+    $msgType = 'error';
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     verifyCsrf();
 
     // Create user
@@ -409,8 +423,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // only sink that did not.
             if ($_FILES['logo_file']['error'] !== UPLOAD_ERR_OK) {
                 $msg = 'Logo upload failed. Please try again.'; $msgType = 'error';
-            } elseif ($_FILES['logo_file']['size'] > 2 * 1024 * 1024) {
-                $msg = 'Logo must be 2 MB or smaller.'; $msgType = 'error';
+            // Asked rather than stated: `2 * 1024 * 1024` here was this page's own
+            // opinion about a limit it could not see, and on a host whose post_max_size
+            // is under 2M the request never arrived to be measured. logoBytes() is the
+            // 2 MB decision capped by what can actually reach the server, and it is
+            // the same call the label beside the picker quotes.
+            } elseif ($_FILES['logo_file']['size'] > UploadLimit::logoBytes()) {
+                $msg = 'That logo is ' . UploadLimit::describeBytes($_FILES['logo_file']['size'])
+                     . '. It must be ' . UploadLimit::describeLogo() . ' or smaller.';
+                $msgType = 'error';
             } elseif (!isset($allowed[$mime = mime_content_type($_FILES['logo_file']['tmp_name'])])) {
                 $msg = 'Logo must be a PNG, JPG, GIF, or WEBP image.'; $msgType = 'error';
             } else {
@@ -1520,10 +1541,23 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                 <p style="font-size:12px; color:#7f8c8d; margin-bottom:10px;">Current: <?= Markup::text($curLogo) ?></p>
             <?php endif; ?>
             <div class="form-group">
-                <label>Upload Logo (PNG, JPG, SVG)</label>
-                <input type="file" name="logo_file" accept="image/png,image/jpeg,image/gif,image/webp" onchange="previewBrandLogo(this)">
+                <!-- Said "PNG, JPG, SVG" and SVG is deliberately refused above — an SVG
+                     can carry a script tag and would be stored XSS from our own origin.
+                     A label offering a type the code blocks is a refusal somebody was
+                     invited into. (Spelled out in words rather than as the tag: the
+                     standing gate extracts this page's script block by scanning for it,
+                     and a browser ignoring a tag inside a comment is not a reason to
+                     leave one where a tool will trip.) -->
+                <label>Upload Logo (PNG, JPG, GIF, WEBP)</label>
+                <input type="file" name="logo_file" accept="image/png,image/jpeg,image/gif,image/webp"
+                       data-max-bytes="<?= intval(UploadLimit::logoBytes()) ?>"
+                       data-max-label="<?= Markup::text(UploadLimit::describeLogo()) ?>"
+                       onchange="previewBrandLogo(this)">
+                <div id="brand-logo-note" style="display:none; font-size:11px; margin-top:4px; line-height:1.5;"></div>
             </div>
-            <p style="font-size:12px; color:#7f8c8d; margin-top:6px;">Max 2 MB. Leave blank to keep existing logo.</p>
+            <!-- The figure comes from UploadLimit, so on a host that cannot take 2 MB
+                 this says what that host will take instead of promising 2. -->
+            <p style="font-size:12px; color:#7f8c8d; margin-top:6px;">Max <?= Markup::text(UploadLimit::describeLogo()) ?>. Leave blank to keep existing logo.</p>
             <div id="brand-logo-preview" style="margin-top:10px;display:none;">
                 <img id="brand-logo-img" src="" alt="" style="max-height:60px; max-width:200px; object-fit:contain;">
             </div>
@@ -2132,13 +2166,67 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         }
     }
 
+    /**
+     * Preview the picked logo — or say why there is nothing to preview.
+     *
+     * It used to do neither: readAsDataURL succeeds on any file at all, so a renamed
+     * .txt produced a preview element pointing at data it could not draw, and a file
+     * over the limit produced a preview of a logo the save was about to refuse. The
+     * only signal either way was whether a picture appeared, which is not a sentence.
+     *
+     * The server still decides — it reads the real bytes with mime_content_type() and
+     * SVG is refused there whatever a browser calls it. This is the half that answers
+     * before the save, and before the upload on a slow connection.
+     */
+    var LOGO_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+
+    function sayAboutLogo(text, bad) {
+        var note = document.getElementById('brand-logo-note');
+        if (!note) { return; }
+        note.textContent   = text;
+        note.style.color   = bad ? '#c0392b' : '#7f8c8d';
+        note.style.display = text ? 'block' : 'none';
+    }
+
     function previewBrandLogo(input) {
-        if (!input.files || !input.files[0]) return;
         var wrap = document.getElementById('brand-logo-preview');
         var img  = document.getElementById('brand-logo-img');
+        var f    = input.files && input.files[0];
+        if (!f) { sayAboutLogo('', false); return; }
+
+        // Cleared on every refusal, so picking the same file again is an event the
+        // browser reports rather than one it swallows as "no change".
+        function refuse(text) {
+            sayAboutLogo(text, true);
+            input.value = '';
+            if (wrap) { wrap.style.display = 'none'; }
+        }
+        if (LOGO_TYPES.indexOf(f.type) < 0) {
+            refuse('Wrong file type (' + (f.type || 'type not recognised') + '). Use a PNG, JPG, '
+                 + 'GIF or WEBP — this file was not selected. SVG is not accepted.');
+            return;
+        }
+        if (f.size === 0) { refuse('That file is empty, so it was not selected.'); return; }
+
+        var max = parseInt(input.getAttribute('data-max-bytes'), 10) || 0;
+        if (max > 0 && f.size > max) {
+            refuse('File too big — ' + Math.max(1, Math.floor(f.size / 1024)) + ' KB. The logo must be '
+                 + (input.getAttribute('data-max-label') || 'smaller')
+                 + ' or smaller. This file was not selected.');
+            return;
+        }
+
         var reader = new FileReader();
-        reader.onload = function(e) { img.src = e.target.result; wrap.style.display = 'block'; };
-        reader.readAsDataURL(input.files[0]);
+        reader.onload = function(e) {
+            if (img)  { img.src = e.target.result; }
+            if (wrap) { wrap.style.display = 'block'; }
+            sayAboutLogo(f.name + ' — saves when you press Save Branding.', false);
+        };
+        reader.onerror = function() {
+            refuse('That file could not be read, so it was not selected. If it is on a drive '
+                 + 'or a share, copy it to this computer first.');
+        };
+        reader.readAsDataURL(f);
     }
 
     function toggleEdit(id) {

@@ -5523,6 +5523,110 @@ a real tree never call it. Opening an already-clipped layout is the likeliest wa
 anybody meets this badge, so the call is held by a check that cannot execute it rather
 than by nothing. That is the weaker grade and it is written down as such.
 
+### 4at. A number that moves and a screen that does not
+
+Browser pass step D, reported as: *"video z-index shows the number moving up and down but
+the element is always front and never drops behind any other element"* — and then
+diagnosed by the reporter in the next sentence, correctly: *"multiple items have the same
+Z-index number causing elements to not move up and down the index order."*
+
+`createBlock` and `createSection` both write `z_index: 1`, and nothing else ever moves it.
+So the ordinary canvas is not a stack. It is a heap of blocks all on layer 1, whose paint
+order comes entirely from the tie — which the browser breaks by document order, later on
+top. The four buttons did arithmetic on the number and so could not see the heap at all:
+
+| Button | Did | Result on a canvas where everything is 1 |
+|---|---|---|
+| Back | set 1 | nothing — it was already 1 |
+| Backward | `max(1, z-1)` | nothing — the floor is where it started |
+| Forward | `z+1` | worked, once: 2 beats the other 1s |
+| Front | `max+1` | worked, always |
+
+Every one of them updated `insp-zindex-val` regardless, which is why the number moved
+while the screen did not. Front worked because `max+1` is the one step a tie cannot
+absorb, and that is precisely the reported asymmetry: front always, back never.
+
+**The fix renumbers the group rather than nudging one number.** `_stackingGroup()` sorts
+the selection's `.editable-block` siblings by layer and then by document order — the same
+tiebreak the browser uses, and the same one the sign uses, because `sort_order` is written
+from the DOM index at publish and read back `ORDER BY sort_order`. `_moveInLayerOrder()`
+splices the selection to its new place and assigns 1..n. Once no two blocks in a stacking
+context share a layer, the readout is an answer rather than a coincidence and all four
+buttons are the same operation.
+
+Three things about it are deliberate:
+
+- **It writes to the siblings, and those numbers are published.** That is the cost and it
+  is real. What it buys is that the number on screen and the order on the sign cannot
+  disagree — before, the number was decorative on any canvas nobody had reordered.
+- **A no-op press still renumbers.** Pressing Back on a heap of 1s does not move the
+  block *in the order* on the first press, but it does convert the heap into a stack, so
+  the second press can. Without that, Back would need pressing twice for reasons nobody
+  could see.
+- **A press that genuinely cannot change anything records no undo step**, which broke an
+  existing check. `selftest_builder_undo.js` drove `bringForward()` on the fixture's price
+  block — the only block in its section, so there is nothing to bring it in front of. The
+  old code recorded a step there by writing `z_index: 2` on a block with no siblings: a
+  number nobody can see, and an undo step restoring a canvas identical to the one before
+  it. The test now drives a root block with four siblings and asserts the other half
+  separately, that a button with no room records nothing.
+
+`.clip-badge` moved from `z-index: 6` to `19` in the same change. A section is a stacking
+context and its children are now renumbered 1..n, so 6 meant the seventh block in a
+section drew over the badge reporting it. 19 is just under `.rh`'s 20, because the bottom
+resize handles are how you fix the clipping and the badge would hide them. Nineteen blocks
+in one section is not a price sign, so that is the bound — stated rather than hoped for.
+
+### 4au. Three doors, three ceilings, and the one that answered "security"
+
+Browser pass step F, reported as: an over-limit pick that *"does not give a warning why and
+that it was not selected"*, an under-limit pick with *"no upload button or progress bar or
+any indicator"*, and no cancel control on a large upload.
+
+The Builder's inspector uploads were already complete — `startUpload()` has XHR progress,
+a refusal naming both the file's size and the server's limit, an empty-file refusal and a
+double-pick guard. Three other doors were not, and each failed differently:
+
+| Door | What it did | Why |
+|---|---|---|
+| Top-bar **Background** (`applyBgFile`) | silently nothing, over the limit or on a non-image | previewed with `FileReader`, no size check, no type check, no `onerror`; the only size refusal lived in `publishCanvas` and abandoned the whole publish |
+| **Asset Library** (`crud.php`) | over `post_max_size`: a bare 403, *"Security token mismatch. Please go back and try again."* | no dropped-body guard before `verifyCsrf()`; its own `10 * 1024 * 1024` stated nowhere on the page |
+| **Brand logo** (`admin_panel.php`) | same 403; and its label offered SVG, which the handler refuses | same missing guard; own `2 * 1024 * 1024`; `previewBrandLogo` previewed anything at all |
+
+The Library's answer is the interesting one, because `UploadLimit`'s header describes that
+exact bug — found in `api.php`, fixed there in 2026, and `bodyWasDropped()` was written for
+it. Two of the three sinks never called it. Going back and trying again, which is the one
+thing that sentence promises will help, reproduces it.
+
+**A stated limit must be one that can be kept**, which is why the two inline numbers moved
+into `UploadLimit` as `IMAGE_MAX_BYTES` and `LOGO_MAX_BYTES`, read through `cappedAt()` —
+`min(the decision, what can actually arrive)`. A per-sink ceiling is still a real decision;
+a page's *own* number is an opinion about a limit it cannot see, and on a host with
+`post_max_size = 8M` the Library was promising 10 MB it could not deliver.
+
+The pickers now refuse at pick time with a sentence naming the file, clear the input so the
+next pick is an event the browser reports, and say what a surviving pick will do. Two of
+those sentences are the ones the report asked for, in its own words: *file too big* and
+*wrong file type*.
+
+**Two things are deliberately not a progress bar.** The Background picker does not upload —
+the image travels with the next Publish, which is why there is no progress to show; what
+was missing is a note saying so, because an absent bar and a dead control look identical.
+And `crud.php` is a plain form POST, which emits no progress events at all, so its
+indicator is an indeterminate bar: it says *working*, which is true, rather than a
+percentage, which would be invented. Turning that form into an XHR upload to earn a real
+percentage is a larger change than a 10 MB image warrants, and it would move the save off
+the one path that already redirects.
+
+**Cancel was half-built.** `startUpload`'s `xhr.onabort` has been handled since it was
+written, with its own sentence — and nothing could ever reach it, because there was no
+control and nothing held a reference to the request. A 50 MB video has a ten-minute
+timeout, so the missing button was ten minutes of a page you could not get on with. The
+requests are now kept in `uploadsActive`, dropped in `done()` so every outcome including
+the abort clears them, and the button lives inside `#upload-status` — which is
+`display:none` until an upload starts, so it exists exactly while there is something to
+cancel.
+
 ---
 
 ## 5. Verification

@@ -531,7 +531,18 @@ stepsFor('the Delete key',          function () { selectBlock(priceBlock());
                                                   handleBuilderKeydown({ key: 'Delete' }); });
 stepsFor('hiding a block',          function () { selectBlock(priceBlock()); toggleHidden(true); });
 stepsFor('locking a block',         function () { selectBlock(priceBlock()); toggleLock(true); });
-stepsFor('bringing one forward',    function () { selectBlock(priceBlock()); bringForward(); });
+// Driven on a root block, which has four siblings to move past. The price block used
+// to serve here and cannot any more: it is the only block in its section, so there is
+// nothing to bring it in front of and renumbering a group of one changes nothing. That
+// is the layer fix working rather than a gap — the old arithmetic set z_index 2 on a
+// block with no siblings, which is a number nobody can see and an undo step that
+// restores a canvas identical to the one before it. Both halves are asserted: this
+// line that a real move is a step, and the pair below that a no-op is not.
+stepsFor('bringing one forward',    function () { selectBlock(textAssetBlock()); bringForward(); });
+buildFixture();
+selectBlock(priceBlock());
+bringForward();
+checkSame(0, undoStack.length, 'and a block with no sibling to pass is not a step at all');
 stepsFor('typing a new width',      function () { selectBlock(priceBlock()); applyDim('w', 250); });
 stepsFor('typing a new position',   function () { selectBlock(priceBlock()); applyPos('x', 90); });
 stepsFor('aligning to the parent',  function () { selectBlock(priceBlock()); alignToParent('right'); });
@@ -810,7 +821,7 @@ checkSame(150, clipRestored.offsetWidth, 'at the narrow width it was snapshotted
 check(clipRestored.querySelector(':scope > .clip-badge') !== null,
       'and it says again that it is hiding a block, having been rebuilt from nothing');
 
-const expected = 119;
+const expected = 120;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

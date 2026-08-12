@@ -325,11 +325,17 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     text-align:center; padding:2px 0; pointer-events:none; letter-spacing:1px;
 }
 /* A section smaller than the blocks inside it. Bottom edge, so it clears the
-   section label and the HIDDEN badge; z-index above .section-label and below .rh,
-   so a selected section's bottom handles still draw over it. The count comes
-   first because a narrow section truncates the sentence, not the number. */
+   section label and the HIDDEN badge; z-index just under .rh's 20, so a selected
+   section's bottom handles still draw over it — they are how you resize the
+   section back, and this badge is pointer-events:none but would still hide them.
+   19 rather than the 6 it was written as: a section is a stacking context and its
+   children are renumbered 1..n by the layer buttons, so 6 meant the seventh block
+   in a section drew over the badge that was there to report it. Nineteen blocks in
+   one section is not a price sign, so that is the bound and it is stated rather
+   than hoped for. The count comes first because a narrow section truncates the
+   sentence, not the number. */
 .clip-badge {
-    position:absolute; bottom:0; left:0; right:0; z-index:6;
+    position:absolute; bottom:0; left:0; right:0; z-index:19;
     background:rgba(230,126,34,0.92); color:#fff; font-size:9px; font-weight:bold;
     text-align:center; padding:2px 0; pointer-events:none; letter-spacing:1px;
     white-space:nowrap; overflow:hidden;
@@ -546,6 +552,11 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #upload-status .up-label { font-weight: bold; margin-bottom: 6px; }
 #upload-status .up-track { background: #1a252f; border-radius: 3px; height: 6px; overflow: hidden; }
 #upload-status .up-fill  { background: #3498db; height: 100%; width: 0; transition: width .15s linear; }
+#upload-status .up-cancel {
+    display: block; margin: 8px 0 0 auto; padding: 3px 10px; font-size: 11px;
+    background: #7f8c8d; color: #fff; border: none; border-radius: 3px; cursor: pointer;
+}
+#upload-status .up-cancel:hover { background: #95a5a6; }
 </style>
 </head>
 <body>
@@ -660,8 +671,14 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     </select>
     <input type="color" id="bg-color" value="#1a1a2e" oninput="applyBg()"
            style="width:40px; height:30px; padding:2px; border:none; cursor:pointer; border-radius:3px;">
-    <input type="file"  id="bg-file"  accept="image/*" onchange="applyBgFile()"
+    <input type="file"  id="bg-file"  accept="image/jpeg,image/png,image/gif,image/webp" onchange="applyBgFile()"
            style="display:none; font-size:11px; color:#aaa;">
+    <!-- Nothing uploads when a background is picked; it rides out with the next
+         Publish. This is what says so, because an absent progress bar and a broken
+         control look identical. Hidden until there is something to report, and
+         `display` rather than emptiness so the top bar does not reflow. -->
+    <span id="bg-pending" style="display:none; font-size:11px; color:#e0a400; max-width:260px;
+          overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
     <?php endif; ?>
 
     <div class="sep" style="margin-left:auto;"></div>
@@ -1047,6 +1064,9 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 <div id="upload-status">
     <div class="up-label"></div>
     <div class="up-track"><div class="up-fill"></div></div>
+    <!-- Inside the box, so it exists exactly while there is something to cancel:
+         the box is display:none until an upload starts. -->
+    <button type="button" class="up-cancel" onclick="cancelUploads()">Cancel upload</button>
 </div>
 
 <script>
@@ -1373,6 +1393,10 @@ function toggleBgInputs() {
     if (!type || !color || !file) return;
     color.style.display = type.value==='color' ? 'inline-block' : 'none';
     file.style.display  = type.value==='image' ? 'inline-block' : 'none';
+    // Switching to Color leaves the picked file in the input — publishCanvas sends
+    // `bg_type` too, so it will not be used — but a note still promising to publish
+    // it would be a sentence that has stopped being true.
+    if (type.value !== 'image') { showBgPending(''); }
 }
 function applyBg() {
     var color = document.getElementById('bg-color');
@@ -1380,15 +1404,96 @@ function applyBg() {
     var canvas = document.getElementById('builder-canvas');
     canvas.style.backgroundColor = color.value;
     canvas.style.backgroundImage = 'none';
+    // The image is gone from the canvas, so a note saying one is on its way is not
+    // true of what is on screen any more.
+    showBgPending('');
 }
+/**
+ * The image types a canvas background may be, and the sentence for anything else.
+ *
+ * `accept="image/*"` on the input filters the *picker* and nothing more — the
+ * browser will still hand over a renamed .txt if somebody switches the filter to
+ * "All Files", and did. api.php has the real allow-list; this is the copy that can
+ * answer before a Publish rather than during one.
+ */
+var BG_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+
+/**
+ * Show the chosen background on the canvas, and say what will happen to it.
+ *
+ * This control is the one file picker in the Builder that does **not** upload. The
+ * image is previewed here and travels with the next Publish (`bg_file` in
+ * publishCanvas), which is a deliberate design and not an omission: a background
+ * is part of the layout, so it lands when the layout lands. What was missing is
+ * that nothing on the screen said so, and the failures said nothing either —
+ *
+ *   too large   the only check lived in publishCanvas, so a 60 MB pick sat there
+ *               looking accepted until Publish refused the *whole layout*
+ *   wrong type  readAsDataURL succeeds on any file at all; the canvas got a
+ *               `url(data:text/plain;…)` that resolved to no image and simply
+ *               did not change, which is indistinguishable from a dead control
+ *   unreadable  onerror was not handled, so a file the OS would not give up
+ *               (removed drive, permissions) was also a control that did nothing
+ *
+ * All three now refuse at pick time and clear the input, so the next pick is an
+ * event the browser will actually report — the same shape as startUpload(), and
+ * for the same reason. A pick that survives all three gets a note naming the file
+ * and saying it goes out with the next Publish, because "no progress bar" is the
+ * right behaviour here and only reads that way if something says nothing is
+ * uploading yet.
+ */
 function applyBgFile() {
     var input = document.getElementById('bg-file');
     if (!input) return;
-    var f = input.files[0];
+    var f = input.files && input.files[0];
     if (!f) return;
+
+    if (f.size > UPLOAD_MAX_BYTES) {
+        showToast('That background image is too large (' + describeBytes(f.size) + '). '
+                + 'This server accepts up to ' + UPLOAD_MAX_LABEL + '. It was not used — '
+                + 'choose a smaller image.', true);
+        input.value = '';
+        showBgPending('');
+        return;
+    }
+    if (f.size === 0) {
+        showToast('That background image file is empty, so it was not used.', true);
+        input.value = '';
+        showBgPending('');
+        return;
+    }
+    // Type is checked by what the browser says it is rather than by the extension:
+    // a .png that is really a text file is refused here and would be refused by
+    // api.php's MIME check at Publish anyway, and being refused twice for the same
+    // reason is better than being refused late for a reason nobody explained.
+    if (BG_IMAGE_TYPES.indexOf(f.type) < 0) {
+        showToast('That file is not an image the sign can show (' + (f.type || 'unknown type') + '). '
+                + 'Use a JPG, PNG, GIF or WEBP.', true);
+        input.value = '';
+        showBgPending('');
+        return;
+    }
+
     var r = new FileReader();
-    r.onload = function(e){ document.getElementById('builder-canvas').style.backgroundImage = "url('"+e.target.result+"')"; };
+    r.onload = function (e) {
+        document.getElementById('builder-canvas').style.backgroundImage = "url('" + e.target.result + "')";
+        showBgPending(f.name + ' — goes on the sign at the next Publish');
+    };
+    r.onerror = function () {
+        showToast('That background image could not be read, so it was not used. '
+                + 'If it is on a drive or a share, copy it to this computer first.', true);
+        input.value = '';
+        showBgPending('');
+    };
     r.readAsDataURL(f);
+}
+
+/** The note beside the Background picker. '' hides it. */
+function showBgPending(text) {
+    var note = document.getElementById('bg-pending');
+    if (!note) return;                       // the picker is admin-only markup (#3)
+    note.textContent = text;
+    note.style.display = text ? 'inline' : 'none';
 }
 
 // ============================================================
@@ -2032,34 +2137,99 @@ function alignBlocks(direction) {
 // ============================================================
 // LAYER / Z-INDEX
 // ============================================================
-function _setZIndex(val) {
+// Every block is created on layer 1 (`z_index: 1` in createBlock and createSection)
+// and until somebody presses one of the four buttons below, nothing moves it. So the
+// ordinary canvas is not a stack — it is a heap of blocks all on layer 1 whose paint
+// order comes entirely from the tiebreak, which is document order.
+//
+// The old arithmetic here worked *on the number* and so could not see that:
+//
+//   sendToBack()    set 1 on a block already on 1        → nothing happened
+//   sendBackward()  floored at 1, and everything was 1   → nothing happened
+//   bringForward()  set 2, which beat the other 1s       → worked, once
+//   bringToFront()  set max+1                            → worked, always
+//
+// and all four lit up the readout regardless, so the reported symptom was exactly
+// right: the number moves up and down and the element is always in front. Front was
+// the only direction that worked, because max+1 is the one step a tie cannot absorb.
+//
+// The fix is to stop nudging a number and to renumber the group, so no two blocks in
+// one stacking context share a layer. Once that holds, the readout is an answer
+// rather than a coincidence and the four buttons are all the same operation: put me
+// somewhere in this list. It writes to the siblings as well as to the selection, and
+// those numbers are published — that is the cost, and it is the price of a layer
+// number that means something.
+
+/** A block's layer, from the attribute that gets published (`data-z-index`). */
+function _layerOf(el) {
+    return Math.max(1, parseInt(el.dataset.zIndex) || 1);   // 1 is the floor; 0 is the background
+}
+
+/**
+ * The blocks sharing a stacking context with the selection, in painted order.
+ *
+ * Bottom to top: layer ascending, and within a tie, document order — because that
+ * is what the browser does with equal z-indexes, and the sign agrees. `sort_order`
+ * is written from the DOM index at publish and read back `ORDER BY sort_order`, so
+ * a tie the Builder breaks this way is broken the same way in viewer.php. Sorting
+ * by the order that is *about* to be replaced is the only way to renumber without
+ * moving anything the first time a button is pressed.
+ */
+function _stackingGroup() {
+    if (!activeBlock || !activeBlock.parentElement) { return []; }
+    // The index is captured before sorting rather than leaned on afterwards: sort is
+    // stable in every engine this runs in, but stability preserves the input order,
+    // and the input order is the thing being used as the comparison. Saying it costs
+    // one map.
+    return Array.from(activeBlock.parentElement.children)
+        .filter(function (el) { return el.classList && el.classList.contains('editable-block'); })
+        .map(function (el, i) { return { el: el, at: i }; })
+        .sort(function (a, b) {
+            var za = _layerOf(a.el), zb = _layerOf(b.el);
+            return za === zb ? a.at - b.at : za - zb;
+        })
+        .map(function (pair) { return pair.el; });
+}
+
+/** Where the selection sits in its own paint order, bottom = 0, or -1. */
+function _layerIndex() {
+    return _stackingGroup().indexOf(activeBlock);
+}
+
+/**
+ * Put the selection at `to` in its paint order and give the whole group 1..n.
+ *
+ * Renumbering happens even when `to` is where the block already was. That is not a
+ * wasted write: a group that arrived all on layer 1 is still all on layer 1, and the
+ * button somebody just pressed has to leave the canvas in a state where the *next*
+ * press can do something. Renumbering a no-op press is what converts the heap into
+ * a stack, and it is why "Back" now works on the first press rather than the second.
+ */
+function _moveInLayerOrder(to) {
     if (!activeBlock) return;
-    val = Math.max(1, parseInt(val) || 1); // min = 1; 0 is background
-    activeBlock.style.zIndex   = val;
-    activeBlock.dataset.zIndex = val;
-    document.getElementById('insp-zindex-val').textContent = val;
-    // The one place all four layer buttons pass through.
+    var ordered = _stackingGroup();
+    var from    = ordered.indexOf(activeBlock);
+    if (from < 0) return;   // selection is not an .editable-block — nothing to order
+
+    to = Math.max(0, Math.min(ordered.length - 1, to));
+    if (to !== from) {
+        ordered.splice(from, 1);
+        ordered.splice(to, 0, activeBlock);
+    }
+    for (var i = 0; i < ordered.length; i++) {
+        ordered[i].dataset.zIndex = i + 1;
+        ordered[i].style.zIndex   = i + 1;
+    }
+    var readout = document.getElementById('insp-zindex-val');
+    if (readout) readout.textContent = _layerOf(activeBlock);
+    // The one place all four layer buttons pass through (invariant 27).
     commitUndoStep();
 }
-function _siblingZValues() {
-    if (!activeBlock) return [];
-    return Array.from(activeBlock.parentElement.children)
-        .filter(function(el) { return el !== activeBlock && el.classList.contains('editable-block'); })
-        .map(function(el) { return parseInt(el.style.zIndex) || 1; });
-}
-function bringToFront() {
-    var maxZ = Math.max.apply(null, _siblingZValues().concat([1]));
-    _setZIndex(maxZ + 1);
-}
-function bringForward() {
-    _setZIndex((parseInt(activeBlock && activeBlock.dataset.zIndex) || 1) + 1);
-}
-function sendBackward() {
-    _setZIndex(Math.max(1, (parseInt(activeBlock && activeBlock.dataset.zIndex) || 1) - 1));
-}
-function sendToBack() {
-    _setZIndex(1); // 1 is the minimum; background is 0
-}
+
+function bringToFront() { _moveInLayerOrder(_stackingGroup().length - 1); }
+function sendToBack()   { _moveInLayerOrder(0); }
+function bringForward() { _moveInLayerOrder(_layerIndex() + 1); }
+function sendBackward() { _moveInLayerOrder(_layerIndex() - 1); }
 
 /**
  * Make a block look the way its `dataset.hidden` says it is.
@@ -2444,6 +2614,29 @@ function clearSectionBg() {
 /** The upload currently in flight per input, so a second pick cannot race it. */
 var uploadsInFlight = 0;
 
+// The requests behind that count, so the Cancel button has something to abort.
+// `xhr.onabort` has been handled since this was written and nothing could ever
+// reach it: there was no control, and an XMLHttpRequest nobody holds a reference to
+// cannot be cancelled. A 50 MB video on shop Wi-Fi has a ten-minute timeout, so the
+// missing button was ten minutes of a page you could not get on with.
+var uploadsActive = [];
+
+/**
+ * Stop every upload in flight.
+ *
+ * All of them rather than one: the progress box is a single shared readout, so the
+ * button on it cannot honestly claim to cancel a particular file. In practice there
+ * is one, because startUpload refuses a second pick on the same input while the
+ * first is running. Each abort lands in its own `onabort`, which reports it and
+ * clears its own input, so nothing is torn down here.
+ */
+function cancelUploads() {
+    var running = uploadsActive.slice();   // aborting splices this array as we walk it
+    for (var i = 0; i < running.length; i++) {
+        try { running[i].abort(); } catch (e) { /* already finished; onabort will not fire */ }
+    }
+}
+
 function showUploadProgress(label, percent) {
     // Guarded the same way every other lookup in this file is: the readout is
     // markup, and an upload must still run — and still report — on a page where
@@ -2504,6 +2697,7 @@ function startUpload(input, action, what, onSuccess) {
     var xhr = new XMLHttpRequest();
     xhr.open('POST', 'api.php?action=' + action, true);
     xhr.timeout = 600000;   // ten minutes: a 50 MB video on shop Wi-Fi is slow, not broken
+    uploadsActive.push(xhr);
 
     var finished = false;
     function done(message, isError) {
@@ -2511,6 +2705,11 @@ function startUpload(input, action, what, onSuccess) {
         finished = true;
         input._uploading = false;
         uploadsInFlight--;
+        // Dropped here rather than in each handler, because this is the one place
+        // every outcome passes through — including the abort the Cancel button
+        // causes, so cancelling twice cannot abort a request that already ended.
+        var at = uploadsActive.indexOf(xhr);
+        if (at >= 0) uploadsActive.splice(at, 1);
         // Cleared whatever happened, so picking the same file again is an action
         // the browser will actually report.
         input.value = '';

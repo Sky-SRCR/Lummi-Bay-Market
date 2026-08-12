@@ -35,6 +35,22 @@ class UploadLimit
     /** The app's own ceiling. Even a host that allows more does not need to. */
     const APP_MAX_BYTES = 52428800;   // 50 MB
 
+    // Two sinks want a smaller ceiling than the media one, and both used to carry
+    // their number inline — `10 * 1024 * 1024` in crud.php, `2 * 1024 * 1024` in
+    // admin_panel.php. That is the thing the header of this file says not to do,
+    // and it cost the two failures it always costs. Neither number was the
+    // smallest ceiling on a host with a small `post_max_size`, so the Library
+    // promised 10 MB on a server that drops the body at 8; and neither was
+    // reachable from the page that drew the file picker, so the picker could not
+    // refuse anything and the Library's limit was stated nowhere on the screen.
+    //
+    // A per-use ceiling is still a real decision — a price sign's logo has no
+    // business being 40 MB — so these are not one number. They are read through
+    // cappedAt() below, which is `min(the decision, what can actually arrive)`:
+    // the only form of a stated limit that cannot turn out to be a lie.
+    const IMAGE_MAX_BYTES = 10485760;   // 10 MB — one Asset Library image
+    const LOGO_MAX_BYTES  =  2097152;   //  2 MB — the brand logo
+
     private static $bytes = null;
 
     /**
@@ -85,6 +101,27 @@ class UploadLimit
     {
         return self::describeBytes(self::bytes());
     }
+
+    /**
+     * A sink's own ceiling, never larger than what can reach this server.
+     *
+     * The `min` is the whole point and it only goes one way: a sink may ask for
+     * less than the transport allows, never more. Asking for more would print a
+     * number in the file picker that the request cannot honour, which is the
+     * `post_max_size` trap wearing a helpful label.
+     */
+    public static function cappedAt($appCeiling)
+    {
+        return min(intval($appCeiling), self::bytes());
+    }
+
+    /** The largest Asset Library image, in bytes, and in words. */
+    public static function imageBytes()    { return self::cappedAt(self::IMAGE_MAX_BYTES); }
+    public static function describeImage() { return self::describeBytes(self::imageBytes()); }
+
+    /** The largest brand logo, in bytes, and in words. */
+    public static function logoBytes()    { return self::cappedAt(self::LOGO_MAX_BYTES); }
+    public static function describeLogo() { return self::describeBytes(self::logoBytes()); }
 
     /** Any byte count in the same words, for "that file was 63 MB". */
     public static function describeBytes($bytes)

@@ -15,6 +15,10 @@ require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/layout_store.php';
 require_once __DIR__ . '/lib/assets.php';
+// Named explicitly, though this page's own upload ceiling is the only thing it asks
+// for: a transitive include is not a dependency, and until now this page carried
+// that ceiling as a number of its own instead of asking (see below).
+require_once __DIR__ . '/lib/upload_limits.php';
 requireCurrentAccount($pdo);   // all roles can access; delete is admin-only below
 $me = currentUser();
 
@@ -23,7 +27,31 @@ $me = currentUser();
 // the admin panel would otherwise be tidying against the label prefix alone.
 ensureSignageSchema($pdo);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') { verifyCsrf(); }
+// The sentence this page prints, and which colour it prints in. Declared here rather
+// than beside the CREATE branch below, because the guard on the next line is now the
+// first thing that can set one.
+$message  = '';
+$msgClass = 'success';
+
+// Answered before the CSRF gate, and that order is the whole of it. A POST whose body
+// PHP dropped for exceeding `post_max_size` arrives with no fields at all — including
+// no token — so verifyCsrf() below saw a missing token and did what it does: a bare 403
+// reading **"Security token mismatch. Please go back and try again."** For an image
+// over the host's limit that is a security failure reported for a size problem, and
+// going back and trying again produces it a second time, which is the one thing the
+// sentence promises will help. api.php has had this guard since the same bug was found
+// there; this page and admin_panel.php were the two sinks that never got it.
+//
+// Rendered rather than sent as JSON, because this page is read by a person in a browser
+// and `HttpReply::json()` here would be a payload nobody sees. The message itself is
+// UploadLimit's, so all three doors say the same thing.
+if (UploadLimit::bodyWasDropped($_SERVER, $_POST, $_FILES)) {
+    http_response_code(413);
+    $message  = UploadLimit::droppedBodyMessage();
+    $msgClass = 'error';
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verifyCsrf();
+}
 
 $library = new AssetLibrary($pdo);
 $signs   = new DisplayStore($pdo);
@@ -52,8 +80,16 @@ function validateImageFile(array $file, array $allowed_ext, array $allowed_mime)
     if ($file['error'] !== UPLOAD_ERR_OK) {
         return ['ok' => false, 'msg' => 'Upload error.'];
     }
-    if ($file['size'] > 10 * 1024 * 1024) {
-        return ['ok' => false, 'msg' => 'File is too large (max 10 MB).'];
+    // Asked rather than stated. The number here used to be `10 * 1024 * 1024` with the
+    // words "max 10 MB" beside it, which was wrong in two directions at once: on a host
+    // whose post_max_size is 8M the promise could not be kept, and the form above never
+    // printed the figure at all, so the first anybody heard of a limit was being refused
+    // by it. UploadLimit::imageBytes() is 10 MB capped by what can actually arrive, and
+    // it is the same call the form and the file picker now quote.
+    if ($file['size'] > UploadLimit::imageBytes()) {
+        return ['ok' => false, 'msg' => 'That image is ' . UploadLimit::describeBytes($file['size'])
+                                      . '. The library accepts up to ' . UploadLimit::describeImage()
+                                      . '. Nothing was changed.'];
     }
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     if (!in_array($ext, $allowed_ext, true)) {
@@ -76,8 +112,8 @@ function ensureUploadsDir(): void {
 // moved into the module when editing stopped being able to skip it, and the add
 // form asks the same question so that both doors into the table use one list.
 
-$message  = '';
-$msgClass = 'success';
+// $message / $msgClass are declared above the upload-size guard, which is the first
+// thing on this page that can set them.
 
 // ============================================================
 // CREATE
@@ -353,6 +389,18 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
         }
         .form-panel h2 { font-size: 16px; margin-bottom: 16px; color: #2c3e50; }
 
+        /* ---- What happened to the file I picked ---- */
+        .file-note { font-size: 11px; margin-top: 4px; line-height: 1.5; }
+        /* Indeterminate, and that is the honest shape: a plain form POST emits no
+           progress events, so there is no percentage to show. It says "working". */
+        .file-busy { margin-top: 6px; height: 4px; background: #e6e9ed; border-radius: 2px; overflow: hidden; }
+        .file-busy-bar { width: 40%; height: 100%; background: #3498db; border-radius: 2px;
+                         animation: file-busy-slide 1.1s ease-in-out infinite; }
+        @keyframes file-busy-slide {
+            0%   { margin-left: -40%; }
+            100% { margin-left: 100%; }
+        }
+
         .form-group { margin-bottom: 14px; }
         label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 5px; color: #555; }
         input[type="text"], textarea, select {
@@ -465,7 +513,7 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
 
         <?php elseif ($editAsset): ?>
         <!-- EDIT FORM -->
-        <form method="POST" action="crud.php" enctype="multipart/form-data">
+        <form method="POST" action="crud.php" enctype="multipart/form-data" onsubmit="return beginAssetSave(this)">
             <input type="hidden" name="action_update" value="1">
             <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
             <!-- No hidden type field: what this entry is comes from the stored row
@@ -519,7 +567,17 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
             </div>
             <div class="form-group">
                 <label>Replace with new upload</label>
-                <input type="file" name="edit_image_file" accept="image/jpeg,image/png,image/gif,image/webp">
+                <!-- The ceiling travels on the element rather than through a JavaScript
+                     variable: it is the input's own property, both forms need it, and an
+                     attribute read back with getAttribute() needs no second escaping
+                     rule for the JS context (§4d). -->
+                <input type="file" name="edit_image_file" accept="image/jpeg,image/png,image/gif,image/webp"
+                       data-max-bytes="<?= intval(UploadLimit::imageBytes()) ?>"
+                       data-max-label="<?= Markup::text(UploadLimit::describeImage()) ?>"
+                       onchange="checkAssetFile(this)">
+                <small style="display:block; margin-top:4px; color:#7f8c8d; font-size:11px;">JPG, PNG, GIF or WEBP, up to <?= Markup::text(UploadLimit::describeImage()) ?>.</small>
+                <div class="file-note" style="display:none;"></div>
+                <div class="file-busy" style="display:none;"><div class="file-busy-bar"></div></div>
             </div>
             <div class="form-group">
                 <label>Or update path / URL</label>
@@ -535,7 +593,7 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
 
         <?php else: ?>
         <!-- ADD FORM -->
-        <form method="POST" action="crud.php" enctype="multipart/form-data">
+        <form method="POST" action="crud.php" enctype="multipart/form-data" onsubmit="return beginAssetSave(this)">
             <input type="hidden" name="action_create" value="1">
             <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
 
@@ -564,8 +622,17 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
             <div id="image-fields" style="display:none;">
                 <div class="form-group">
                     <label>Upload Image File</label>
-                    <input type="file" name="image_file" accept="image/jpeg,image/png,image/gif,image/webp">
-                    <small style="display:block; margin-top:4px; color:#7f8c8d; font-size:11px;">Accepted types: JPG, PNG, GIF, WEBP</small>
+                    <input type="file" name="image_file" accept="image/jpeg,image/png,image/gif,image/webp"
+                           data-max-bytes="<?= intval(UploadLimit::imageBytes()) ?>"
+                           data-max-label="<?= Markup::text(UploadLimit::describeImage()) ?>"
+                           onchange="checkAssetFile(this)">
+                    <!-- The size is stated, and it is stated as the number that will
+                         actually be enforced. This line said "Accepted types: JPG, PNG,
+                         GIF, WEBP" and nothing about size, so the whole of what a person
+                         knew about the ceiling was whatever refused them. -->
+                    <small style="display:block; margin-top:4px; color:#7f8c8d; font-size:11px;">Accepted types: JPG, PNG, GIF, WEBP &mdash; up to <?= Markup::text(UploadLimit::describeImage()) ?>.</small>
+                    <div class="file-note" style="display:none;"></div>
+                    <div class="file-busy" style="display:none;"><div class="file-busy-bar"></div></div>
                 </div>
                 <div class="form-group">
                     <label>Or Paste Image URL / Path</label>
@@ -691,6 +758,110 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
         var type = document.getElementById('asset-type').value;
         document.getElementById('text-fields').style.display  = type === 'text'  ? 'block' : 'none';
         document.getElementById('image-fields').style.display = type === 'image' ? 'block' : 'none';
+    }
+
+    // ============================================================
+    // WHAT HAPPENED TO THE FILE I PICKED
+    // ============================================================
+    // Nothing on this page used to answer that. The picker took a file, the form sat
+    // there looking ready, and the answer arrived after a full upload — or, over the
+    // host's post_max_size, as a bare 403 about a security token (see the guard at the
+    // top of this file). The Builder has had this since a 40 MB video was answered the
+    // same way; the Asset Library is the door that never got it.
+    //
+    // Three sentences, all of them at pick time and all of them naming the file:
+    // wrong type, too big, and — for a file that is neither — that it is ready and how
+    // big it is. A refused file also has the input cleared, so picking it again is an
+    // event the browser reports rather than a no-op it silently swallows.
+
+    var ASSET_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+
+    /** Bytes as words, matching UploadLimit::describeBytes so both agree. */
+    function describeAssetBytes(bytes) {
+        if (bytes >= 1048576) { return Math.floor(bytes / 1048576) + ' MB'; }
+        if (bytes >= 1024)    { return Math.floor(bytes / 1024) + ' KB'; }
+        return bytes + ' bytes';
+    }
+
+    /** The note under a file input. Looked up from the input's own group, so one
+     *  function serves the add form and the edit form without knowing which. */
+    function sayAboutFile(input, text, bad) {
+        var note = input.parentElement ? input.parentElement.querySelector('.file-note') : null;
+        if (!note) { return; }
+        note.textContent   = text;
+        note.style.color   = bad ? '#c0392b' : '#7f8c8d';
+        note.style.display = text ? 'block' : 'none';
+    }
+
+    /**
+     * Is this pick usable? Says why if not, and clears the input if not.
+     *
+     * `accept=` on the input only filters the dialog — switch it to "All Files" and a
+     * renamed .txt arrives — so the type is checked against what the browser reports
+     * the file to be. The server checks the real bytes with mime_content_type() and
+     * remains the check; this is the half that can answer immediately.
+     */
+    function checkAssetFile(input) {
+        var f = input.files && input.files[0];
+        if (!f) { sayAboutFile(input, '', false); return true; }
+
+        if (ASSET_IMAGE_TYPES.indexOf(f.type) < 0) {
+            sayAboutFile(input, 'Wrong file type (' + (f.type || 'type not recognised') + '). '
+                              + 'Use a JPG, PNG, GIF or WEBP — this file was not selected.', true);
+            input.value = '';
+            return false;
+        }
+        if (f.size === 0) {
+            sayAboutFile(input, 'That file is empty, so it was not selected.', true);
+            input.value = '';
+            return false;
+        }
+        // 0 would mean the attribute was missing or unreadable, and refusing every file
+        // because a number could not be read is worse than letting the server refuse
+        // this one: it has the same limit and the guard at the top of this file now
+        // explains the dropped-body case in words.
+        var max = parseInt(input.getAttribute('data-max-bytes'), 10) || 0;
+        if (max > 0 && f.size > max) {
+            sayAboutFile(input, 'File too big — ' + describeAssetBytes(f.size) + '. The library accepts up to '
+                              + (input.getAttribute('data-max-label') || 'the server limit')
+                              + '. This file was not selected.', true);
+            input.value = '';
+            return false;
+        }
+
+        sayAboutFile(input, f.name + ' — ' + describeAssetBytes(f.size) + ', ready to save.', false);
+        return true;
+    }
+
+    /**
+     * Called on submit: show that something is happening, or stop the submit.
+     *
+     * A plain form POST reports no progress — there are no events to listen to — so
+     * the bar this shows is indeterminate on purpose. It says "working", which is
+     * true, rather than a percentage, which would be invented. Turning this form into
+     * an XHR upload to get a real percentage is a bigger change than the problem
+     * warrants for a 10 MB image, and it would move the save off the one path that
+     * already redirects.
+     *
+     * The pick is re-checked here rather than trusted: onchange did not run for a file
+     * still in the input from a bfcache restore, and a form is not obliged to have been
+     * through this page's JavaScript at all.
+     */
+    function beginAssetSave(form) {
+        var input = form.querySelector('input[type=file]');
+        if (input && !checkAssetFile(input)) { return false; }
+
+        var file = input && input.files && input.files[0];
+        var btn  = form.querySelector('button[type=submit]');
+        // The action travels in a hidden field, so disabling the button loses no data.
+        if (btn) { btn.disabled = true; btn.textContent = file ? 'Uploading…' : 'Saving…'; }
+        if (file && input) {
+            sayAboutFile(input, 'Uploading ' + file.name + ' (' + describeAssetBytes(file.size) + ')… '
+                              + 'this can take a moment on shop Wi-Fi. Do not close this page.', false);
+            var busy = input.parentElement ? input.parentElement.querySelector('.file-busy') : null;
+            if (busy) { busy.style.display = 'block'; }
+        }
+        return true;
     }
 </script>
 </body>

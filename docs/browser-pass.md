@@ -91,7 +91,12 @@ value survives a page reload (before publishing — a reload re-reads the server
 anything that vanishes was never saved).
 
 - [ ] Text align
-- [ ] Z-index / layering — send one block behind another and confirm the paint order
+- [ ] Z-index / layering — send one block behind another and confirm the paint order.
+      **The Layer number will move on blocks you did not select**, and that is the fix
+      rather than a fault (§4at): everything is created on layer 1, so the buttons
+      renumber the whole group to 1..n and no two blocks share a layer afterwards.
+      Check both directions from a fresh canvas — Back and Backward are the two that
+      did nothing at all before, and Back must work on the **first** press.
 - [ ] Hide / unhide — a hidden block should be visibly marked in the Builder, and absent
       from the Viewer later
 - [ ] The slide fields
@@ -121,14 +126,52 @@ and only in the tab that made the changes (ADR-0010).
 
 ## F. Uploads
 
-Ceiling from step A (50 MB app maximum).
+Ceiling from step A (50 MB app maximum). **There are four separate file pickers in this
+app and they do not behave the same way** (§4au) — which one you are testing decides what
+you should see, so they are listed apart:
+
+**The inspector's uploads** (Upload Image, Upload Video, a section's background, a
+carousel slide). These upload immediately.
 
 - [ ] Upload a small image. Progress shows, then it appears in the Asset Library and can
       be placed on the canvas.
 - [ ] Upload a file **over** the ceiling. It must be refused with a sentence naming the
       limit — not a silent failure and not a raw 500.
 - [ ] Upload a non-image (a `.txt` renamed, say). Refused, with a reason.
-- [ ] Cancel a large upload midway. The page recovers and stays usable.
+- [ ] Cancel a large upload midway with the **Cancel upload** button on the progress box.
+      It says the upload was cancelled and nothing was changed, and the page stays usable.
+
+**The top bar's `Background:` picker.** This one does *not* upload — the image travels with
+the next Publish, so there is no progress bar and there should not be one.
+
+- [ ] Pick a valid image. It appears behind the canvas **and** a note appears beside the
+      picker naming the file and saying it goes on the sign at the next Publish.
+- [ ] Pick one over the ceiling. Refused at pick time, naming the size and the limit.
+      Before §4au this did nothing whatsoever and the refusal only arrived at Publish,
+      where it abandoned the entire publish rather than the image.
+- [ ] Pick a non-image. Refused, naming the type.
+- [ ] Switch Background to **Color**. The note goes away — it has stopped being true.
+
+**The Asset Library (`crud.php`).** A plain form POST, so its progress bar is
+indeterminate on purpose: there is nothing to measure.
+
+- [ ] The form states the size limit next to the accepted types. Check the number matches
+      step A's row if the host's limit is below 10 MB.
+- [ ] Pick an image over the limit. Refused under the picker — *file too big* — and the
+      file is **not** left in the picker.
+- [ ] Pick a `.txt` renamed to `.png`. Refused under the picker — *wrong file type*.
+- [ ] Save a valid image. The button reads Uploading… and the bar moves while it works.
+- [ ] If you can raise a file past the host's `post_max_size`, do it. The answer must
+      name the **size**. A page reading *"Security token mismatch"* means the guard
+      before `verifyCsrf()` is gone — that was the original defect.
+
+**The brand logo (Admin Panel → Branding).** Same shape as the Library.
+
+- [ ] The label offers PNG, JPG, GIF, WEBP and **not SVG** — an SVG is refused by the
+      handler, so offering it was inviting a refusal.
+- [ ] Pick something over the stated maximum. Refused at pick time, and no preview appears.
+- [ ] Pick a valid logo. It previews, and the note says it saves when you press Save
+      Branding.
 
 ## G. The edit lock — needs a second browser
 

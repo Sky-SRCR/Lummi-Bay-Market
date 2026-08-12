@@ -531,6 +531,116 @@ check(/setupInteract\(\);[\s\S]{0,800}refreshClipWarnings\(\);[\s\S]{0,800}reset
       'and the load path refreshes every section before the undo baseline is taken');
 
 // ============================================================
+section('No two blocks share a layer, which is what makes the layer buttons work');
+// ============================================================
+
+// createBlock and createSection both write z_index 1, and until one of the four layer
+// buttons is pressed nothing moves it — so the ordinary canvas is not a stack, it is a
+// heap of blocks all on layer 1 whose paint order comes from the tie, which the browser
+// breaks by document order. The old arithmetic worked on the number and so could not
+// see that: Back set 1 on a block already on 1, Backward floored at 1 immediately, and
+// both still updated the readout. That is the reported symptom exactly — the number
+// moves up and down and the element never leaves the front. Front was the one direction
+// that worked, because max+1 is the only step a tie cannot absorb.
+//
+// The fix renumbers the group instead of nudging one number, so these checks are about
+// the group: every block has a layer, no two share one, and the four buttons each move
+// the selection one place, all the way, or nowhere.
+
+/** n blocks in one parent, all on layer 1 — the state a new canvas is always in. */
+function layerGroup(n) {
+    const parent = el('div');
+    for (let i = 0; i < n; i++) {
+        const b = el('div', 'editable-block root-block');
+        b.dataset.zIndex = 1;
+        b.dataset.name   = String.fromCharCode(97 + i);   // a, b, c… so a failure is readable
+        parent.appendChild(b);
+    }
+    return parent;
+}
+
+/** Every block's name and layer, in document order: "a2 b3 c4 d1". */
+function layers(parent) {
+    return parent.children
+        .filter(function (n) { return n.classList.contains('editable-block'); })
+        .map(function (n) { return n.dataset.name + n.dataset.zIndex; })
+        .join(' ');
+}
+
+const stack = layerGroup(4);
+checkSame('a1 b1 c1 d1', layers(stack), 'four blocks start life on the same layer');
+
+// The headline: Back, once, from the state every canvas is actually in.
+activeBlock = stack.children[3];
+sendToBack();
+checkSame('a2 b3 c4 d1', layers(stack), 'sending the top one back moves it, on the first press');
+checkSame('1', String(document.getElementById('insp-zindex-val').textContent),
+          'and the readout says the layer it is now on');
+check(stack.children.every(function (n) { return String(n.style.zIndex) === String(n.dataset.zIndex); }),
+      'with the painted layer and the published one agreeing on every block');
+
+bringToFront();
+checkSame('a1 b2 c3 d4', layers(stack), 'and Front brings it back to the top');
+
+sendBackward();
+checkSame('a1 b2 c4 d3', layers(stack), 'Backward swaps it with the one below, and only that one');
+bringForward();
+checkSame('a1 b2 c3 d4', layers(stack), 'Forward undoes that exactly');
+
+// A button that has run out of room does nothing rather than drifting the numbers.
+bringToFront();
+checkSame('a1 b2 c3 d4', layers(stack), 'Front on the topmost block changes nothing');
+bringForward();
+checkSame('a1 b2 c3 d4', layers(stack), 'nor does Forward');
+activeBlock = stack.children[0];
+sendToBack();
+checkSame('a1 b2 c3 d4', layers(stack), 'Back on the bottom one changes nothing');
+sendBackward();
+checkSame('a1 b2 c3 d4', layers(stack), 'and Backward cannot push it below 1');
+
+// The property the whole fix rests on, asserted rather than inferred from the strings.
+activeBlock = stack.children[2];
+sendToBack();
+const seen = stack.children.map(function (n) { return String(n.dataset.zIndex); });
+checkSame(4, new Set(seen).size, 'after any of them, no two blocks share a layer');
+check(seen.every(function (z) { return parseInt(z, 10) >= 1; }), 'and none is below 1');
+
+// A section is its own stacking context, so a child moving inside it must not renumber
+// anything on the canvas. Getting this wrong would reorder the whole sign to raise one
+// price tag inside one section.
+const outerStack = layerGroup(2);
+const innerSec   = el('div', 'editable-block section-block');
+innerSec.dataset.zIndex = 1;
+innerSec.dataset.name   = 'sec';
+outerStack.appendChild(innerSec);
+const kidP = el('div', 'editable-block child-block');
+const kidQ = el('div', 'editable-block child-block');
+kidP.dataset.zIndex = 1; kidP.dataset.name = 'p';
+kidQ.dataset.zIndex = 1; kidQ.dataset.name = 'q';
+innerSec.appendChild(kidP);
+innerSec.appendChild(kidQ);
+activeBlock = kidQ;
+sendToBack();
+checkSame('p2 q1', layers(innerSec), 'a child sent back is renumbered against its section');
+checkSame('a1 b1 sec1', layers(outerStack), 'and nothing outside that section is touched');
+
+// The guard every other lookup in this file has. All four buttons are reachable by
+// keyboard shortcut, and the canvas can be deselected between the keypress and the act.
+activeBlock = null;
+let threwLayer = false;
+try { bringToFront(); sendToBack(); bringForward(); sendBackward(); } catch (e) { threwLayer = true; }
+check(!threwLayer, 'with nothing selected, all four layer buttons do nothing rather than throw');
+
+// A block that is not an .editable-block is not in any group — the selection can be
+// one during a rebuild, and indexOf returning -1 has to mean "leave it alone".
+activeBlock = el('div', 'root-block');
+el('div').appendChild(activeBlock);
+let threwStray = false;
+try { sendToBack(); } catch (e) { threwStray = true; }
+check(!threwStray, 'and a selection outside any group is left alone rather than renumbered');
+activeBlock = null;
+
+// ============================================================
 section('A hidden section says it is hidden, and can be brought back');
 // ============================================================
 
@@ -758,7 +868,7 @@ check(/function blockContent\(block\)[\s\S]{0,400}?inner\.innerText/.test(php),
 // ============================================================
 // The expected total, for the same reason the other two suites carry one:
 // without it, deleting half this file still reports a clean run.
-const expected = 113;
+const expected = 130;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

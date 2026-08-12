@@ -5044,6 +5044,46 @@ checkMentions(UploadLimit::droppedBodyMessage(), 'Nothing was changed',
 check(strpos(UploadLimit::droppedBodyMessage(), 'token') === false,
       'and never mentions a security token, which was the old answer');
 
+// ── The two ceilings that used to be written at the sink ──
+// `10 * 1024 * 1024` sat in crud.php with the words "max 10 MB" beside it, and
+// `2 * 1024 * 1024` in admin_panel.php. Both were opinions about a limit neither page
+// could see: on a host whose post_max_size is 8M the Library still promised 10 MB, and
+// the request carrying an 9 MB image never arrived to be measured at all. cappedAt() is
+// the `min` that makes a stated limit one that can be kept.
+checkSame(10485760, UploadLimit::IMAGE_MAX_BYTES, 'an Asset Library image may be 10 MB');
+checkSame(2097152,  UploadLimit::LOGO_MAX_BYTES,  'and the brand logo 2 MB');
+checkSame('10 MB', UploadLimit::describeBytes(UploadLimit::IMAGE_MAX_BYTES),
+          'in the words the form beside the picker prints');
+checkSame('2 MB', UploadLimit::describeBytes(UploadLimit::LOGO_MAX_BYTES),
+          'and the words beside the logo picker');
+
+// The direction of the cap, which is the whole of it: a sink may ask for less than the
+// transport allows and never for more. Reversing the min, or returning the constant
+// unchanged, passes every check above and reintroduces exactly the promise that could
+// not be kept.
+UploadLimit::forget();
+check(UploadLimit::imageBytes() <= UploadLimit::bytes(),
+      'no library image is allowed to be larger than what can reach the server');
+check(UploadLimit::imageBytes() <= UploadLimit::IMAGE_MAX_BYTES,
+      'nor larger than the library asked for');
+check(UploadLimit::logoBytes() <= UploadLimit::bytes(),
+      'and no logo larger than what can reach the server');
+check(UploadLimit::logoBytes() <= UploadLimit::LOGO_MAX_BYTES,
+      'nor larger than the logo rule asked for');
+check(UploadLimit::logoBytes() <= UploadLimit::imageBytes(),
+      'and a logo is never allowed to be bigger than a library image');
+checkSame(UploadLimit::describeBytes(UploadLimit::imageBytes()), UploadLimit::describeImage(),
+          'the words a form prints are the number it will be refused by');
+checkSame(UploadLimit::describeBytes(UploadLimit::logoBytes()), UploadLimit::describeLogo(),
+          'and the same holds for the logo');
+
+// A ceiling under the transport limit is honoured, and one over it is not. Passed in
+// rather than read from ini, because these are PHP_INI_PERDIR and cannot be set here —
+// the same reason smallestOf() exists as a seam beside bytes().
+checkSame(512, UploadLimit::cappedAt(512), 'a small ceiling is used as it stands');
+check(UploadLimit::cappedAt(PHP_INT_MAX) === UploadLimit::bytes(),
+      'and one larger than the server allows is cut down to what the server allows');
+
 // ─────────────────────────────────────────────────────────────
 section('The branding file is swapped in, never written in place');
 
@@ -6789,4 +6829,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1805 : 1782);
+reportChecks(testIsMysql() ? 1818 : 1795);
