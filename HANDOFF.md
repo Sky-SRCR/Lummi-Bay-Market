@@ -32,9 +32,14 @@ of the system.
 - **Stack:** vanilla PHP (PDO, `ERRMODE_EXCEPTION`, real prepared statements),
   no framework, inline CSS/JS. Uses `interact.js` in the builder for drag/resize.
 
-> **The multi-display build is finished in the repo and has never run on the
-> server.** The live site is still the single-sign app. Nothing in §6 has been
-> deployed, and deploying it is a scripted 22-step visit — see §7.
+> **The multi-display build runs in `lbm-test/` as of 2026-08-12, and has never run
+> live.** That first half is new and the sentence above it said "has never run on the
+> server" for two phases. The rehearsal install now signs in, converges the schema
+> against its own database and opens the Builder. The live site is still the
+> single-sign app: nothing in §6 has been deployed there, and deploying it is a
+> scripted 22-step visit — see §7. What the rehearsal has **not** yet done is a
+> browser pass over the Builder (work-lanes lane 0) — loading is not the same as
+> driving it.
 
 ## 2. Git / branch
 
@@ -324,6 +329,7 @@ to do" — they are here because they will be noticed and are not faults.
 
 | Since | At deploy time | Why |
 |-------|----------------|-----|
+| **The database user's MySQL privileges** (rehearsal, 2026-08-12) | Confirm the user owns **SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES** on the target database *before* the first sign-in. Not `ALL PRIVILEGES` — see why. | Convergence issues 22 DDL statements and only two are `CREATE TABLE`; the other 20 are `ALTER TABLE` (14 add or modify a column, 5 add a foreign key, 1 adds a key). A failed schema statement is logged and emailed, never thrown (#9), so **missing privileges do not announce themselves** — the page carries on and dies later at the first query against what was never created. That is how `lbm-test` presented as `Base table or view not found: displays` when the real fault was a `CREATE` the user could not issue. Worse, a user with `CREATE` but not `ALTER` produces a Builder that *loads*: the two tables appear, `canvas_elements.display_id` does not, and Settings → Database Structure reads "Nothing is scoped to a Display. Do not publish." A crash is honest; that state is not. **`DROP`, `TRUNCATE`, `LOCK TABLES` and `CREATE TEMPORARY TABLES` appear nowhere in the plan** and should stay unchecked — in an app with no undo, a privilege it never uses is only risk. |
 | **#36** · §4y | **Make sure the webroot directory is writable by the web user**, not just `branding_config.php` itself. Confirm by saving anything on Admin Panel → Branding. If only the file is writable the save refuses with *"Check the folder permissions."* and changes nothing — safe, but branding cannot be edited until it is fixed. | That file is now replaced by writing a temporary copy beside it and `rename`-ing over it, so the permission that matters moved from the file to the folder. |
 | **#37** · §4w | **Nothing to do.** Expect **check** marks on the Asset Library the first time it is opened, with a count above the table. | Entries saved before the type rules are labelled with what today's rules would refuse or change. Nothing was rewritten, and no sign changed. |
 | **#38** · §4v | **Nothing to do.** Any login lockout in force at the moment of the deploy is released — the store is west of UTC. | `locked_until` moved to UTC and old rows read earlier from here. Bounded: a lockout is never more than 15 minutes out, and the failure counter beside it is untouched. §4v has the east-of-UTC case, which does not apply to this store. |
