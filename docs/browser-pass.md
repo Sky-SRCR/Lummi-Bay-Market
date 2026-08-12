@@ -208,6 +208,32 @@ The lock lapses after **15 minutes** of no real interaction (`IDLE_LAPSE_SECONDS
 - [ ] Sign in as a basic account with **no Display assigned**. The footer must offer only
       **Sign Out** — no Asset Library link, because the Library needs a sign to add to.
 
+### G2. What a lock on a block refuses — six doors (§4aw)
+
+The lock was asked at the drag and resize seams only, so everything below except the first
+line went through it. Take one block, tick **Lock this block**, and try all seven:
+
+- [ ] Drag it, and pull a resize handle. Both refuse (these two always did).
+- [ ] **Delete Block** in the Inspector, and then the **Delete** key. Both refuse, each with
+      a sentence, and the Delete key must refuse *before* the "Delete this block?" confirm.
+- [ ] Type a new number into the Inspector's **X** and **W** boxes. Both refuse — and the
+      box must snap back to the block's real value rather than keeping what you typed.
+- [ ] Press an **Align** button and an **Align to Parent** button. Both refuse.
+- [ ] Press **Send to Back**. It refuses too.
+- [ ] Press **Undo** after all of that. It must have nothing to take back — a refusal is not
+      a step.
+- [ ] With that block still locked, select it *and* an unlocked one (shift-click) and press
+      **Align → centre**. The locked one stays put, the unlocked one moves, and a message
+      says how many were left where they are.
+- [ ] Put a locked block inside a section, select the **section**, and press Delete. It
+      refuses and says how many locked blocks it found — deleting a section deletes what is
+      inside it.
+- [ ] Un-tick the lock. Everything above works again — a lock is an accident-preventer, not
+      a permission, and anyone who can lock can unlock.
+
+Two things a lock deliberately does **not** stop: editing the block's text or its colour,
+and the layer numbers of its *siblings* moving when one of them is re-layered.
+
 ## H. Publish, and the sign
 
 Only now, and only with step A's Database Structure green.

@@ -115,11 +115,15 @@ function findAll(node, sel) {
         }
         const steps = part.split(/\s+/);
         let scope = [node];
-        steps.forEach(function (step, i) {
+        steps.forEach(function (step) {
             const next = [];
             scope.forEach(function (s) {
-                (i === 0 && s === node && matchesSel(node, step) ? [node] : descendants(s))
-                    .forEach(function (d) { if (matchesSel(d, step) && next.indexOf(d) < 0) next.push(d); });
+                // Descendants only — a real querySelectorAll never returns the node it
+                // was called on. See the same note in selftest_builder_editing.js: the
+                // version that did made a section report no locked blocks inside it.
+                descendants(s).forEach(function (d) {
+                    if (matchesSel(d, step) && next.indexOf(d) < 0) next.push(d);
+                });
             });
             scope = next;
         });
@@ -543,6 +547,24 @@ buildFixture();
 selectBlock(priceBlock());
 bringForward();
 checkSame(0, undoStack.length, 'and a block with no sibling to pass is not a step at all');
+
+// A refusal is not a step either, and this is the other half of invariant 27 rather
+// than an exception to it: the invariant is that a function which *changes* the canvas
+// commits a step. Six doors now refuse a locked block, and each returns before the
+// commit — because a history holding an entry for something that never happened makes
+// Ctrl+Z do nothing visible, once per refusal, which is indistinguishable from Undo
+// being broken. The fixture's image block is the locked one.
+buildFixture();
+const lockedImg = imageBlock();
+selectBlock(lockedImg);
+deleteSelected();
+applyPos('x', 900);
+applyDim('w', 400);
+alignToParent('left');
+alignBlocks('top');
+sendToBack();
+checkSame(0, undoStack.length, 'and six refusals against a locked block record no steps between them');
+checkSame(lockedImg, imageBlock(), 'with the block still there to have been refused about');
 stepsFor('typing a new width',      function () { selectBlock(priceBlock()); applyDim('w', 250); });
 stepsFor('typing a new position',   function () { selectBlock(priceBlock()); applyPos('x', 90); });
 stepsFor('aligning to the parent',  function () { selectBlock(priceBlock()); alignToParent('right'); });
@@ -821,7 +843,7 @@ checkSame(150, clipRestored.offsetWidth, 'at the narrow width it was snapshotted
 check(clipRestored.querySelector(':scope > .clip-badge') !== null,
       'and it says again that it is hiding a block, having been rebuilt from nothing');
 
-const expected = 120;
+const expected = 122;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

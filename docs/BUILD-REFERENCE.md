@@ -5695,6 +5695,106 @@ account now has nowhere to add, which is correct and is a thing an admin has to 
 
 ---
 
+### 4aw. Six doors, three verbs, and a lock that was only ever asked by the mouse
+
+Browser pass step G, second round: *"a locked block can be deleted. if it's locked it should
+not be deleted."* One sentence, and it was true — but the report is one door and the defect
+was **six**.
+
+`data-locked` was read in exactly three places, and all three are on the way in from a
+pointer: the `mousedown` that starts a drag, and interact.js's own `move` and `resize`
+handlers. Everything else that changes a block ignored it:
+
+| Door | What it did to a locked block |
+|------|-------------------------------|
+| drag, resize handles | refused — the three places that asked |
+| **Delete Block** button | deleted it |
+| **Delete** key | deleted it, after a confirm it did not need |
+| Inspector **X / Y** boxes | moved it, by typing |
+| Inspector **W / H** boxes | resized it, by typing |
+| **Align** bar | moved it, one press |
+| **Align to Parent** | moved it, one press |
+
+So the 🔒 icon promised no moving, resizing or deleting and delivered it against the mouse
+only. The two typed boxes are the quietest of them: no drag, no handle, no confirm, and the
+block simply moves.
+
+**The fix is one predicate, not seven guards.** `isLockedBlock()` answers, `refuseIfLocked()`
+says the sentence, and every door asks. Six copies of `dataset.locked === '1'` is how five
+doors came to be missing it, and a seventh copy would have been the same bet again. Three
+properties are deliberate:
+
+- **The refusal comes before the confirm.** A "Delete this block?" answered *Yes* and then
+  quietly ignored teaches that the button is broken, not that the block is locked.
+- **A refused box is put back.** `applyPos()`/`applyDim()` call `showGeometry()` on the way
+  out, or the number somebody typed sits in the box claiming a position the block does not
+  have — and publish reads the block, not the box, so the disagreement is silent and the box
+  is the one that looks right. `showGeometry()` is also now the only place that fills those
+  four boxes, which is what makes "put them back" a call rather than four more lines.
+- **A refusal commits no undo step.** Every guard returns before `commitUndoStep()`. This is
+  invariant 27 the other way round: a history holding an entry for something that never
+  happened makes Ctrl+Z do nothing visible, once per refusal, which is indistinguishable
+  from Undo being broken.
+
+**Two things that had to be decided rather than looked up.**
+
+*Deleting the section over the top of it.* A lock on a child was worth nothing if its section
+could go, and by a route nobody had to unlock. So a section holding anything locked is not
+deleted either — locked itself or not — and the refusal counts what it found ("This section
+holds 2 locked blocks"), because *unlock them first* is only actionable if you know how many
+there are. `lockedInside()` asks through `isLockedBlock()` rather than a
+`[data-locked="1"]` selector: an attribute selector matches the stored string while the rest
+of the file asks `dataset`, and two readers that agree only by coincidence is the shape half
+of this section is about.
+
+*A locked block inside a multi-selection.* Skipping it and aligning the other four is what
+somebody pressing the button means, so `movableTargets()` returns the movable ones and says
+what stayed ("1 locked block was left where it is; the other 4 moved") — doing less than was
+asked without a word is #21 in another costume. But the **bounds** are still measured over
+every selected block, locked ones included: a locked block's edge is exactly what the others
+are being lined up against, and dropping it from the maths would align the group to a
+rectangle that is not the one on the screen. It is only the moving that the lock stops. And
+`alignBlocks()` branches on the size of the *selection*, not of what may move — two blocks
+with one locked still means "align these two to each other", and filtering first would
+silently turn it into "align the free one to its parent", which lands it somewhere nobody
+asked for.
+
+**What the lock still does not stop, on purpose:** editing a block's text or its colour,
+which change what it says rather than where it is; the renumbering that a *sibling's* layer
+change does, which preserves every block's order relative to every other so nothing a locked
+block covers changes unless the moving block crosses it — unavoidable if layering is allowed
+at all; and anybody unlocking it. **The lock is an accident-preventer, not a permission** —
+the edit lock (ADR-0007) is the permission. Nothing here is enforced server-side, and it
+should not be: `LayoutStore::publish()` takes the payload it is given, and everyone who can
+reach that endpoint can also untick the box.
+
+**Two lessons from verifying it, both about checks rather than code.**
+
+The suites were all green when the six doors were broken, because not one of them had ever
+locked a block before driving `applyPos`, `alignBlocks` or `deleteSelected`. Green over an
+untested premise is the recurring failure of §4 and this is another instance: the fixture in
+`selftest_builder_undo.js` has a `locked: 1` image and the checks that use it are about
+*restoring* it, so nothing asked what a locked block refuses. The 34 new checks in
+`selftest_builder_editing.js` are per **door**, not per verb, because the defect was never
+the verb.
+
+And the mutation pass (invariant 30) earned its minutes twice over. Eleven hand-written
+mutants, one per guard: ten died immediately, and one survived — deleting the
+`movable.indexOf()` skip in the group-align path changed nothing, because the locked block in
+the fixture sat at the left edge and a *left*-align does not move it whether the guard runs
+or not. The check was vacuous in exactly the way #50 is about. Centring is the direction that
+moves both blocks, and it distinguishes the two ways of being wrong at once: with the locked
+block inside the bounds the free one lands on 115, and with it dropped from them, on 30.
+
+The harness had its own bug in the way of one check, and it read as the app being wrong.
+`findAll()` in the editing and undo suites returned the node the call was made on when that
+node matched the selector — something a real `querySelectorAll` never does — so a section
+asking which locked blocks were inside it got *itself* back and answered "none". Fixed in
+both files, and worth stating as a rule: when a new check fails, the stub is a suspect
+alongside the code, and the way to tell them apart is to ask what a browser would answer.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of

@@ -122,11 +122,17 @@ function findAll(node, sel) {
         }
         const steps = part.split(/\s+/);
         let scope = [node];
-        steps.forEach(function (step, i) {
+        steps.forEach(function (step) {
             const next = [];
             scope.forEach(function (s) {
-                (i === 0 && s === node && matchesSel(node, step) ? [node] : descendants(s))
-                    .forEach(function (d) { if (matchesSel(d, step) && next.indexOf(d) < 0) next.push(d); });
+                // Descendants only, never the node the call was made on. A real
+                // querySelectorAll cannot return its own root, and this used to: a
+                // section asked which locked blocks were inside it got itself back
+                // and answered "none", so the check that found this read as the app
+                // being wrong when it was the harness.
+                descendants(s).forEach(function (d) {
+                    if (matchesSel(d, step) && next.indexOf(d) < 0) next.push(d);
+                });
             });
             scope = next;
         });
@@ -723,6 +729,198 @@ clearTargetSection();
 clearToast();
 
 // ============================================================
+section('A lock stops every door, not only the two a mouse goes through');
+// ============================================================
+
+// The lock was asked about in three places — the mousedown that starts a drag, and
+// interact.js's own move and resize handlers — and in none of the others. So the icon
+// promised no moving, resizing or deleting, and delivered it only against the mouse:
+// the Delete button removed a locked block, the Delete key removed it, the inspector's
+// X/Y/W/H boxes moved and resized it by typing, and both rows of Align buttons moved it
+// with one press. Six doors, three verbs, one predicate now — which is the point. These
+// checks exist per door rather than per verb, because the defect was never the verb.
+
+function lockedBlockIn(parent, locked) {
+    const b = el('div', 'editable-block root-block');
+    b.dataset.type   = 'text';
+    b.dataset.locked = locked ? '1' : '0';
+    b.offsetWidth = 100; b.offsetHeight = 40;
+    b.setAttribute('data-x', 30);
+    b.setAttribute('data-y', 40);
+    parent.appendChild(b);
+    return b;
+}
+
+/** Where a block is and how big, as one readable string: "30,40 100x40". */
+function geom(b) {
+    return (parseFloat(b.getAttribute('data-x')) || 0) + ',' + (parseFloat(b.getAttribute('data-y')) || 0)
+         + ' ' + b.offsetWidth + 'x' + b.offsetHeight;
+}
+
+const lockHost = byId('builder-canvas');
+lockHost.children.length = 0;
+
+// Door 1: the Delete Block button in the inspector.
+let doomed = lockedBlockIn(lockHost, true);
+activeBlock = doomed;
+clearToast();
+deleteSelected();
+checkSame(1, lockHost.children.length, 'the Delete button leaves a locked block where it is');
+mentions(toastText(), 'locked', 'and says why rather than doing nothing visible');
+mentions(toastText(), 'cannot be deleted', 'naming the thing it would not do');
+
+// Door 2: the Delete key. Same verb, a different listener — and the refusal has to come
+// before the confirm, or somebody answers "yes" to a question that was never going to
+// be honoured, which reads as a broken button rather than a locked block.
+clearToast();
+handleBuilderKeydown({ key: 'Delete' });
+checkSame(1, lockHost.children.length, 'and so does the Delete key');
+mentions(toastText(), 'locked', 'with its own sentence, from its own listener');
+
+// The refusal must be about the lock and not about deleting, or Delete stops working.
+doomed.dataset.locked = '0';
+clearToast();
+deleteSelected();
+checkSame(0, lockHost.children.length, 'an unlocked block still deletes');
+checkSame('', toastText(), 'and says nothing about locks');
+
+// Deleting a section deletes what is inside it, so a lock on a child is worth nothing
+// if the section over it can go. This is the route that needed no unlocking at all.
+lockHost.children.length = 0;
+const holder = el('div', 'editable-block section-block');
+holder.dataset.type = 'section';
+holder.offsetWidth = 600; holder.offsetHeight = 400;
+lockHost.appendChild(holder);
+const keptKid = lockedBlockIn(holder, true);
+keptKid.className = 'editable-block child-block';
+activeBlock = holder;
+clearToast();
+deleteSelected();
+checkSame(1, lockHost.children.length, 'an unlocked section holding a locked block is not deleted either');
+mentions(toastText(), '1 locked block', 'and the refusal counts what it is protecting');
+mentions(toastText(), 'Unlock it first', 'and says how to get past it');
+
+// Two of them, because "1 locked block" and "2 locked blocks" are different sentences
+// and only one of them can be the one that was written.
+const secondKid = lockedBlockIn(holder, true);
+secondKid.className = 'editable-block child-block';
+clearToast();
+deleteSelected();
+mentions(toastText(), '2 locked blocks', 'two of them are counted, and pluralised');
+
+// And an empty-handed section still goes, or locking one child would freeze the sign.
+keptKid.dataset.locked = '0';
+secondKid.dataset.locked = '0';
+clearToast();
+deleteSelected();
+checkSame(0, lockHost.children.length, 'a section holding nothing locked still deletes');
+
+// Doors 3 and 4: the inspector's four number boxes. Typing in these was the quietest
+// way past the lock — no drag, no handle, no confirm, and the block simply moved.
+lockHost.children.length = 0;
+const typedAt = lockedBlockIn(lockHost, true);
+activeBlock = typedAt;
+byId('insp-x').value = ''; byId('insp-y').value = '';
+byId('insp-w').value = ''; byId('insp-h').value = '';
+clearToast();
+applyPos('x', 500);
+checkSame('30,40 100x40', geom(typedAt), 'typing an X does not move a locked block');
+mentions(toastText(), 'cannot be moved', 'and the box says what it refused');
+checkSame('30', String(byId('insp-x').value),
+          'and the box is put back to where the block actually is, not left showing 500');
+
+clearToast();
+applyDim('w', 480);
+checkSame('30,40 100x40', geom(typedAt), 'nor does typing a W resize it');
+mentions(toastText(), 'cannot be resized', 'with the verb that was actually attempted');
+checkSame('100', String(byId('insp-w').value), 'and that box is put back too');
+
+// Unlocked, the same two boxes must still work — this is the ordinary path.
+typedAt.dataset.locked = '0';
+applyPos('x', 120);
+checkSame(120, parseFloat(typedAt.getAttribute('data-x')), 'an unlocked block still moves by typing');
+
+// Door 5: Align, on one block, which aligns to its parent's edge.
+lockHost.children.length = 0;
+const solo = lockedBlockIn(lockHost, true);
+activeBlock = solo;
+multiSel.length = 0;
+clearToast();
+alignBlocks('left');
+checkSame('30,40 100x40', geom(solo), 'Align does not move a locked block on its own');
+mentions(toastText(), 'locked', 'and says so');
+
+// Align across a selection: the locked one stays, the others go — and the group's
+// bounds still include the locked one, because its edge is what somebody is lining up
+// against.
+//
+// The direction matters, and the first version of this check got it wrong: a locked
+// block sitting at the left edge is not moved by a left-align *either way*, so the
+// check passed with the guard deleted. Centring is the direction that moves both, and
+// it also distinguishes the two ways of being wrong — with the locked block in the
+// bounds the free one lands on 115, and with it dropped from them, on 30.
+const freeOne = lockedBlockIn(lockHost, false);
+solo.setAttribute('data-x', 200);
+freeOne.setAttribute('data-x', 30);
+freeOne.setAttribute('data-y', 40);
+activeBlock = null;
+multiSel.length = 0;
+multiSel.push(solo, freeOne);
+clearToast();
+alignBlocks('center-h');
+checkSame('200,40 100x40', geom(solo), 'in a selection, the locked block is left where it is');
+checkSame(115, parseFloat(freeOne.getAttribute('data-x')),
+          'the unlocked one centres on bounds that still include the locked block');
+mentions(toastText(), '1 locked block was left', 'and the count of what stayed is said out loud');
+
+// Every block in the selection locked: nothing moves, and the sentence is about the
+// selection rather than "that block", which would read as the wrong one being selected.
+freeOne.dataset.locked = '1';
+freeOne.setAttribute('data-x', 30);
+clearToast();
+alignBlocks('right');
+checkSame(30, parseFloat(freeOne.getAttribute('data-x')), 'with every one locked, nothing moves');
+mentions(toastText(), 'All 2 selected blocks are locked', 'and the sentence is about the selection');
+
+// Door 6: Align to Parent, a separate row of buttons and a separate function — each
+// block goes to its own parent's edge, so here the locked ones simply drop out.
+multiSel.length = 0;
+freeOne.dataset.locked = '0';
+freeOne.setAttribute('data-x', 200);
+multiSel.push(solo, freeOne);
+clearToast();
+alignToParent('left');
+checkSame('200,40 100x40', geom(solo), 'Align to Parent leaves the locked block alone');
+checkSame(0, parseFloat(freeOne.getAttribute('data-x')), 'and takes the unlocked one to the edge');
+mentions(toastText(), 'locked', 'saying what it skipped');
+
+// The layer buttons are the third dimension of the same verb. The renumbering they do
+// still touches locked siblings, and that is deliberate: it preserves every block's
+// order relative to every other, so nothing a locked block covers changes.
+multiSel.length = 0;
+const layerLock = layerGroup(3);
+layerLock.children[0].dataset.locked = '1';
+activeBlock = layerLock.children[0];
+clearToast();
+sendToBack();
+checkSame('a1 b1 c1', layers(layerLock), 'a locked block is not moved to another layer');
+mentions(toastText(), 'locked', 'and that refusal has a sentence too');
+activeBlock = layerLock.children[2];
+sendToBack();
+checkSame('a2 b3 c1', layers(layerLock),
+          'but an unlocked block still moves, renumbering the locked sibling around it');
+
+// Unlocking is the way out of all of the above, so it can never be refused by them.
+activeBlock = solo;
+multiSel.length = 0;
+toggleLock(false);
+checkSame('0', String(solo.dataset.locked), 'and unlocking a locked block is never refused');
+
+lockHost.children.length = 0;
+activeBlock = null;
+clearToast();
+
+// ============================================================
 section('A hidden section says it is hidden, and can be brought back');
 // ============================================================
 
@@ -950,7 +1148,7 @@ check(/function blockContent\(block\)[\s\S]{0,400}?inner\.innerText/.test(php),
 // ============================================================
 // The expected total, for the same reason the other two suites carry one:
 // without it, deleting half this file still reports a clean run.
-const expected = 142;
+const expected = 175;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

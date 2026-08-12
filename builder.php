@@ -1028,8 +1028,12 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     <div class="insp-section">
         <label>
             <input type="checkbox" id="lock-toggle" onchange="toggleLock(this.checked)">
-            Lock this block (prevent accidental moves)
+            Lock this block (no moving, resizing or deleting)
         </label>
+        <div style="font-size:11px;color:#7f8c8d;margin-top:4px;">
+            A locked section also refuses new blocks, and cannot be deleted while
+            anything locked is inside it.
+        </div>
     </div>
 
     <!-- Delete -->
@@ -1912,10 +1916,7 @@ function showInspector(block) {
     var isSection = type === 'section';
 
     insp.style.display = 'flex';
-    document.getElementById('insp-x').value = Math.round(parseFloat(block.getAttribute('data-x')) || 0);
-    document.getElementById('insp-y').value = Math.round(parseFloat(block.getAttribute('data-y')) || 0);
-    document.getElementById('insp-w').value = Math.round(block.offsetWidth);
-    document.getElementById('insp-h').value = Math.round(block.offsetHeight);
+    showGeometry(block);
     document.getElementById('insp-title').textContent =
         isSection ? 'Section' :
         subtype !== 'free' ? (TYPE_LABELS[subtype]||subtype) :
@@ -2109,13 +2110,44 @@ function moveBlock(block, nx, ny) {
     block.setAttribute('data-y', ny);
 }
 
+/**
+ * Which of a selection may actually be moved, having said what was not.
+ *
+ * A locked block in a selection of five should leave the other four aligning —
+ * that is what somebody pressing the button means. But doing less than was asked
+ * without a word is #21 in another costume, so the count is part of the answer.
+ * Returns the ones to move; says the sentence itself.
+ */
+function movableTargets(targets, attempt) {
+    var free = targets.filter(function (b) { return !isLockedBlock(b); });
+    if (free.length === targets.length) { return free; }
+    if (free.length === 0) {
+        if (targets.length === 1) { refuseIfLocked(targets[0], attempt); }
+        else {
+            showToast('All ' + targets.length + ' selected blocks are locked, so nothing '
+                    + attempt + '. Unlock one first if you meant to change it.', true);
+        }
+        return free;
+    }
+    var held = targets.length - free.length;
+    showToast(held + (held === 1 ? ' locked block was' : ' locked blocks were')
+            + ' left where ' + (held === 1 ? 'it is' : 'they are')
+            + '; the other ' + free.length + ' ' + attempt + '.', true);
+    return free;
+}
+
 function alignBlocks(direction) {
     var targets = multiSel.length > 0 ? multiSel.slice() : (activeBlock ? [activeBlock] : []);
     if (targets.length === 0) return;
 
+    // The branch below is on the size of the *selection*, not of what may move: two
+    // blocks with one locked still means "align these two to each other", and
+    // filtering first would silently turn it into "align the free one to its parent",
+    // which lands it somewhere nobody asked for.
     if (targets.length === 1) {
         // Single element: align to its parent container
         var block = targets[0];
+        if (refuseIfLocked(block, 'moved')) return;
         var pc = _parentContainer(block);
         var x  = parseFloat(block.getAttribute('data-x')) || 0;
         var y  = parseFloat(block.getAttribute('data-y')) || 0;
@@ -2130,6 +2162,13 @@ function alignBlocks(direction) {
         moveBlock(block, x, y);
     } else {
         // Multi-select: align relative to each other (scope already enforced at selection time)
+        //
+        // The bounds are measured over every selected block, locked ones included: a
+        // locked block's edge is exactly what somebody lines the others up against, and
+        // leaving it out of the maths would align the group to a rectangle that is not
+        // the one on the screen. It is only the *moving* that the lock stops.
+        var movable = movableTargets(targets, 'moved');
+        if (movable.length === 0) return;
         var bounds = targets.map(function(b) {
             return {
                 el: b,
@@ -2146,6 +2185,7 @@ function alignBlocks(direction) {
         var ctrX = minX + (maxR - minX) / 2;
         var ctrY = minY + (maxB - minY) / 2;
         bounds.forEach(function(b) {
+            if (movable.indexOf(b.el) < 0) { return; }
             var nx = b.x, ny = b.y;
             if      (direction === 'left')     nx = minX;
             else if (direction === 'right')    nx = maxR - b.w;
@@ -2243,6 +2283,13 @@ function _layerIndex() {
  */
 function _moveInLayerOrder(to) {
     if (!activeBlock) return;
+    // Which layer a block paints on is where it sits in the third dimension, so a lock
+    // stops it for the same reason it stops the other two. Locked *siblings* are still
+    // renumbered by the loop below, and that is not the same thing: renumbering keeps
+    // every block's order relative to every other, so nothing a locked block covers or
+    // is covered by changes unless the moving block crosses it — which is unavoidable
+    // if layering is allowed at all.
+    if (refuseIfLocked(activeBlock, 'moved to another layer')) return;
     var ordered = _stackingGroup();
     var from    = ordered.indexOf(activeBlock);
     if (from < 0) return;   // selection is not an .editable-block — nothing to order
@@ -2410,6 +2457,68 @@ function toggleHidden(hidden) {
     commitUndoStep();
 }
 
+/**
+ * Whether a lock stands in the way of what somebody just pressed.
+ *
+ * Lock was enforced at the two seams a mouse goes through — the mousedown that
+ * starts a drag, and interact.js's own move and resize handlers — and nowhere
+ * else. Every other way to change a block ignored it: the Delete button, the
+ * Delete key, the inspector's X/Y/W/H boxes, and both rows of Align buttons.
+ * Six doors onto the same three verbs the lock icon promises to prevent, and
+ * only the mouse ones asked. A predicate all of them share is the fix; six
+ * copies of the same `=== '1'` is how five of them came to be missing it.
+ *
+ * `attempt` completes the sentence "so it cannot be ___", so it is a past
+ * participle — 'deleted', 'moved', 'resized' — and the block says whether it is
+ * a section, because "that block is locked" pointing at a whole section reads
+ * like the wrong thing was selected.
+ */
+function isLockedBlock(el) {
+    return !!(el && el.dataset && el.dataset.locked === '1');
+}
+
+function refuseIfLocked(el, attempt) {
+    if (!isLockedBlock(el)) { return false; }
+    showToast('That ' + (el.dataset.type === 'section' ? 'section' : 'block')
+            + ' is locked, so it cannot be ' + attempt
+            + '. Unlock it first if you meant to change it.', true);
+    return true;
+}
+
+/**
+ * How many locked blocks are inside this one. Deleting a section deletes
+ * everything in it, so a lock on a child is worth nothing if its section can be
+ * removed over the top of it — the block is just as gone, and by a route nobody
+ * had to unlock.
+ */
+function lockedInside(el) {
+    if (!el || !el.querySelectorAll) { return 0; }
+    // Through isLockedBlock rather than a `[data-locked="1"]` selector, so this and
+    // every other door read the lock the same way. An attribute selector matches the
+    // stored string; the rest of this file asks dataset. They agree today, and a
+    // reader that agrees only by coincidence is the shape half of §4 is about.
+    return Array.from(el.querySelectorAll('.editable-block')).filter(isLockedBlock).length;
+}
+
+/**
+ * The one question both delete doors ask, before either of them says "are you
+ * sure?" — a confirm answered Yes and then quietly ignored teaches that the
+ * button is broken rather than that the block is locked.
+ */
+function refuseDelete(block) {
+    if (refuseIfLocked(block, 'deleted')) { return true; }
+    var held = lockedInside(block);
+    if (held > 0) {
+        showToast('This section holds ' + held + ' locked '
+                + (held === 1 ? 'block' : 'blocks')
+                + ', and deleting the section would delete '
+                + (held === 1 ? 'it' : 'them') + ' too. '
+                + 'Unlock ' + (held === 1 ? 'it' : 'them') + ' first if you meant to remove the section.', true);
+        return true;
+    }
+    return false;
+}
+
 function toggleLock(locked) {
     if (!activeBlock) return;
     activeBlock.dataset.locked = locked ? '1' : '0';
@@ -2542,6 +2651,7 @@ function handleBuilderKeydown(e) {
     if (e.key === 'Delete' && !READ_ONLY) {
         if (keyboardIsInAField()) { return; }
         if (activeBlock) {
+            if (refuseDelete(activeBlock)) { return; }
             var msg = activeBlock.dataset.type === 'section'
                 ? 'Delete this section and ALL blocks inside it?'
                 : 'Delete this block?';
@@ -2901,6 +3011,7 @@ function linkAsset(assetId) {
 function deleteSelected() {
     if (READ_ONLY) return;
     if (activeBlock) {
+        if (refuseDelete(activeBlock)) return;
         if (activeBlock.dataset.type === 'section') {
             if (!confirm('Delete this section and ALL blocks inside it?')) return;
         }
@@ -3846,8 +3957,26 @@ function _parentBounds() {
     return { w: p.offsetWidth, h: p.offsetHeight };
 }
 
+/**
+ * What the four geometry boxes say about a block.
+ *
+ * One place, because a refusal has to put them back: the number somebody typed
+ * stays in the box otherwise, claiming a size the block does not have, and the
+ * next publish reads the block rather than the box — so the disagreement is
+ * silent and the box is the one that looks right.
+ */
+function showGeometry(block) {
+    var x = document.getElementById('insp-x');
+    if (!x || !block) { return; }        // read-only page: there are no boxes
+    x.value = Math.round(parseFloat(block.getAttribute('data-x')) || 0);
+    document.getElementById('insp-y').value = Math.round(parseFloat(block.getAttribute('data-y')) || 0);
+    document.getElementById('insp-w').value = Math.round(block.offsetWidth);
+    document.getElementById('insp-h').value = Math.round(block.offsetHeight);
+}
+
 function applyDim(which, val) {
     if (!activeBlock) return;
+    if (refuseIfLocked(activeBlock, 'resized')) { showGeometry(activeBlock); return; }
     val = parseInt(val) || 0;
     var pb  = _parentBounds();
     // The same floor a drag stops at, so typing 20 into W and dragging the edge
@@ -3868,6 +3997,7 @@ function applyDim(which, val) {
 
 function applyPos(which, val) {
     if (!activeBlock) return;
+    if (refuseIfLocked(activeBlock, 'moved')) { showGeometry(activeBlock); return; }
     val = parseInt(val) || 0;
     var pb  = _parentBounds();
     var bw  = activeBlock.offsetWidth;
@@ -4500,6 +4630,10 @@ function applyTextAlign(align) {
 // For root-level blocks and sections, the canvas is the parent.
 function alignToParent(direction) {
     var targets = multiSel.length > 0 ? multiSel : (activeBlock ? [activeBlock] : []);
+    if (targets.length === 0) return;
+    // Each block goes to its own parent's edge, so unlike alignBlocks() above there is
+    // no group geometry to preserve — the locked ones simply drop out of the list.
+    targets = movableTargets(targets, 'moved');
     if (targets.length === 0) return;
     targets.forEach(function(block) {
         var pc = _parentContainer(block);

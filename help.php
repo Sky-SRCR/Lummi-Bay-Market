@@ -480,17 +480,31 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 <div class="help-section" id="locking">
     <h2>Locking Blocks</h2>
     <a href="#" class="back-top">↑ Top</a>
-    <p>Any block can be locked to prevent accidental moves or resizes during editing.</p>
+    <p>Any block can be locked to prevent accidental changes during editing.</p>
     <ol class="steps">
         <li><span>Click the block to select it.</span></li>
         <li><span>In the Inspector, tick <strong>Lock this block</strong>.</span></li>
-        <li><span>A 🔒 icon appears on the block. It can no longer be dragged or resized.</span></li>
+        <li><span>A 🔒 icon appears on the block.</span></li>
         <li><span>To unlock, select the block and un-tick the checkbox.</span></li>
     </ol>
+    <p>A locked block cannot be <strong>moved</strong>, <strong>resized</strong> or
+       <strong>deleted</strong> — by dragging it, by its resize handles, by typing in the
+       Inspector's X / Y / W / H boxes, by the Align buttons, by the Delete Block button, or
+       by the Delete key. Each of those says the block is locked rather than doing nothing
+       visible. The layer buttons refuse it too, since which layer a block paints on is
+       where it sits in front of or behind the others.</p>
+    <p>Two things a lock does <em>not</em> stop, because they change what a block says rather
+       than where it is: editing its text or price, and changing its font or colour. And
+       anyone who can lock a block can unlock it — a lock guards against an accident, not
+       against a colleague.</p>
     <div class="tip"><strong>Tip:</strong> Lock section backgrounds and header blocks once they are positioned correctly, so everyday users editing prices won't accidentally move them.</div>
     <h3>Locking a section</h3>
     <p>A locked <strong>section</strong> also refuses <em>new blocks</em>. Clicking it does not target it, and the block buttons say so rather than dropping something in. That is the point of locking a section: it has been positioned and filled, and it should stay as it is.</p>
     <p>To add to a locked section, select it, un-tick <strong>Lock this block</strong>, add what you need, and tick it again. Blocks already inside a locked section are unaffected — their own lock decides whether each one can be moved, so prices inside a locked section stay editable.</p>
+    <p>Deleting a section deletes everything inside it, so a section holding any locked block
+       will not be deleted either, however many are in there and whether or not the section
+       itself is locked. The refusal says how many locked blocks it found. Unlock those first
+       if you really do mean to remove the section and its contents.</p>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
