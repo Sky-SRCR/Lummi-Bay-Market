@@ -1,0 +1,224 @@
+# The browser pass — lane 0, in order
+
+Everything in this repo is verified by something except what a browser does. Six node
+suites run `builder.php`'s JavaScript against a stubbed DOM, and a stub cannot see a CSS
+rule that does not apply, a button that overlaps another at 1080p, or `interact.js` —
+which is un-run by anything at all (§4al). Four commits of `builder.php` have never been
+rendered: the six inspector controls (#42), the split opening reads, the root-content
+`db_id` payload, and Undo. This is the list for closing that.
+
+**Do it in `lbm-test/`.** It exists for this. As of 2026-08-12 it is isolated against
+`silverad_lummi_market_drive_thru_2` and the multi-display build runs there.
+
+**Order matters.** The cheap observations come first, the irreversible one (Publish) comes
+after the things that would explain a bad publish. Undo is deliberately before Publish:
+it is the only feature here whose purpose is to change the canvas out from under you, and
+a round trip that is byte-identical in a stub can still be wrong on screen.
+
+You need **two accounts** — one admin, one non-admin — and ideally **two browsers** (or
+one plus a private window). Steps G and I cannot be done with a single session.
+
+---
+
+## A. Before anything else: is this the rehearsal or the live sign?
+
+**Admin Panel → Settings → This Server.**
+
+| Row | Must read |
+|---|---|
+| This install | `lbm-test` |
+| Database | `silverad_lummi_market_drive_thru_2` |
+
+If Database says `silverad_lummi_market_drive_thru` with no suffix, **stop** — the
+credentials file is missing and you are about to rehearse on the live sign
+(`DEPLOY-SKIP.md` §E). This is the whole isolation guarantee, and the sign-in that shows
+it to you is the same one that converges schema on whatever database it found.
+
+While on that card, read the three time-zone rows and the upload ceiling:
+
+- **Store time zone** — `America/Los_Angeles` unless somebody changed it.
+- **PHP time zone** — expect `America/Chicago`. The host sets it; nothing in this repo does.
+- **Database time zone** — must be **`+00:00`**. `db_connect.php` asks every connection
+  for it and the request is *suppressed rather than fatal*, so a host that refused it says
+  so **here and nowhere else**. Anything but a zero offset means the app is back to two
+  clocks and creation dates read hours out.
+- **Largest file that can be uploaded** — note the number for step F. 50 MB is the app's
+  own ceiling; the host may be lower and this row prints whichever wins.
+
+Then **Settings → Database Structure**: every row green. A red `canvas_elements.display_id`
+reads *"Nothing is scoped to a Display. Do not publish."* and means exactly that — go no
+further.
+
+---
+
+## B. The Builder at the size a sign actually is
+
+Open a Display in the Builder. Set the browser to **1920×1080** if you can, or zoom to
+fit and note it.
+
+- [ ] No control overlaps another in the top bar. It wraps (`flex-wrap`) — check it wraps
+      *tidily* rather than hiding a button behind another.
+- [ ] The canvas is the Display's own dimensions, not a hardcoded 1920×1080.
+- [ ] Every block on the stored layout is drawn, in roughly the positions the old sign had.
+- [ ] Nothing is drawn off-canvas or at 0,0 in a pile — that shape means a field a rebuild
+      forgot to carry.
+- [ ] Zoom in and out. Blocks scale with the canvas and stay where they belong.
+
+## C. `interact.js` — the one thing nothing has ever run
+
+- [ ] **Drag a block.** It follows the pointer and stays where dropped.
+- [ ] **Resize a block** from a corner handle. It resizes, and does not snap back.
+- [ ] Drag a block to a canvas edge. It stops at the boundary rather than vanishing.
+- [ ] Resize a block down to nothing. There is a floor; it should refuse to go below it
+      rather than reaching zero or inverting.
+- [ ] Drag a block *inside a section*. It stays parented to the section — a section's
+      children move with it.
+- [ ] Move the section itself and confirm its children follow.
+
+If drag or resize does nothing at all, `interact.js` did not load — check the browser
+console for a 404 before assuming a logic fault.
+
+## D. The inspector's six controls (#42)
+
+Select a block. For each control, change it and confirm the canvas changes **and** the
+value survives a page reload (before publishing — a reload re-reads the server's copy, so
+anything that vanishes was never saved).
+
+- [ ] Text align
+- [ ] Z-index / layering — send one block behind another and confirm the paint order
+- [ ] Hide / unhide — a hidden block should be visibly marked in the Builder, and absent
+      from the Viewer later
+- [ ] The slide fields
+- [ ] The marquee
+- [ ] Colour pickers — set a colour, reload, confirm it came back **as the colour you
+      chose**. This is the one with history: a colour the CSSOM silently discarded was
+      published as black.
+
+## E. Undo — before you publish anything
+
+Default depth is **5 steps** (Settings, capped at 20). Undo works only *before* a publish
+and only in the tab that made the changes (ADR-0010).
+
+- [ ] Make 3 distinct changes — move a block, retype some text, change a colour. Undo
+      three times. Each step reverses **one** change, newest first, and the canvas on
+      screen matches what it looked like at that point.
+- [ ] Undo past the beginning. The button should become unavailable rather than emptying
+      the canvas.
+- [ ] Make 6+ changes and undo repeatedly — it stops at 5 and does not misbehave at the
+      boundary.
+- [ ] Undo a **delete**. The block comes back with its text, size, colour and parent
+      section intact, not as a bare box.
+- [ ] Undo while a text field has focus — it should not fight the field's own undo
+      (`keyboardIsInAField()` guards this).
+- [ ] Reload the page. The undo stack is empty and the button is unavailable. That is
+      correct: the stack lives in the tab.
+
+## F. Uploads
+
+Ceiling from step A (50 MB app maximum).
+
+- [ ] Upload a small image. Progress shows, then it appears in the Asset Library and can
+      be placed on the canvas.
+- [ ] Upload a file **over** the ceiling. It must be refused with a sentence naming the
+      limit — not a silent failure and not a raw 500.
+- [ ] Upload a non-image (a `.txt` renamed, say). Refused, with a reason.
+- [ ] Cancel a large upload midway. The page recovers and stays usable.
+
+## G. The edit lock — needs a second browser
+
+The lock lapses after **15 minutes** of no real interaction (`IDLE_LAPSE_SECONDS = 900`).
+
+- [ ] Open a Display as account 1. In browser 2, sign in as account 2 and open the same
+      Display. Account 2 gets a **read-only** Builder naming who holds it and *since when*.
+- [ ] **Read that "since" time carefully — see step J.** It is the store's clock, not yours.
+- [ ] Account 1 releases the lock (or closes the page). Account 2 reloads and can now edit.
+- [ ] While account 1 holds it, have an admin **revoke account 1's grant** to that Display.
+      Account 1's page should say their access was removed, in a sentence, and stop
+      offering Publish. This is one of the five terminal refusals — it never comes back,
+      and the wording tells them their work is still on screen to copy.
+- [ ] Have an admin **rename the screen name tag** while account 1 holds the lock. This one
+      is *not* terminal: account 1 keeps the lock and is asked to reload.
+- [ ] Have an admin **turn the Display off** while it is held. Terminal, with its own
+      sentence.
+
+## H. Publish, and the sign
+
+Only now, and only with step A's Database Structure green.
+
+- [ ] Press **Publish**. It reports success with a revision, and the Builder says who
+      published and when.
+- [ ] Open the Viewer for that Display in another tab:
+      `lbm-test/viewer.php?display=<tag>`. The layout matches the Builder.
+- [ ] A **hidden** block from step D is absent from the Viewer.
+- [ ] Change one block, publish again, and **leave the Viewer alone**. It must pick the
+      change up **within 30 seconds** without being touched.
+- [ ] Open the Viewer with a **wrong tag**. It renders a notice, never another sign's
+      layout, and never a blank screen (ADR-0003).
+- [ ] Open the Viewer with **no tag at all**. Same — a notice, even though only one
+      Display exists and the guess would have been right.
+- [ ] Turn the Display off in the admin panel and reload the Viewer. It reports the
+      Display is inactive rather than drawing an empty canvas.
+- [ ] Leave the Viewer running for a few minutes. No JavaScript error appears in the
+      console — on a TV a thrown exception is a blank sign, not a stack trace anybody
+      reads.
+
+## I. The read-only Builder, from an account with no sign
+
+- [ ] Sign in as an account with **no Display assigned**. The Builder tells them no
+      display is assigned to them.
+- [ ] From that same account, confirm the inspector, align bar and modals are **not on the
+      page at all** (#3) — not merely disabled. View source and search for the inspector's
+      markup.
+- [ ] Try an upload from that account. Refused — the asset library and `uploads/` are one
+      pool behind every sign, so the refusal is the check, not the missing form.
+
+## J. #44's two live-only questions
+
+These are why the timezone work needed a browser at all.
+
+- [ ] **The "since" time in step G reads in the store's zone**, `America/Los_Angeles` by
+      default — **not yours and not the server's.** This is the easiest thing on this page
+      to misread as a bug:
+
+      If you are on Eastern time, a lock you took at 2:15pm your time should display as
+      **11:15am**. That is correct. Before #44 it displayed Central — 1:15pm. So the
+      number to check against is *Pacific*, not your wall clock.
+
+- [ ] **Settings → Store Time Zone.** Change it to something obviously different
+      (`America/New_York`), save, and confirm the "since" time in step G moves by the right
+      number of hours. Then set it back to `America/Los_Angeles`. A save must also
+      **redirect** — press F5 afterwards and it must not re-submit.
+- [ ] The picker offers region names only. If you can find `PST` or `+08:00` in it,
+      something is wrong: a fixed offset is not a timezone and is wrong for half the year.
+
+---
+
+## If something fails
+
+Capture, in this order:
+
+1. **The browser console** — for anything in B–F, a JS error is usually the whole answer.
+2. **The PHP error log**, around the timestamp. Note that a *schema* failure is logged
+   rather than thrown, so the visible error can be two steps downstream of the fault —
+   that is exactly how a missing `CREATE` privilege presented as
+   `Base table or view not found: displays`. Read the lines *before* the exception.
+3. **Settings → Database Structure**, if the failure is a query. A red row names the
+   missing column and what it costs.
+4. **Settings → This Server**, if the failure involves a time, an upload size, or a
+   cookie.
+
+A screenshot of the Builder at 1080p is worth more than a description for anything in
+section B.
+
+---
+
+## What this pass does not cover
+
+- **The live sign.** Passing here says the build runs on this host against a copy of the
+  data. Deploying is still the 22-step visit in
+  [`docs/roadmap-multi-display.md`](roadmap-multi-display.md) plus the rows in
+  `HANDOFF.md` §5.
+- **A database that lags the repo.** `_2` is a copy of live and converged on first
+  sign-in. A deploy against data that has drifted further is a different rehearsal.
+- **More than one real Screen.** Two TVs polling the same install at once is untested by
+  anything, here included.

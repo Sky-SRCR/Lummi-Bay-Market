@@ -39,7 +39,8 @@ of the system.
 > single-sign app: nothing in §6 has been deployed there, and deploying it is a
 > scripted 22-step visit — see §7. What the rehearsal has **not** yet done is a
 > browser pass over the Builder (work-lanes lane 0) — loading is not the same as
-> driving it.
+> driving it. The ordered list for that is
+> [`docs/browser-pass.md`](docs/browser-pass.md).
 
 ## 2. Git / branch
 

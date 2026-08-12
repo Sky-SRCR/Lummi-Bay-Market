@@ -46,6 +46,10 @@ paragraphs on would have been the anchor line and nothing else.
 
 ## Lane 0, and it is the only thing left
 
+**The ordered list is [`docs/browser-pass.md`](browser-pass.md)** — what to click, what should happen, and the
+real numbers (the lock lapses at 15 minutes, Undo defaults to 5 steps, the Viewer picks a
+publish up within 30 seconds). The rest of this section is why it has to be a browser.
+
 `https://www.srcresort.com/lbm-test/` exists precisely so this can happen without
 risking the live sign (`DEPLOY-SKIP.md` §E). Since the last deploy, `builder.php` has
 gained the six inspector controls (#42), the split opening reads, the root-content
