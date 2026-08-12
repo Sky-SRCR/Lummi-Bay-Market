@@ -766,7 +766,51 @@ check(/does not cover[\s\S]{0,200}background/i.test(php),
 // ============================================================
 // The expected total, for the same reason the other three suites carry one:
 // without it, deleting half this file still reports a clean run.
-const expected = 110;
+// ============================================================
+section('Undo takes a clipped-block warning back along with the size');
+// ============================================================
+// A section is overflow:hidden here and in viewer.php, so shrinking one past a block
+// inside it hides that block on the sign while the row lives on — the hazard ADR-0004
+// closed for the canvas and left open one container down. The Builder now says so.
+//
+// The badge is drawn, never stored, so a restored canvas has none until something
+// asks. If restoreCanvas() does not ask, an Undo that puts the size back leaves the
+// warning standing on a section that no longer hides anything, and the next real one
+// is read as the same stale badge nobody trusts.
+
+buildFixture();
+const clipSec   = must(canvas.querySelectorAll(':scope > .section-block')[0], 'section to clip in');
+const clipChild = priceBlock();     // 160 wide at x 24, well inside a 600-wide section
+checkSame(null, clipSec.querySelector(':scope > .clip-badge'),
+          'the fixture section starts out hiding nothing');
+checkSame(184, parseFloat(clipChild.getAttribute('data-x')) + clipChild.offsetWidth,
+          'and its price block ends at 184, so 150 is past it and 600 is not');
+
+const roomy = snapshotCanvas();
+handleResize({ target: clipSec, rect: { width: 150, height: 380 }, deltaRect: { left: 0, top: 0 } });
+check(clipSec.querySelector(':scope > .clip-badge') !== null,
+      'dragging the section in past the price block raises the badge');
+const tight = snapshotCanvas();
+
+// Undoing *out* of it. This one would pass on its own: restoreCanvas() builds fresh
+// nodes and a fresh node has no badge, so it says nothing about whether anything
+// asked. It is here for the width, and the next block is the one that bites.
+check(restoreCanvas(roomy), 'the roomier canvas restores');
+let clipRestored = must(canvas.querySelectorAll(':scope > .section-block')[0], 'restored section');
+checkSame(600, clipRestored.offsetWidth, 'the section is its old width again');
+checkSame(null, clipRestored.querySelector(':scope > .clip-badge'), 'with no badge on it');
+
+// Undoing *into* it, which is the half a rebuild cannot get right by accident. Every
+// node here is new and none of them carries a badge from before, so the warning is
+// either recomputed after the restore or it is silently gone — and a section that has
+// stopped mentioning the block it is hiding is worse than one that never did.
+check(restoreCanvas(tight), 'and the clipped canvas restores too');
+clipRestored = must(canvas.querySelectorAll(':scope > .section-block')[0], 'restored narrow section');
+checkSame(150, clipRestored.offsetWidth, 'at the narrow width it was snapshotted at');
+check(clipRestored.querySelector(':scope > .clip-badge') !== null,
+      'and it says again that it is hiding a block, having been rebuilt from nothing');
+
+const expected = 119;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

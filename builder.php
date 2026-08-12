@@ -324,6 +324,16 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     background:rgba(192,57,43,0.82); color:#fff; font-size:9px; font-weight:bold;
     text-align:center; padding:2px 0; pointer-events:none; letter-spacing:1px;
 }
+/* A section smaller than the blocks inside it. Bottom edge, so it clears the
+   section label and the HIDDEN badge; z-index above .section-label and below .rh,
+   so a selected section's bottom handles still draw over it. The count comes
+   first because a narrow section truncates the sentence, not the number. */
+.clip-badge {
+    position:absolute; bottom:0; left:0; right:0; z-index:6;
+    background:rgba(230,126,34,0.92); color:#fff; font-size:9px; font-weight:bold;
+    text-align:center; padding:2px 0; pointer-events:none; letter-spacing:1px;
+    white-space:nowrap; overflow:hidden;
+}
 /* ── Resize handles ── */
 .rh {
     position: absolute; width: 10px; height: 10px;
@@ -1315,6 +1325,11 @@ function loadLayout() {
 
             setupInteract();
 
+            // Before anybody touches anything: a layout can arrive already clipped,
+            // from a hand-edited row or from a section shrunk in an earlier session
+            // and published. Opening the Builder is the first chance to say so.
+            refreshClipWarnings();
+
             // The history starts here and not a moment earlier. Before this the
             // canvas is empty, and a baseline of "empty" would make the first Undo
             // clear the sign — which is exactly the kind of thing an undo button is
@@ -2071,6 +2086,112 @@ function applyHiddenLook(block) {
 }
 
 /**
+ * How many of a section's blocks the section is currently hiding by being smaller
+ * than they are.
+ *
+ * Measured in canvas pixels. `data-x`/`data-y` and `offsetWidth` are all layout
+ * measurements and none of them move with the zoom, which is the other half of
+ * invariant 26: a bound written in screen pixels would report a different count
+ * at 50% than at 200%.
+ *
+ * The bound is the section's *border* box rather than its content box, and that
+ * is what makes this agree with the drag. A child's `data-x` is measured from the
+ * padding box, 2px inside the border (`box-sizing:border-box` and a 2px border,
+ * see `*` and `.section-block`), while interact.js's restrictRect holds a child
+ * inside the border box — so a child dragged flush against the right edge sits
+ * past the content box and is not clipped. Comparing against the border box gives
+ * exactly the 2px of slack that ordinary use produces, so nothing is reported for
+ * a block somebody pushed against the wall on purpose.
+ */
+function clippedChildCount(section) {
+    var boxW = section.offsetWidth;
+    var boxH = section.offsetHeight;
+    var n    = 0;
+    section.querySelectorAll(':scope > .child-block').forEach(function(c) {
+        var x = parseFloat(c.getAttribute('data-x')) || 0;
+        var y = parseFloat(c.getAttribute('data-y')) || 0;
+        // Negative is defensive: restrictRect and applyPos both floor at 0, so it
+        // takes a hand-edited row to get here. It costs one comparison to survive.
+        if (x < 0 || y < 0 || x + c.offsetWidth > boxW || y + c.offsetHeight > boxH) { n++; }
+    });
+    return n;
+}
+
+/**
+ * Say so when a section is smaller than the blocks inside it.
+ *
+ * `.section-block` is `overflow: hidden` here *and* in `viewer.php`, so the
+ * Builder is already telling the truth: a child past the edge is invisible on the
+ * sign too. What it did not do is say so, and every other consequence is bad:
+ *
+ *   · The block is still in the layout and still goes out with the next publish.
+ *     collectElements() walks by class, not by visibility.
+ *   · It cannot be clicked back. Clipping takes it out of hit testing, and the
+ *     inspector's X/Y and Layer controls all act on the selected block — there is
+ *     no layers panel to reach an unselectable one from.
+ *   · So dragging one handle can retire a row of prices, with nothing on screen
+ *     changing except the row going away. That reads as a rendering fault rather
+ *     than as something you just did, and the way back is Undo or growing the
+ *     section again — neither of which occurs to somebody who thinks it broke.
+ *
+ * ADR-0004 froze canvas dimensions over exactly this hazard and then concluded
+ * that "neither the Builder nor the admin panel needs out-of-bounds warnings".
+ * A section is not the canvas: it resizes freely, by the most ordinary gesture in
+ * the editor. This is the warning that consequence said was unnecessary.
+ *
+ * Nothing is moved and nothing is repaired, on ADR-0004's own reasoning: it
+ * rejected auto-clamping because a tuned layout comes back as a pile, and Undo
+ * reaches five steps. A badge is recoverable; a rearranged layout is not.
+ *
+ * A badge rather than a toast on purpose. The risk is not missing it in the
+ * moment — it is publishing half an hour later having forgotten, and a toast is
+ * gone by then.
+ */
+function applyClipWarning(section) {
+    var n     = clippedChildCount(section);
+    var badge = section.querySelector(':scope > .clip-badge');
+    if (n === 0) {
+        if (badge) { badge.remove(); }
+        return;
+    }
+    if (!badge) {
+        badge = document.createElement('div');
+        badge.className = 'clip-badge';
+        section.appendChild(badge);
+    }
+    badge.textContent = '⚠ ' + n + ' CLIPPED — NOT ON THE SIGN';
+}
+
+/**
+ * The section a change to `block` could have started or stopped clipping in.
+ *
+ * A section clips its own children; a child block can grow past its section's
+ * edge, because handleResize applies BLOCK_MIN *after* restrictRect has had its
+ * say and applyDim clamps a width to the parent's without asking where the block
+ * starts. So both directions reach the same badge, from the same call.
+ */
+function refreshClipWarningFor(block) {
+    if (!block || !block.classList) { return; }
+    if (block.classList.contains('section-block')) {
+        applyClipWarning(block);
+    } else if (block.classList.contains('child-block')
+               && block.parentElement
+               && block.parentElement.classList
+               && block.parentElement.classList.contains('section-block')) {
+        applyClipWarning(block.parentElement);
+    }
+}
+
+/** Every section — for the paths that rebuild the canvas instead of resizing one. */
+function refreshClipWarnings() {
+    var canvas = document.getElementById('builder-canvas');
+    if (!canvas) { return; }
+    canvas.querySelectorAll(':scope > .section-block').forEach(function(s) {
+        applyClipWarning(s);
+    });
+}
+
+/**
  * Hide or show the selected block on the Screens. Nothing is written here: the
  * change rides out on the next publish, like everything else on this canvas.
  * The Work Area's own Show/Hide writes immediately and does not — the two are
@@ -2529,8 +2650,15 @@ function deleteSelected() {
         if (activeBlock.dataset.type === 'section') {
             if (!confirm('Delete this section and ALL blocks inside it?')) return;
         }
+        var wasIn = activeBlock.parentElement;
         activeBlock.remove();
         deselectAll();
+        // Deleting the clipped block is one of the ways somebody resolves this, and
+        // it is the one that leaves no other trace. refreshClipWarningFor() reads the
+        // block's own parent, which a removed node no longer has.
+        if (wasIn && wasIn.classList && wasIn.classList.contains('section-block')) {
+            applyClipWarning(wasIn);
+        }
         commitUndoStep();
     }
 }
@@ -2772,6 +2900,10 @@ function restoreCanvas(json) {
         node.dataset.manualPath = el.snap_manual_path || '';
     });
     undoRestoring = false;
+
+    // The badge is drawn, never stored, so a restored canvas has none until asked.
+    // An Undo that puts a section's size back must take the badge back with it.
+    refreshClipWarnings();
 
     // No setupInteract() here, and that is not an omission. interact.js binds by
     // CSS selector, not by node: '.section-block' and '.child-block' were
@@ -3441,6 +3573,9 @@ function handleResize(event) {
     lbl.style.display = 'block';
     document.getElementById('insp-w').value = w;
     document.getElementById('insp-h').value = h;
+    // Live, not on release: watching the badge appear as the edge crosses a block
+    // is the whole difference between "I did that" and "it broke".
+    refreshClipWarningFor(t);
 }
 
 function hideResizeLabel() {
@@ -3473,6 +3608,7 @@ function applyDim(which, val) {
         activeBlock.style.height = val + 'px';
         document.getElementById('insp-h').value = val;
     }
+    refreshClipWarningFor(activeBlock);
     commitUndoStep();
 }
 
@@ -3493,6 +3629,9 @@ function applyPos(which, val) {
     activeBlock.setAttribute('data-y', y);
     document.getElementById('insp-x').value = Math.round(x);
     document.getElementById('insp-y').value = Math.round(y);
+    // Clamped above, so this cannot start clipping — but it is one of the two ways
+    // to end it, and a badge that outlives its reason is worse than none.
+    refreshClipWarningFor(activeBlock);
     commitUndoStep();
 }
 

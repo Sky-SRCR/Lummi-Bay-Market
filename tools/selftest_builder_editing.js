@@ -377,6 +377,160 @@ checkSame('40px', typed.style.width, 'a non-section keeps its own floor when typ
 activeBlock = null;
 
 // ============================================================
+section('A section smaller than its blocks says so');
+// ============================================================
+
+// ADR-0004 froze the canvas so nothing could be orphaned outside it, and then said
+// the Builder needed no out-of-bounds warning. A section is not the canvas: it
+// resizes by dragging a handle, it is overflow:hidden here and in viewer.php, and a
+// child past its edge still publishes and can no longer be clicked. See the
+// correction in that ADR.
+
+function clipBadge(node) { return node.querySelector(':scope > .clip-badge'); }
+
+/** A section with one child block, both measured in canvas pixels. */
+function sectionWithChild(secW, secH, cx, cy, cw, ch) {
+    const s = el('div', 'editable-block section-block');
+    s.offsetWidth = secW; s.offsetHeight = secH;
+    s.appendChild(childAt(cx, cy, cw, ch));
+    return s;
+}
+
+function childAt(cx, cy, cw, ch) {
+    const c = el('div', 'editable-block child-block');
+    c.offsetWidth = cw; c.offsetHeight = ch;
+    c.setAttribute('data-x', cx);
+    c.setAttribute('data-y', cy);
+    return c;
+}
+
+let host = sectionWithChild(600, 400, 10, 10, 100, 50);
+checkSame(0, clippedChildCount(host), 'a block inside its section is not clipped');
+applyClipWarning(host);
+checkSame(null, clipBadge(host), 'so the section carries no badge');
+
+// The bound is the border box, which is the slack a flush drag needs: restrictRect
+// holds a child inside the border box while data-x is measured from the padding box.
+// Get this wrong and every layout in the shop reports two false positives on open.
+host = sectionWithChild(600, 400, 500, 350, 100, 50);
+checkSame(0, clippedChildCount(host), 'nor is one pushed flush into the far corner');
+
+host = sectionWithChild(600, 400, 501, 10, 100, 50);
+checkSame(1, clippedChildCount(host), 'one pixel further out and it is clipped');
+applyClipWarning(host);
+check(clipBadge(host) !== null, 'and the section says so');
+checkSame('⚠ 1 CLIPPED — NOT ON THE SIGN', clipBadge(host) && clipBadge(host).textContent,
+          'with the count first, so a narrow section truncates the sentence and not the number');
+
+// The badge is itself a child of the section. Counting it would add one every time
+// the warning was refreshed, which is every pointer event of a resize.
+applyClipWarning(host);
+checkSame(1, host.querySelectorAll(':scope > .clip-badge').length,
+          'refreshing does not stack badges');
+checkSame('⚠ 1 CLIPPED — NOT ON THE SIGN', clipBadge(host) && clipBadge(host).textContent,
+          'nor count the badge it added last time');
+
+// A count of blocks, not of edges.
+host = sectionWithChild(600, 400, 700, 700, 100, 50);
+checkSame(1, clippedChildCount(host), 'a block past both edges counts once, not twice');
+host.appendChild(childAt(10, 900, 100, 50));
+checkSame(2, clippedChildCount(host), 'and a second clipped block makes it two');
+applyClipWarning(host);
+checkSame('⚠ 2 CLIPPED — NOT ON THE SIGN', clipBadge(host) && clipBadge(host).textContent,
+          'which the badge pluralises');
+
+// A badge that outlives its cause teaches people to ignore the next one.
+host.offsetWidth = 2000; host.offsetHeight = 2000;
+applyClipWarning(host);
+checkSame(null, clipBadge(host), 'growing the section back takes the badge away again');
+
+// Only the section's own children. A root block answers to the canvas, which
+// ADR-0004 froze precisely so it could never be orphaned.
+host = sectionWithChild(600, 400, 10, 10, 100, 50);
+const strayRoot = el('div', 'editable-block root-block');
+strayRoot.offsetWidth = 100; strayRoot.offsetHeight = 50;
+strayRoot.setAttribute('data-x', 5000); strayRoot.setAttribute('data-y', 5000);
+host.appendChild(strayRoot);
+checkSame(0, clippedChildCount(host), 'a root block is not a child block and is not counted');
+
+// Reached from either end: a child block can grow past the edge too, because
+// handleResize applies BLOCK_MIN after restrictRect has had its say.
+host = sectionWithChild(600, 400, 501, 10, 100, 50);
+refreshClipWarningFor(host.children[0]);
+check(clipBadge(host) !== null, 'a change to a child block refreshes the section it is in');
+host = sectionWithChild(600, 400, 501, 10, 100, 50);
+refreshClipWarningFor(host);
+check(clipBadge(host) !== null, 'and a change to the section refreshes itself');
+
+let threwClip = false;
+try {
+    refreshClipWarningFor(null);
+    refreshClipWarningFor(el('div', 'editable-block root-block'));
+} catch (e) { threwClip = true; }
+checkSame(false, threwClip, 'and a root block, or nothing at all, is not an error');
+
+// The wiring, not the function. offsetWidth reads back off style here so the page's
+// own resize path feeds the measurement — without this the drag proves nothing.
+const dragged = resizable('section-block');
+Object.defineProperty(dragged, 'offsetWidth',  { get() { return parseFloat(dragged.style.width)  || 600; } });
+Object.defineProperty(dragged, 'offsetHeight', { get() { return parseFloat(dragged.style.height) || 400; } });
+dragged.appendChild(childAt(450, 10, 100, 50));
+checkSame(null, clipBadge(dragged), 'a section wide enough for its block starts clean');
+handleResize(drag(dragged, 500, 400));
+check(clipBadge(dragged) !== null,
+      'dragging its edge in past the block raises the badge, with nothing else called');
+handleResize(drag(dragged, 600, 400));
+checkSame(null, clipBadge(dragged), 'and dragging the edge back out takes it away');
+
+// A block only *partly* over the edge is still clickable — it is the fully hidden
+// one that drops out of hit testing — so typing it back inside is a real way out of
+// this, and the only hook that ends a clip without changing a section's size.
+host = sectionWithChild(600, 400, 550, 10, 100, 50);   // 50px of it past the right edge
+applyClipWarning(host);
+check(clipBadge(host) !== null, 'a block hanging half over the edge is clipped too');
+activeBlock = host.children[0];
+applyPos('x', 100);
+checkSame(null, clipBadge(host), 'and typing it back inside takes the badge off');
+activeBlock = null;
+
+// Typing a width in has to raise the same badge dragging to one does. The two
+// controls already agree about how small a section may get; if only one of them
+// mentions what that costs, the quiet one is the way people will meet this.
+const typedSec = resizable('section-block');
+Object.defineProperty(typedSec, 'offsetWidth',  { get() { return parseFloat(typedSec.style.width)  || 600; } });
+Object.defineProperty(typedSec, 'offsetHeight', { get() { return parseFloat(typedSec.style.height) || 400; } });
+parent.appendChild(typedSec);
+typedSec.appendChild(childAt(450, 10, 100, 50));
+activeBlock = typedSec;
+checkSame(null, clipBadge(typedSec), 'a section wide enough for its block has no badge to start');
+applyDim('w', 150);
+check(clipBadge(typedSec) !== null, 'typing 150 into W raises the badge, as dragging to it does');
+applyDim('w', 600);
+checkSame(null, clipBadge(typedSec), 'and typing the width back out takes it away again');
+activeBlock = null;
+
+// Deleting the clipped block is one of the two ways out of this, and the only one
+// that leaves no other trace on the canvas — so the badge has to notice a removal it
+// cannot see from the removed node, which no longer has a parent to ask.
+host = sectionWithChild(600, 400, 501, 10, 100, 50);
+applyClipWarning(host);
+check(clipBadge(host) !== null, 'a section hiding a block says so before the delete');
+activeBlock = host.children[0];
+activeBlock.dataset.type = 'text';
+deleteSelected();
+checkSame(null, clipBadge(host), 'and stops saying it once that block is deleted');
+activeBlock = null;
+
+// The third hook, held in the source rather than run. No suite drives loadLayout()
+// over a real DOM tree: the one that does drive it stubs a page flat enough to answer
+// "did anything throw" and discards appended children, and the two suites with a real
+// tree never call it. Opening a layout that was already clipped when it was published
+// is the likeliest way anybody meets this badge at all, so the call is held by a check
+// that cannot execute it rather than by nothing.
+check(/setupInteract\(\);[\s\S]{0,800}refreshClipWarnings\(\);[\s\S]{0,800}resetUndoHistory\(\);/.test(js),
+      'and the load path refreshes every section before the undo baseline is taken');
+
+// ============================================================
 section('A hidden section says it is hidden, and can be brought back');
 // ============================================================
 
@@ -604,7 +758,7 @@ check(/function blockContent\(block\)[\s\S]{0,400}?inner\.innerText/.test(php),
 // ============================================================
 // The expected total, for the same reason the other two suites carry one:
 // without it, deleting half this file still reports a clean run.
-const expected = 86;
+const expected = 113;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

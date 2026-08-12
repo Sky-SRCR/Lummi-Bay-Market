@@ -5447,6 +5447,84 @@ sign, and neither is visible from the other machine.
 
 ---
 
+### 4as. The room the closed door made nobody check
+
+The first finding of the browser pass, and it is not a bug. It is a consequence
+somebody wrote down, drew correctly for one container, and then generalised one step
+too far — after which the document that named the danger became the reason nobody
+looked for it.
+
+ADR-0004 froze a Display's canvas dimensions at creation. Its Context states the
+hazard exactly: shrinking a container that is `overflow: hidden` makes anything
+outside it invisible on the Screen while the rows still exist in the database, and
+with no version history an automatic repair would be unrecoverable. That reasoning is
+right, and freezing the canvas is right. Then its Consequences said:
+
+> Elements can never be orphaned outside their canvas, so neither the Builder nor the
+> admin panel needs out-of-bounds warnings or repair tooling.
+
+The first clause is true. The second does not follow, because the hazard was never a
+property of the canvas — it is a property of *any* `overflow: hidden` container whose
+children are absolutely positioned inside it. A **section** is exactly that, and a
+section was never frozen: it resizes by dragging a handle.
+
+Four facts, each checked rather than assumed:
+
+| | |
+|---|---|
+| Does the Viewer clip too? | Yes — `.section-block` is `overflow: hidden` in `builder.php` and `viewer.php`. So the Builder is **honest**; the sign hides exactly what the Builder hides. This is the good half, and it is why this is a missing sentence rather than a WYSIWYG defect. |
+| Does a clipped block still publish? | Yes. `collectElements()` walks the canvas by class with no visibility or bounds test. |
+| Can it be clicked back? | No, once fully clipped. Clipping removes it from hit testing, and the inspector's X/Y and Layer controls act on the *selected* block. There is no layers panel. |
+| Do Builder and sign agree on paint order? | Yes, and this was the phantom worth disproving before chasing it: `sort_order` is written from DOM index and read back `ORDER BY sort_order ASC, id ASC`, so ties break identically on both sides. |
+
+So dragging one handle could retire a row of prices, with nothing on screen changing
+except the row going away — which reads as a rendering fault rather than as something
+you just did. The way back is Undo or growing the section again, and neither occurs to
+somebody who thinks the app broke.
+
+**What was added** is the warning that consequence said was unnecessary:
+`applyClipWarning()` puts a badge on a section naming how many of its blocks it is
+hiding. Live while the edge moves, on load for a layout that arrives already clipped,
+after an Undo, after a delete, and after either inspector control that can change the
+answer. Nothing is moved and nothing is repaired — on ADR-0004's own reasoning, since
+it rejected auto-clamping for the canvas because a tuned layout comes back as a pile,
+and Undo reaches five steps. A badge rather than a toast because the risk is not
+missing it in the moment; it is publishing half an hour later having forgotten.
+
+**Two details worth keeping.** The bound is the section's *border* box, not its
+content box: a child's `data-x` is measured from the padding box while interact.js's
+`restrictRect` holds it inside the border box, so comparing against the border box is
+what gives a flush-dragged block the 2px of slack it needs. Get that wrong and every
+layout in the shop reports false positives the moment it opens, which is worse than
+saying nothing. And the measurement is in canvas pixels — `data-x` and `offsetWidth`,
+never a screen rect — which is invariant 26's other half: a bound in screen pixels
+would report a different count at 50% zoom than at 200%.
+
+**Nine mutants, nine kills, and four of them were found by mutating rather than by
+writing tests.** The function was covered first and the *wiring* was not, which is the
+failure mode §4aq exists for: dropping the `handleResize`, `restoreCanvas`,
+`deleteSelected`, `applyDim` and `applyPos` calls each left a green suite. Two of
+those taught something beyond the missing line:
+
+- Widening the child selector to `:scope > *` was killed only by a `TypeError`, because
+  three assertions dereferenced `clipBadge(host).textContent` where the suite's own
+  idiom guards it. A fatal is the harness noticing something moved, not a check knowing
+  what the line was for; guarded, the same mutant dies to eleven named assertions.
+- The first `restoreCanvas` test asserted that undoing *out* of a clipped state removes
+  the badge — and passed with the hook deleted, because a rebuild makes fresh nodes and
+  a fresh node has no badge. The half that needs the hook is undoing *into* a clipped
+  state, where the warning must be recomputed from nothing. A check that holds for a
+  reason other than the one you had in mind is the exact shape #50 was filed about.
+
+One hook is held by reading the source rather than running it: no suite drives
+`loadLayout()` over a real DOM tree — the suite that drives it stubs a page flat enough
+to answer "did anything throw" and discards appended children, and the two suites with
+a real tree never call it. Opening an already-clipped layout is the likeliest way
+anybody meets this badge, so the call is held by a check that cannot execute it rather
+than by nothing. That is the weaker grade and it is written down as such.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of

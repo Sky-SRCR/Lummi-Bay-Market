@@ -74,6 +74,12 @@ fit and note it.
 - [ ] Drag a block *inside a section*. It stays parented to the section — a section's
       children move with it.
 - [ ] Move the section itself and confirm its children follow.
+- [ ] **Shrink a section until a block inside it is cut off.** The block *should*
+      disappear — sections clip, here and on the sign. What must also happen is that the
+      section grows an orange badge along its bottom edge naming the count (§4as). A
+      fully clipped block cannot be clicked any more, so the badge is the only thing
+      telling you it is still in the layout and still going out with the next publish.
+      Grow the section back, or press Undo, and the badge must go away with it.
 
 If drag or resize does nothing at all, `interact.js` did not load — check the browser
 console for a 404 before assuming a logic fault.
