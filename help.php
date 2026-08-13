@@ -169,7 +169,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <a href="#builder-intro" class="section-link">Builder Overview</a>
     <a href="#adding-blocks" class="sub-link">Adding Content</a>
     <a href="#moving"        class="sub-link">Moving &amp; Resizing</a>
-    <a href="#inspector"     class="sub-link">Inspector Panel</a>
+    <a href="#inspector"     class="sub-link">Properties Panel</a>
     <a href="#multiselect"   class="sub-link">Multi-Select &amp; Align</a>
     <a href="#locking"       class="sub-link">Locking Blocks</a>
     <a href="#undo"          class="sub-link">Undoing a Change</a>
@@ -320,14 +320,15 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h2>Builder Overview</h2>
     <a href="#" class="back-top">↑ Top</a>
     <p>The Builder is the main design tool, and it edits <strong>one display at a time</strong>. The display's title, its screen name tag, and its size are shown in the top-left of the nav bar — for example <strong>Drive-Thru</strong> · <code>drive-thru</code> · 1920 × 1080. The canvas is that display's size, so what you arrange is exactly what its screen shows. Everything is positioned absolutely, using X and Y coordinates from the top-left corner of the canvas.</p>
-    <p>The interface has three main areas:</p>
+    <p>Under the nav bar the screen is three columns:</p>
     <ul>
-        <li><strong>Top control bar</strong> — buttons for adding content, changing the background, zoom, and publishing</li>
-        <li><strong>Canvas (centre)</strong> — the design area where you place and arrange content blocks</li>
-        <li><strong>Inspector panel (right)</strong> — appears when a block is selected; shows position, size, and content options</li>
+        <li><strong>Palette (left)</strong> — the blocks you can add, grouped by what they are: Layout, Text, Media. Above the rule at the top of it are the things that are about <em>which</em> sign you are on rather than what is on it.</li>
+        <li><strong>Canvas (centre)</strong> — the design area where you place and arrange content blocks, with a thin footer under it carrying the zoom controls and who last published this display.</li>
+        <li><strong>Properties (right)</strong> — the controls for whichever block is selected. It stays on screen with nothing selected and says so, rather than appearing and disappearing.</li>
     </ul>
-    <p>If you can edit more than one display, <strong>Switch display ⇄</strong> in the nav bar lists the ones available to you; going straight to <code>builder.php</code> with no display named shows the same list.</p>
-    <div class="tip"><strong>Tip:</strong> A canvas is usually bigger than the window it is being edited in — a portrait screen especially. Use the <strong>Zoom</strong> buttons in the control bar: <strong>Fit</strong> shows the whole canvas at once, <strong>100%</strong> is actual size, and <strong>−</strong> / <strong>+</strong> step between them. The percentage next to them is the current zoom. The Builder opens at Fit. Use these rather than your browser's own zoom, so the X and Y numbers in the Inspector keep matching what you see.</div>
+    <p>The nav bar itself holds, left to right: the store name, which display this is, <strong>View ↗</strong> to open its Viewer in a new tab, then <strong>↺ Undo</strong> and <strong>✓ Publish</strong>, then your username, <strong>Sign Out</strong>, and a <strong>⚙</strong> gear. The gear is where the Asset Library, the Admin Panel and this Help live, along with which kind of account you are signed in as.</p>
+    <p>If you can edit more than one display, <strong>⇄ Switch sign</strong> at the top of the palette lists the ones available to you; going straight to <code>builder.php</code> with no display named shows the same list.</p>
+    <div class="tip"><strong>Tip:</strong> A canvas is usually bigger than the window it is being edited in — a portrait screen especially. Use the <strong>Zoom</strong> buttons in the canvas footer: <strong>Fit</strong> shows the whole canvas at once, <strong>100%</strong> is actual size, and <strong>−</strong> / <strong>+</strong> step between them. The percentage next to them is the current zoom. The Builder opens at Fit. Use these rather than your browser's own zoom, so the X and Y numbers in the properties panel keep matching what you see.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -338,7 +339,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h3>For Admins — Add a Section first</h3>
     <p>Sections are the structural containers (purple border) that organise your layout. Content blocks live <em>inside</em> sections.</p>
     <ol class="steps">
-        <li><span>Click <strong>+ Section</strong> in the control bar. A purple-bordered rectangle appears.</span></li>
+        <li><span>Click <strong>Section</strong> under <em>Layout</em> in the palette on the left. A purple-bordered rectangle appears.</span></li>
         <li><span>Drag it to where you want it on the canvas.</span></li>
         <li><span>Resize it by dragging any edge or corner.</span></li>
         <li><span>Click the section to target it, then add blocks inside it.</span></li>
@@ -348,25 +349,25 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <p>You cannot create sections. An admin must create them. To add content:</p>
     <ol class="steps">
         <li><span>Click on a section (purple border) — its border turns orange when targeted.</span></li>
-        <li><span>The banner at the top shows "Section selected — now add a block."</span></li>
-        <li><span>Click any block type button to add it inside that section.</span></li>
+        <li><span>The note at the foot of the palette confirms which section your next block will land in.</span></li>
+        <li><span>Click any block in the palette to add it inside that section.</span></li>
     </ol>
 
     <h3>Block types available to all users</h3>
     <ul>
-        <li><strong>+ Section Header</strong> — Large styled heading (uses brand font/colour)</li>
-        <li><strong>+ Item Title</strong> — Product or menu item name (uses brand font/colour)</li>
-        <li><strong>+ Price</strong> — Price display block (uses brand font/colour)</li>
-        <li><strong>+ Description</strong> — Smaller description text (uses brand font/colour)</li>
-        <li><strong>+ Image</strong> — Displays a still image (upload in the inspector)</li>
+        <li><strong>Section Header</strong> — Large styled heading (uses brand font/colour)</li>
+        <li><strong>Item Title</strong> — Product or menu item name (uses brand font/colour)</li>
+        <li><strong>Price</strong> — Price display block (uses brand font/colour)</li>
+        <li><strong>Description</strong> — Smaller description text (uses brand font/colour)</li>
+        <li><strong>Image</strong> — Displays a still image (upload in the properties panel)</li>
     </ul>
 
     <h3>Admin-only block types</h3>
     <ul>
-        <li><strong>+ Image</strong> — Image block with fit-mode options</li>
-        <li><strong>+ Video</strong> — Auto-playing looped video (MP4, WebM, OGV — max 50 MB)</li>
-        <li><strong>+ Carousel</strong> — Slideshow of images with optional titles/prices</li>
-        <li><strong>+ Marquee</strong> — Scrolling ticker text across the bottom or anywhere</li>
+        <li><strong>Image</strong> — Image block with fit-mode options</li>
+        <li><strong>Video</strong> — Auto-playing looped video (MP4, WebM, OGV — max 50 MB)</li>
+        <li><strong>Carousel</strong> — Slideshow of images with optional titles/prices</li>
+        <li><strong>Marquee</strong> — Scrolling ticker text across the bottom or anywhere</li>
     </ul>
 </div>
 
@@ -376,15 +377,15 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <a href="#" class="back-top">↑ Top</a>
 
     <h3>Moving a block</h3>
-    <p>Click and drag the <strong>centre area</strong> of any block to move it. The cursor changes to a move arrow (<span style="font-size:16px;">✥</span>) when dragging is available. The X and Y position fields in the Inspector update live as you drag.</p>
+    <p>Click and drag the <strong>centre area</strong> of any block to move it. The cursor changes to a move arrow (<span style="font-size:16px;">✥</span>) when dragging is available. The X and Y position fields in the properties panel update live as you drag.</p>
 
     <h3>Resizing a block</h3>
     <p>Hover near any <strong>edge or corner</strong> of a selected block. The cursor changes to a resize arrow. Drag to change the size. While resizing, a dark badge shows the current dimensions (e.g. <kbd>420 × 180 px</kbd>) floating in the centre of the block.</p>
 
-    <div class="tip"><strong>Tip:</strong> Use the <strong>W</strong> and <strong>H</strong> fields in the Inspector to type an exact pixel size. This is the easiest way to make two blocks exactly the same width or height — read the size from one, type it into the other.</div>
+    <div class="tip"><strong>Tip:</strong> Use the <strong>W</strong> and <strong>H</strong> fields in the properties panel to type an exact pixel size. This is the easiest way to make two blocks exactly the same width or height — read the size from one, type it into the other.</div>
 
     <h3>Typing exact position or size</h3>
-    <p>With any block selected, the Inspector panel (right side) shows four editable number fields:</p>
+    <p>With any block selected, the properties panel on the right shows four editable number fields:</p>
     <ul>
         <li><strong>X</strong> — distance from the left edge of the canvas (in pixels)</li>
         <li><strong>Y</strong> — distance from the top edge of the canvas (in pixels)</li>
@@ -398,9 +399,9 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
 <!-- ════════════════════════════════════════════════════════ -->
 <div class="help-section" id="inspector">
-    <h2>Inspector Panel</h2>
+    <h2>Properties Panel</h2>
     <a href="#" class="back-top">↑ Top</a>
-    <p>Click any block to select it (red outline). The Inspector panel opens on the right side of the screen showing controls specific to that block type.</p>
+    <p>Click any block to select it (red outline). The properties panel on the right fills in with the controls for that block type. It is a fixed column rather than a floating window &mdash; it does not move, and it cannot be dragged. With nothing selected it stays where it is and says so; for admins it also carries the <strong>Canvas Background</strong>, which belongs to the canvas rather than to any block.</p>
 
     <h3>All blocks</h3>
     <ul>
@@ -443,7 +444,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Background Color</strong> — the bar's background. Tick <strong>Transparent</strong> to let whatever is behind the block show through; your colour is remembered while it is ticked, so unticking gives it straight back.</li>
     </ul>
 
-    <div class="tip"><strong>Alignment tip:</strong> The Inspector shows a reminder: Shift+click a second block to enter multi-select mode and reveal the alignment toolbar above the canvas.</div>
+    <div class="tip"><strong>Alignment tip:</strong> The <strong>Arrange</strong> group in the properties panel has two rows of arrows. With one block selected the first row lines it up inside its section; Shift+click a second block and the second row lines the selected blocks up with each other. The line under them says which one you are about to use.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -454,7 +455,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h3>Selecting multiple blocks</h3>
     <ol class="steps">
         <li><span>Click the first block (red outline — single select).</span></li>
-        <li><span>Hold <kbd>Shift</kbd> and click a second block. Both turn orange — the alignment toolbar appears above the canvas.</span></li>
+        <li><span>Hold <kbd>Shift</kbd> and click a second block. Both turn orange, and the <strong>Arrange</strong> group in the properties panel says how many are selected.</span></li>
         <li><span>Continue <kbd>Shift</kbd>-clicking to add more blocks to the selection.</span></li>
         <li><span><kbd>Shift</kbd>-click an orange block again to remove it from the selection.</span></li>
         <li><span>Click any block <em>without</em> Shift (or click the canvas background) to clear multi-select and go back to single-select.</span></li>
@@ -462,8 +463,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
     <div class="note"><strong>Note:</strong> Sections cannot be multi-selected. Only content blocks (text, image, video, etc.) can be shift-selected.</div>
 
-    <h3>Alignment toolbar</h3>
-    <p>When 2 or more blocks are selected the alignment bar appears between the top control bar and the canvas:</p>
+    <h3>Arrange</h3>
+    <p>With 2 or more blocks selected, the second row of arrows in <strong>Arrange</strong> lines them up with each other:</p>
     <ul>
         <li><strong>◀ Left</strong> — align all left edges to the leftmost block's left edge</li>
         <li><strong>Right ▶</strong> — align all right edges to the rightmost block's right edge</li>
@@ -483,13 +484,13 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <p>Any block can be locked to prevent accidental changes during editing.</p>
     <ol class="steps">
         <li><span>Click the block to select it.</span></li>
-        <li><span>In the Inspector, tick <strong>Lock this block</strong>.</span></li>
+        <li><span>In the properties panel, tick <strong>Lock this block</strong>.</span></li>
         <li><span>A 🔒 icon appears on the block.</span></li>
         <li><span>To unlock, select the block and un-tick the checkbox.</span></li>
     </ol>
     <p>A locked block cannot be <strong>moved</strong>, <strong>resized</strong> or
        <strong>deleted</strong> — by dragging it, by its resize handles, by typing in the
-       Inspector's X / Y / W / H boxes, by the Align buttons, by the Delete Block button, or
+       panel's X / Y / W / H boxes, by the Arrange buttons, by the Delete Block button, or
        by the Delete key. Each of those says the block is locked rather than doing nothing
        visible. The layer buttons refuse it too, since which layer a block paints on is
        where it sits in front of or behind the others.</p>
@@ -511,7 +512,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 <div class="help-section" id="undo">
     <h2>Undoing a Change</h2>
     <a href="#" class="back-top">↑ Top</a>
-    <p>The <strong>↺ Undo</strong> button in the top control bar takes back your last change to
+    <p>The <strong>↺ Undo</strong> button in the nav bar takes back your last change to
        the canvas. <strong>Ctrl+Z</strong> (⌘Z on a Mac) does the same thing.</p>
     <p>One press takes back one finished change — a block moved, a block resized, a block
        added or deleted, a colour chosen, or a piece of text edited and clicked away from.
@@ -543,7 +544,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <p>Publishing saves the current canvas to the database and makes it live on the display.</p>
     <ol class="steps">
         <li><span>Finish making your changes on the canvas.</span></li>
-        <li><span>Click the <strong>✓ Publish</strong> button (top-right of the control bar).</span></li>
+        <li><span>Click the <strong>✓ Publish</strong> button in the nav bar.</span></li>
         <li><span>A success message appears. The display viewer will show the new layout within 30 seconds.</span></li>
     </ol>
     <div class="note"><strong>Important:</strong> Unpublished changes exist only in your browser tab. If you close the tab or navigate away <em>without</em> publishing, your changes are lost. Always publish before leaving the builder.</div>
@@ -569,7 +570,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <ul>
         <li>Drag the section's border or label to move it on the canvas</li>
         <li>Drag any edge to resize the section</li>
-        <li>Sections can have a <strong>background image</strong> — set it in the Inspector when the section is selected</li>
+        <li>Sections can have a <strong>background image</strong> — set it in the properties panel when the section is selected</li>
         <li>Click a section to target it (orange border) before adding blocks to it</li>
         <li>Child blocks inside a section cannot be dragged outside the section's boundary</li>
     </ul>
@@ -597,12 +598,12 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 <div class="help-section" id="image-blocks">
     <h2>Image Blocks</h2>
     <a href="#" class="back-top">↑ Top</a>
-    <p>Image blocks display a still image. After adding an image block to the canvas, select it and use the Inspector to upload a photo.</p>
+    <p>Image blocks display a still image. After adding an image block to the canvas, select it and use the properties panel to upload a photo.</p>
 
     <h3>Uploading an image</h3>
     <ol class="steps">
-        <li><span>Click <strong>+ Image</strong> in the control bar.</span></li>
-        <li><span>Click the block to select it — the Inspector panel opens on the right.</span></li>
+        <li><span>Click <strong>Image</strong> under <em>Media</em> in the palette.</span></li>
+        <li><span>Click the block to select it — the properties panel on the right fills in with its controls.</span></li>
         <li><span>Under <strong>Upload Image</strong>, click the file picker and choose an image (JPG, PNG, GIF, WEBP — max <?= Markup::text(UploadLimit::describe()) ?>).</span></li>
         <li><span>The image appears in the block immediately.</span></li>
         <li><span>Choose an <strong>Image Fit</strong> mode (see below).</span></li>
@@ -648,8 +649,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <div class="admin-only"><strong>Admin only.</strong></div>
     <p>Video blocks auto-play, loop continuously, and are always muted (required for auto-play in modern browsers).</p>
     <ol class="steps">
-        <li><span>Click <strong>+ Video</strong> in the control bar.</span></li>
-        <li><span>Select the block and click <strong>Upload Video</strong> in the Inspector.</span></li>
+        <li><span>Click <strong>Video</strong> under <em>Media</em> in the palette.</span></li>
+        <li><span>Select the block and click <strong>Upload Video</strong> in the properties panel.</span></li>
         <li><span>Choose an MP4, WebM, or OGV file (max <?= Markup::text(UploadLimit::describe()) ?>).</span></li>
         <li><span>The video begins playing in the builder preview.</span></li>
         <li><span>Resize the block to fit your layout. Publish when ready.</span></li>
@@ -674,8 +675,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
     <h3>Setting up a carousel</h3>
     <ol class="steps">
-        <li><span>Click <strong>+ Carousel</strong> in the control bar.</span></li>
-        <li><span>Select the block and set the <strong>Interval</strong> (seconds per slide) in the Inspector.</span></li>
+        <li><span>Click <strong>Carousel</strong> under <em>Media</em> in the palette.</span></li>
+        <li><span>Select the block and set the <strong>Interval</strong> (seconds per slide) in the properties panel.</span></li>
         <li><span>Click <strong>Edit Slides</strong> to open the slide editor.</span></li>
         <li><span>For each slide: upload an image, enter an optional title and price.</span></li>
         <li><span>Use the <strong>Remove</strong> button to delete a slide. Add more with <strong>Add Slide</strong>.</span></li>
@@ -696,8 +697,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
     <h3>Setting up a marquee</h3>
     <ol class="steps">
-        <li><span>Click <strong>+ Marquee</strong> in the control bar.</span></li>
-        <li><span>Select the block. In the Inspector, type the scrolling message in the <strong>Marquee Text</strong> box.</span></li>
+        <li><span>Click <strong>Marquee</strong> under <em>Media</em> in the palette.</span></li>
+        <li><span>Select the block. In the properties panel, type the scrolling message in the <strong>Marquee Text</strong> box.</span></li>
         <li><span>Adjust the <strong>Scroll Speed</strong> slider (pixels per second — higher = faster).</span></li>
         <li><span>Set the text colour, size, weight, and background colour — or tick <strong>Transparent</strong> for no bar behind the text. The colour you picked is kept while Transparent is ticked, so you can switch back without choosing it again.</span></li>
         <li><span>Resize the block to span the width you want (commonly full-screen width).</span></li>
@@ -711,7 +712,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 <div class="help-section" id="assets">
     <h2>Asset Library</h2>
     <a href="#" class="back-top">↑ Top</a>
-    <p>The Asset Library (<a href="crud.php" style="color:#3498db;">Assets</a> in the nav) is a central pool of reusable content items — text snippets, images, and video paths. Linking a canvas block to an asset means the block's content comes from the asset and updates everywhere the asset is used.</p>
+    <p>The Asset Library (behind the <strong>⚙</strong> gear in the Builder's nav bar) is a central pool of reusable content items — text snippets, images, and video paths. Linking a canvas block to an asset means the block's content comes from the asset and updates everywhere the asset is used.</p>
 
     <h3>Adding an asset</h3>
     <ol class="steps">
@@ -723,7 +724,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h3>Linking an asset to a block</h3>
     <ol class="steps">
         <li><span>Select a block on the canvas.</span></li>
-        <li><span>In the Inspector, find the <strong>Link DB Asset</strong> dropdown.</span></li>
+        <li><span>In the properties panel, find the <strong>Link DB Asset</strong> dropdown.</span></li>
         <li><span>Choose an asset from the list. The block's content is replaced by the asset's content.</span></li>
         <li><span>Publish. From now on, updating the asset in the Asset Library will update all linked blocks on the next Publish.</span></li>
     </ol>
@@ -775,7 +776,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><span>Click <strong>Save Brand Standards</strong>.</span></li>
     </ol>
 
-    <div class="note"><strong>Note:</strong> Brand Standards only affect <em>branded</em> text blocks — not free text blocks, where you set the font yourself in the Inspector.</div>
+    <div class="note"><strong>Note:</strong> Brand Standards only affect <em>branded</em> text blocks — not free text blocks, where you set the font yourself in the properties panel.</div>
     <div class="tip"><strong>These reach the screens on their own.</strong> Every screen reads this typography each time it polls, so a saved change appears within 30 seconds on <em>every</em> display, with no publishing needed. That also makes it the one change you can make without opening the Builder. Because it lands on every sign at once, it is refused while <em>anyone</em> is editing <em>any</em> display — the message names who, and you can save once they are finished or once their editing lock lapses after 15 idle minutes.</div>
 </div>
 
@@ -822,7 +823,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     </ul>
 
     <h3>Work Area tab</h3>
-    <p>Lists the published elements of one display — choose which with the <strong>Display</strong> selector at the top — so you can hide or delete a single block without opening the Builder. <strong>Hide</strong> takes it off that screen within 30 seconds while keeping it in the layout, ready to un-hide — here, or from the block's own <strong>Hide from the screens</strong> box in the Builder's Inspector, which takes effect at the next publish instead. <strong>Delete</strong> removes it for good. Neither needs a publish, and both mean that any Builder tab opened before the change has to reload before it can publish.</p>
+    <p>Lists the published elements of one display — choose which with the <strong>Display</strong> selector at the top — so you can hide or delete a single block without opening the Builder. <strong>Hide</strong> takes it off that screen within 30 seconds while keeping it in the layout, ready to un-hide — here, or from the block's own <strong>Hide from the screens</strong> box in the Builder's properties panel, which takes effect at the next publish instead. <strong>Delete</strong> removes it for good. Neither needs a publish, and both mean that any Builder tab opened before the change has to reload before it can publish.</p>
 
     <h3>Users tab</h3>
     <ul>
@@ -950,16 +951,16 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li>Double-click text block — enters text editing mode</li>
         <li>Drag block centre — moves the block</li>
         <li>Drag block edge/corner — resizes the block</li>
-        <li><kbd>Tab</kbd> / <kbd>Enter</kbd> in Inspector number field — applies the typed value</li>
+        <li><kbd>Tab</kbd> / <kbd>Enter</kbd> in a properties-panel number field — applies the typed value</li>
         <li><kbd>F11</kbd> — full-screen browser (for viewer screen)</li>
     </ul>
 
     <h3>Common tasks at a glance</h3>
     <ul>
         <li><strong>Change a price</strong> → double-click the Price block, edit text, Publish</li>
-        <li><strong>Swap an image</strong> → click the image block, Upload Image in Inspector, Publish</li>
-        <li><strong>Make two boxes the same width</strong> → click first block, note W value in Inspector; click second block, type same W value, press Tab</li>
-        <li><strong>Align a row of labels</strong> → Shift+click all blocks, click ▲ Top in alignment bar, Publish</li>
+        <li><strong>Swap an image</strong> → click the image block, Upload Image in the properties panel, Publish</li>
+        <li><strong>Make two boxes the same width</strong> → click first block, note W value in the properties panel; click second block, type same W value, press Tab</li>
+        <li><strong>Align a row of labels</strong> → Shift+click all blocks, click ▲ in the second row of Arrange, Publish</li>
         <li><strong>Add a new product</strong> → click a section, add Item Title + Price + Description blocks, fill in text, Publish</li>
         <li><strong>Change all prices to a new colour</strong> → Brand Standards → change Price font colour → Save. No publishing needed; every screen picks it up within 30 seconds</li>
         <li><strong>Update a display remotely</strong> → make changes in the Builder, click Publish — that display's screen updates within 30 seconds</li>
@@ -975,8 +976,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>A display says somebody is editing it and they are not here</strong> — this clears itself. A lock is dropped fifteen minutes after that person's last click, and immediately if their account has been suspended or closed. An admin can also take it over from the Builder without waiting</li>
         <li><strong>Publish was refused</strong> — either the display changed since you opened it (reload and re-apply your changes, or the message names who published) or somebody else holds it now. Nothing was saved either way, and what is on your screen is still there</li>
         <li><strong>Wrong display in the Builder</strong> — use <strong>Switch display ⇄</strong> in the nav bar</li>
-        <li><strong>Block won't move</strong> — check if the 🔒 lock icon is showing; deselect and re-click the block, then untick Lock in the Inspector</li>
-        <li><strong>Image looks stretched</strong> — select the image block, change Image Fit to <em>Cover</em> or <em>Contain</em> in the Inspector</li>
+        <li><strong>Block won't move</strong> — check if the 🔒 lock icon is showing; deselect and re-click the block, then untick Lock in the properties panel</li>
+        <li><strong>Image looks stretched</strong> — select the image block, change Image Fit to <em>Cover</em> or <em>Contain</em> in the properties panel</li>
         <li><strong>Shift+click not working</strong> — make sure you click the block itself (not its text inner area); click a block normally first, then Shift+click the next</li>
         <li><strong>Can't add a block (basic user)</strong> — you must click a section (purple border) first to target it before adding any blocks</li>
         <li><strong>Forgot password</strong> — use the Forgot Password link on the login page; check spam/junk if the email doesn't arrive</li>

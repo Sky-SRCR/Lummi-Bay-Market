@@ -2328,8 +2328,12 @@ check(abs(strtotime((string)$publishedAt) - time()) > 3600,
 
 $pdo->prepare("UPDATE displays SET last_published_at = ?, last_published_by = 1 WHERE id = ?")
     ->execute([$instant, $zoned->id()]);
-checkSame('sky, Aug 11 at 2:15pm', $store->forId($zoned->id())->lastPublishDescription(),
-          'and the refusal names the moment in the store\'s zone');
+// `n/j/y g:ia` since the publish line moved into the canvas footer. The year is the
+// point of the change rather than the brevity: without it a sign published last
+// August and left alone reads as published this August, and "is what I'm looking at
+// live?" is the one question this sentence exists to answer.
+checkSame('sky, 8/11/26 2:15pm', $store->forId($zoned->id())->lastPublishDescription(),
+          'and the refusal names the moment in the store\'s zone, year and all');
 $pdo->prepare("UPDATE displays SET last_published_at = 'nonsense' WHERE id = ?")
     ->execute([$zoned->id()]);
 checkSame('sky', $store->forId($zoned->id())->lastPublishDescription(),
@@ -4161,11 +4165,17 @@ checkMentions($apiSrc, "'published'    => \$justPublished ? \$justPublished->las
 checkMentions($apiSrc, '$justPublished = $displays->forId($display->id());',
               'read fresh after the publish, not composed beside it');
 checkMentions($wJs, "showPublishState(res.published);",
-              'and the Builder puts that sentence in its top bar');
-checkMentions($wJs, '<span class="d-pub" id="pub-state">',
+              'and the Builder puts that sentence in its canvas footer');
+checkMentions($wJs, '<span id="pub-state">',
               'which is a line the page renders on load as well, so it is there before any publish');
-checkMentions($wJs, 'published by <?= Markup::text($display->lastPublishDescription()) ?>',
+checkMentions($wJs, 'Last published by <?= Markup::text($display->lastPublishDescription()) ?>',
               'from the same method, through the one escaping door');
+// The line moved out of the nav and into the footer, and the footer is emitted for
+// a read-only Builder too — that was the case it was written for. `#canvas-footer`
+// sits outside every `$readOnly` conditional, which selftest_builder_readonly.js
+// holds it to by name; this is the half that says the publish line is inside it.
+check(strpos($wJs, '<span id="pub-state">') > strpos($wJs, '<div id="canvas-footer">'),
+      'and it is inside the canvas footer rather than the bar the sketch was clearing');
 
 // ─────────────────────────────────────────────────────────────
 section('What a visitor is told when something breaks');
@@ -6985,4 +6995,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1853 : 1830);
+reportChecks(testIsMysql() ? 1854 : 1831);

@@ -90,8 +90,17 @@ function emittedOnlyWhenEditable(marker) {
     return guarded && depth > 0;
 }
 
-check(emittedOnlyWhenEditable('<div id="align-bar">'),              'the align bar is emitted only when the page can edit');
-check(emittedOnlyWhenEditable('<div id="inspector">'),              'so is the inspector');
+check(emittedOnlyWhenEditable('<div id="inspector">'),              'the properties rail is emitted only when the page can edit');
+// `#align-bar` retired with the horizontal bar stack; the same buttons are the
+// Arrange group inside the rail, so they are covered by the line above. The check
+// that they did not simply escape the gate on the way is below: nothing named
+// align-bar is in the file at all any more, and the id would otherwise sit in
+// PRESENT for ever pointing at nothing — which is exactly the failure the PRESENT
+// audit further down exists to catch.
+// The prose that explains the retirement mentions the name several times, so this
+// asks for the node and the lookup rather than the string.
+check(!/id="align-bar"/.test(php) && !/getElementById\('align-bar'\)/.test(php),
+      'and the align bar it replaced is gone rather than hidden');
 check(emittedOnlyWhenEditable('<div id="carousel-modal-overlay">'), 'so is the carousel editor');
 check(emittedOnlyWhenEditable('<div id="table-modal-overlay">'),    'so is the table editor');
 check(emittedOnlyWhenEditable('<button id="publish-btn"'),          'and so is the Publish button, which is why setPublishBusy has to cope without one');
@@ -104,10 +113,16 @@ check(emittedOnlyWhenEditable('<button id="publish-btn"'),          'and so is t
 // point of this list: those are emitted only for the holder, while losing *access*
 // can happen to somebody who is only watching. A read-only page has the access bar
 // and the banner above it, and nothing else the lock uses.
+// `control-bar` left this list with the bar itself. What replaced it is three
+// columns, and only two of them reach a read-only page: the palette, which carries
+// Switch sign and the read-only sentence and no editing control, and the canvas
+// column with its footer — the zoom controls and the publish line, which is a fact
+// somebody who cannot edit still needs.
 const PRESENT = new Set([
     'lock-banner', 'lock-access-bar', 'lock-access-text',
-    'control-bar', 'zoom-readout', 'editor-frame', 'canvas-sizer', 'builder-canvas',
-    'toast', 'resize-label', 'display-off-banner', 'top-nav'
+    'workbench', 'palette', 'canvas-column', 'canvas-footer', 'pub-state',
+    'zoom-readout', 'editor-frame', 'canvas-sizer', 'builder-canvas',
+    'toast', 'resize-label', 'display-off-banner', 'top-nav', 'gear-btn', 'gear-menu'
 ]);
 
 // ---- ...and the list above is checked against the page, not trusted ----------

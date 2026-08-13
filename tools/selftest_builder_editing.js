@@ -1144,11 +1144,52 @@ check(/function blockContent\(block\)[\s\S]{0,400}?inner\.innerText/.test(php),
       'what publish reads out of a text block is still its plain text');
 
 // ============================================================
+section('The rail has two states and is never in both, or neither');
+// ============================================================
+// The properties panel used to answer "nothing is selected" by disappearing, from
+// `position: fixed; top: 100px` — a number set against a stack of up to five bars
+// whose height depended on which of them were showing, so on a page carrying a lock
+// banner it sat on top of them and read as a window somebody had dragged there.
+// It is a docked column now and it stays put; only which of its two states is
+// showing changes. The failure that replaces the overlap is the two states getting
+// out of step, and it has a shape the old code could not have: a rail saying
+// "nothing selected" above a populated set of block controls.
+
+const railBlock = el('div', 'editable-block');
+railBlock.dataset.type = 'text';
+railBlock.dataset.subtype = 'free';
+railBlock.offsetWidth = 200; railBlock.offsetHeight = 60;
+railBlock.setAttribute('data-x', 10); railBlock.setAttribute('data-y', 10);
+
+const resting = byId('insp-resting');
+const railSet = byId('insp-block');
+
+showInspector(railBlock);
+checkSame('none', resting.style.display, 'selecting a block puts the resting state away');
+checkSame('flex', railSet.style.display, 'and shows the block controls');
+
+deselectAll();
+checkSame('block', resting.style.display, 'dropping the selection brings the resting state back');
+checkSame('none',  railSet.style.display, 'and takes the block controls away');
+
+// The rail itself is never touched by either, which is the property the old
+// `inspector.style.display = 'none'` did not have — a 290px panel came off the
+// screen on every click on empty canvas, and the canvas reflowed under the pointer.
+checkSame('', byId('inspector').style.display, 'and the rail itself is never shown or hidden by either');
+
+// Nor is the panel positioned, which is what made an overlap possible at all. The
+// three columns are siblings of one flex row; a sibling cannot overlap a sibling.
+check(!/#inspector\s*\{[^}]*position:\s*fixed/.test(php),
+      'the rail is not positioned, so it cannot land on anything');
+check(/#workbench\s*\{[^}]*display:\s*flex/.test(php),
+      'it is a column of the workbench row instead');
+
+// ============================================================
 // Result
 // ============================================================
 // The expected total, for the same reason the other two suites carry one:
 // without it, deleting half this file still reports a clean run.
-const expected = 175;
+const expected = 182;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

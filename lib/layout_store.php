@@ -950,9 +950,16 @@ class LayoutStore
         if (BrandStyles::paints($el['type'] ?? 'text', $el['block_subtype'] ?? 'free', $brandStandards)) {
             return BrandStyles::DEFAULTS;
         }
+        // `??` and nothing else, which is what these six lines were before this
+        // function existed — an empty string or a zero is a value the payload sent
+        // and is stored as one, exactly as it always was. The first draft wrote
+        // `isset($el[$field]) && $el[$field] !== null`, whose second clause is dead
+        // (isset is already false for null) and whose mutant therefore survived
+        // while still changing behaviour: under `!=` an empty family would have
+        // started falling back to Arial. A dead clause that can still be wrong.
         $own = [];
         foreach (BrandStyles::DEFAULTS as $field => $fallback) {
-            $own[$field] = (isset($el[$field]) && $el[$field] !== null) ? $el[$field] : $fallback;
+            $own[$field] = $el[$field] ?? $fallback;
         }
         return $own;
     }

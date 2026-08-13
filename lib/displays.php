@@ -480,8 +480,16 @@ class Display
     }
 
     /**
-     * "sky, Aug 5 at 2:04pm" — the material for a refused-publish message. Empty when
+     * "sky, 8/5/26 2:04pm" — the material for a refused-publish message. Empty when
      * never published.
+     *
+     * The format was `M j \a\t g:ia` — "Aug 5 at 2:04pm" — and lost its year, which
+     * is the one part a person reading *"is what I'm looking at live?"* cannot infer.
+     * A sign published last August and left alone reads as published this August. It
+     * is also now drawn in a footer strip beside the zoom controls rather than in a
+     * bar of its own, so the shorter form is what fits. Changed here and therefore in
+     * all three places that print it — the Builder, the Admin Panel's Displays tab,
+     * and a refused publish — which is why the format lives in one method.
      *
      * This line was `date('M j \a\t g:ia', strtotime($at))`, and it was wrong twice
      * over in a way neither half could show on its own (#44). `strtotime()` with no
@@ -497,7 +505,7 @@ class Display
         $at = $this->lastPublishedAt();
         if (!$at) { return ''; }
         $who  = $this->lastPublishedByName() !== '' ? $this->lastPublishedByName() : 'someone else';
-        $when = StoreClock::label($at, 'M j \a\t g:ia');
+        $when = StoreClock::label($at, 'n/j/y g:ia');
         return $when === '' ? $who : $who . ', ' . $when;
     }
 

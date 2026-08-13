@@ -583,12 +583,12 @@ section('A publish says who did it and when, and the line outlives the toast');
 const pubLine = () => document.getElementById('pub-state').textContent;
 
 reset();
-document.getElementById('pub-state').textContent = 'not published yet';
+document.getElementById('pub-state').textContent = 'Not published yet';
 publishCanvas();
 f.reply({ status: 'success', layout_stamp: 'stamp-4', published: 'sky, Aug 12 at 3:42pm' });
 await settle();
-checkSame('published by sky, Aug 12 at 3:42pm', pubLine(),
-          'a successful publish puts who and when in the top bar');
+checkSame('Last published by sky, Aug 12 at 3:42pm', pubLine(),
+          'a successful publish puts who and when in the canvas footer');
 checkMentions(toast(), 'by sky, Aug 12 at 3:42pm', 'and the toast carries the same words');
 checkMentions(toast(), 'Published to Deli Board', 'without losing which sign it went to');
 
@@ -598,7 +598,7 @@ reset();
 publishCanvas();
 f.reply({ status: 'success', layout_stamp: 'stamp-5' });
 await settle();
-checkSame('published by sky, Aug 12 at 3:42pm', pubLine(),
+checkSame('Last published by sky, Aug 12 at 3:42pm', pubLine(),
           'a reply carrying no sentence leaves the old one standing, rather than saying never');
 checkMentions(toast(), 'Published to Deli Board', 'and the publish is still reported as the success it was');
 check(toast().indexOf(' by .') < 0 && toast().indexOf('by undefined') < 0,
@@ -611,7 +611,7 @@ publishCanvas();
 f.reply({ status: 'error', reason: 'stale', message: 'Somebody else published first.',
           published: 'someone else, Aug 12 at 4:00pm' });
 await settle();
-checkSame('published by sky, Aug 12 at 3:42pm', pubLine(),
+checkSame('Last published by sky, Aug 12 at 3:42pm', pubLine(),
           'a refused publish leaves the line alone — nothing was published');
 
 section('Every way a publish ends puts the button back');

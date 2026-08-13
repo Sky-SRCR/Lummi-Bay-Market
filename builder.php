@@ -225,9 +225,27 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #top-nav .nav-spacer { flex: 1; }
 #top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px; padding: 5px 9px; border-radius: 3px; }
 #top-nav a:hover { background: #2c3e50; color: #fff; }
-.role-tag { background: <?= $isAdmin ? '#e74c3c' : '#3498db' ?>; color: #fff;
-            font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
-            text-transform: uppercase; }
+#top-nav .nav-sep { border-left: 1px solid <?= Brand::navBorder() ?>; height: 20px; margin: 0 2px; }
+/* The account-and-settings menu. Everything that is a *destination* rather than a
+   thing you do to this sign lives behind it — Asset Library, Admin Panel, Help —
+   plus the role, which was a chip in the nav and is a fact about you rather than
+   about the display in front of you. Sign Out stays outside it: it was the one
+   link nobody should have to open a menu to find. */
+#gear-wrap { position: relative; display: flex; align-items: center; }
+.nav-icon { background: none; border: none; color: #bdc3c7; font-size: 16px; line-height: 1;
+            padding: 4px 7px; border-radius: 3px; cursor: pointer; }
+.nav-icon:hover { background: #2c3e50; color: #fff; }
+#gear-menu {
+    position: absolute; right: 0; top: 30px; min-width: 196px; background: #1a252f;
+    border: 1px solid #34495e; border-radius: 6px; padding: 6px; display: none;
+    flex-direction: column; z-index: 400; box-shadow: 0 6px 22px rgba(0,0,0,.45);
+}
+#gear-menu.open { display: flex; }
+#gear-menu .gf { font-size: 11px; color: #8fa6bb; padding: 5px 8px; line-height: 1.4; }
+#gear-menu .gd { border-top: 1px solid #2c3e50; margin: 4px 0; }
+#gear-menu a { display: block; color: #dfe6ec; font-size: 12px; padding: 6px 8px;
+               border-radius: 3px; text-decoration: none; }
+#gear-menu a:hover { background: #2c3e50; color: #fff; }
 .btn.publish-btn { background: <?= Brand::accent() ?>; }
 /* While a publish is in flight. The button being visibly out of action is what
    stops the second click happening at all; the guard in publishCanvas() is what
@@ -290,11 +308,76 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #lock-access-bar { background: #7b3f3f; border-bottom: 1px solid #9b5252; }
 #lock-idle-bar .btn { padding: 4px 10px; }
 
-/* ── Control bar ── */
-#control-bar {
-    background: #1a252f; padding: 8px 14px; display: flex; gap: 8px;
-    align-items: center; flex-wrap: wrap; flex-shrink: 0; border-bottom: 2px solid #34495e;
+/* ── The workbench: palette | canvas | rail ──
+   One flex row owning everything under the banners. The three columns are
+   siblings, and that is the whole of why the properties panel can no longer
+   overlap anything: an overlap needs a positioned element and there is not one
+   here. The old panel was `position: fixed; top: 100px` against a stack of up to
+   five bars whose combined height depended on which of them were showing, so on a
+   page carrying a lock banner and an align bar it sat on top of them — and looked
+   like a window somebody had dragged there and could drag away again.
+
+   `min-height: 0` is load-bearing rather than tidy. A flex child defaults to
+   `min-height: auto`, which refuses to shrink below its content, so without it a
+   canvas taller than the window pushes this row past the bottom and the *page*
+   scrolls instead of the canvas. */
+#workbench { flex: 1; display: flex; min-height: 0; }
+
+/* ── Left column: which sign this is, then what you can put on it ──
+   Two parts divided by a rule, and the rule is a boundary in the markup as well as
+   a line: everything below it is an editing control and is not emitted for a
+   read-only Builder, while the block above it always is. Somebody looking at a
+   sign they cannot edit still has to be able to leave it, and still needs to know
+   which venue they are looking at. */
+#palette {
+    width: 178px; flex-shrink: 0; background: #1a252f; border-right: 1px solid #34495e;
+    display: flex; flex-direction: column; overflow-y: auto; padding: 9px 9px 12px;
 }
+#palette .pal-top { display: flex; flex-direction: column; gap: 6px;
+                    border-bottom: 1px solid #34495e; padding-bottom: 10px; margin-bottom: 2px; }
+#palette .pal-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: #7f8c8d; }
+#palette .pal-h   { font-size: 10px; text-transform: uppercase; letter-spacing: .8px;
+                    color: #7f8c8d; margin: 11px 0 4px; }
+#palette .pal-b {
+    display: flex; align-items: center; gap: 8px; width: 100%; margin-bottom: 3px;
+    background: #22303c; border: 1px solid #33475a; color: #fff; border-radius: 4px;
+    padding: 6px 8px; font-size: 12px; cursor: pointer; text-align: left;
+}
+#palette .pal-b:hover { background: #2d3e4f; }
+#palette .pal-b .ic { width: 16px; text-align: center; color: #8fa6bb; flex-shrink: 0; }
+#palette .pal-switch {
+    display: block; color: #bdc3c7; text-decoration: none; font-size: 12px;
+    border: 1px solid #33475a; border-radius: 4px; padding: 6px 8px; background: #22303c;
+}
+#palette .pal-switch:hover { background: #2d3e4f; color: #fff; }
+/* The Brand control (step 4) lands above the rule. Until it does there is nothing
+   to caption, and a heading over an empty space reads as something that failed to
+   load — so the slot is a comment in the markup rather than an empty box. */
+#palette .pal-note { font-size: 11px; line-height: 1.5; color: #8fa6bb; margin-top: 10px; }
+#palette .pal-spacer { flex: 1; min-height: 10px; }
+/* Aimed at basic accounts, who add blocks into a section rather than onto the
+   canvas. It used to be a full-width orange bar above the canvas; here it sits at
+   the foot of the column whose buttons it is about. */
+#palette .pal-hint {
+    display: none; background: #7a4a12; border: 1px solid #a2670f; border-radius: 4px;
+    padding: 7px 8px; font-size: 11px; line-height: 1.45; color: #ffe9cf;
+}
+
+/* ── Centre column: the canvas, and a footer of facts about it ── */
+#canvas-column { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* Zoom on the left, who published and when on the right. Both are properties of
+   what you are looking at rather than controls you reach for, which is why they
+   are here and not in the nav the sketch was clearing. Drawn for a read-only
+   Builder too — somebody who cannot edit still needs to know whether the sign
+   moved under them. */
+#canvas-footer {
+    flex-shrink: 0; background: #1a252f; border-top: 1px solid #34495e;
+    display: flex; align-items: center; gap: 6px; padding: 5px 12px;
+    font-size: 11px; color: #8fa6bb; flex-wrap: wrap;
+}
+#canvas-footer .foot-spacer { flex: 1; }
+#canvas-footer .btn { padding: 3px 9px; font-size: 11px; }
+
 .btn { background: #3498db; border: none; color: #fff; padding: 6px 12px;
        border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 12px; white-space: nowrap; }
 .btn:hover { filter: brightness(1.15); }
@@ -306,22 +389,13 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 .btn:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
 .sep { border-left: 1px solid #34495e; height: 24px; margin: 0 4px; }
 
-/* Align toolbar – hidden until multi-select */
-#align-bar {
-    background: #1a252f; padding: 6px 14px; display: none; gap: 6px;
-    align-items: center; flex-shrink: 0; border-bottom: 1px solid #34495e;
-}
-#align-bar span { font-size: 11px; color: #bdc3c7; margin-right: 4px; }
+/* The align buttons. `#align-bar` retired with the horizontal stack — the same
+   buttons are an *Arrange* group inside the rail now, beside the block they act
+   on, which is where somebody looks for them. */
 .align-btn { background: #2c3e50; border: 1px solid #4a6278; color: #fff;
              width: 32px; height: 28px; border-radius: 3px; cursor: pointer;
              font-size: 13px; display: inline-flex; align-items: center; justify-content: center; }
 .align-btn:hover { background: #3d5166; }
-
-/* Section target banner (basic users) */
-#section-banner {
-    background: #d35400; color: #fff; text-align: center; font-size: 12px;
-    font-weight: 600; padding: 5px; display: none; flex-shrink: 0;
-}
 
 /* ── Canvas wrapper ── */
 #editor-frame { flex: 1; overflow: auto; padding: 40px; display: flex;
@@ -425,14 +499,30 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     width: 100%; height: 100%; display: block; pointer-events: none;
 }
 
-/* ── Inspector ── */
+/* ── Inspector: the docked right rail ──
+   A sibling of the canvas column, not a floating panel. It keeps its width whether
+   or not a block is selected, so the canvas never reflows underneath somebody's
+   pointer, and it never vanishes — an empty rail with a sentence in it is a panel
+   waiting for you, and a rail that disappears is a panel you have to rediscover. */
 #inspector {
-    position: fixed; right: 16px; top: 100px; width: 290px;
-    background: #1a252f; border: 1px solid #34495e; border-radius: 6px;
-    padding: 14px; display: none; flex-direction: column; gap: 10px;
-    z-index: 300; box-shadow: 0 4px 20px rgba(0,0,0,.4);
-    max-height: calc(100vh - 120px); overflow-y: auto;
+    width: 296px; flex-shrink: 0;
+    background: #1a252f; border-left: 1px solid #34495e;
+    padding: 14px; display: flex; flex-direction: column; gap: 10px;
+    overflow-y: auto;
 }
+/* What the rail says with nothing selected. Not a placeholder: for an admin it
+   carries the canvas background, which is a property of the canvas rather than a
+   block, and had no other home once the control bar went. */
+#insp-resting { font-size: 12px; line-height: 1.55; color: #8fa6bb; }
+#insp-resting .rest-lead { color: #bdc3c7; font-weight: 600; margin-bottom: 4px; }
+/* The block controls as one set, so the rail swaps between two states rather than
+   toggling twenty. Shown by showInspector() as `flex` — these two only take effect
+   once it is, which is why they are here and `display` is not. The gap has to be
+   restated at all because #inspector's own applies to its children, and this is
+   now one child rather than twenty. */
+#insp-block { flex-direction: column; gap: 10px; }
+.arrange-row { display: flex; gap: 4px; margin-top: 4px; }
+.arrange-row .align-btn { flex: 1; width: auto; }
 #inspector h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
                 color: #f39c12; border-bottom: 1px solid #34495e; padding-bottom: 6px; }
 #inspector label { font-size: 11px; text-transform: uppercase; letter-spacing: .7px;
@@ -592,44 +682,56 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 </head>
 <body>
 
-<!-- ── Top Nav ── -->
+<!-- ── Top Nav ──
+     Left to right: the store, then which sign this is, then the two things you do
+     to it, then who you are. No store logo and no role chip: both were about the
+     installation rather than about the sign in front of you, and the bar was being
+     cleared on purpose. The role moved into the gear, as text.
+
+     Two things that used to be here are deliberately elsewhere. The Brand control
+     and Switch sign are at the top of the left column, because both had to be
+     squeezed into icons to fit a bar that was being cleared — and a bare ⇄ is not
+     a clean bar, it is an unreadable one. "Last published by" is in the canvas
+     footer, quiet but still on screen, because the question it answers has to
+     answer at a glance or not at all. -->
 <div id="top-nav">
-    <?php if (Brand::logo()): ?>
-        <img src="<?= Markup::text(Brand::logo()) ?>" alt="<?= Markup::text(SITE_NAME) ?>"
-             style="max-height:32px; max-width:130px; object-fit:contain; flex-shrink:0;">
-    <?php endif; ?>
     <span class="brand"><?= Markup::text(SITE_NAME) ?></span>
-    <span class="user-badge">
-        <?= Markup::text($me['username']) ?>
-        <span class="role-tag"><?= $isAdmin ? 'ADMIN' : 'USER' ?></span>
-    </span>
     <span class="display-badge" title="The display you are editing. Publishing sends only this one to its screen.">
         <span class="d-title"><?= Markup::text($display->title()) ?></span>
         <span class="d-tag"><?= Markup::text($display->tag()) ?></span>
         <span class="d-dims"><?= Markup::text($display->dimensionsLabel()) ?></span>
         <?php if (!$display->isActive()): ?><span class="d-off">off</span><?php endif; ?>
-        <?php
-        // "who and when" comes from lastPublishDescription(), the same sentence the
-        // admin panel's Displays tab and a refused publish already use — so the three
-        // places that report a publish cannot drift, and the time goes through
-        // StoreClock exactly once (#44). A Display with a revision but no stamp is a
-        // real state, not an error: advanceLayoutRevision() bumps the stamp when an
-        // element is hidden or deleted and deliberately records no publisher, and rows
-        // published before this was stored have no stamp either.
-        ?>
-        <span class="d-pub" id="pub-state"><?php if ($display->lastPublishDescription() === ''): ?>not published yet<?php else: ?>published by <?= Markup::text($display->lastPublishDescription()) ?><?php endif; ?></span>
     </span>
-    <?php if ($switchable > 1): ?>
-        <a href="builder.php?switch=1" title="Edit a different display">Switch display ⇄</a>
-    <?php endif; ?>
+    <a href="viewer.php?display=<?= urlencode($display->tag()) ?>" target="_blank" title="Open this display's Viewer in a new tab">View &#8599;</a>
     <span class="nav-spacer"></span>
-    <a href="crud.php">Asset Library</a>
-    <?php if ($isAdmin): ?>
-    <a href="admin_panel.php">Admin Panel</a>
+
+    <?php if ($undoSteps > 0): ?>
+    <button id="undo-btn" class="btn gray" onclick="undoStep()" disabled
+            title="Undo the last change (Ctrl+Z)">&#8630; Undo</button>
     <?php endif; ?>
-    <a href="help.php" target="_blank">Help</a>
-    <a href="viewer.php?display=<?= urlencode($display->tag()) ?>" target="_blank">View Display ↗</a>
+    <?php if (!$readOnly): ?>
+    <button id="publish-btn" class="btn publish-btn" onclick="publishCanvas()">&#10003; Publish</button>
+    <?php endif; ?>
+
+    <span class="nav-sep"></span>
+    <span class="user-badge"><?= Markup::text($me['username']) ?></span>
     <a href="logout.php">Sign Out</a>
+    <span id="gear-wrap">
+        <button id="gear-btn" class="nav-icon" onclick="toggleGearMenu(event)"
+                title="Account and settings" aria-haspopup="true" aria-expanded="false">&#9881;</button>
+        <div id="gear-menu">
+            <div class="gf"><?= Markup::text($me['username']) ?> &mdash; <?= $isAdmin ? 'Administrator' : 'Standard user' ?></div>
+            <div class="gd"></div>
+            <!-- The Workspace Theme picker lands here (roadmap v2 step 5). It is a
+                 setting about this account rather than about this sign, which is
+                 what puts it in here and not beside the Brand. -->
+            <a href="crud.php">Asset Library</a>
+            <?php if ($isAdmin): ?>
+            <a href="admin_panel.php">Admin Panel</a>
+            <?php endif; ?>
+            <a href="help.php" target="_blank">Help</a>
+        </div>
+    </span>
 </div>
 
 <!-- ── Edit lock (ADR-0007) ── -->
@@ -682,90 +784,6 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         copy anything you need before you leave the page. Ask an admin if this was not expected.</span>
 </div>
 
-<!-- ── Control bar ── -->
-<div id="control-bar">
-    <?php if ($isAdmin && !$readOnly): ?>
-        <button class="btn purple" onclick="createSection()">+ Section</button>
-        <button class="btn"        onclick="createBlock('image',null)">+ Image</button>
-        <button class="btn"        onclick="createBlock('carousel',null)">+ Carousel</button>
-        <button class="btn"        onclick="createBlock('table',null)">+ Table</button>
-        <button class="btn"        onclick="createBlock('marquee',null)">+ Marquee</button>
-        <button class="btn"        onclick="createBlock('video',null)">+ Video</button>
-        <div class="sep"></div>
-    <?php endif; ?>
-
-    <?php if (!$readOnly): ?>
-    <button class="btn orange" onclick="createBlock('text','section_header')">+ Section Header</button>
-    <button class="btn orange" onclick="createBlock('text','item_title')">+ Item Title</button>
-    <button class="btn orange" onclick="createBlock('text','price')">+ Price</button>
-    <button class="btn orange" onclick="createBlock('text','description')">+ Description</button>
-    <?php else: ?>
-    <span style="font-size:12px; color:#bdc3c7;">Read-only — <?= Markup::text($lockHolder) ?> has this display open.</span>
-    <?php endif; ?>
-
-    <?php if ($isAdmin && !$readOnly): ?>
-    <div class="sep"></div>
-    <label style="font-size:11px; color:#bdc3c7;">Background:</label>
-    <select id="bg-type" onchange="toggleBgInputs()" style="padding:5px 7px; border-radius:3px; border:1px solid #34495e; background:#2c3e50; color:#fff; font-size:12px;">
-        <option value="color">Color</option>
-        <option value="image">Image</option>
-    </select>
-    <input type="color" id="bg-color" value="#1a1a2e" oninput="applyBg()"
-           style="width:40px; height:30px; padding:2px; border:none; cursor:pointer; border-radius:3px;">
-    <input type="file"  id="bg-file"  accept="image/jpeg,image/png,image/gif,image/webp" onchange="applyBgFile()"
-           style="display:none; font-size:11px; color:#aaa;">
-    <!-- Nothing uploads when a background is picked; it rides out with the next
-         Publish. This is what says so, because an absent progress bar and a broken
-         control look identical. Hidden until there is something to report, and
-         `display` rather than emptiness so the top bar does not reflow. -->
-    <span id="bg-pending" style="display:none; font-size:11px; color:#e0a400; max-width:260px;
-          overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
-    <?php endif; ?>
-
-    <div class="sep" style="margin-left:auto;"></div>
-    <label style="font-size:11px; color:#bdc3c7;">Zoom:</label>
-    <button class="btn gray" onclick="zoomToFit()" title="Fit the whole canvas in the window">Fit</button>
-    <button class="btn gray" onclick="applyZoom(1)" title="Actual size">100%</button>
-    <button class="btn gray" onclick="nudgeZoom(-1)" title="Zoom out">&minus;</button>
-    <button class="btn gray" onclick="nudgeZoom(1)" title="Zoom in">+</button>
-    <span id="zoom-readout" style="font-size:11px; color:#bdc3c7; min-width:34px; text-align:right;">100%</span>
-
-    <?php if ($undoSteps > 0): ?>
-    <button id="undo-btn" class="btn gray" style="margin-left:12px;" onclick="undoStep()" disabled
-            title="Undo the last change (Ctrl+Z)">&#8630; Undo</button>
-    <?php endif; ?>
-
-    <?php if (!$readOnly): ?>
-    <button id="publish-btn" class="btn publish-btn" style="margin-left:12px;" onclick="publishCanvas()">&#10003; Publish</button>
-    <?php endif; ?>
-</div>
-
-<!-- ── Align bar (shown on multi-select OR single select) ──
-     Everything from here to the end of the editor modals is an editing control,
-     and a read-only Builder does not get any of it in the page. See the note
-     above #inspector for what that costs and why it is worth it. -->
-<?php if (!$readOnly): ?>
-<div id="align-bar">
-    <span style="font-size:11px;color:#bdc3c7;">Align Items:</span>
-    <button class="align-btn" title="Align left edges (single: to parent left)"    onclick="alignBlocks('left')"     style="width:auto;padding:0 8px;font-size:11px;">&#9664; Left</button>
-    <button class="align-btn" title="Align right edges (single: to parent right)"  onclick="alignBlocks('right')"    style="width:auto;padding:0 8px;font-size:11px;">Right &#9654;</button>
-    <button class="align-btn" title="Align top edges (single: to parent top)"      onclick="alignBlocks('top')"      style="width:auto;padding:0 8px;font-size:11px;">&#9650; Top</button>
-    <button class="align-btn" title="Align bottom edges (single: to parent bottom)" onclick="alignBlocks('bottom')"  style="width:auto;padding:0 8px;font-size:11px;">Bottom &#9660;</button>
-    <button class="align-btn" title="Center horizontally (single: within parent)"  onclick="alignBlocks('center-h')" style="width:auto;padding:0 8px;font-size:11px;">&#8596; H-Center</button>
-    <button class="align-btn" title="Center vertically (single: within parent)"    onclick="alignBlocks('center-v')" style="width:auto;padding:0 8px;font-size:11px;">&#8597; V-Center</button>
-    <div class="sep"></div>
-    <span style="font-size:11px;color:#bdc3c7;">Align to Parent:</span>
-    <button class="align-btn" title="Snap left edge to parent left"   onclick="alignToParent('left')"     style="width:auto;padding:0 8px;font-size:11px;">&#9664; Left</button>
-    <button class="align-btn" title="Center in parent horizontally"   onclick="alignToParent('center-h')" style="width:auto;padding:0 8px;font-size:11px;">&#8596; H-Center</button>
-    <button class="align-btn" title="Snap right edge to parent right" onclick="alignToParent('right')"    style="width:auto;padding:0 8px;font-size:11px;">Right &#9654;</button>
-    <button class="align-btn" title="Snap top edge to parent top"     onclick="alignToParent('top')"      style="width:auto;padding:0 8px;font-size:11px;">&#9650; Top</button>
-    <button class="align-btn" title="Center in parent vertically"     onclick="alignToParent('center-v')" style="width:auto;padding:0 8px;font-size:11px;">&#8597; V-Center</button>
-    <button class="align-btn" title="Snap bottom edge to parent bottom" onclick="alignToParent('bottom')" style="width:auto;padding:0 8px;font-size:11px;">Bottom &#9660;</button>
-    <div class="sep"></div>
-    <span id="sel-count" style="font-size:11px; color:#bdc3c7;"></span>
-</div>
-<?php endif; ?>
-
 <!-- ── Turned-off notice ── -->
 <?php if (!$display->isActive()): ?>
 <div id="display-off-banner" style="display:block;">
@@ -780,20 +798,102 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 </div>
 <?php endif; ?>
 
-<!-- ── Section banner for basic users ── -->
-<?php if (!$isAdmin && !$readOnly): ?>
-<div id="section-banner">
-    Click on a <strong>section</strong> (purple border) to target it, then add your blocks.
-</div>
-<?php endif; ?>
+<!-- ── The workbench ──
+     Palette, canvas, rail: three columns of one flex row, so the properties panel
+     is a sibling of the canvas rather than something floating over it. Everything
+     above this point is a bar the whole window-width, and everything below it is
+     inside one of the three columns. -->
+<div id="workbench">
 
-<!-- ── Canvas ── -->
-<div id="editor-frame">
-    <!-- #canvas-sizer carries the ZOOMED footprint. A CSS transform does not
-         change layout size, so without this the frame could not scroll to the
-         far edge of a canvas zoomed past the viewport. -->
-    <div id="canvas-sizer" style="flex-shrink:0;">
-        <div id="builder-canvas"></div>
+<!-- ── Left column ──
+     Above the rule, always emitted: which sign this is and the way off it. Below
+     it, only for a Builder that may edit: what you can put on the sign. -->
+<div id="palette">
+    <?php
+    // The Brand control (roadmap v2 step 4) goes at the top of this block, with its
+    // own `pal-cap` heading. It is not stubbed out here: a caption over an empty box
+    // reads as something that failed to load, and an empty box is worse than a
+    // shorter column. Until then this part holds only Switch sign, and is emitted
+    // only when there is more than one sign to switch to — a rule above nothing is
+    // a line the eye has to account for.
+    ?>
+    <?php if ($switchable > 1): ?>
+    <div class="pal-top">
+        <a class="pal-switch" href="builder.php?switch=1"
+           title="Edit a different display">&#8646; Switch sign</a>
+    </div>
+    <?php endif; ?>
+
+    <?php if (!$readOnly): ?>
+        <?php if ($isAdmin): ?>
+        <div class="pal-h">Layout</div>
+        <button class="pal-b" onclick="createSection()"><span class="ic">&#9707;</span> Section</button>
+        <?php endif; ?>
+
+        <div class="pal-h">Text</div>
+        <button class="pal-b" onclick="createBlock('text','section_header')"><span class="ic">H</span> Section Header</button>
+        <button class="pal-b" onclick="createBlock('text','item_title')"><span class="ic">T</span> Item Title</button>
+        <button class="pal-b" onclick="createBlock('text','price')"><span class="ic">$</span> Price</button>
+        <button class="pal-b" onclick="createBlock('text','description')"><span class="ic">&#182;</span> Description</button>
+
+        <?php if ($isAdmin): ?>
+        <div class="pal-h">Media</div>
+        <button class="pal-b" onclick="createBlock('image',null)"><span class="ic">&#9635;</span> Image</button>
+        <button class="pal-b" onclick="createBlock('carousel',null)"><span class="ic">&#9707;</span> Carousel</button>
+        <button class="pal-b" onclick="createBlock('table',null)"><span class="ic">&#9636;</span> Table</button>
+        <button class="pal-b" onclick="createBlock('marquee',null)"><span class="ic">&#9654;</span> Marquee</button>
+        <button class="pal-b" onclick="createBlock('video',null)"><span class="ic">&#9658;</span> Video</button>
+        <?php endif; ?>
+
+        <div class="pal-spacer"></div>
+        <?php if (!$isAdmin): ?>
+        <!-- Aimed at basic accounts, and revealed by the same code that always
+             revealed it — the id and the emit condition are unchanged, only where
+             it is drawn. See setSectionBanner(): the markup decides whether it
+             exists and the script only has to survive the answer. -->
+        <div id="section-banner" class="pal-hint">
+            Click on a <strong>section</strong> (purple border) to target it, then add your blocks.
+        </div>
+        <?php endif; ?>
+    <?php else: ?>
+        <div class="pal-note">Read-only — <?= Markup::text($lockHolder) ?> has this display open.
+            You can look at it and leave it; nothing here can be changed.</div>
+    <?php endif; ?>
+</div>
+
+<!-- ── Centre column: the canvas, and the footer of facts about it ── -->
+<div id="canvas-column">
+    <div id="editor-frame">
+        <!-- #canvas-sizer carries the ZOOMED footprint. A CSS transform does not
+             change layout size, so without this the frame could not scroll to the
+             far edge of a canvas zoomed past the viewport. -->
+        <div id="canvas-sizer" style="flex-shrink:0;">
+            <div id="builder-canvas"></div>
+        </div>
+    </div>
+
+    <div id="canvas-footer">
+        <span>Zoom</span>
+        <button class="btn gray" onclick="zoomToFit()" title="Fit the whole canvas in the window">Fit</button>
+        <button class="btn gray" onclick="applyZoom(1)" title="Actual size">100%</button>
+        <button class="btn gray" onclick="nudgeZoom(-1)" title="Zoom out">&minus;</button>
+        <button class="btn gray" onclick="nudgeZoom(1)" title="Zoom in">+</button>
+        <span id="zoom-readout" style="min-width:34px; text-align:right;">100%</span>
+        <span class="foot-spacer"></span>
+        <?php
+        // "who and when" comes from lastPublishDescription(), the same sentence the
+        // admin panel's Displays tab and a refused publish already use — so the three
+        // places that report a publish cannot drift, and the time goes through
+        // StoreClock exactly once (#44). A Display with a revision but no stamp is a
+        // real state, not an error: advanceLayoutRevision() bumps the stamp when an
+        // element is hidden or deleted and deliberately records no publisher, and rows
+        // published before this was stored have no stamp either.
+        //
+        // Emitted for a read-only Builder too, which is the case it was written for:
+        // somebody who cannot edit still needs to know whether the sign moved under
+        // them.
+        ?>
+        <span id="pub-state"><?php if ($display->lastPublishDescription() === ''): ?>Not published yet<?php else: ?>Last published by <?= Markup::text($display->lastPublishDescription()) ?><?php endif; ?></span>
     </div>
 </div>
 
@@ -811,6 +911,43 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
      drive one of these controls is now unreachable rather than merely inert. -->
 <?php if (!$readOnly): ?>
 <div id="inspector">
+
+    <!-- ── The resting state ──
+         What the rail says with nothing selected. The old panel answered that
+         question by disappearing, which is why it read as a window: a thing that
+         comes and goes is a thing you have to find again. It stays, and for an
+         admin it is not a placeholder — the canvas background is a property of the
+         canvas rather than of any block, and when the control bar went it had
+         nowhere else that was true of it. The left column is *what you can put on
+         the sign*; a background is not something you put on. -->
+    <div id="insp-resting">
+        <div class="rest-lead">Nothing selected.</div>
+        Click a block on the canvas to edit it. Shift+click a second block in the
+        same section to line them up with each other.
+
+        <?php if ($isAdmin): ?>
+        <div class="insp-section" style="margin-top:14px;">
+            <label>Canvas Background</label>
+            <select id="bg-type" onchange="toggleBgInputs()">
+                <option value="color">Color</option>
+                <option value="image">Image</option>
+            </select>
+            <input type="color" id="bg-color" value="#1a1a2e" oninput="applyBg()" style="margin-top:6px;">
+            <input type="file"  id="bg-file"  accept="image/jpeg,image/png,image/gif,image/webp"
+                   onchange="applyBgFile()" style="display:none; margin-top:6px;">
+            <!-- Nothing uploads when a background is picked; it rides out with the
+                 next Publish. This is what says so, because an absent progress bar
+                 and a broken control look identical. Hidden until there is
+                 something to report. -->
+            <div id="bg-pending" style="display:none; font-size:11px; color:#e0a400;
+                 margin-top:6px; line-height:1.45;"></div>
+        </div>
+        <?php endif; ?>
+    </div>
+
+    <!-- ── The block state ── Everything from here down is about one selected
+         block, and is shown as a set. -->
+    <div id="insp-block" style="display:none;">
     <h3 id="insp-title">Block</h3>
 
     <!-- Position + size (always visible when block selected) -->
@@ -1013,9 +1150,33 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         </select>
     </div>
 
-    <!-- Align tip -->
-    <div class="insp-section" style="font-size:11px;color:#7f8c8d;line-height:1.5;">
-        &#128161; <strong style="color:#bdc3c7;">Alignment tools:</strong> Select one block to align it to its parent. Shift+click additional blocks (same parent only) to align them to each other.
+    <!-- ── Arrange ──
+         What `#align-bar` was. It used to be a horizontal strip that appeared above
+         the canvas when something was selected — one more bar in the stack the
+         floating panel was landing on, and a long way from the block it acted on.
+         Same two sets of buttons, same two functions, beside the block instead.
+         The label under them is `#sel-count`, which says which of the two sets the
+         selection can actually use. -->
+    <div class="insp-section" id="insp-arrange">
+        <label>Arrange &mdash; align to parent</label>
+        <div class="arrange-row">
+            <button class="align-btn" title="Snap left edge to parent left"     onclick="alignToParent('left')">&#9664;</button>
+            <button class="align-btn" title="Center in parent horizontally"     onclick="alignToParent('center-h')">&#8596;</button>
+            <button class="align-btn" title="Snap right edge to parent right"   onclick="alignToParent('right')">&#9654;</button>
+            <button class="align-btn" title="Snap top edge to parent top"       onclick="alignToParent('top')">&#9650;</button>
+            <button class="align-btn" title="Center in parent vertically"       onclick="alignToParent('center-v')">&#8597;</button>
+            <button class="align-btn" title="Snap bottom edge to parent bottom" onclick="alignToParent('bottom')">&#9660;</button>
+        </div>
+        <label style="margin-top:9px;">Align selected to each other</label>
+        <div class="arrange-row">
+            <button class="align-btn" title="Align left edges"     onclick="alignBlocks('left')">&#9664;</button>
+            <button class="align-btn" title="Center horizontally"  onclick="alignBlocks('center-h')">&#8596;</button>
+            <button class="align-btn" title="Align right edges"    onclick="alignBlocks('right')">&#9654;</button>
+            <button class="align-btn" title="Align top edges"      onclick="alignBlocks('top')">&#9650;</button>
+            <button class="align-btn" title="Center vertically"    onclick="alignBlocks('center-v')">&#8597;</button>
+            <button class="align-btn" title="Align bottom edges"   onclick="alignBlocks('bottom')">&#9660;</button>
+        </div>
+        <div id="sel-count" style="font-size:11px; color:#8fa6bb; margin-top:6px;"></div>
     </div>
 
     <!-- Layer / Z-index -->
@@ -1059,8 +1220,16 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
             &#128465; Delete Block
         </button>
     </div>
-</div>
+    </div><!-- #insp-block -->
+</div><!-- #inspector -->
+<?php endif; ?>
 
+</div><!-- #workbench -->
+
+<!-- The two editor modals are full-window overlays, so they sit outside the
+     workbench row rather than inside one of its columns. Same read-only gate as
+     the rail: a page that cannot edit does not receive them at all. -->
+<?php if (!$readOnly): ?>
 <!-- ── Carousel Slide Editor Modal ── -->
 <div id="carousel-modal-overlay">
     <div id="carousel-modal">
@@ -1930,24 +2099,44 @@ function deselectAll() {
         if (_ti) { _ti.style.pointerEvents = 'none'; _ti.blur(); }
     }
     activeBlock = null;
-    // Both panels are absent on a read-only page, and this runs on every click in
-    // the canvas area — including there, where there is nothing to deselect but
-    // the handler still fires.
-    var insp = document.getElementById('inspector');
-    if (insp) { insp.style.display = 'none'; }
-    var bar = document.getElementById('align-bar');
-    if (bar && multiSel.length === 0) { bar.style.display = 'none'; }
+    // The rail is absent on a read-only page, and this runs on every click in the
+    // canvas area — including there, where there is nothing to deselect but the
+    // handler still fires.
+    //
+    // The rail itself does not move: it goes back to its resting state. What used
+    // to happen here was `inspector.style.display = 'none'`, which took a 290px
+    // panel off the screen on every click on empty canvas.
+    showRestingRail();
+    updateAlignBar();
+}
+
+/**
+ * Put the rail back to what it says with nothing selected.
+ *
+ * One function rather than the two lines written out four times, because the two
+ * halves have to move together: a rail showing the resting sentence *and* a
+ * populated block panel is worse than either, and that is the state every one of
+ * those call sites could reach on its own.
+ */
+function showRestingRail() {
+    var rest  = document.getElementById('insp-resting');
+    var block = document.getElementById('insp-block');
+    if (rest)  { rest.style.display  = 'block'; }
+    if (block) { block.style.display = 'none'; }
 }
 
 function showInspector(block) {
     var insp = document.getElementById('inspector');
     if (!insp) { return; }              // read-only: nothing to show it in
-    updateAlignBar(); // keep screen-align bar visible while a block is selected
+    updateAlignBar();
     var type    = block.dataset.type;
     var subtype = block.dataset.subtype || 'free';
     var isSection = type === 'section';
 
-    insp.style.display = 'flex';
+    // The rail is already on screen and stays there; only which of its two states
+    // is showing changes.
+    document.getElementById('insp-resting').style.display = 'none';
+    document.getElementById('insp-block').style.display   = 'flex';
     showGeometry(block);
     document.getElementById('insp-title').textContent =
         isSection ? 'Section' :
@@ -2080,8 +2269,7 @@ function toggleMultiSel(block) {
         multiSel.push(activeBlock);
     }
     activeBlock = null;
-    var _insp = document.getElementById('inspector');
-    if (_insp) { _insp.style.display = 'none'; }
+    showRestingRail();
 
     var idx = multiSel.indexOf(block);
     if (idx >= 0) {
@@ -2100,20 +2288,28 @@ function clearMultiSel() {
     updateAlignBar();
 }
 
+/**
+ * Say which of Arrange's two sets of buttons this selection can use.
+ *
+ * It used to show and hide `#align-bar`, a strip above the canvas — one more bar in
+ * the stack the floating properties panel was landing on. The buttons live in the
+ * rail now and are always there, so the only thing left to keep in step is the
+ * sentence under them, which is the part that was doing the work anyway: *align to
+ * parent* and *align to each other* are two different operations behind identical
+ * arrows, and which one a click performs depends on how many blocks are selected.
+ *
+ * The name is kept. It is called from six places, and a rename would be six edits
+ * to say the same thing.
+ */
 function updateAlignBar() {
-    var bar  = document.getElementById('align-bar');
-    var cnt  = document.getElementById('sel-count');
-    if (!bar || !cnt) { return; }       // read-only: the align bar is not in the page
-    var total = multiSel.length + (activeBlock ? 1 : 0);
-    if (total > 0) {
-        bar.style.display = 'flex';
-        if (multiSel.length >= 2) {
-            cnt.textContent = multiSel.length + ' blocks — aligning to each other';
-        } else {
-            cnt.textContent = '1 block — aligning to parent';
-        }
+    var cnt = document.getElementById('sel-count');
+    if (!cnt) { return; }               // read-only: the rail is not in the page
+    if (multiSel.length >= 2) {
+        cnt.textContent = multiSel.length + ' blocks selected — the second row aligns them to each other.';
+    } else if (multiSel.length + (activeBlock ? 1 : 0) > 0) {
+        cnt.textContent = '1 block selected — the first row aligns it inside its parent.';
     } else {
-        bar.style.display = 'none';
+        cnt.textContent = '';
     }
 }
 
@@ -3461,7 +3657,7 @@ function endPublish() {
 function showPublishState(desc) {
     var line = document.getElementById('pub-state');
     if (!line || !desc) { return; }
-    line.textContent = 'published by ' + desc;
+    line.textContent = 'Last published by ' + desc;
 }
 
 function publishCanvas() {
@@ -4200,6 +4396,42 @@ function svgPlaceholder(w, h, label) {
         'font-family="Arial" font-size="14" fill="#7f8c8d">'+label+'</text></svg>'
     );
 }
+
+/**
+ * The account-and-settings menu behind the gear.
+ *
+ * Closes on the next click anywhere, which is what a menu has to do — a panel that
+ * only closes by clicking the thing that opened it is a panel people leave open and
+ * then click through. The listener is added once, on the document, and reads the
+ * class rather than a variable so the two cannot disagree about whether it is open.
+ *
+ * `aria-expanded` is kept in step because a button that says nothing about its own
+ * state is a button a screen reader describes wrongly, and this one now holds the
+ * three links the nav used to show.
+ */
+function toggleGearMenu(e) {
+    if (e) { e.stopPropagation(); }     // or the document listener closes it again
+    var menu = document.getElementById('gear-menu');
+    var btn  = document.getElementById('gear-btn');
+    if (!menu) { return; }
+    var open = !menu.classList.contains('open');
+    menu.classList.toggle('open', open);
+    if (btn) { btn.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+}
+
+function closeGearMenu() {
+    var menu = document.getElementById('gear-menu');
+    var btn  = document.getElementById('gear-btn');
+    if (menu) { menu.classList.remove('open'); }
+    if (btn)  { btn.setAttribute('aria-expanded', 'false'); }
+}
+
+document.addEventListener('click', function (e) {
+    var menu = document.getElementById('gear-menu');
+    // A click inside the menu is somebody using it — following a link, and later
+    // choosing a Workspace Theme. Closing on that would fight the control.
+    if (menu && menu.classList.contains('open') && !menu.contains(e.target)) { closeGearMenu(); }
+});
 
 function showToast(msg, isErr) {
     var t = document.getElementById('toast');

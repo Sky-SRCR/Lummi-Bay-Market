@@ -742,7 +742,18 @@ applyPos('x', 320);
 undoStep();
 checkSame(null, activeBlock,    'the selection is dropped');
 checkSame(null, targetSection,  'and the section that was targeted for new blocks');
-checkSame('none', document.getElementById('inspector').style.display, 'the inspector is put away');
+// The rail stays on screen and goes back to its resting state — it is a docked
+// column now, not a floating panel, so "put away" would mean the canvas reflowing
+// under the pointer every time a selection was dropped. This is the stronger check
+// the display property was standing in for: what matters is that no control is
+// still populated from a node that has gone, and that the two states are never
+// both showing.
+checkSame('none',  document.getElementById('insp-block').style.display,
+          'the rail stops showing block controls');
+checkSame('block', document.getElementById('insp-resting').style.display,
+          'and shows its resting state instead of disappearing');
+checkSame('',      document.getElementById('sel-count').textContent,
+          'with nothing left claiming a selection');
 
 // A multi-selection is the other way nodes are held, and it is a separate run
 // because the two are mutually exclusive: toggleMultiSel() gives up the single
@@ -921,7 +932,7 @@ checkSame(undefined, priceBlock().dataset.brandTypography,
 checkSame('Arial', priceEntry(snapshotCanvas()).font_family,
           'and its own typography is carried again, exactly as before this landed');
 
-const expected = 137;
+const expected = 139;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }
