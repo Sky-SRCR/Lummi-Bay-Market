@@ -1738,6 +1738,10 @@ checkSame($nSalmon->id(), $nBrands->otherBrandNamed('SALMON HOUSE')->id(),
           'but case is not a difference, because MySQL\'s collation does not think so either');
 checkSame(null, $nBrands->otherBrandNamed('Salmon House', $nSalmon->id()),
           'and a Brand does not clash with itself, or it could never be re-saved');
+checkSame($nSeeded->id(), $nBrands->otherBrandNamed($nSeeded->name())->id(),
+          'the very first Brand is checked like any other — the default exceptId excludes nothing');
+checkSame($nSalmon->id(), $nBrands->otherBrandNamed('  Salmon   House  ')->id(),
+          'and the name being compared is the folded one, so spacing is not a way past the check');
 
 // ---- The logo, and the two background kinds ---------------------------------
 $nLogoId = intval((new AssetLibrary($nPdo))->pool('image', 'uploads/salmon-logo.png'));
@@ -7388,4 +7392,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1991 : 1965);
+reportChecks(testIsMysql() ? 1993 : 1967);
