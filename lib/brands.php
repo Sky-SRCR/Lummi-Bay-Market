@@ -218,23 +218,30 @@ class BrandStore
     }
 
     /**
-     * Is this name taken? `$exceptId` lets a Brand keep its own name while renaming.
+     * The *other* Brand already using this name, or null. `$exceptId` lets a Brand
+     * keep its own name while renaming.
      *
      * Compared case-insensitively in PHP rather than left to the database, because
      * the two engines disagree: MySQL's default collation makes "Salmon House" and
      * "salmon house" the same name and refuses the second with a unique-key error,
      * and SQLite's does not. A rule that answers differently per engine is a rule the
      * self-test cannot state.
+     *
+     * Answers the Brand rather than a yes/no so the refusal can quote **its** name
+     * instead of the one that was typed. Those differ exactly when the comparison did
+     * the work it exists for — somebody typing "salmon house" is told the clash is
+     * with "Salmon House", which is the string they will actually find in the list.
+     * A predicate could only ever echo the input back.
      */
-    public function nameExists($name, $exceptId = 0)
+    public function otherBrandNamed($name, $exceptId = 0)
     {
         $name = self::cleanName($name);
-        if ($name === '') { return false; }
+        if ($name === '') { return null; }
         foreach ($this->all() as $brand) {
             if ($brand->id() === intval($exceptId)) { continue; }
-            if (strcasecmp($brand->name(), $name) === 0) { return true; }
+            if (strcasecmp($brand->name(), $name) === 0) { return $brand; }
         }
-        return false;
+        return null;
     }
 
     // ---- Name rules ---------------------------------------------------------

@@ -140,9 +140,11 @@ next.
 _Avoid_: block styles, global fonts, defaults
 
 **Brand palette**:
-The named colours a Brand carries, offered as swatches wherever a colour is
-picked for a Display. Offered and never enforced — a block with its own colour
-keeps it.
+The colours a Brand carries — up to six, in the order they are shown — offered
+as swatches wherever a colour is picked for a Display. Offered and never
+enforced: a block with its own colour keeps it. Deliberately an ordered list
+rather than named roles, because a role ("this is the heading colour") is an
+instruction, and an enforced palette is the option ADR-0011 rejected.
 _Avoid_: theme colours, colour scheme, swatch set
 
 **Workspace Theme**:

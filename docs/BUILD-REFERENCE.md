@@ -556,6 +556,31 @@ through the app again:
     Both of `LayoutStore`'s writers ask it. `copyLayout()` is the one that looks like an
     exception and is not: a copy is a new row, and copying a fossil faithfully puts it
     on a sign that never had one.
+33. **Nothing outside `lib/brands.php` writes `brands`** (ADR-0011), and no page decides
+    what a Brand *is*. A Brand is the identity several signs read their typography,
+    palette, logo and default canvas background from, so a second writer is a venue
+    repainted by a page that did not know it was the one deciding — and repainted
+    within thirty seconds, on every screen wearing it, with no publish and no undo.
+    `BrandStore` owns every statement against the table; `lib/schema.php` creates it and
+    seeds the first Brand, the same exception `displays` has for the same reason.
+    `BrandAdmin` is deliberately **not** on the list, and that is the sharper half of
+    the rule: creating a Brand spans two tables — the row, and the six `block_styles`
+    rows without which its whole typography form is an `UPDATE` that matches nothing and
+    reports success — so it holds the transaction, composes `BrandStore` with
+    `BrandStyles`, and writes no SQL of its own. If it ever appears in this rule's
+    output it has started reaching past the module that owns the table, which is the
+    shape `DisplayAdmin`, `AccountAdmin` and `PasswordResetCompletion` all avoid.
+    Two consequences worth stating because neither is obvious from the table. **A Brand
+    in use is never reassigned**, only refused, naming the Displays — moving three
+    boards in a restaurant onto some other identity on one click is the merge invariant 5
+    exists to prevent, and `displays.brand_id`'s foreign key carries no `ON DELETE`
+    clause so the database says the same thing to anything reaching it another way. And
+    **the lock refusal narrows rather than widens**: Brand Standards used to be refused
+    while *anyone* was editing *anything*, which was airtight when one table reached
+    every sign and is simply false now, so it asks
+    `DisplayStore::editedByAnyoneElseUsingBrand()` instead. That is the one place this
+    work makes the app less restrictive, and it is a rule getting *more* correct rather
+    than being relaxed.
 
 ---
 
@@ -6111,6 +6136,98 @@ the category no harness here is pointed at, and this step rewrote most of the sa
 is invisible to all six suites. **A green gate is not a working screen**, and that
 sentence is load-bearing for this step in particular: nothing in this repo can see a
 three-column layout fail to be three columns.
+
+---
+
+### 4bb. The word Brand went back to what it means, and a key changed under a live table
+
+v2 step 3, and the high-risk one: it re-keys a table on a database that is driving
+signs. ADR-0011 reversed roadmap decision C — one set of Brand Standards for the whole
+installation becomes one per **Brand**, a named reusable identity that several Displays
+share. `block_styles` is keyed on `(brand_id, block_type)`, `displays.brand_id` is
+`NOT NULL`, and a `brands` table carries the palette, the logo asset and the default
+canvas background.
+
+**The name had to be freed first, and that landed as its own commit.** `lib/brand.php`
+held a class called `Brand` whose contents were the *navigation bar's* colours —
+which `CONTEXT.md` calls a Workspace Theme, and which never reaches a Screen. The
+vocabulary file has been unambiguous about this since it was written; the class simply
+predated it. It is `SiteChrome`, in `lib/site_chrome.php`, and not `WorkspaceTheme`,
+because a Workspace Theme is per-person and chosen and this is still one set of colours
+for the whole install read out of a generated file — step 5 is what turns it into the
+other, and it keeps these four method names when it does, so every call site survives
+that change too. 65 references across 16 files, no behaviour change, gated on its own.
+Doing it inside the schema commit would have made the risky diff unreadable.
+
+**The gate on the re-key reads the key's columns, not whether a key exists.** This is
+the only statement convergence issues that *replaces* structure rather than adding to
+it, and the difference matters twice over. Every table has a `PRIMARY`, so a gate built
+on `hasIndex()` would answer the same before and after — the statement would either
+never run or run on every request. And unlike a duplicate `ADD COLUMN`, which fails
+harmlessly, a second `DROP PRIMARY KEY, ADD PRIMARY KEY` does not fail at all: it
+rebuilds the table. So `SchemaFacts` learned `indexColumns()` and `needsPrimaryKey()`,
+and `readSchemaFacts()` orders by `SEQ_IN_INDEX`, because `(brand_id, block_type)` and
+`(block_type, brand_id)` are different keys and a set comparison would call the re-key
+already done. An index recorded without its columns answers **null** — "I did not
+look" — and not an empty list, which is the same three-valued discipline the rest of
+that file already had.
+
+The order is add-nullable, backfill, tighten, re-key, and the tighten is written out
+rather than left to MySQL's silent conversion of a nullable column into a `PRIMARY KEY`
+member. Relying on that would work and would leave the `MODIFY` in the plan on the next
+request as well, since both gates were decided from one catalogue read taken before
+either ran — and an `ALTER` that "does nothing" takes the same metadata lock as one
+that does (§4o).
+
+**Two things the plan did not mention, found by building it.**
+
+The first is that `seedBlockStyles()` had never run in a test. It was a single
+`INSERT IGNORE`, which SQLite rejects — and the suite's default engine is SQLite, so a
+`true` return could only ever mean "the count found all six and the statement was never
+sent". The inserting half was unreachable from the one engine that runs by default, and
+the SQLite check was *written that way on purpose*, using the rejection as its witness.
+Re-keying forced the statement to name a `brand_id`, and the replacement computes the
+absent `(Brand, type)` pairs and sends plain `INSERT`s, which both engines run. The
+suite now watches it seed for real, including seeding a second Brand — which on the old
+key would have been six duplicate-key failures. That is #11's rule collecting another
+one: a statement only one engine can execute is a statement the fixture cannot test.
+
+The second is not about this feature at all. The fixture's temp-directory cleanup was
+one level deep, and the install-paths section writes `private/db_credentials.php` — a
+file inside a subdirectory. `rmdir` on a non-empty `private/` failed, so `rmdir` on the
+parent failed too, and **every run of the suite since had left a directory in `/tmp`**.
+429 had accumulated. The directory name is keyed on the process id, a container reuses
+those freely, and one run inherited an older run's credentials file whole and failed a
+check that had nothing to do with the change under test. It is worth stating which way
+that fails: this time it produced a false *failure*, which is the harmless direction. A
+check that reads a file some earlier run wrote can pass for the wrong reason just as
+easily, and nothing would have said so. Cleanup is recursive now and the directory is
+emptied before use.
+
+**Where the risk actually sits, and what does not cover it.** The re-key statement
+itself is MySQL-only, so no suite in this container executes it — and this container has
+no MySQL server, so the layout suite's MySQL arm did not run either and its expected
+check count is derived rather than observed. `tools/rehearse_phase1.php` is what covers
+the statement, and it grew the checks to do it: the primary key's columns read back out
+of `SHOW KEYS`, both backfills asked as rows rather than as structure, `brand_id`
+`NOT NULL` on both tables, and the `RESTRICT` rule on `displays_ibfk_3`. That tool runs
+against a copy of live data, by a person, and **it has not been run** — the rehearsal is
+step 3's stated gate and it is owed before this goes near the shop. So is the browser
+pass, which §4ba already owed and which this step adds a rewritten Display Branding tab
+to.
+
+**A note on what the mutation runs found**, since invariant 30 is the reason to do them:
+the first run over `lib/brands.php` survived on nearly every accessor, because the
+module had no section in the suite at all — the Brand tests written at that point were
+about `BrandStyles` and `DisplayStore`. Writing that section then found two real
+defects that no gate had: `BrandAdmin::create()` refused a Brand created from a name
+alone, because an absent background was being read as an unreadable one rather than as
+"none supplied" (#21's line, in the direction that refuses a legitimate save); and the
+duplicate-name refusal quoted the name that had just been *typed* rather than the name
+of the Brand actually holding it — so somebody typing `salmon house` was told the clash
+was with `salmon house`, a string that appears nowhere in the list they were about to
+go and look at. `otherBrandNamed()` answers the Brand rather than a boolean for exactly
+that reason: a predicate can only echo its input back.
 
 ---
 

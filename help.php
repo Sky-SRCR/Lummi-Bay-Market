@@ -185,7 +185,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
     <h2>Other Pages</h2>
     <a href="#assets"        class="section-link">Asset Library</a>
-    <a href="#branding"      class="section-link">Brand Standards</a>
+    <a href="#branding"      class="section-link">Brands &amp; Brand Standards</a>
     <a href="#setup-brand"   class="section-link">Store Branding</a>
     <?php if ($isAdmin): ?>
     <a href="#admin"         class="section-link">Admin Panel</a>
@@ -227,7 +227,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li>Create and move <strong>Sections</strong> (the purple-bordered layout containers)</li>
         <li>Add any block type: Image, Carousel, Marquee, Video</li>
         <li>Edit font styles, block dimensions, canvas background</li>
-        <li>Manage Brand Standards via the Branding page (global font/color styles for branded blocks)</li>
+        <li>Create brands and manage their Brand Standards via the Display Branding page (font/colour styles for branded blocks, one set per brand)</li>
         <li>Delete blocks, manage accounts, configure store branding</li>
         <li>Publish the layout to the display</li>
     </ul>
@@ -416,7 +416,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <ul>
         <li>Shows a purple "Brand Style Applied" badge — font and colour come from Brand Standards</li>
         <li>Double-click the block to edit the text content (all users can do this)</li>
-        <li>To change the font or colour for ALL blocks of this type at once, use <strong>Brand Standards</strong> (admin only)</li>
+        <li>To change the font or colour for ALL blocks of this type at once — on every display wearing this display's brand — use <strong>Brand Standards</strong> (admin only)</li>
     </ul>
 
     <h3>Image blocks</h3>
@@ -583,15 +583,15 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <a href="#" class="back-top">↑ Top</a>
 
     <h3>Branded Text Blocks</h3>
-    <p>These four types use store-wide font and colour settings defined in Brand Standards (set on the Branding page):</p>
+    <p>These four types use the font and colour settings defined in the display's brand, in Brand Standards (set on the Display Branding page):</p>
     <ul>
         <li><strong>Section Header</strong> — Large heading. Default: Arial 36px bold white.</li>
         <li><strong>Item Title</strong> — Product name. Default: Arial 24px bold light-grey.</li>
         <li><strong>Price</strong> — Price. Default: Arial 30px bold orange (#f39c12).</li>
         <li><strong>Description</strong> — Detail text. Default: Arial 14px regular grey.</li>
     </ul>
-    <p>To edit the text: double-click the block and type. To change the style for <em>all</em> blocks of that type, go to Brand Standards (admin only).</p>
-    <div class="tip"><strong>Tip:</strong> Consistent use of branded text blocks means you can restyle your entire display (e.g. change all prices to green) in seconds from the Brand Standards screen.</div>
+    <p>To edit the text: double-click the block and type. To change the style for <em>all</em> blocks of that type on every display wearing this brand, go to Brand Standards (admin only).</p>
+    <div class="tip"><strong>Tip:</strong> Consistent use of branded text blocks means you can restyle a whole venue (e.g. change all prices to green) in seconds from the Brand Standards screen — every display wearing that brand at once.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -764,20 +764,21 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
 <!-- ════════════════════════════════════════════════════════ -->
 <div class="help-section" id="branding">
-    <h2>Brand Standards</h2>
+    <h2>Brands &amp; Brand Standards</h2>
     <a href="#" class="back-top">↑ Top</a>
     <div class="admin-only"><strong>Admin only.</strong></div>
-    <p>Brand Standards define the default font family, size, colour, weight, and line height for each of the six branded text block types: Section Header, Item Title, Item Title 2, Price, Price 2, and Description.</p>
+    <p>A <strong>brand</strong> is one venue's look: its typography, its palette, its logo and the canvas background its screens start from. Every display wears exactly one, and several displays can share it — so a restaurant with three boards has one red, edited once.</p>
+    <p>Brand Standards define the default font family, size, colour, weight, and line height for each of the six branded text block types: Section Header, Item Title, Item Title 2, Price, Price 2, and Description — <em>per brand</em>.</p>
 
     <h3>Changing brand styles</h3>
     <ol class="steps">
-        <li><span>Go to <strong>Branding</strong> (top nav → Branding) and scroll to the Brand Standards section.</span></li>
+        <li><span>Go to <strong>Display Branding</strong> (Admin Panel → Display Branding) and open the brand you want to change.</span></li>
         <li><span>A table shows each block type's current settings, with a live preview. Edit any field.</span></li>
         <li><span>Click <strong>Save Brand Standards</strong>.</span></li>
     </ol>
 
-    <div class="note"><strong>Note:</strong> Brand Standards only affect <em>branded</em> text blocks — not free text blocks, where you set the font yourself in the properties panel.</div>
-    <div class="tip"><strong>These reach the screens on their own.</strong> Every screen reads this typography each time it polls, so a saved change appears within 30 seconds on <em>every</em> display, with no publishing needed. That also makes it the one change you can make without opening the Builder. Because it lands on every sign at once, it is refused while <em>anyone</em> is editing <em>any</em> display — the message names who, and you can save once they are finished or once their editing lock lapses after 15 idle minutes.</div>
+    <div class="note"><strong>Note:</strong> Brand Standards only affect <em>branded</em> text blocks — not free text blocks, where you set the font yourself in the properties panel. A brand's <strong>palette</strong> is different again: it is offered as swatches wherever you pick a colour, and never enforced, so a block with its own colour keeps it.</div>
+    <div class="tip"><strong>These reach the screens on their own.</strong> Every screen reads this typography each time it polls, so a saved change appears within 30 seconds on every display <em>wearing that brand</em>, with no publishing needed. That also makes it the one change you can make without opening the Builder. Because it lands on those signs at once, it is refused while anyone is editing <em>a display that wears this brand</em> — the message names who and which display, and you can save once they are finished or once their editing lock lapses after 15 idle minutes. Somebody working on a display wearing a different brand does not block you.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->

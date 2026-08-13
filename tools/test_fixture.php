@@ -41,6 +41,7 @@ require_once __DIR__ . '/../lib/layout_store.php';
 require_once __DIR__ . '/../lib/grants.php';
 require_once __DIR__ . '/../lib/display_request.php';
 require_once __DIR__ . '/../lib/display_admin.php';
+require_once __DIR__ . '/../lib/brand_admin.php';
 require_once __DIR__ . '/../lib/password_resets.php';
 require_once __DIR__ . '/../lib/server_report.php';
 require_once __DIR__ . '/../lib/accounts.php';

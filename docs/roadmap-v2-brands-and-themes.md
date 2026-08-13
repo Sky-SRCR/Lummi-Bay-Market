@@ -1,6 +1,6 @@
 # Roadmap v2 — Brands, Workspace Themes, and the Builder workbench
 
-Status: **steps 1 and 2 built, steps 3–5 planned.** Settled in a grilling session on
+Status: **steps 1, 2 and 3 built; steps 4–5 planned.** Settled in a grilling session on
 2026-08-13; the decisions are recorded here and the one that reverses a previous
 decision is in [ADR-0011](adr/0011-typography-and-colour-belong-to-a-brand.md).
 
@@ -261,6 +261,11 @@ the rewritten checks.
 
 ### Step 3 — Brands: data and the admin surface · size L · risk **High**
 
+**Done — 2026-08-13. Written up as §4bb; it is invariant 33.** Not deployed, and
+**the rehearsal against a copy of live data has not been run** — that is this step's
+own stated gate and it needs a person and a database this container cannot reach.
+What follows is the plan as written, with what it got wrong marked.
+
 Risk lives here, as it did in v1's phase 1, and for the same reason: this step
 converges schema on a live database that is driving signs.
 
@@ -291,11 +296,44 @@ itself on this host in 2026-08-07 and the live path is convergence.
 
 **Done when** a database built from `schema.sql` has nothing left for convergence
 to do, a rehearsal against a copy of live data leaves every sign rendering
-identically, and the Displays tab shows each Display's Brand.
+identically, and the Displays tab shows each Display's Brand. — **Two of three
+met.** The first is asserted by the MySQL arm of `selftest_layout`, which *did not
+run*: this container has no MySQL server, so that arm's expected check count is
+derived from the standing delta rather than observed. The Displays tab shows and
+sets each Display's Brand. **The rehearsal has not been run and is owed before this
+goes near the shop** — `tools/rehearse_phase1.php` grew the checks for it (the
+primary key's columns out of `SHOW KEYS`, both backfills as rows, `brand_id`
+`NOT NULL` on both tables, and the `RESTRICT` rule), and running it needs a copy of
+live data.
 
 Gates: the standing set, plus `selftest_layout` sections for the seeding and the
 narrowed refusal, plus `php tools/mutate.php lib/brands.php` and over
 `lib/brand_styles.php`.
+
+> **Four corrections while building.**
+>
+> The plan said nothing about the *name*. `lib/brand.php` already held a class
+> called `Brand`, and what it held was the navigation bar's colours — a Workspace
+> Theme by `CONTEXT.md`'s own vocabulary. It is `SiteChrome` now, renamed in its own
+> commit before any of this, because doing it inside the schema diff would have made
+> the risky half unreadable. Step 5 takes it further and keeps its four method names.
+>
+> The plan said `block_styles` re-keyed and left the gate unspecified. The gate has
+> to read the key's **columns**: every table has a `PRIMARY`, so an existence test
+> would either never run or run every request, and a second `DROP PRIMARY KEY, ADD
+> PRIMARY KEY` does not fail harmlessly — it rebuilds the table. `SchemaFacts` gained
+> `indexColumns()` and `needsPrimaryKey()`, and the catalogue read now orders by
+> `SEQ_IN_INDEX`.
+>
+> The plan did not mention that a Brand needs a *use case* module. Creating one
+> spans two tables — the row, and the six `block_styles` rows without which its
+> typography form is an `UPDATE` matching nothing that reports success — so
+> `lib/brand_admin.php` holds the transaction, the fourth module of the shape
+> `DisplayAdmin`, `AccountAdmin` and `PasswordResetCompletion` share.
+>
+> And it did not anticipate the palette needing a shape. Six ordered slots, not named
+> roles: a role is an instruction, and an enforced palette is the option ADR-0011
+> rejected. `CONTEXT.md`'s "Brand palette" entry was corrected to say so.
 
 ### Step 4 — Brands in the Builder · size M · risk Medium
 
@@ -376,9 +414,9 @@ fallback.
   publish sends no brand-owned typography; no canvas colour resolves through a
   theme; nothing outside `lib/brands.php` writes `brands`; nothing outside
   `lib/workspace_themes.php` writes `workspace_themes` — take their numbers when
-  they land, not here. The first of them landed with step 1 and took **32**; the
-  other three are still unnumbered, and a branch cut beside another one has to
-  read that item before writing one down.
+  they land, not here. The first landed with step 1 and took **32**; the third
+  landed with step 3 and took **33**; the other two are still unnumbered, and a
+  branch cut beside another one has to read that item before writing one down.
 - **The browser pass is a list, not a receipt.** Step 2 rewrites every page it
   describes, and five of its seven defects were things a screen did not *say* —
   the category no harness here is pointed at. It gets re-walked.

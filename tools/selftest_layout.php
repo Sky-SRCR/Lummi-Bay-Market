@@ -1656,6 +1656,203 @@ checkSame('5.00',    BrandStyles::formatLineHeight(9999),
 checkSame('1.40',    BrandStyles::formatLineHeight('nonsense'), 'and nonsense falls back to the default');
 
 // ─────────────────────────────────────────────────────────────
+section('A Brand: its name, its palette, and what may destroy it');
+// ─────────────────────────────────────────────────────────────
+// ADR-0011 makes a Brand the thing several signs read their typography, palette and
+// logo from. Two properties matter more than the rest, and both are #21's line: a
+// palette colour that cannot be read is *named*, never substituted, and a Brand a
+// sign still wears is refused rather than reassigned.
+
+$nPdo    = newTestDb();
+$nBrands = new BrandStore($nPdo);
+$nStyles = new BrandStyles($nPdo);
+$nDisp   = newTestDisplayStore($nPdo);
+$nAdmin  = new BrandAdmin($nPdo, $nBrands, $nStyles, $nDisp);
+
+// ---- The name rules ---------------------------------------------------------
+checkSame('Salmon House', BrandStore::cleanName('  Salmon   House  '),
+          'a name is trimmed and its whitespace collapsed');
+checkSame('', BrandStore::cleanName(['Salmon House']),
+          'and a value that is not a string is not a name folded badly — it is not a name (#27)');
+checkSame(false, BrandStore::isValidName(''), 'an empty name is refused');
+checkSame(false, BrandStore::isValidName(str_repeat('a', BrandStore::NAME_MAX + 1)),
+          'and one longer than the column, rather than being truncated to something nobody chose');
+checkSame(true,  BrandStore::isValidName(str_repeat('a', BrandStore::NAME_MAX)),
+          'exactly the column width is fine');
+checkSame(false, BrandStore::isValidName("Salmon\tHouse"),
+          'a control character is refused, because two names that look identical must not be two rows');
+checkSame(true,  BrandStore::isValidName('Tavern & Grill'),
+          'but an ampersand is an ordinary venue name');
+
+// The two numbers that have to agree with `schema.sql`, asserted as literals rather
+// than through the constants. A check written as `str_repeat('a', NAME_MAX)` moves
+// with the constant and would pass just as happily at 81, where the column would
+// truncate silently; PALETTE_SLOTS at 7 would build `palette_7 = ?` against a table
+// that has six. Both are the constant agreeing with the database, so both are stated.
+checkSame(80, BrandStore::NAME_MAX, 'the name limit is the width of brands.name in schema.sql');
+checkSame(6,  BrandStore::PALETTE_SLOTS, 'and there are exactly as many palette slots as columns');
+checkSame(['palette_1','palette_2','palette_3','palette_4','palette_5','palette_6'],
+          BrandStore::paletteFields(), 'spelled the way the columns are');
+
+// ---- Which value names a Brand ----------------------------------------------
+// Reached straight from `$_POST['b_id']` on the panel's save and delete forms, so
+// this is the same hazard `DisplayStore::forId()` was fixed for (#21): `intval("7abc")`
+// is 7, so a mangled id would not fail — it would silently name a *different Brand*,
+// and the delete form would act on it.
+$nSeeded = $nBrands->all()[0];
+checkSame($nSeeded->id(), $nBrands->forId((string)$nSeeded->id())->id(),
+          'an id written as a whole number names its Brand');
+checkSame(null, $nBrands->forId((string)$nSeeded->id() . 'abc'),
+          'but a number with rubbish after it names no Brand, rather than that one');
+checkSame(null, $nBrands->forId([]),      'and neither does an array, which intval() reads as 1');
+checkSame(null, $nBrands->forId(true),    'nor a boolean, which intval() also reads as 1');
+checkSame(null, $nBrands->forId('1.9'),   'nor a fraction, which would round down onto Brand 1');
+checkSame(null, $nBrands->forId(0),       'zero names nothing');
+checkSame(null, $nBrands->forId(-1),      'and so does a negative id');
+checkSame(null, $nBrands->forId(99999),   'and an id no Brand has answers null rather than throwing');
+
+// ---- Creating one -----------------------------------------------------------
+$nRes = $nAdmin->create(['name' => 'Salmon House']);
+checkSame(true, $nRes->isOk(), 'a Brand is created from a name alone');
+$nSalmon = $nRes->brand();
+checkSame(6, count($nStyles->all($nSalmon->id())),
+          'and comes with its six sets of standards, or its typography form would save nothing');
+checkSame('#e74c3c', $nStyles->all($nSalmon->id())['price']['font_color'],
+          'started from BrandStyles::STARTING_POINTS');
+
+$nDup = $nAdmin->create(['name' => 'salmon house']);
+checkSame(BrandResult::CONFLICT, $nDup->kind(),
+          'a name another Brand already has is refused, compared the way a person reads it');
+checkSame('name', $nDup->field(), 'and the refusal names the field to point at');
+checkMentions($nDup->message(), 'Salmon House', 'and quotes the Brand already using it');
+
+checkSame(BrandResult::INVALID, $nAdmin->create(['name' => ''])->kind(), 'a nameless Brand is refused');
+
+// An empty name matches nothing rather than the first Brand whose name is falsy —
+// the guard that makes `otherBrandNamed('')` safe to call before the name has been
+// validated, which is the order `checkFields()` puts them in.
+checkSame(null, $nBrands->otherBrandNamed(''), 'an empty name clashes with no Brand');
+checkSame(null, $nBrands->otherBrandNamed('   '), 'and neither does one that is only spaces');
+checkSame($nSalmon->id(), $nBrands->otherBrandNamed('SALMON HOUSE')->id(),
+          'but case is not a difference, because MySQL\'s collation does not think so either');
+checkSame(null, $nBrands->otherBrandNamed('Salmon House', $nSalmon->id()),
+          'and a Brand does not clash with itself, or it could never be re-saved');
+
+// ---- The logo, and the two background kinds ---------------------------------
+$nLogoId = intval((new AssetLibrary($nPdo))->pool('image', 'uploads/salmon-logo.png'));
+$nAdmin->updateDetails($nSalmon, ['name' => 'Salmon House', 'logo_asset_id' => $nLogoId,
+                                  'bg_type' => 'color', 'bg_val' => '#1a1a2e']);
+checkSame($nLogoId, $nBrands->forId($nSalmon->id())->logoAssetId(), 'a Brand remembers its logo');
+checkSame($nLogoId, $nBrands->forId($nSalmon->id())->toClientArray()['logo_asset_id'],
+          'and hands it to a client as an id');
+$nAdmin->updateDetails($nBrands->forId($nSalmon->id()),
+                       ['name' => 'Salmon House', 'logo_asset_id' => '',
+                        'bg_type' => 'color', 'bg_val' => '#1a1a2e']);
+checkSame(0, $nBrands->forId($nSalmon->id())->logoAssetId(),
+          'and clearing it answers 0 rather than null, so no caller has to test for both');
+
+$nPdo->prepare("UPDATE brands SET bg_type = 'image', bg_val = ? WHERE id = ?")
+     ->execute(['uploads/salmon-bg.png', $nSalmon->id()]);
+checkSame('image', $nBrands->forId($nSalmon->id())->backgroundType(), 'a Brand can default to an image background');
+$nPdo->prepare("UPDATE brands SET bg_type = 'nonsense' WHERE id = ?")->execute([$nSalmon->id()]);
+checkSame('color', $nBrands->forId($nSalmon->id())->backgroundType(),
+          'and anything that is not the word image reads as a colour, never as a third kind');
+
+// ---- The palette: offered, and never substituted ----------------------------
+$nRes = $nAdmin->updateDetails($nSalmon, [
+    'name' => 'Salmon House', 'bg_type' => 'color', 'bg_val' => '#102030',
+    'palette_1' => '#AABBCC', 'palette_2' => '', 'palette_3' => '#ddeeff',
+    'palette_4' => '', 'palette_5' => '', 'palette_6' => '',
+]);
+checkSame(true, $nRes->isOk(), 'a Brand\'s palette and background are saved');
+$nSalmon = $nBrands->forId($nSalmon->id());
+checkSame(['#aabbcc', '#ddeeff'], $nSalmon->palette(),
+          'the filled slots come back normalised, in slot order, with the empty ones left out');
+checkSame('#102030', $nSalmon->backgroundValue(), 'and the default canvas background is stored');
+checkSame([], $nSalmon->unreadablePalette(), 'nothing is unreadable about a palette this app wrote');
+
+$nBad = $nAdmin->updateDetails($nSalmon, [
+    'name' => 'Salmon House', 'bg_type' => 'color', 'bg_val' => '#102030',
+    'palette_1' => '#aabbcc', 'palette_2' => 'puce', 'palette_3' => '',
+    'palette_4' => '', 'palette_5' => '', 'palette_6' => '',
+]);
+checkSame(BrandResult::INVALID, $nBad->kind(), 'a palette colour that is not a colour is refused');
+checkSame('palette_2', $nBad->field(), 'naming the slot rather than the whole form');
+checkMentions($nBad->message(), 'Palette colour 2', 'in the words the form puts on it');
+checkSame(['#aabbcc', '#ddeeff'], $nBrands->forId($nSalmon->id())->palette(),
+          'and nothing was saved — a refusal is whole, never a partial write');
+
+// A row that got past this app — hand-edited, or written before the rule. The
+// swatch is not offered, and the tab says which value it could not use rather than
+// leaving a palette one colour short with no explanation (#21).
+$nPdo->prepare("UPDATE brands SET palette_2 = 'puce' WHERE id = ?")->execute([$nSalmon->id()]);
+$nStored = $nBrands->forId($nSalmon->id());
+checkSame(['#aabbcc', '#ddeeff'], $nStored->palette(), 'an unreadable stored slot is not offered as a swatch');
+checkSame(1, count($nStored->unreadablePalette()), 'but it is reported rather than silently dropped');
+checkSame('puce', $nStored->unreadablePalette()[0]['value'], 'quoting what is actually stored');
+checkSame('Palette colour 2', $nStored->unreadablePalette()[0]['label'], 'and naming which slot');
+checkSame('puce', $nStored->paletteSlot(1), 'the form redraws the stored value, not a substitute');
+checkSame('', $nStored->paletteSlot(99), 'and a slot that does not exist is empty rather than an error');
+
+// ---- Destroying one ---------------------------------------------------------
+$nCasino = $nAdmin->create(['name' => 'Casino Floor'])->brand();
+$nSign   = makeTestDisplay($nPdo, 'salmon-board', 'Salmon House Board', 1920, 1080, $nSalmon->id());
+
+checkSame(BrandResult::INVALID, $nAdmin->destroy($nSalmon, 'wrong name')->kind(),
+          'destroying a Brand needs its name typed back');
+checkSame(BrandResult::INVALID, $nAdmin->destroy($nSalmon, '')->kind(),
+          'and a blank confirm is not a match either');
+
+$nWorn = $nAdmin->destroy($nSalmon, 'Salmon House');
+checkSame(BrandResult::CONFLICT, $nWorn->kind(), 'a Brand a sign still wears cannot be destroyed');
+checkMentions($nWorn->message(), 'Salmon House Board',
+              'and the refusal names the sign, because "it is in use" is not something to act on');
+checkMentions($nWorn->message(), 'no undo', 'and says why it is not done automatically');
+checkSame(6, count($nStyles->all($nSalmon->id())), 'its standards are still there');
+
+// Moved off it, and now it goes — with its standards.
+$nAdminD = newTestDisplayAdmin($nPdo);
+$nAdminD->updateDetails(loadTestDisplay($nPdo, $nSign->id()),
+                        ['title' => 'Salmon House Board', 'tag' => 'salmon-board',
+                         'location' => '', 'brand_id' => $nCasino->id()]);
+checkSame($nCasino->id(), loadTestDisplay($nPdo, $nSign->id())->brandId(),
+          'a sign can be moved to another Brand from the panel');
+$nGone = $nAdmin->destroy($nBrands->forId($nSalmon->id()), 'Salmon House');
+checkSame(true, $nGone->isOk(), 'and then the Brand nothing wears is destroyed');
+checkSame(null, $nBrands->forId($nSalmon->id()), 'the row is gone');
+checkSame([], $nStyles->all($nSalmon->id()), 'and its six sets of standards went with it');
+
+// The last Brand cannot go: `displays.brand_id` is NOT NULL, so an install with no
+// Brands is one where no sign can be created at all. The sign goes first, or the
+// refusal under test is never the one that fires — the wearer check comes before it,
+// which is the right order and is why this needs saying.
+$nStillWorn = $nAdmin->destroy($nBrands->forId($nCasino->id()), 'Casino Floor');
+checkSame(BrandResult::CONFLICT, $nStillWorn->kind(), 'the Brand the sign moved to is now the one in use');
+checkMentions($nStillWorn->message(), 'Salmon House Board', 'and it is that sign standing in the way');
+
+$nAdminD->destroy(loadTestDisplay($nPdo, $nSign->id()), 'salmon-board', 1);
+checkSame(0, count($nDisp->usingBrand($nCasino->id())), 'with the sign gone, nothing wears it');
+checkSame(true, $nAdmin->destroy($nBrands->forId($nCasino->id()), 'Casino Floor')->isOk(),
+          'and it can go too');
+
+// Down to the one the fixture seeds, which nothing wears and which still cannot be
+// destroyed: `displays.brand_id` is NOT NULL, so an install with no Brands is one
+// where no sign can be created at all.
+$nOnly = $nBrands->all()[0];
+checkSame(1, $nBrands->count(), 'one Brand is left');
+$nLast = $nAdmin->destroy($nOnly, $nOnly->name());
+checkSame(BrandResult::CONFLICT, $nLast->kind(), 'and the only Brand left cannot be destroyed');
+checkMentions($nLast->message(), 'Rename it instead', 'the message says what to do instead');
+checkSame(1, $nBrands->count(), 'and it really is still there');
+
+// ---- What a client is handed -------------------------------------------------
+$nClient = $nOnly->toClientArray();
+checkSame($nOnly->id(), $nClient['id'],     'the client array carries the id');
+checkSame($nOnly->name(), $nClient['name'], 'and the name');
+checkSame([], $nClient['palette'],          'and a palette that is read rather than raw');
+checkSame(0, $nClient['logo_asset_id'],     'and 0 for a Brand with no logo, never null');
+
+// ─────────────────────────────────────────────────────────────
 section('Publish never writes what a Brand paints (invariant 32)');
 // ─────────────────────────────────────────────────────────────
 // The Builder paints the shared standard onto a branded block's inline style so it
@@ -7066,4 +7263,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1879 : 1853);
+reportChecks(testIsMysql() ? 1949 : 1923);

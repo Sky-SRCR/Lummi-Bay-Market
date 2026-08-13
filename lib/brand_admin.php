@@ -272,9 +272,10 @@ class BrandAdmin
                 'That brand name cannot be used — it must be ' . BrandStore::NAME_MAX
                 . ' characters or fewer and contain no control characters. Nothing was saved.');
         }
-        if ($this->brands->nameExists($name, $exceptId)) {
+        $clash = $this->brands->otherBrandNamed($name, $exceptId);
+        if ($clash) {
             return BrandResult::conflict('name',
-                'Another brand is already called "' . $name . '". Brand names have to be '
+                'Another brand is already called "' . $clash->name() . '". Brand names have to be '
                 . 'different so a person picking one can tell them apart. Nothing was saved.');
         }
 
@@ -294,14 +295,24 @@ class BrandAdmin
             }
         }
 
-        // The same class the publish path and the Display form ask, so a Brand's
-        // default background cannot be something a Display could never be set to.
-        $bg = ($fields['bg_type'] ?? 'color') === 'image'
-            ? Background::image((string)($fields['bg_val'] ?? ''))
-            : Background::color((string)($fields['bg_val'] ?? ''));
-        $problem = $bg->problemWith($fields['bg_val'] ?? '');
-        if ($problem !== null) {
-            return BrandResult::invalid('bg_val', $problem);
+        // Blank and unreadable are two different answers (#21), and the same two
+        // DisplayAdmin::create() distinguishes. Nothing supplied means the form never
+        // carried a background — creating a Brand from a name alone is the ordinary
+        // case — and a Brand has to have *some* default, so the app's own applies. A
+        // value that is not a colour means the form said something this app cannot
+        // store, and substituting there is how "saved" gets reported for a background
+        // nobody chose.
+        $rawBg = $fields['bg_val'] ?? '';
+        if ($rawBg !== '' && $rawBg !== null) {
+            // The same class the publish path and the Display form ask, so a Brand's
+            // default background cannot be something a Display could never be set to.
+            $bg = ($fields['bg_type'] ?? 'color') === 'image'
+                ? Background::image((string)$rawBg)
+                : Background::color((string)$rawBg);
+            $problem = $bg->problemWith((string)$rawBg);
+            if ($problem !== null) {
+                return BrandResult::invalid('bg_val', $problem);
+            }
         }
 
         return null;
