@@ -2,9 +2,17 @@
 
 **All four lanes have landed.** #33 as §4ao, #44 as §4ap, #50 as §4aq — and with #50 the
 numbered audit list closed. **Lane 0, the browser pass, was walked on 2026-08-12/13 and
-closed too**: ten sections, seven defects, §4as through §4ax. What is left is the live
-deploy, and that is not a lane — it is the 22-step visit in
-[`docs/roadmap-multi-display.md`](roadmap-multi-display.md).
+closed too**: ten sections, seven defects, §4as through §4ax. **And the live deploy has
+happened** — v1 is running and driving signs, confirmed by the store owner on
+2026-08-13, with `lbm-test/` left standing beside it. The 22-step visit in
+[`docs/roadmap-multi-display.md`](roadmap-multi-display.md) is a record now rather than
+a plan. What is still owed is the browser pass against the *live* install, which is not
+a lane either: it is the same list walked somewhere else.
+
+Work from here is [`roadmap-v2-brands-and-themes.md`](roadmap-v2-brands-and-themes.md),
+whose five steps are each deployable on their own — so the thing this file is about,
+two branches colliding in the three files every branch touches, is more likely rather
+than less.
 
 So this file has stopped being a plan and become the thing it was always more useful as:
 what a branch cut beside another one has to agree about before it starts. The round of

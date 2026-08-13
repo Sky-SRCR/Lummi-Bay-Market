@@ -1825,10 +1825,21 @@ function renderBlock(el, parent, isNew) {
 // ============================================================
 // APPLY TEXT STYLES
 // ============================================================
+// Two jobs, and the second one is why this function decides rather than reports:
+// paint the block, and record *whose* typography got painted (invariant 32).
+//
+// serializeBlock() needs the same answer and must not work it out again. A second
+// copy of `sub !== 'free' && blockStyles[sub]` somewhere else is a second thing to
+// keep in step with this one, and the day they disagree the publish either strips
+// typography the block was still rendering from — a blank price on a wall — or
+// keeps the Brand's, which is the fossil this is all about. So the condition is
+// evaluated exactly once, here, at the moment the paint happens, and the answer
+// rides on the node.
 function applyTextStyles(block, el) {
     var sub = el.block_subtype || 'free';
     if (sub !== 'free' && blockStyles[sub]) {
         var bs = blockStyles[sub];
+        block.dataset.brandTypography = '1';
         block.style.fontFamily  = bs.font_family;
         block.style.fontSize    = bs.font_size + 'px';
         applyStoredColor(block, bs.font_color);
@@ -1836,6 +1847,10 @@ function applyTextStyles(block, el) {
         block.style.fontStyle   = bs.font_style;
         block.style.lineHeight  = bs.line_height;
     } else {
+        // Cleared, not left: a Brand Standard that stops existing — or a block whose
+        // subtype went back to `free` — hands the six fields back to the block, and
+        // a stale marker would silently stop publishing them.
+        delete block.dataset.brandTypography;
         block.style.fontFamily  = el.font_family  || 'Arial';
         block.style.fontSize    = (el.font_size||16) + 'px';
         applyStoredColor(block, el.font_color);
@@ -3106,12 +3121,25 @@ function serializeSection(s) {
     };
 }
 
-/** One non-section block, as publish sends it. */
+/**
+ * One non-section block, as publish sends it.
+ *
+ * The six typography fields are sent only when the block owns them (invariant 32).
+ * A branded block's inline font, size, colour, weight, style and line height are
+ * the Brand's, painted on by applyTextStyles() so the block looks like what it
+ * will become — reading them back out and publishing them wrote the shared
+ * standard into the element's own row on every publish since those columns
+ * existed. The server ignores them for a branded block regardless (LayoutStore),
+ * so this half is not what makes the row right; it is what makes the *snapshot*
+ * right, and that is a different fault. snapshotCanvas() serializes through here,
+ * so leaving them in would mean picking a Brand changed the undo history although
+ * no element had changed — invariant 27 the other way round. See ADR-0011.
+ */
 function serializeBlock(block, sortOrder) {
     var assetId   = block.dataset.assetId || '';
     var sectionEl = block.closest('.section-block');
     var own       = assetId ? { content: '', pool: false } : blockContent(block);
-    return {
+    var out = {
         type:            block.dataset.type,
         block_subtype:   block.dataset.subtype || 'free',
         db_id:           block.dataset.dbId || null,
@@ -3123,22 +3151,32 @@ function serializeBlock(block, sortOrder) {
         asset_id:        assetId,
         manual_content:  own.content,
         save_to_db_pool: own.pool,
-        font_family:     block.style.fontFamily  || 'Arial',
-        font_size:       parseInt(block.style.fontSize) || 16,
-        // The stored value wins while it is still unreadable (#41), so a publish
-        // cannot quietly replace a colour nobody could read with black. It clears the
-        // moment somebody picks a colour — see updateStyle(). A block that simply
-        // never had a colour still publishes '#000000', exactly as before.
-        font_color:      block.dataset.colorUnread || readHex(block.style.color) || '#000000',
-        font_weight:     block.style.fontWeight  || 'normal',
-        font_style:      block.style.fontStyle   || 'normal',
-        line_height:     parseFloat(block.style.lineHeight) || 1.4,
         text_align:      block.dataset.textAlign || block.style.textAlign || '',
         locked:          block.dataset.locked === '1' ? 1 : 0,
         sort_order:      sortOrder,
         z_index:         Math.max(1, parseInt(block.dataset.zIndex) || 1),
         hidden:          block.dataset.hidden === '1' ? 1 : 0,
     };
+
+    if (block.dataset.brandTypography !== '1') {
+        out.font_family = block.style.fontFamily  || 'Arial';
+        out.font_size   = parseInt(block.style.fontSize) || 16;
+        // The stored value wins while it is still unreadable (#41), so a publish
+        // cannot quietly replace a colour nobody could read with black. It clears the
+        // moment somebody picks a colour — see updateStyle(). A block that simply
+        // never had a colour still publishes '#000000', exactly as before.
+        //
+        // Only reachable for a block that owns its colour now, which is the right
+        // narrowing rather than a lost check: an unreadable colour on a *branded*
+        // block is the Brand's, one row in `block_styles` reported once by ColorAudit
+        // where somebody can fix it, instead of once per block on every sign as
+        // though eleven signs had eleven faults.
+        out.font_color  = block.dataset.colorUnread || readHex(block.style.color) || '#000000';
+        out.font_weight = block.style.fontWeight  || 'normal';
+        out.font_style  = block.style.fontStyle   || 'normal';
+        out.line_height = parseFloat(block.style.lineHeight) || 1.4;
+    }
+    return out;
 }
 
 /** Everything on the canvas, sections first — the order publish has always sent. */

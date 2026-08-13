@@ -406,11 +406,20 @@ class LayoutStore
 
         // Sections come first in the result set, so a child's parent is always
         // already in the map by the time the child is inserted.
+        $brandStandards = $this->brandStyles()->all();
         $idMap  = [];
         $copied = 0;
         foreach ($rows as $row) {
             $oldSection = $row['section_id'] !== null ? intval($row['section_id']) : null;
             $newSection = $oldSection !== null && isset($idMap[$oldSection]) ? $idMap[$oldSection] : null;
+
+            // The same question a publish asks, so invariant 32 holds for every row
+            // this module writes rather than for the rows one of its two writers
+            // happened to write. A source row that predates the fix carries the
+            // baked standard; copying it faithfully would be copying a fossil into
+            // a sign that never had one, and there is nothing on the new row to
+            // say where it came from.
+            $typography = self::typographyFor($row, $brandStandards);
 
             $insert->execute([
                 $target->id(),
@@ -424,17 +433,17 @@ class LayoutStore
                 $row['manual_content'],
                 $row['asset_id'] !== null ? intval($row['asset_id']) : null,
                 $row['section_bg'],
-                $row['font_family'],
-                intval($row['font_size']),
-                $row['font_color'],
-                $row['font_weight'],
-                $row['font_style'],
+                $typography['font_family'],
+                intval($typography['font_size']),
+                $typography['font_color'],
+                $typography['font_weight'],
+                $typography['font_style'],
                 // Through the same clamp as a publish, not `number_format($v, 2)`.
                 // DECIMAL(4,2) cannot hold a value that needs a thousands
                 // separator, so a row that predates the column — or one hand-edited
                 // — is brought inside the bounds here rather than copied into a
                 // string the placeholder cannot bind (#32).
-                LayoutRules::lineHeight($row['line_height']),
+                LayoutRules::lineHeight($typography['line_height']),
                 $row['text_align'],
                 intval($row['locked']) ? 1 : 0,
                 intval($row['sort_order']),
@@ -907,6 +916,47 @@ class LayoutStore
         return isset($tempMap[$parentTmp]) ? $tempMap[$parentTmp] : null;
     }
 
+    /**
+     * The six typography values an element row should carry (invariant 32).
+     *
+     * Brand Standards owns the typography of a branded text block: both renderers
+     * read `block_styles` for it and never look at these six columns. The Builder
+     * nevertheless *paints* the standard onto the node's inline style — it has to,
+     * or the block would not look like what it will become — and `serializeBlock()`
+     * read that inline style straight back out. So every publish baked the shared
+     * standard into every branded element's own row, and had done since the columns
+     * existed.
+     *
+     * Invisible while one set of standards reached every sign. Two live faults the
+     * moment several do (ADR-0011): a block whose subtype is changed to `free` a
+     * month later would inherit whichever Brand was selected at its last publish,
+     * from a venue it may never have been part of and with nothing saying so; and
+     * the Builder's undo snapshot would move when a Brand was merely *picked*,
+     * although no element had changed — invariant 27 the other way round.
+     *
+     * Decided here rather than trusted from the payload, because this module owns
+     * the table and the browser is not the thing that gets to promise this. It is
+     * also not a *refusal*: a Builder tab loaded before this landed still sends all
+     * six fields, and somebody publishing from one on the afternoon of a deploy is
+     * an ordinary thing to happen. Their work lands; the six fields are ignored.
+     *
+     * What lands instead is `BrandStyles::DEFAULTS`, which is that module's own
+     * answer to "what a field is when the row does not say" and is the `schema.sql`
+     * column defaults written down. Not NULL: `intval(null)` is 0, and a `font_size`
+     * of 0 read back by anything that does not expect it is an invisible block.
+     */
+    private static function typographyFor(array $el, array $brandStandards)
+    {
+        if (BrandStyles::paints($el['type'] ?? 'text', $el['block_subtype'] ?? 'free', $brandStandards)) {
+            return BrandStyles::DEFAULTS;
+        }
+        $own = [];
+        foreach (BrandStyles::DEFAULTS as $field => $fallback) {
+            $own[$field] = (isset($el[$field]) && $el[$field] !== null) ? $el[$field] : $fallback;
+        }
+        return $own;
+    }
+
     private function insertSection(Display $display, array $el)
     {
         $this->pdo->prepare(
@@ -955,6 +1005,10 @@ class LayoutStore
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         );
 
+        // Read once, outside the loop: the answer is the same for every element and
+        // this runs inside the publish transaction, a line at a time down the sign.
+        $brandStandards = $this->brandStyles()->all();
+
         $order = 0;
         foreach ($elements as $el) {
             $type = $el['type'] ?? 'text';
@@ -998,6 +1052,8 @@ class LayoutStore
                        && isset($keepIds[intval($el['db_id'])]))
                 ? intval($el['db_id']) : null;
 
+            $typography = self::typographyFor($el, $brandStandards);
+
             $insert->execute([
                 $keepId,
                 $display->id(),
@@ -1010,12 +1066,12 @@ class LayoutStore
                 intval($el['height'] ?? 100),
                 $manualToStore,
                 $assetId,
-                $el['font_family'] ?? 'Arial',
-                intval($el['font_size'] ?? 16),
-                $el['font_color']  ?? '#000000',
-                $el['font_weight'] ?? 'normal',
-                $el['font_style']  ?? 'normal',
-                LayoutRules::lineHeight($el['line_height'] ?? null),
+                $typography['font_family'],
+                intval($typography['font_size']),
+                $typography['font_color'],
+                $typography['font_weight'],
+                $typography['font_style'],
+                LayoutRules::lineHeight($typography['line_height']),
                 $el['text_align']  ?? '',
                 intval($el['locked'] ?? 0),
                 $order++,

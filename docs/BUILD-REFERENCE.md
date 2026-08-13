@@ -527,6 +527,35 @@ through the app again:
     as one token and 8.2 as four — matching only the 8.4 shape would have gone quietly
     blind in CI, which is the machine pinned to the floor, and would have looked exactly
     like a pass.
+32. **Publish never writes what a Brand paints** (ADR-0011). A branded text block's
+    typography lives in `block_styles`; both renderers read it from there and neither
+    ever looks at the element's own six `font_*` columns. The Builder nevertheless
+    paints the standard onto the node's inline style — it has to, or the block would
+    not look like what it will become — and `serializeBlock()` read that inline style
+    straight back out, so **every publish since those columns existed baked the shared
+    standard into every branded element's own row.** Invisible while one set of
+    standards reached every sign, because the values were identical everywhere and
+    nothing read them. Two live faults once several Brands exist: a block whose subtype
+    is changed to `free` a month later inherits whichever Brand was selected at its last
+    publish, from a venue it may never have belonged to, with nothing saying so; and the
+    undo snapshot — which serializes through the same function — moves when a Brand is
+    merely *picked*, so the next real edit pushes a step recording a difference nobody
+    made. That second one is invariant 27 the other way round, and it is why this
+    landed on its own and before the feature that would activate it.
+    The rule holds at both ends and they are not the same rule twice. The browser stops
+    *sending* the six, which is what makes the snapshot stable — a server cannot fix an
+    undo history that never leaves the tab. `LayoutStore` stops *storing* them
+    whatever it is sent, which is what makes the row right for a Builder tab loaded
+    before this landed; that is an ordinary thing to happen on the afternoon of a
+    deploy, so it is ignored rather than refused. `BrandStyles::paints()` is the one
+    place the question is asked, because the two ends disagreeing is worse than either
+    being wrong: keeping the Brand's values is the fossil, and stripping values a
+    renderer is still going to read is a blank price on a wall. That second case is
+    real — a half-seeded install has no row for a type, both renderers fall back to the
+    element's own columns, and `paints()` answers `false` for exactly that reason.
+    Both of `LayoutStore`'s writers ask it. `copyLayout()` is the one that looks like an
+    exception and is not: a copy is a new row, and copying a fossil faithfully puts it
+    on a sign that never had one.
 
 ---
 
@@ -5913,6 +5942,95 @@ by nothing, §4as's `loadLayout` hook and §4ax's `api.php` reply are held by re
 rather than running it, and no suite renders a pixel. **So this pass is repeatable and not
 retired.** `browser-pass.md` carries its outcome at the top and stays as the list, because
 the live sign is a second install with its own data, and every step applies there again.
+
+### 4az. The publish had been writing the Brand into every branded block for a year
+
+The first step of v2 ([`roadmap-v2-brands-and-themes.md`](roadmap-v2-brands-and-themes.md)),
+and it is a bug fix that landed on its own, before the feature that would have made it
+visible. Nobody reported it. Nothing was wrong on any sign, and nothing would have been
+for as long as the store had one set of Brand Standards.
+
+**What it was.** `applyTextStyles()` paints Brand Standards onto a branded text block's
+inline style, because a price has to *look* like a price while somebody is laying it out.
+`serializeBlock()` then read `block.style.fontFamily` and its five neighbours straight
+back out and put them in the publish payload, and `LayoutStore::insertContent()` stored
+them in the element's own `font_*` columns. So every publish, going back to the day those
+columns existed, copied the shared standard onto every branded row. Both renderers ignore
+those columns for a branded subtype — that is the whole point of the subtype — so the
+values sat there unread, identical everywhere, indistinguishable from the defaults.
+
+**Why it was invisible, and why it stopped being.** One set of standards reaching every
+sign means the baked value and the live value are always the same value. ADR-0011 makes
+Brands per-venue, and the moment there are two the copy is a *fossil*: change a block from
+`price` to `free` a month later and it renders whatever venue's typography happened to be
+selected at its last publish, with nothing on the block or in the Builder saying where
+that came from. This is the same shape as several of §4ab's coercions — a value the app
+was writing down without anybody having decided it should — and the same shape as §4at,
+where a fixture could not show the fault because the fixture's data was too tidy. Here
+the *installation* was too tidy.
+
+**The second fault is the one that made this land first.** `snapshotCanvas()` serializes
+through `serializeBlock()`. So the undo snapshot carried the Brand too, and picking a
+different Brand — which changes no element, moves nothing, types nothing — would have
+changed the string every undo step is measured against. The next real edit would push a
+step recording a difference nobody made, and an Undo would hand somebody typography they
+had never chosen. That is **invariant 27 the other way round**: 27 says a function that
+changes the canvas must commit a step, and this is a step committed for something that
+was not a change. It could not be fixed after Brands shipped without also unpicking
+whatever histories had been built on top of it, and it cannot be fixed on the server at
+all, because an undo history never leaves the tab.
+
+**The fix is at both ends and they are not the same fix twice.** The browser stops
+*sending* the six fields, which is what makes the snapshot stable. `LayoutStore` stops
+*storing* them whatever it is sent, which is what makes the row right for a Builder tab
+that was loaded before the deploy — an ordinary thing to happen on the afternoon of one.
+That case is **ignored rather than refused**: the person publishing did not know they
+were sending a field, and refusing their work over it would be this app inventing a
+problem for them.
+
+**One condition, asked in one place, because the two ways of getting it wrong point in
+opposite directions.** Keeping the Brand's values is the fossil; stripping values a
+renderer is still going to read is a blank price on a wall at 1080p. Those are not
+symmetric — the second one is on a sign in a shop. So `BrandStyles::paints()` is the only
+place the question is asked on the server, and in the browser `applyTextStyles()` decides
+it once, at the moment the paint happens, and records the answer on the node for
+`serializeBlock()` to read. A second copy of `sub !== 'free' && blockStyles[sub]`
+somewhere else would be a second thing to keep in step, and the day the two disagreed the
+sign would go blank. **The condition includes "and a standard is actually stored for this
+type"**, which is not defensive padding: a half-seeded install has no row, both renderers
+already fall back to the element's own columns for it, and `rehearse_phase1.php` exists
+partly to look for exactly that.
+
+**`copyLayout()` is the writer that looks like an exception and is not.** It copies rows
+verbatim, and copying a pre-fix row faithfully would carry a fossil onto a sign that never
+had one. It asks the same question, so invariant 32 holds for every row the module writes
+rather than for the rows one of its two writers happened to write.
+
+**One thing narrowed as a side effect, and it narrowed the right way.** #41's rule — a
+colour nobody can read is published as stored rather than replaced with black — now only
+applies to a block that owns its colour. An unreadable colour on a *branded* block is the
+Brand's, one row in `block_styles`, which `ColorAudit` was already auditing directly.
+Before, that one bad value was copied onto every price on every sign and reported as
+though there were eleven separate faults; now it is reported once, where it can be fixed.
+
+**What the suites had to be taught, and the check that was quietly proved wrong.** The
+layout suite's own baseline layout uses a `price` block, and one check on it — *"the clamp
+reaches the column, which is the half a pure function cannot prove"* — went red
+immediately. It would have gone **green again on its own** if the fix had been written
+slightly differently: the stored line height became 1.40, which is both the clamp's
+default and the value a branded block now stores, so the check would have passed while
+proving that the value never arrived rather than that it was clamped. It was moved onto a
+`free` block. That is the failure mode invariant 30 is about, caught by arithmetic rather
+than by a mutation run, and it is worth noticing that the check *did* fail first — a
+version of this fix that stored the payload's clamped value instead of the default would
+have left it silently vacuous.
+
+Mutation over `lib/brand_styles.php` kills the new condition at the `assertion` grade in
+both directions, with three equivalent survivors (`!==` → `!=` between two non-numeric
+string literals, which cannot differ) and one honest `fatal`: the `is_string` guard is the
+module's own door, `LayoutRules` refuses a non-word `block_subtype` long before publish
+reaches it, and removing the guard throws on an array offset rather than answering wrongly.
+That grade is recorded rather than engineered away.
 
 ---
 

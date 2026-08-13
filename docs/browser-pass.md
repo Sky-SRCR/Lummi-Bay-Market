@@ -28,7 +28,9 @@ them. What each section produced:
 
 **The list below is not spent.** It was written for the rehearsal install, and every step
 of it applies again to the live sign — which is the one thing this pass does not cover
-(see the end). Re-run it there after the 22-step deploy.
+(see the end). **The deploy has since happened** — v1 is live and driving signs as of
+2026-08-13 — so re-running it there is owed *now*, not after something. It has not been
+done.
 
 **Do it in `lbm-test/`.** It exists for this. As of 2026-08-12 it is isolated against
 `silverad_lummi_market_drive_thru_2` and the multi-display build runs there.

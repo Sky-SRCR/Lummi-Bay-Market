@@ -123,14 +123,15 @@ so a change reaches every Screen of that Brand on the next thirty-second poll
 with no publish. The blast radius is smaller than it was; it is not zero, and
 nothing about this decision makes a brand edit undoable.
 
-**One latent defect must be fixed before any of this lands.** `applyBlockStyle()`
-writes the shared standard into a node's inline style, and `serializeBlock()`
-reads those same inline styles back and publishes them into the element's own
-`font_*` columns. Today this is invisible: the values are identical everywhere
-and the branded-subtype branch ignores those columns at render. With Brands it
-becomes two live faults — a block that changes subtype later inherits whichever
-Brand was selected at its last publish, and switching Brands changes the undo
-snapshot even though no element changed, which is invariant 27 the other way
-round. Publish must send nothing for the six typography fields of a branded
-subtype, because the Brand owns them. That fix lands on its own, before the
-feature that would activate it.
+**One latent defect had to be fixed before any of this landed — and it has been**
+(2026-08-13, BUILD-REFERENCE §4az, invariant 32). `applyTextStyles()` writes the
+shared standard into a node's inline style, and `serializeBlock()` read those same
+inline styles back and published them into the element's own `font_*` columns.
+It was invisible: the values are identical everywhere and the branded-subtype
+branch ignores those columns at render. With Brands it becomes two live faults —
+a block that changes subtype later inherits whichever Brand was selected at its
+last publish, and switching Brands changes the undo snapshot even though no
+element changed, which is invariant 27 the other way round. Publish now sends
+nothing for the six typography fields of a branded subtype, and `LayoutStore`
+stores the documented defaults whatever it is sent, because the Brand owns them.
+That fix landed on its own, before the feature that activates it.

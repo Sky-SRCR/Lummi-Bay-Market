@@ -162,6 +162,46 @@ class BrandStyles
         return $bad;
     }
 
+    /**
+     * Whether Brand Standards paints this block, rather than the block's own row.
+     *
+     * The question both renderers already ask before they choose a font —
+     * `applyTextStyles()` in `builder.php`, and the same three lines inside
+     * `viewer.php`'s render loop — written down once so the publish path can ask
+     * exactly the same one. All three have to agree, and they disagree in opposite
+     * directions: a publish that stripped typography a renderer was still going to
+     * read blanks the block on the sign, and a publish that keeps typography the
+     * Brand paints writes the fossil this method exists to stop (invariant 32).
+     *
+     * `$stored` is `all()`'s output, keyed by block type, which is what makes a
+     * **missing** row mean "the Brand paints nothing here, so the block's own values
+     * are load-bearing" — precisely what both renderers do with an empty
+     * `blockStyles[sub]`. That is a half-seeded install rather than a design, and
+     * `signageSchemaPlan()` seeds all six; but it is reachable — `rehearse_phase1.php`
+     * looks for exactly this — and stripping a column on the strength of a row that
+     * is not there is how a price becomes 16px Arial black on a wall.
+     *
+     * Only text blocks: `renderBlock()` calls `applyTextStyles()` under
+     * `el.type === 'text'` and nothing else reads these columns. A carousel or a
+     * table styles its *contents* from Brand Standards, but never from the element's
+     * own six.
+     *
+     * The `is_string` guard is this module's own door and not a publish check.
+     * `LayoutRules` refuses a payload whose `block_subtype` is not one of the seven
+     * words before `LayoutStore` ever gets here, so the publish path cannot reach it;
+     * what it covers is a later caller, and what it prevents is `isset($stored[$sub])`
+     * throwing on an array offset instead of answering. Its mutant therefore dies as a
+     * *fatal* rather than an assertion — the honest grade, and worth writing down
+     * rather than contorting the line into something a check can grade better
+     * (invariant 30).
+     */
+    public static function paints($blockType, $blockSubtype, array $stored)
+    {
+        if ($blockType !== 'text')       { return false; }
+        if (!is_string($blockSubtype))   { return false; }
+        return $blockSubtype !== '' && $blockSubtype !== 'free' && isset($stored[$blockSubtype]);
+    }
+
     /** One field of a stored row, or the app's documented value when it has none. */
     private static function field(array $row, $name)
     {

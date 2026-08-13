@@ -1,8 +1,8 @@
 # Roadmap v2 — Brands, Workspace Themes, and the Builder workbench
 
-Status: **planned, nothing built.** Settled in a grilling session on 2026-08-13;
-the decisions are recorded here and the one that reverses a previous decision is
-in [ADR-0011](adr/0011-typography-and-colour-belong-to-a-brand.md).
+Status: **step 1 built, steps 2–5 planned.** Settled in a grilling session on
+2026-08-13; the decisions are recorded here and the one that reverses a previous
+decision is in [ADR-0011](adr/0011-typography-and-colour-belong-to-a-brand.md).
 
 v1 is **live and running**, and `lbm-test/` is still standing. That is the whole
 of why this roadmap looks different from
@@ -13,11 +13,12 @@ here: each step below is deployable on its own, and each can be rehearsed agains
 [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) §5 lists as covered by no suite, *"the
 rehearsal against a database that genuinely lags the repo."*
 
-Three documents are stale as of this being written and are corrected in step 1:
-the status line of `roadmap-multi-display.md` (PR #3 is merged), the "what is
-left is the live deploy" framing in [`work-lanes.md`](work-lanes.md), and the
-"re-run against the live install after the deploy" note in
-[`browser-pass.md`](browser-pass.md).
+Three documents were stale as of this being written and were corrected in step 1:
+the status line of `roadmap-multi-display.md` (PR #3 is merged and deployed), the
+"what is left is the live deploy" framing in [`work-lanes.md`](work-lanes.md), and
+the "re-run against the live install after the deploy" note in
+[`browser-pass.md`](browser-pass.md) — which is owed *now*, not after something.
+`CLAUDE.md`'s row for that file said the same thing and was corrected with them.
 
 ## Why
 
@@ -83,7 +84,13 @@ and once in the new nav.
 
 ### Step 1 — Publish stops writing what the Brand owns · size S · risk Medium
 
-**This is a bug fix, and it lands alone.** `applyBlockStyle()` (`builder.php:1830`)
+**Done — 2026-08-13. Written up as §4az; it is invariant 32.** What follows is the
+plan as it was written, with the two things it got wrong marked. It has not been
+deployed: like every step here it is deployable on its own, and it changes nothing
+anybody can see, which makes it the safe one to send first.
+
+**This is a bug fix, and it lands alone.** `applyTextStyles()` (`builder.php:1828`
+— the plan called it `applyBlockStyle()`, which is not a function in this codebase)
 writes the shared standard into a node's inline style; `serializeBlock()`
 (`builder.php:3126`) reads those same inline styles back out and publishes them
 into the element's own `font_*` columns. Every publish already bakes the global
@@ -103,14 +110,36 @@ live faults:
   history holding an entry for something that never changed."
 
 **What changes.** For a branded subtype, publish sends nothing for the six
-typography fields and the server leaves those columns untouched — the *absent
-means untouched* property `BrandStyles` already promises for its own table. The
-undo snapshot stops carrying brand-derived values.
+typography fields, and the server stores the documented defaults rather than
+whatever it was sent. The undo snapshot stops carrying brand-derived values.
+
+> **Corrected while building.** The plan said the server would "leave those
+> columns untouched — the *absent means untouched* property `BrandStyles` already
+> promises for its own table." It cannot: a publish deletes the layout and
+> re-inserts it, so there is no row left to leave alone, and for an admin publish
+> the ids are reassigned as well. `BrandStyles::DEFAULTS` is what lands instead —
+> that module's own answer to "what a field is when the row does not say", and the
+> `schema.sql` column defaults written down. Not NULL, because `intval(null)` is 0
+> and a `font_size` of 0 read by anything that does not expect it is an invisible
+> block.
+>
+> The plan also under-specified the condition. "For a branded subtype" is not
+> enough: with no `block_styles` row stored for a type, both renderers fall back to
+> the element's own columns, so stripping them there would blank the block on the
+> sign. `BrandStyles::paints()` asks the renderers' whole question, and both of
+> `LayoutStore`'s writers ask it — `copyLayout()` too, which the plan did not
+> mention and which would otherwise have carried a pre-fix fossil onto a new sign.
 
 **Done when** a mutation run over the touched files kills the new checks with the
 `assertion` grade, and `selftest_builder_undo.js` proves that re-applying block
 styles does not move the snapshot. Also corrects the three stale documents named
-at the top of this file.
+at the top of this file. — **All three met.** The undo suite asserts the stronger
+form: after a Brand switch, `commitUndoStep()` returns `false`, so the phantom step
+is not there to record. The layout suite gained a section proving the row, the
+`copyLayout` case, and the half-seeded install; the colours suite proves an
+unreadable *Brand* colour is no longer copied onto every block that wears it.
+`selftest_layout.php` went from 1,805 checks to 1,830, the undo suite from 122 to
+137, the colours suite from 43 to 47.
 
 Gates: `php -l`, `selftest_layout`, `check_invariants`, `check_doc_numbering`,
 `selftest_builder_undo.js`, `selftest_builder_editing.js`, and
@@ -319,7 +348,9 @@ fallback.
   publish sends no brand-owned typography; no canvas colour resolves through a
   theme; nothing outside `lib/brands.php` writes `brands`; nothing outside
   `lib/workspace_themes.php` writes `workspace_themes` — take their numbers when
-  they land, not here.
+  they land, not here. The first of them landed with step 1 and took **32**; the
+  other three are still unnumbered, and a branch cut beside another one has to
+  read that item before writing one down.
 - **The browser pass is a list, not a receipt.** Step 2 rewrites every page it
   describes, and five of its seven defects were things a screen did not *say* —
   the category no harness here is pointed at. It gets re-walked.

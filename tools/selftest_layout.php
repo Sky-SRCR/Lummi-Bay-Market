@@ -1617,6 +1617,108 @@ checkSame('5.00',    BrandStyles::formatLineHeight(9999),
 checkSame('1.40',    BrandStyles::formatLineHeight('nonsense'), 'and nonsense falls back to the default');
 
 // ─────────────────────────────────────────────────────────────
+section('Publish never writes what a Brand paints (invariant 32)');
+// ─────────────────────────────────────────────────────────────
+// The Builder paints the shared standard onto a branded block's inline style so it
+// looks like what it will become, and serialising read that straight back out — so
+// every publish baked the standard into the element's own row. Harmless while one
+// set of standards reaches every sign; a stale-brand fossil the moment several do
+// (ADR-0011).
+//
+// The browser stopped sending them, and this is the other half: the module that
+// owns the table decides, so a Builder tab loaded before the fix — an ordinary
+// thing on the afternoon of a deploy — cannot write one either.
+
+// Who is painted and who is not, asked of the standards this install really has.
+$stored = $brand->all();
+check(BrandStyles::paints('text', 'price', $stored),       'a price block is painted by Brand Standards');
+check(!BrandStyles::paints('text', 'free', $stored),       'a free text block owns its own typography');
+check(!BrandStyles::paints('image', 'price', $stored),     'and only a text block reads these columns at all');
+check(!BrandStyles::paints('text', 'price', []),           'no standard for a type means the block\'s own values are load-bearing');
+check(!BrandStyles::paints('text', ['price'], $stored),    'a subtype that is not a string names no standard');
+
+$bPdo     = newTestDb();
+$bStore   = newTestDisplayStore($bPdo);
+$bLayouts = newTestLayoutStore($bPdo);
+$bSign    = makeTestDisplay($bPdo, 'brandcheck', 'Brand Check');
+
+/** One section holding a branded block and a free one, both shouting the same font. */
+function brandBakingLayout()
+{
+    $shout = ['font_family' => 'Comic Sans MS', 'font_size' => 99, 'font_color' => '#ff00ff',
+              'font_weight' => 'bold', 'font_style' => 'italic', 'line_height' => 3.0];
+    return [
+        ['type' => 'section', 'temp_id' => 'bs', 'x_pos' => 0, 'y_pos' => 0,
+         'width' => 600, 'height' => 380],
+        array_merge(['type' => 'text', 'block_subtype' => 'price', 'parent_temp_id' => 'bs',
+                     'manual_content' => '18.99', 'x_pos' => 5, 'y_pos' => 5,
+                     'width' => 160, 'height' => 60], $shout),
+        array_merge(['type' => 'text', 'block_subtype' => 'free', 'parent_temp_id' => 'bs',
+                     'manual_content' => 'Fresh today', 'x_pos' => 5, 'y_pos' => 90,
+                     'width' => 300, 'height' => 60], $shout),
+    ];
+}
+
+check(publishAs($bLayouts, $bSign, brandBakingLayout(), '0')->isOk(),
+      'a publish carrying typography for a branded block is accepted, not refused');
+
+$bRows = [];
+foreach (elementsOf($bPdo, $bSign->id()) as $row) {
+    if ($row['type'] === 'text') { $bRows[$row['block_subtype']] = $row; }
+}
+checkSame(2, count($bRows), 'both text blocks landed');
+
+// The branded one: every field is the documented default, none of them the payload's.
+checkSame('Arial',    $bRows['price']['font_family'], 'a branded block stores no font family of its own');
+checkSame(16,         intval($bRows['price']['font_size']),  'no size');
+checkSame('#000000',  $bRows['price']['font_color'],  'no colour');
+checkSame('normal',   $bRows['price']['font_weight'], 'no weight');
+checkSame('normal',   $bRows['price']['font_style'],  'no style');
+checkSame('1.40', number_format(floatval($bRows['price']['line_height']), 2), 'and no line height');
+
+// The free one, same payload, and it keeps every field — which is what stops the
+// check above passing because publish dropped typography altogether.
+checkSame('Comic Sans MS', $bRows['free']['font_family'], 'a free block keeps the family it was sent');
+checkSame(99,        intval($bRows['free']['font_size']), 'and the size');
+checkSame('#ff00ff', $bRows['free']['font_color'],        'and the colour');
+checkSame('bold',    $bRows['free']['font_weight'],       'and the weight');
+checkSame('italic',  $bRows['free']['font_style'],        'and the style');
+checkSame('3.00', number_format(floatval($bRows['free']['line_height']), 2), 'and the line height');
+
+// A copy is a write of the same columns by the same module, so it answers the same
+// question. Otherwise the invariant would hold for the rows one of the two writers
+// wrote, which is not an invariant.
+$bTarget = makeTestDisplay($bPdo, 'brandcopy', 'Brand Copy', 1920, 1080);
+$bPdo->prepare("UPDATE canvas_elements SET font_family = ?, font_size = ?, font_color = ?
+                 WHERE display_id = ? AND block_subtype = 'price'")
+     ->execute(['Georgia', 44, '#c0392b', $bSign->id()]);
+check($bLayouts->copyLayout($bStore->forId($bSign->id()), $bStore->forId($bTarget->id())) > 0,
+      'a layout carrying a fossil from before this landed can still be copied');
+
+$copied = [];
+foreach (elementsOf($bPdo, $bTarget->id()) as $row) {
+    if ($row['type'] === 'text') { $copied[$row['block_subtype']] = $row; }
+}
+checkSame('Arial',   $copied['price']['font_family'], 'and the copy does not carry the fossil forward');
+checkSame('#000000', $copied['price']['font_color'],  'in any of its columns');
+checkSame('Comic Sans MS', $copied['free']['font_family'],
+          'while a free block\'s own typography is copied exactly as before');
+
+// The half that is a *sign* rather than a row: with no standard stored for a type,
+// both renderers fall back to the element's own columns, so publish must keep them.
+// Stripping on the strength of a row that is not there is a blank price on a wall.
+$bPdo->exec("DELETE FROM block_styles WHERE block_type = 'price'");
+$bSign = $bStore->forId($bSign->id());
+check(publishAs($bLayouts, $bSign, brandBakingLayout(), $bSign->layoutStamp())->isOk(),
+      'a publish still succeeds when no standard is stored for the type');
+$bare = [];
+foreach (elementsOf($bPdo, $bSign->id()) as $row) {
+    if ($row['type'] === 'text') { $bare[$row['block_subtype']] = $row; }
+}
+checkSame('Comic Sans MS', $bare['price']['font_family'],
+          'and a block no standard paints keeps the typography it was sent');
+
+// ─────────────────────────────────────────────────────────────
 section('The session gates: a token that is really checked, and a role that is re-read');
 
 $_SESSION = [];
@@ -5739,9 +5841,17 @@ check($vLayouts->publish($vSign, new PublishRequest(
       'so the corrected layout publishes on the next try');
 
 // And the clamp reaches the column, which is the half a pure function cannot prove.
-$vSign = $vStore->forId($vSign->id());
+//
+// On a `free` block rather than the baseline's price. A branded subtype's line
+// height belongs to Brand Standards and publish no longer carries it at all
+// (invariant 32), so the baseline would now pass this check for the wrong reason:
+// the stored 1.40 would be the *default*, proving the value never arrived rather
+// than that it was clamped on the way in. This caught it.
+$vSign  = $vStore->forId($vSign->id());
+$absurd = layoutWithField(1, 'line_height', 2000);
+$absurd[1]['block_subtype'] = 'free';
 check($vLayouts->publish($vSign, new PublishRequest(
-        layoutWithField(1, 'line_height', 2000), Background::unchanged(), 1, true,
+        $absurd, Background::unchanged(), 1, true,
         $vSign->layoutStamp()))->isOk(),
       'a layout with an absurd line height publishes, clamped');
 $stored = elementsOf($vPdo, $vSign->id());
@@ -6875,4 +6985,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1828 : 1805);
+reportChecks(testIsMysql() ? 1853 : 1830);

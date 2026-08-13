@@ -1,18 +1,23 @@
 # Roadmap — Multi-Display Support
 
-Status: **All six phases built on `claude/app-update-planning-1pjqfr`, not yet
-deployed** — open as [PR #3](https://github.com/Sky-SRCR/Lummi-Bay-Market/pull/3).
-The build is finished; what is left is the deployment visit below.
+Status: **Done and live.** All six phases were built on
+`claude/app-update-planning-1pjqfr`, merged as
+[PR #3](https://github.com/Sky-SRCR/Lummi-Bay-Market/pull/3), and deployed — the store
+owner confirmed on 2026-08-13 that v1 is running and driving signs. The rehearsal
+install `lbm-test/` is still standing, which is what makes it available to rehearse
+against; see [`roadmap-v2-brands-and-themes.md`](roadmap-v2-brands-and-themes.md),
+whose steps are each deployable on their own precisely because this one was not.
 
-**Since then, and it changes what the visit is walking into:** the build has been running
-in the rehearsal install `lbm-test/` since 2026-08-12, and the browser pass over it
-([`browser-pass.md`](browser-pass.md), work-lanes lane 0) was walked in full on 2026-08-13
-— ten sections, seven defects, all fixed. Six rows of `HANDOFF.md` §5 exist because of it
-and each one changes something a person will see. **The deployment visit below has not
-been done, and the pass has not been run against the live install** — those are two
-separate things and both are still owed. How the code is
-shaped, and the invariants any later change must preserve, are in
-[`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that alongside this file.
+**The deployment visit below has been walked.** It is kept as the record of what was
+done, and because several of its steps — the backup, the `DEPLOY-SKIP.md` reads, the
+convergence check — are the shape every later deploy takes.
+
+**One thing is still owed:** the browser pass ([`browser-pass.md`](browser-pass.md)) was
+walked in full on 2026-08-13 against `lbm-test/` and has *not* been re-walked against
+the live install. Those were always two separate things; the first is closed and the
+second is not. How the code is shaped, and the invariants any later change must
+preserve, are in [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that alongside this
+file.
 
 ## Why
 
