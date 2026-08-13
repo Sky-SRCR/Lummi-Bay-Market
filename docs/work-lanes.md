@@ -277,8 +277,10 @@ version of this cost the deferral argument was actually about.
   and a decision the owner has not asked for.
 - ~~**Automating the mutation runs.**~~ **Done in #50** — `tools/mutate.php`, one file at
   a time and deliberately not a gate, because `lib/layout_rules.php` alone is 187 mutants
-  and half an hour of runs. What is *not* done is the sweep: six of twenty-six `lib/`
-  modules, and the remaining twenty are a command each rather than a lane.
+  and half an hour of runs. What is *not* done is the sweep — and how much of it is left is
+  `php tools/mutate.php --swept`, not a number in this file, which held a wrong one until
+  2026-08-13 (§4aq). Whatever it reports, the remainder is a command each rather than a
+  lane.
 - **Deleting the retired branches.** One command, no code, and it needs rights this
   repo's automation does not have — the delete has been attempted and refused with
   `HTTP 403`. `reviewed-decisions.md` holds the shas and, more usefully, the one-liner

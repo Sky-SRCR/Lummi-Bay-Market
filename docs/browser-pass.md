@@ -340,10 +340,11 @@ section B.
 
 ## What this pass does not cover
 
-- **The live sign.** Passing here says the build runs on this host against a copy of the
-  data. Deploying is still the 22-step visit in
-  [`docs/roadmap-multi-display.md`](roadmap-multi-display.md) plus the rows in
-  `HANDOFF.md` §5.
+- **The live sign, which is now running this build.** It was deployed on 2026-08-13, and
+  passing here said only that the build runs on this host against a *copy* of the data —
+  so this is the gap that is currently open rather than a future one. Walk every section
+  again on the live install; `HANDOFF.md` §1 has the four checks to do before you start,
+  and its §5 rows say which findings will look like faults on the shop's own layouts.
 - **A database that lags the repo.** `_2` is a copy of live and converged on first
   sign-in. A deploy against data that has drifted further is a different rehearsal.
 - **More than one real Screen.** Two TVs polling the same install at once is untested by

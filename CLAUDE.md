@@ -137,6 +137,7 @@ And one that is not a gate, because it takes minutes rather than seconds:
 
 ```
 php tools/mutate.php lib/whatever.php      # over each lib/ file you changed
+php tools/mutate.php --swept               # instant: what has been swept, what is next
 ```
 
 It breaks that file one way at a time and runs the suite each time, so a check you

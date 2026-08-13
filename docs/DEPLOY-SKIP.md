@@ -61,7 +61,7 @@ now answers 404. What the live server said, once asked:
 | `HANDOFF.md`, `README.md`, `CLAUDE.md`, `docs/BUILD-REFERENCE.md` | 404 | Never uploaded. The `.md` deny is a backstop, not a fix for a live exposure. |
 | `.git/config` | 404 | The repository has never been uploaded. |
 | `schema.sql` | 403 | The root `.htaccess` is deployed and its `FilesMatch` blocks work on this host. |
-| `lib/schema.php` | 404 | `lib/` is not on the server yet — the multi-display build is still undeployed. |
+| `lib/schema.php` | 404 | `lib/` was not on the server *at the time of this probe*. **The build went live on 2026-08-13**, so `lib/` is there now and this row no longer describes the server. Re-ask it: the answer must be **403**, from `lib/.htaccess`. A **404** means the folder is there and its `.htaccess` is not — which is what an FTP client that skips dotfiles produces — and **200** means the same thing on a host that serves what it cannot deny. |
 
 **And it will not need deleting by hand again.** `setup.php` now removes itself: at the
 end of a successful setup, and otherwise on the first request that finds it already

@@ -72,6 +72,100 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 
 $repo = dirname(__DIR__);
 
+// ---- The sweep ledger, and why it is here rather than in a document ----------
+//
+// Three documents carried three different answers to "how many `lib/` modules have
+// been swept" — six, eight and nine — and the true number was ten. That is #50's
+// own complaint arriving in #50's bookkeeping: a count written into prose is right
+// on the day and nothing ever disagrees with it afterwards. The root of all three
+// was one sentence in §4aq naming `lib/layout_rules.php` as worth doing next, four
+// paragraphs under a table reporting its 208 mutants. Both halves read fine alone.
+//
+// So the answer lives here, once, and `--swept` prints it. The documents cite the
+// command.
+//
+// **It is a hand-maintained list and every run says so.** A sweep leaves nothing
+// behind in the tree — no artifact, no timestamp — so nothing can derive this, the
+// same way `check_invariants.php` prints that its floor check is a denylist. What
+// the flag does check is the part that *can* be checked: that every module named
+// here still exists under `lib/`, that the denominator is counted from `lib/` on
+// disk rather than remembered, and that every write-up section cited is really in
+// `BUILD-REFERENCE.md`. A citation left behind by a renumbering is rot this repo
+// has shipped twice.
+//
+// Adding a row is part of writing the sweep up, next to the section itself.
+
+$sweptLedger = [
+    'lib/plain_text.php'      => ['§4am', '§4aq'],  // #49 by hand, then re-run by the tool
+    'lib/schema.php'          => ['§4am'],          // #49 by hand; the MySQL-only statements ride #48
+    'lib/markup.php'          => ['§4aq'],
+    'lib/color.php'           => ['§4aq'],
+    'lib/grants.php'          => ['§4aq'],
+    'lib/store_clock.php'     => ['§4aq'],          // measured twice; the second run is the useful one
+    'lib/display_request.php' => ['§4aq'],
+    'lib/upload_limits.php'   => ['§4aq', '§4au'],  // and again when the browser pass widened it
+    'lib/http_reply.php'      => ['§4aq'],
+    'lib/layout_rules.php'    => ['§4aq'],          // 208 mutants — the one §4aq then called undone
+];
+
+// Worth doing next, in this order, because each is a module where a wrong answer
+// empties a sign or hands somebody a Display they were never granted. The first
+// three are §4aq's own list minus `layout_rules.php`; the fourth is here because
+// the front door settles closed, suspended and locked-out before it reads the
+// password, and a wrong answer there is an oracle rather than a bug (ADR-0008).
+$sweptNext = [
+    'lib/layout_store.php',
+    'lib/displays.php',
+    'lib/accounts.php',
+    'lib/login_attempt.php',
+];
+
+/**
+ * Print the ledger, check the checkable half of it, and return an exit code.
+ *
+ * Returns 1 on anything wrong so a caller in a script notices; the ledger being
+ * stale is the failure this exists to make loud.
+ */
+function reportSweep($repo, array $ledger, array $next)
+{
+    $modules = glob($repo . '/lib/*.php');
+    $total   = is_array($modules) ? count($modules) : 0;
+    $doc     = @file_get_contents($repo . '/docs/BUILD-REFERENCE.md');
+    $bad     = 0;
+
+    echo "Mutation sweep — which lib/ modules have been seen to fail (invariant 30)\n\n";
+
+    foreach ($ledger as $file => $sections) {
+        $notes = [];
+        if (!is_file($repo . '/' . $file)) {
+            $notes[] = 'NOT IN THE TREE — renamed or removed';
+            $bad++;
+        }
+        foreach ($sections as $s) {
+            // The heading is `### 4aq.`; the citation is `§4aq`.
+            $needle = '### ' . ltrim($s, '§') . '.';
+            if ($doc === false || strpos($doc, $needle) === false) {
+                $notes[] = 'no write-up at ' . $s;
+                $bad++;
+            }
+        }
+        printf("  %-26s %-12s %s\n", $file, implode(' ', $sections),
+               $notes ? '<-- ' . implode('; ', $notes) : '');
+    }
+
+    $swept = count($ledger);
+    echo "\n" . $swept . ' of ' . $total . " lib/ modules swept; " . ($total - $swept) . " not.\n";
+    echo "Next, in order: " . implode(', ', $next) . "\n";
+    echo "\nThe list of swept modules is maintained by hand — a sweep leaves no artifact,\n";
+    echo "so this cannot be derived from the tree. The count and the citations are checked.\n";
+
+    if ($bad > 0) {
+        echo "\n" . $bad . " problem(s) above. Fix the ledger in tools/mutate.php.\n";
+        return 1;
+    }
+    return 0;
+}
+
 // ---- Arguments ---------------------------------------------------------------
 
 $targets  = [];
@@ -81,7 +175,9 @@ $suite    = 'tools/selftest_layout.php';
 $timeout  = 180;
 
 foreach (array_slice($argv, 1) as $arg) {
-    if ($arg === '--list') {
+    if ($arg === '--swept') {
+        exit(reportSweep($repo, $sweptLedger, $sweptNext));
+    } elseif ($arg === '--list') {
         $listOnly = true;
     } elseif (strpos($arg, '--only=') === 0) {
         $only = (int)substr($arg, 7);
@@ -99,6 +195,7 @@ foreach (array_slice($argv, 1) as $arg) {
 
 if (!$targets) {
     echo "usage: php tools/mutate.php [--list] [--only=N] <file.php> [file.php ...]\n";
+    echo "       php tools/mutate.php --swept        which modules have been swept, and what is next\n";
     echo "       one file at a time is the intended unit; see the header.\n";
     exit(2);
 }

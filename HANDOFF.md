@@ -32,22 +32,44 @@ of the system.
 - **Stack:** vanilla PHP (PDO, `ERRMODE_EXCEPTION`, real prepared statements),
   no framework, inline CSS/JS. Uses `interact.js` in the builder for drag/resize.
 
-> **The multi-display build runs in `lbm-test/` as of 2026-08-12, and has never run
-> live.** That first half is new and the sentence above it said "has never run on the
-> server" for two phases. The rehearsal install now signs in, converges the schema
-> against its own database and opens the Builder. The live site is still the
-> single-sign app: nothing in §6 has been deployed there, and deploying it is a
-> scripted 22-step visit — see §7.
+> **The multi-display build is live.** Reported by the store owner on **2026-08-13**: the
+> browser-pass six went to the live install and the app works there. This line said "has
+> never run live" for three phases and it is the sentence to trust least in this file, so
+> it carries its date and its source — the deploy was made from a chair this repo cannot
+> see, and nothing here has read the live server. What replaced *rehearsing* is
+> **checking**, and the four checks are below.
 >
-> **The rehearsal has now been driven, not just loaded.** The browser pass
-> ([`docs/browser-pass.md`](docs/browser-pass.md), work-lanes lane 0) was walked in full
-> on 2026-08-12/13: all ten sections, seven defects, all seven fixed and re-checked in
-> the browser. Undo, the Viewer, the read-only Builder and both timezone questions came
-> through clean. The fixes are the six §5 rows tagged *browser pass step …*, and every one
-> of them changes something a person will see on the live sign — read those rows before
-> the deploy, not after. **Re-run that list against the live install once it is deployed**;
-> nothing about it was used up by running it here, and `lbm-test/` is a different
-> database with different data.
+> The rehearsal install `lbm-test/` did its job first: it signed in on 2026-08-12,
+> converged schema against its own database, and then had the browser pass walked over it
+> in full ([`docs/browser-pass.md`](docs/browser-pass.md), work-lanes lane 0) — ten
+> sections, seven defects, all fixed and re-checked in the browser. Undo, the Viewer, the
+> read-only Builder and both timezone questions came through clean.
+>
+> **Four things to do on the live install, in this order, none of which changes a file:**
+>
+> 1. **Request `lib/schema.php` in a browser. It must answer 403, not 404 and never 200.**
+>    `lib/` is unreachable because `lib/.htaccess` denies it, and **many FTP clients skip
+>    dotfiles by default** — so the one upload mistake that leaves no trace is the folder
+>    arriving without the file that protects it — `/lbm/lib/schema.php` is the URL. Same
+>    for `tools/.htaccess`; §3's file map carries both rows.
+> 2. **Admin Panel → Settings → This Server**, and read the whole card: which install and
+>    database it found, the three time-zone rows (the database's session zone must be
+>    `+00:00`), the upload ceiling, and the PHP version — that last one is a fact CI is
+>    pinned to, and the card is now the only place it can be read from inside the app.
+> 3. **Settings → Database Structure — every row green.** A red
+>    `canvas_elements.display_id` reads *"Nothing is scoped to a Display. Do not publish."*
+>    and means it. This is also the only thing that would show a convergence that stopped
+>    half-way on a database that lagged the repo — the one case CI cannot cover, and its
+>    own comments say so.
+> 4. **`php tools/audit_colors.php`**, read-only, against the live database; §3 says what
+>    it reports. One unreadable stored colour makes its Display refuse **every** publish,
+>    and that state was reachable long before this build.
+>
+> **Then re-run the browser pass against live**, which is not the same walk: it is a
+> different database with the shop's own data. Expect two things §5 warns about — the
+> first press of a layer button on each Display renumbering blocks nobody selected, and
+> every `last_published_at` written before #44 reading shifted until that Display is next
+> published.
 
 ## 2. Git / branch
 

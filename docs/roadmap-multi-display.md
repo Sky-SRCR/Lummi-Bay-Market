@@ -4,13 +4,19 @@ Status: **All six phases built on `claude/app-update-planning-1pjqfr`, not yet
 deployed** — open as [PR #3](https://github.com/Sky-SRCR/Lummi-Bay-Market/pull/3).
 The build is finished; what is left is the deployment visit below.
 
-**Since then, and it changes what the visit is walking into:** the build has been running
-in the rehearsal install `lbm-test/` since 2026-08-12, and the browser pass over it
+**That status line is out of date and is kept for the record.** The build ran in the
+rehearsal install `lbm-test/` from 2026-08-12, the browser pass over it
 ([`browser-pass.md`](browser-pass.md), work-lanes lane 0) was walked in full on 2026-08-13
-— ten sections, seven defects, all fixed. Six rows of `HANDOFF.md` §5 exist because of it
-and each one changes something a person will see. **The deployment visit below has not
-been done, and the pass has not been run against the live install** — those are two
-separate things and both are still owed. How the code is
+— ten sections, seven defects, all fixed, six rows of `HANDOFF.md` §5 — and **the build is
+live as of 2026-08-13**, reported by the store owner.
+
+So the checklist below is history rather than instructions: it is what one specific
+cutover asked for, and it happened. **What it does not become is verified** — nothing in
+this repo has read the live server, and a deploy made outside it cannot be assumed to have
+included every step. The four checks that settle it in a few minutes are in `HANDOFF.md`
+§1, and the browser pass has still not been run against the live data. Anybody re-reading
+the list below should treat a step as a question ("did the backup happen? is the backfill
+count zero?") rather than as work to redo. How the code is
 shaped, and the invariants any later change must preserve, are in
 [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that alongside this file.
 

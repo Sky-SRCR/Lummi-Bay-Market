@@ -4891,6 +4891,13 @@ automated… Decision #50 is where that belongs."* This is that.
 ```
 php tools/mutate.php lib/grants.php        # break it 55 ways, 55 runs of the suite
 php tools/mutate.php --list lib/color.php  # what it would break, without running
+php tools/mutate.php --swept               # which modules have been swept, with the
+                                           # section each was written up in, and what
+                                           # is worth doing next. The ledger it prints
+                                           # is by hand — a sweep leaves no artifact —
+                                           # so the flag checks what it can: the module
+                                           # still exists, the denominator is counted
+                                           # from lib/, and every citation resolves
 ```
 
 Every operator is a defect somebody could type rather than a mutation a paper would
@@ -5295,14 +5302,23 @@ can see.
 
 #### What is left, named rather than left to be assumed
 
-- **Eighteen of twenty-six `lib/` modules have not been swept.** The eight were chosen by
-  stake — the access module, the two escaping doors, the resolution seam, the sanitiser,
-  the reply door, the upload ceiling, the newest module — and the rest are a command each.
-  `lib/layout_rules.php`, `lib/layout_store.php`, `lib/displays.php` and `lib/accounts.php`
-  are the four worth doing next, in that order, because each is a module where a wrong
-  answer empties a sign or hands somebody a Display. This is the one place where "#50 is
-  done" would be an overstatement: the *instrument* is done and the sweep is a standing
-  activity, which is what makes it a rule (invariant 30) rather than a task.
+- **Sixteen of twenty-six `lib/` modules have not been swept**, and **the count is not
+  written here any more** — `php tools/mutate.php --swept` prints it, names each swept
+  module with the section it was written up in, and says what to do next. Ask the tool.
+  The ten that are done were chosen by stake; the rest are a command each. This is the one
+  place where "#50 is done" would be an overstatement: the *instrument* is done and the
+  sweep is a standing activity, which is what makes it a rule (invariant 30) rather than a
+  task.
+
+  **This bullet is where the ledger came from, because this bullet was wrong.** It said
+  eight modules and named `lib/layout_rules.php` as one of the four worth doing next —
+  four paragraphs below the table reporting that module's 208 mutants and 53 survivors.
+  Two other documents then quoted the number as six and nine. Three answers to one
+  countable question, none of them ten, and each of them locally plausible: the table is
+  the measurement and the sentence was the plan it was drafted beside, so neither half
+  looks stale on its own. That is #50's complaint recurring inside #50's own bookkeeping,
+  which is why the fix is the shape #50 chose for the original — a number nobody writes
+  twice, printed by something that also checks the citations beside it.
 - **The sweep is not a gate and should not become one.** `lib/layout_rules.php` alone
   generates 187 mutants, half an hour of runs. CI running that per push would buy less
   than the ten seconds the suite already costs.
@@ -5971,6 +5987,8 @@ php tools/mutate.php lib/whatever.php    # break that file one way at a time and
                                          # passes is a line no test can fail on, which is
                                          # invariant 30 and §4aq. `--list` shows what it
                                          # would break without running anything
+php tools/mutate.php --swept             # and this one is instant: which modules have
+                                         # been swept, and which are still a command each
 ```
 
 And, with a MySQL to point at — the same suite, with nothing stubbed:

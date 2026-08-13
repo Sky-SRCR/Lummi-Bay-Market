@@ -10,19 +10,23 @@
 // on a guess, and there is no shell on the live host: the only place the answer could
 // appear from inside the app is a page an admin can open. This one.
 //
-// **It has not answered yet, and the answer came from elsewhere.** A branch recorded
-// 8.2 here and raised the rule to match; that was withdrawn, because this card ships
-// with the multi-display build and #46's probe found that build undeployed — `lib/`
-// answers 404 live — so this screen cannot have been the thing that reported it, and
-// Cloudflare hides the version from the response headers too (§4k). The store owner
-// then stated it directly: **PHP 8.2, 2026-08-10**. That is a person, dated, not a
-// reading this code took, which is why it is recorded that way.
+// **The answer came from elsewhere first, and this card was not what reported it.** A
+// branch recorded 8.2 here and raised the rule to match; that was withdrawn, because this
+// card ships with the multi-display build and #46's probe found that build undeployed —
+// `lib/` answered 404 live — so this screen cannot have been the thing that reported it,
+// and Cloudflare hides the version from the response headers too (§4k). The store owner
+// then stated it directly (**PHP 8.2, 2026-08-10**), and on **2026-08-11** it was observed
+// twice in cPanel: 8.2.33 on the runtime card, and `ea-php82` pinned explicitly to the
+// domain against a system default of 8.3. A person and a configuration screen, both dated,
+// neither of them a reading this code took — which is why it is recorded that way.
 //
-// So this card's job changed. It is no longer where the answer will come from — it is
-// what confirms that answer the moment the build is deployed, and what contradicts it
-// if the host is upgraded, downgraded or moved to a different account. That is the
-// only place such a change becomes visible: nothing else here observes the version,
-// and the floor in `ASSUMED_PHP` is now load-bearing rather than cautious.
+// **The build went live on 2026-08-13, so this card now runs where the question is.** Its
+// job was always going to change at that moment: from a page that could not answer to the
+// one place inside the app where the version, the three clocks, the upload ceiling and the
+// converged columns can be read at all. Nothing else here observes any of them, and the
+// floor in `ASSUMED_PHP` is load-bearing rather than cautious — so what this card
+// contradicts is a host upgraded, downgraded or moved to a different account, and it is
+// worth opening after any hosting change rather than only after a deploy.
 //
 // The second half is the same problem wearing different clothes. Invariant 10 says
 // the live database is behind the repo and every schema change is an idempotent
