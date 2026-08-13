@@ -2,7 +2,15 @@
 
 Status: **All six phases built on `claude/app-update-planning-1pjqfr`, not yet
 deployed** — open as [PR #3](https://github.com/Sky-SRCR/Lummi-Bay-Market/pull/3).
-The build is finished; what is left is the deployment visit below. How the code is
+The build is finished; what is left is the deployment visit below.
+
+**Since then, and it changes what the visit is walking into:** the build has been running
+in the rehearsal install `lbm-test/` since 2026-08-12, and the browser pass over it
+([`browser-pass.md`](browser-pass.md), work-lanes lane 0) was walked in full on 2026-08-13
+— ten sections, seven defects, all fixed. Six rows of `HANDOFF.md` §5 exist because of it
+and each one changes something a person will see. **The deployment visit below has not
+been done, and the pass has not been run against the live install** — those are two
+separate things and both are still owed. How the code is
 shaped, and the invariants any later change must preserve, are in
 [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that alongside this file.
 

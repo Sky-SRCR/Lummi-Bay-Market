@@ -5846,6 +5846,74 @@ fresh re-read for the stale `$display` already in hand. That second one is the w
 by some distance — a source check pins the line, not the behaviour — and it is recorded here
 rather than papered over, the same way §4as's `loadLayout` hook is.
 
+### 4ay. What the pass found, and what that says about everything that passed
+
+The browser pass closed on 2026-08-13. Ten sections, seven defects, five commits, and
+this section is the only one in §4 that is not about a defect — it is about the shape of
+the seven, because that shape contradicts what this repo predicted it would be.
+
+**The score.** Before the pass, this build was covered by 1,782 checks in
+`selftest_layout.php` (1,805 against MySQL), 546 across six node suites, 58 invariant
+greps and 6 numbering checks. All green, and green the whole way through. The pass found
+seven defects anyway, and **not one of them was a wrong answer**. Every one was a missing
+door or a missing sentence: a thing the app did not do and had never been asked to.
+
+**What the exposure was predicted to be, and what it was.** `work-lanes.md` argued the
+risk was `interact.js` — un-run by anything (§4al) — plus four commits of `builder.php`
+that no browser had drawn, and it singled out Undo as the biggest stake, on the good
+reasoning that Undo's whole purpose is to change the canvas under somebody. Half of that
+paid and half of it did not:
+
+| Predicted | What happened |
+|---|---|
+| `interact.js` | **Paid.** §4as is a resize handle over a real `overflow: hidden` box, and nothing in this repo could have held that handle. |
+| Un-rendered CSS at 1080p | **Nothing.** The top bar wrapped tidily, no control hid behind another, and zoom scaled proportionally at every step. |
+| Undo | **Clean.** So were the Viewer, its unattended 30-second pickup, all three notice cases, the read-only Builder, and both of #44's live-only questions. |
+| — | **Five findings nobody predicted**, all of them about what the page *says*: §4au, §4av twice, §4aw, §4ax. |
+
+**The category that produced five of seven has a name, and no harness here was pointed at
+it.** The six node suites and the layout suite all ask the same kind of question: given
+this input, does the function return the right thing. Every one of §4au–§4ax is a
+different question — *does the page tell the person what just happened, and is what it
+tells them true of everyone it tells.* A ceiling stated nowhere and a 403 saying
+*security* for a size problem. A lock that refused a mouse and accepted a keystroke. An
+Asset Library link offered to an account whose write would be refused. A publisher and a
+time recorded correctly for a year and displayed in two places, neither of them where the
+question is asked. **In two of those five, no logic changed at all** — §4ax added a
+sentence over a fact the tests had been asserting all along, and half of §4au was a number
+the page already knew. A suite cannot fail a sentence that was never written, and it will
+not miss it either, because missing implies looking.
+
+**The data mattered as much as the browser.** §4at is not visible on any fixture this
+repo can build: every block on a layout copied from the shop is on `z_index` 1, so Back
+and Backward were moving a number that could not break a tie, and a fixture that assigns
+distinct layers because distinct layers make the check readable hides that forever. The
+same is true of §4as, which appears the moment a layout with an already-too-small section
+opens. **A fixture picks data that makes a check legible; a copy of the shop picks data
+that has been accumulating for years.** That is the argument for `lbm-test/` being a copy
+and not a seed, and it is worth re-reading before anybody proposes seeding it.
+
+**One report was narrower than the defect, and reading it as filed would have shipped five
+of six doors still open.** Step G's second round arrived as *"a locked block can be
+deleted"*. It was true, and Delete was one of six controls that ignored the lock, because
+the lock was read at three pointer seams and copied nowhere else (§4aw). The habit that
+found the other five was asking *what else touches this fact* rather than fixing what was
+pointed at. Two other reports went the other way and are worth recording as
+non-defects: the 15-minute lock lapse letting a second account edit is the lapse working,
+and a 1920-wide canvas overhanging a 1920-wide *window* at 100 % is what 1:1 means when the
+top bar is in the window too. **A pass that produces no non-defects is a pass somebody was
+being polite during.**
+
+**What the pass has been converted into, and what it has not.** The seven fixes carried
+the layout suite from 1,782 checks to 1,805 and the editing suite from 86 to 175, so a
+browser-only finding is now a stub-checkable regression — which is the durable half of the
+exercise, and the reason the next `builder.php` change cannot silently undo any of it.
+What did **not** convert is worth naming in the same breath: `interact.js` is still driven
+by nothing, §4as's `loadLayout` hook and §4ax's `api.php` reply are held by reading source
+rather than running it, and no suite renders a pixel. **So this pass is repeatable and not
+retired.** `browser-pass.md` carries its outcome at the top and stays as the list, because
+the live sign is a second install with its own data, and every step applies there again.
+
 ---
 
 ## 5. Verification

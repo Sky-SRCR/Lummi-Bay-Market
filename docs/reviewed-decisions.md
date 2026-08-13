@@ -120,10 +120,14 @@ own half and wrong about the whole.
 smaller form.** Every numbered item from the adversarial audit has been answered. What
 that does *not* mean:
 
-- **Nothing on this list was ever the browser.** `docs/work-lanes.md` lane 0 is still
-  first and still cannot be done from here: four commits of `builder.php` have never been
-  rendered by one, `interact.js` is un-run by any suite (§4al), and #44 added two things
-  only a live page can confirm. A list of closed audit items is not a walked application.
+- **Nothing on this list was ever the browser** — and the browser has now been run, which
+  is the sharpest available evidence for what this bullet was claiming. Lane 0 was walked
+  on 2026-08-12/13 (`docs/browser-pass.md` carries the outcome) and found **seven defects,
+  none of which appear anywhere on this list**: §4as through §4ax. A list of closed audit
+  items was not a walked application, and the gap between the two was seven items deep.
+  Two of those needed a rendered page over real data; the other five were things a page
+  failed to *say*, which is a category an audit reading source for wrong answers does not
+  produce.
 - **#50 closed by becoming a rule.** Its first half asked for a hand count to be swept,
   and what shipped is the instrument that makes the question answerable per file, plus
   invariant 30. Six of twenty-six `lib/` modules have been swept; the other twenty are a

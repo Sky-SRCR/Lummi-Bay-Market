@@ -7,6 +7,29 @@ which is un-run by anything at all (§4al). Four commits of `builder.php` have n
 rendered: the six inspector controls (#42), the split opening reads, the root-content
 `db_id` payload, and Undo. This is the list for closing that.
 
+## It was walked, and it closed — 2026-08-13
+
+**All ten sections were run against `lbm-test/` by the store owner over 2026-08-12/13.**
+Seven defects, all seven fixed on the same branch and re-checked in the browser that found
+them. What each section produced:
+
+| Step | What the browser said |
+|---|---|
+| **A** | Passed. `lbm-test` against `_2`, the database's session zone `+00:00`, Database Structure all green. The isolation guarantee held for the whole pass. |
+| **B** | Passed, with one thing explained rather than changed: **100 % means 1:1**, so a 1920-wide canvas overhangs a 1920-wide *window* — the top bar is inside that window too. Fit is the answer to that, and Fit reported 84 %. Zooming scaled proportionally throughout. |
+| **C** | `interact.js` driven for the first time by anything. Drag, resize, the edges and the floor all held — and shrinking a **section** over its own children hid them from the sign in silence. §4as, and ADR-0004's Consequences corrected. |
+| **D** | Every block on a layout copied from live sat on layer 1, so Back and Backward were moving a number that could not break a tie. §4at. |
+| **E** | Passed, unchanged. |
+| **F** | Three file pickers, three ceilings, none of them stated — and the file over the host's `post_max_size` was answered *"Security token mismatch"*. §4au. |
+| **G** | Three things, then a fourth. A locked section still accepted new blocks and an account with no sign was still offered the Asset Library (§4av); the 15-minute lock lapse was checked and is **not** a bug; and a locked block turned out to be refused by the mouse and by nothing else — six doors, not the one reported. §4aw. |
+| **H** | H.1 only: who published and when had been recorded correctly for a year and shown nowhere in the Builder. §4ax. Everything else passed, including the Viewer's unattended 30-second pickup, the wrong-tag / no-tag / inactive notices, and a few minutes with the console open. |
+| **I** | Passed. The read-only Builder tells an account with no sign so, the editing markup is absent rather than disabled, and the upload is refused. |
+| **J** | Passed. Both of #44's live-only questions answered in the store's zone, and the picker offers region names only. |
+
+**The list below is not spent.** It was written for the rehearsal install, and every step
+of it applies again to the live sign — which is the one thing this pass does not cover
+(see the end). Re-run it there after the 22-step deploy.
+
 **Do it in `lbm-test/`.** It exists for this. As of 2026-08-12 it is isolated against
 `silverad_lummi_market_drive_thru_2` and the multi-display build runs there.
 

@@ -1,8 +1,10 @@
 # What can be worked on at the same time
 
-**All three lanes have landed** — #33 as §4ao, #44 as §4ap, #50 as §4aq — and with #50
-the numbered audit list is closed. **What is left is lane 0, the browser pass, and
-nothing in this repo can do it.**
+**All four lanes have landed.** #33 as §4ao, #44 as §4ap, #50 as §4aq — and with #50 the
+numbered audit list closed. **Lane 0, the browser pass, was walked on 2026-08-12/13 and
+closed too**: ten sections, seven defects, §4as through §4ax. What is left is the live
+deploy, and that is not a lane — it is the 22-step visit in
+[`docs/roadmap-multi-display.md`](roadmap-multi-display.md).
 
 So this file has stopped being a plan and become the thing it was always more useful as:
 what a branch cut beside another one has to agree about before it starts. The round of
@@ -19,7 +21,7 @@ and the count line in `reviewed-decisions.md` does not conflict when it should.
 
 | Lane | Item | Run it | Why |
 |------|------|--------|-----|
-| **0** | Browser pass on `lbm-test/` | **The only thing left, and it was never an audit item** | Four commits of Builder changes have never run in a browser, and #44 added two things only a live page can confirm. Nothing here can do it. |
+| ~~**0**~~ | ~~Browser pass on `lbm-test/`~~ | **Walked 2026-08-13** — §4as–§4ax | It was never an audit item and it found seven defects the audit did not contain. Two needed a rendered page over real data (§4as, §4at). The other **five were things the screen did not say** (§4au–§4ax) — the category no harness here was ever pointed at, and one of them needed this host to be noticed at all. |
 | ~~**A**~~ | ~~#33 — an account with no signs can still write the shared library~~ | **Landed** — §4ao, invariant 29 | Touched `crud.php`, `api.php`, `lib/grants.php` — not `lib/assets.php`, which is what this table predicted. |
 | ~~**B**~~ | ~~#44 — no timezone, so "editing since 2:15pm" followed the host's `php.ini`~~ | **Landed** — §4ap, invariant 28 | Touched `lib/branding.php`, `admin_panel.php`, `lib/displays.php`, `config.php`, and — beyond what was predicted — `db_connect.php`, `lib/login_attempt.php`, `lib/server_report.php` and the new `lib/store_clock.php`. Still nothing A touched. |
 | ~~**C**~~ | ~~#50 — 29 checks that cannot fail, 5 invariants with no automated check~~ | **Landed** — §4aq, invariant 30 | Ran alone, and the sequencing below was the reason: its whole subject was the two files A and B were both adding to. It ended up rewriting neither of them much and adding a third tool, `tools/mutate.php`. |
@@ -44,40 +46,50 @@ One thing C did *not* need, which was predicted: it barely touched
 label on one check, and left the rest alone. The collision this file spent three
 paragraphs on would have been the anchor line and nothing else.
 
-## Lane 0, and it is the only thing left
+## Lane 0, and what walking it actually cost
 
-**The ordered list is [`docs/browser-pass.md`](browser-pass.md)** — what to click, what should happen, and the
-real numbers (the lock lapses at 15 minutes, Undo defaults to 5 steps, the Viewer picks a
-publish up within 30 seconds). The rest of this section is why it has to be a browser.
+**The ordered list is [`docs/browser-pass.md`](browser-pass.md)** — what to click, what
+should happen, and the real numbers (the lock lapses at 15 minutes, Undo defaults to 5
+steps, the Viewer picks a publish up within 30 seconds). It now carries its own outcome
+table at the top, and **it is still the list**: nothing about it was consumed by being run
+once, because the live sign is a second install and every step applies there again.
 
-`https://www.srcresort.com/lbm-test/` exists precisely so this can happen without
-risking the live sign (`DEPLOY-SKIP.md` §E). Since the last deploy, `builder.php` has
-gained the six inspector controls (#42), the split opening reads, the root-content
-`db_id` payload, and Undo. All of it is covered by six node suites over a stubbed DOM,
-and **none of it has been rendered by a browser**. The suites cannot see a CSS rule
-that does not apply, a button that overlaps another at 1080p, or interact.js — which is
-still un-run by anything (§4al).
+This section used to argue that a browser was necessary. It is kept in the past tense
+because the argument was right in a way worth being able to re-read, and wrong about which
+part would hurt.
 
-Undo raises the stake specifically: it is the first feature in this app whose whole
-purpose is to *change* the canvas out from under whoever is looking at it. A round trip
-that is byte-identical in a stub and wrong on screen is exactly the shape a harness
-cannot catch.
+The prediction was that `interact.js` and the un-rendered CSS were the exposure —
+`https://www.srcresort.com/lbm-test/` exists precisely so that could be found without
+risking the live sign (`DEPLOY-SKIP.md` §E), and four commits of `builder.php` had never
+been drawn by anything but a stub. **That paid**: step C's section-clipping defect is
+exactly a resize handle over a real `overflow: hidden` box (§4as), and step D's is a paint
+order that only a layout copied from the shop could produce, because every block on it
+shares layer 1 (§4at).
 
-None of the three lanes touched `builder.php`, so that list is the same four commits it
-was — but **#44 added two things to look at on the same visit**, and both are things only
-a live page can answer:
+**Undo, singled out here as the biggest stake, came through clean.** So did the Viewer, the
+read-only Builder and both of #44's live-only questions. The stake was mis-sited: five of
+the seven findings were not the JavaScript computing the wrong answer, they were the page
+**not saying** something — a ceiling nobody was told (§4au), a lock that stopped a mouse and
+nothing else (§4av, §4aw), a publisher and a time recorded for a year and shown in two
+places, neither of them the Builder (§4ax). A harness that asserts what a function returns
+is blind to that whole category by construction, and a person clicking is not. Worth
+carrying into the live pass: **the question that found things was "does this page tell me
+what just happened", not "did it compute correctly".**
+
+The two things #44 added, both confirmed on the visit:
 
 - **Admin Panel → Settings → Store Time Zone.** The default is `America/Los_Angeles`,
-  so a deploy that never touches it is already right for this store. Check it once, and
-  read the three time-zone rows on **This Server** while you are there.
+  so a deploy that never touches it is already right for this store. Changing it moved the
+  "since" time by the right number of hours and the save redirects, and the picker offers
+  region names only.
 - **The database's session zone**, on the same card, which nothing had ever shown.
-  `db_connect.php` now asks every connection for `+00:00` and the request is suppressed
-  rather than fatal, so a host that refused it says so *there and nowhere else*.
-  Anything other than a zero offset means the app is back to two clocks, and what it
+  `db_connect.php` asks every connection for `+00:00` and the request is suppressed
+  rather than fatal, so a host that refused it says so *there and nowhere else*. It read
+  `+00:00` on this host. Anything else means the app is back to two clocks, and what it
   costs is a creation date reading a few hours out.
 
-Read **Settings → This Server** before signing in a second time. It must say
-`lbm-test` and `silverad_lummi_market_drive_thru_2`. That check is the whole isolation
+Read **Settings → This Server** before signing in a second time — on the live host too.
+It must say the install and database you meant. That check is the whole isolation
 guarantee, and the sign-in that shows it to you is also the one that converges schema
 on whatever database it found.
 
@@ -238,17 +250,23 @@ counted as neither — two branches have each quietly folded it into a different
 
 ## Sequencing, in one line each
 
-1. **Lane 0** — deploy to `lbm-test/`, read the isolation card, check the two things #44
-   added, then walk the Builder: drag, resize, hide, unhide, edit a price, Undo it,
-   publish, and look at the sign. **This is the only one left, and it has now had three
-   branches land in front of it.**
+1. ~~**Lane 0**~~ — walked 2026-08-12/13 after waiting behind three branches. Seven
+   defects, §4as–§4ax, five commits, each fixed and re-checked in the browser that found
+   it.
 2. ~~**Lanes A and B**~~ — landed, §4ao/invariant 29 and §4ap/invariant 28.
 3. ~~**Lane C**~~ — landed, §4aq/invariant 30, alone and against a suite that held still.
 
 Nothing was blocked by lane 0, and it stayed last three times running because it needs a
-person, a deploy and a screen. The cost is now visible rather than theoretical: a browser
-defect found today is a defect in a diff four commits deep in `builder.php` plus everything
-since, which is an afternoon of bisecting rather than an afternoon of looking.
+person, a deploy and a screen. **The cost of that ordering can now be stated instead of
+guessed, and it was smaller than this file feared.** The prediction was an afternoon of
+bisecting, on the grounds that a browser defect would be four commits deep in
+`builder.php` plus everything since. No bisecting happened: all seven findings were
+diagnosable by reading, because each was a door or a sentence that had never existed
+rather than a behaviour that had regressed. Deferring a *first* look is not the same risk
+as deferring a re-look — nothing had been right and then broken, so there was no point in
+history to find. The lesson keeps only for a pass that has been walked once: from here on,
+a browser defect in `builder.php` really is a regression with a date, and that is the
+version of this cost the deferral argument was actually about.
 
 ## What is deliberately not a lane
 
