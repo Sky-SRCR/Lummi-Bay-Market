@@ -4243,6 +4243,23 @@ check(ErrorPolicy::sentence(ErrorPolicy::PAGE) !== $deployNote,
       'a refusal stores nothing, so a later failure on the same request is unaffected');
 ErrorPolicy::sayOnFailure('');
 
+// And the argument nobody passes, which is the one `db_connect.php` uses. A sweep found
+// the whole `$mode` line removable with every check above still green: they all name a
+// mode, so none of them exercised the default — and the default is the entire call site.
+// Every check above could have gone on passing while the one real caller was deciding by
+// a `null` that is not equal to `page`, and refusing to say anything on any page at all.
+//
+// This process has installed no mode, so it is PAGE, which is what a signed-in page is.
+checkSame(true, ErrorPolicy::sayOnFailureToAPerson($deployNote),
+          'with no mode named it uses this request\'s, which is what db_connect.php relies on');
+ErrorPolicy::sayOnFailure('');
+// The same line's other half: an unrecognised mode is a page, matching knownMode() and
+// matching what noticeFor() already does with one. Erring towards the mode with a person
+// in front of it is right — the sentence is for somebody who can act on it.
+checkSame(true, ErrorPolicy::sayOnFailureToAPerson($deployNote, 'nonsense'),
+          'and a mode it does not recognise is a page, as everywhere else in this file');
+ErrorPolicy::sayOnFailure('');
+
 // ─────────────────────────────────────────────────────────────
 section('The error log');
 
@@ -6991,8 +7008,11 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // asked for after the first figure had already been run and written down. Which is the
 // paragraph above happening: the second number was run too. And a third time, 1829 →
 // 1836, when the mode guard moved out of db_connect.php and into ErrorPolicy so that a
-// suite could ask it — which is what a page-shaped rule costs when it wants covering. The MySQL figure moved by the same 27
+// suite could ask it — which is what a page-shaped rule costs when it wants covering.
+// And a fourth, 1836 → 1838, for the two the sweep over that method then asked for: the
+// default `$mode` argument had no check on it at all, and it is the one the real caller
+// uses. The MySQL figure moved by the same 27
 // because nothing was added to the engine-only section, which is the difference of 23
 // staying 23 — the one check on that line worth making by arithmetic, because it is a
 // check *of* the arithmetic.
-reportChecks(testIsMysql() ? 1859 : 1836);
+reportChecks(testIsMysql() ? 1861 : 1838);

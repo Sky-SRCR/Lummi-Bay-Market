@@ -5851,6 +5851,26 @@ guard being right rather than a check being missing, and it is the same reason f
 those seven have survived every sweep since the file was written. Written down here
 because invariant 30 asks for the reason, not for the line to go.
 
+**And the sweep over `lib/error_policy.php` found the real one.** That file is mostly
+uncovered and always has been — 226 mutants, 56 killed — because most of it is suppressed
+filesystem calls whose whole contract is to fail quietly; none of that changed here and
+none of it is claimed. What matters is the eight mutants inside the new method, of which
+five died by assertion and one of the three survivors was a gap rather than a reason:
+**the whole `$mode = ($mode === null) ? … : knownMode($mode)` line could be deleted with
+every check still green.** Every check named a mode, because naming it is what made the
+rule askable in the first place — so not one of them exercised the default. And the
+default is the entire call site: `db_connect.php` passes no mode. With that line gone the
+suite stayed green while the one real caller decided by a `null` that is not `page`, and
+refused to say anything on any page at all. Two checks now cover it — the default
+argument, and an unrecognised mode being a page as it is everywhere else in that file —
+and the mutant dies on both. The other two survivors are the same strict-versus-loose
+shape as above.
+
+That is the second time in this one change that a parameter added *for* testability took
+the only untested path with it, and it is worth stating as a pattern rather than as an
+incident: when a value is made injectable so a suite can vary it, the suite varies it, and
+the shipped call site is the one arrangement nobody writes a check for.
+
 The Settings card gained a **Credentials** row beside **This install** and **Database**,
 and it is the row that does not require you to already know the answer. Telling
 `silverad_lummi_market_drive_thru` from `silverad_lummi_market_drive_thru_2` needs
