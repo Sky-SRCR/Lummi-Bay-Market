@@ -417,6 +417,38 @@ td:first-child { color: var(--ink-muted); }
     font-family: ui-monospace, Menlo, Consolas, monospace;
 }
 
+/* Settled-design pieces: centre column with its own footer, the Brand control,
+   the gear menu, and palette swatches in the rail. */
+.mk-center { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.mk-center .mk-stage { flex: 1 1 auto; min-height: 0; }
+.mk-footer {
+    flex-shrink: 0; background: var(--nav); border-top: 1px solid var(--line);
+    display: flex; align-items: center; gap: 6px; padding: 4px 10px;
+    font-size: 9.5px; color: var(--dim);
+}
+.mk-footer .pub { color: #7e93a6; }
+.mk-brand-ctl {
+    display: inline-flex; align-items: center; gap: 6px; background: #22303d;
+    border: 1px solid #4a6278; border-radius: 4px; padding: 2px 8px; font-size: 10px;
+}
+.mk-brand-ctl .lg, .mk-brand-plain .lg {
+    width: 15px; height: 15px; border-radius: 3px; background: #b8442e; color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 8px; font-weight: 700;
+    flex-shrink: 0;
+}
+.mk-brand-plain { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; color: var(--dim); }
+.mk-gear-menu {
+    position: absolute; top: 38px; right: 10px; width: 190px; background: #22303d;
+    border: 1px solid #4a6278; border-radius: 5px; padding: 5px; z-index: 7;
+    box-shadow: 0 10px 26px rgba(0,0,0,.55); display: flex; flex-direction: column; gap: 1px;
+}
+.mk-gear-menu .gi { font-size: 10px; padding: 3px 7px; border-radius: 3px; }
+.mk-gear-menu .gi.on { background: #34495e; }
+.mk-gear-menu .gf { font-size: 9.5px; padding: 2px 7px; color: #8fa6bb; line-height: 1.4; }
+.mk-gear-menu .gd { height: 1px; background: #3a4d5f; margin: 3px 0; }
+.mk-swatches { display: flex; gap: 3px; margin-bottom: 4px; }
+.mk-sw { width: 15px; height: 15px; border-radius: 2px; border: 1px solid #4a6278; flex-shrink: 0; }
+
 /* ── The Admin / Basic axis ─────────────────────────────── */
 body[data-role="basic"] .admin-only { display: none !important; }
 body[data-role="admin"] .basic-only { display: none !important; }
@@ -435,7 +467,8 @@ footer {
         <p class="standfirst">The properties panel floats over the toolbars because its
             position is a guess at how tall they are. Every option below docks it into the
             layout instead &mdash; and each one spends the space it frees differently. Switch
-            between the Admin and Basic user view to compare what each role actually sees.</p>
+            between the Admin and Basic user view to compare what each role actually sees.
+            <strong>B was chosen</strong> &mdash; the settled design is the last panel.</p>
     </div>
 </header>
 
@@ -447,6 +480,7 @@ footer {
             <a href="#b">B &middot; Workbench</a>
             <a href="#c">C &middot; Canvas first</a>
             <a href="#compare">Compare</a>
+            <a href="#settled">Settled</a>
         </nav>
         <span class="axis-label">Viewing as</span>
         <div class="seg" role="group" aria-label="Which role's Builder to show">
@@ -1119,19 +1153,196 @@ footer {
     </div>
 
     <div class="col" style="margin-top:44px">
-        <h2 class="display">The recommendation</h2>
-        <p><strong>A now, B next.</strong> A is the fix for what you actually reported and it
-            touches CSS and one wrapper element &mdash; the overlap becomes arithmetically
-            impossible rather than merely moved, and nobody has to relearn the page. It can go
-            in ahead of the live deploy without putting the walkthrough in
-            <code>help.php</code> out of date.</p>
-        <p>B is the one worth building next, and the reason is the Basic user view above rather
-            than the overlap: a horizontal bar that is mostly holes is what a role-gated toolbar
-            turns into, and it gets worse with every block type added. C is the right answer only
-            if signs are being built on small screens often enough that ~110px of canvas height
-            is worth a two-click Add and a rewritten Help page.</p>
-        <p>None of the three has been built. This page is the pitch; say which one and it gets
-            implemented against the real <code>builder.php</code>.</p>
+        <h2 class="display">The recommendation, and what was chosen</h2>
+        <p>The recommendation on this page was <strong>A now, B next</strong> &mdash; A being the
+            smallest thing that makes the overlap impossible, B being the one that fixes the
+            Basic user&rsquo;s half-empty toolbar. <strong>B was chosen</strong>, with the nav
+            reworked and a canvas footer added. The settled design is below; A and C stay on this
+            page as the record of what it was chosen against.</p>
+    </div>
+</section>
+
+<!-- ════════════════ SETTLED ════════════════ -->
+<section id="settled">
+    <div class="col">
+        <div class="eyebrow">Settled &middot; 13 August 2026</div>
+        <h2 class="display">Option B as specified</h2>
+        <p class="lede">B&rsquo;s three columns, a rebuilt nav, and a canvas footer that B as
+            pitched didn&rsquo;t have. Two slots are filled by later work &mdash; the Brand
+            control and the Workspace Theme item &mdash; and are drawn here so the layout can be
+            judged whole.</p>
+        <p>Four things changed from the pitch above. The nav drops the store logo and the role
+            chip, and its links move behind a gear. <strong>Sign Out stays visible</strong>
+            &mdash; it was the one link that shouldn&rsquo;t need a click to find. The
+            <strong>canvas footer</strong> is new: it carries the zoom controls, which B as
+            pitched had simply lost, and the last-published line, which belongs on screen because
+            the question it answers &mdash; <em>is what I&rsquo;m looking at live?</em> &mdash;
+            has to answer at a glance. And the <strong>Brand control</strong> sits with the
+            sign&rsquo;s other facts, while the Workspace Theme sits in the gear with the
+            person&rsquo;s: two pickers, opposite ends of the bar, describing different nouns.</p>
+    </div>
+
+    <div class="col-wide mk-frame">
+        <div class="mk-scroll">
+            <div class="mk">
+                <div class="mk-nav">
+                    <span class="mk-brand">LUMMI BAY MARKET</span>
+                    <span class="mk-sep"></span>
+                    <span class="mk-disp">
+                        <span class="t">Beer Cave Board</span>
+                        <span class="g">beer-cave</span>
+                        <span class="d">1920 &times; 1080</span>
+                    </span>
+                    <span class="mk-link">View &#8599;</span>
+                    <span class="mk-link">&#8646;</span>
+                    <span class="mk-brand-ctl admin-only"><span class="lg">SH</span> Brand: Salmon House &#9662;</span>
+                    <span class="mk-brand-plain basic-only"><span class="lg">SH</span> Brand: Salmon House</span>
+                    <span class="mk-spacer"></span>
+                    <button class="mk-btn gray">&#8630; Undo</button>
+                    <button class="mk-btn publish">&#10003; Publish</button>
+                    <span class="mk-sep"></span>
+                    <span class="mk-user">jporter</span>
+                    <span class="mk-link">Sign Out</span>
+                    <span class="mk-link">&#9881;</span>
+                </div>
+
+                <div class="mk-gear-menu">
+                    <div class="gf admin-only">jporter &mdash; Administrator</div>
+                    <div class="gf basic-only">jporter &mdash; Standard user</div>
+                    <div class="gd"></div>
+                    <div class="gi on">Workspace Theme &#9662;</div>
+                    <div class="gd"></div>
+                    <div class="gi">Asset Library</div>
+                    <div class="gi admin-only">Admin Panel</div>
+                    <div class="gi">Help</div>
+                </div>
+
+                <div class="mk-body">
+                    <div class="mk-pal">
+                        <div class="mk-pal-h admin-only">Layout</div>
+                        <div class="mk-pal-b admin-only"><span class="ic">&#9707;</span> Section</div>
+                        <div class="mk-pal-h">Text</div>
+                        <div class="mk-pal-b"><span class="ic">H</span> Section Header</div>
+                        <div class="mk-pal-b"><span class="ic">T</span> Item Title</div>
+                        <div class="mk-pal-b on"><span class="ic">$</span> Price</div>
+                        <div class="mk-pal-b"><span class="ic">&#182;</span> Description</div>
+                        <div class="mk-pal-h admin-only">Media</div>
+                        <div class="mk-pal-b admin-only"><span class="ic">&#9635;</span> Image</div>
+                        <div class="mk-pal-b admin-only"><span class="ic">&#9707;</span> Carousel</div>
+                        <div class="mk-pal-b admin-only"><span class="ic">&#9636;</span> Table</div>
+                        <div class="mk-pal-b admin-only"><span class="ic">&#9654;</span> Marquee</div>
+                        <div class="mk-pal-b admin-only"><span class="ic">&#9658;</span> Video</div>
+                        <div class="mk-pal-h admin-only">Brand</div>
+                        <div class="mk-pal-b admin-only"><span class="ic">&#9873;</span> Venue Logo</div>
+                        <div class="mk-pal-b admin-only"><span class="ic">&#9633;</span> Background</div>
+                        <div class="mk-spacer"></div>
+                        <div class="mk-hint basic-only">Pick a <strong>section</strong> on the
+                            canvas first &mdash; new blocks land inside the one you pick.</div>
+                    </div>
+
+                    <div class="mk-center">
+                        <div class="mk-stage">
+                            <div class="mk-canvas">
+                                <div class="mk-section"><span class="sl">SECTION</span></div>
+                                <div class="mk-txt head">COLD BEER &mdash; 12 PACKS</div>
+                                <div class="mk-txt item">Rainier Tallboy</div>
+                                <div class="mk-txt price">$14.99</div>
+                                <div class="mk-marq">OPEN DAILY 6AM&ndash;11PM &middot; ICE &amp; BAIT IN STOCK
+                                    <span class="h tl"></span><span class="h tr"></span>
+                                    <span class="h bl"></span><span class="h br"></span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mk-footer">
+                            <span>Zoom</span>
+                            <button class="mk-btn gray sm">Fit</button>
+                            <button class="mk-btn gray sm">100%</button>
+                            <button class="mk-btn gray sm">&minus;</button>
+                            <button class="mk-btn gray sm">+</button>
+                            <span>79%</span>
+                            <span class="mk-spacer"></span>
+                            <span class="pub">Last published by jporter 9/13/25 11:42am</span>
+                        </div>
+                    </div>
+
+                    <div class="mk-props mk-rail">
+                        <h4>Marquee Block</h4>
+                        <div class="mk-2">
+                            <div><div class="mk-f">X (px)</div><div class="mk-in">96</div></div>
+                            <div><div class="mk-f">Y (px)</div><div class="mk-in">812</div></div>
+                        </div>
+                        <div class="mk-2">
+                            <div><div class="mk-f">W (px)</div><div class="mk-in">1728</div></div>
+                            <div><div class="mk-f">H (px)</div><div class="mk-in">148</div></div>
+                        </div>
+                        <div class="mk-grp">
+                            <div class="mk-f">Marquee Text</div>
+                            <div class="mk-in area">OPEN DAILY 6AM&ndash;11PM &middot; ICE &amp; BAIT IN STOCK</div>
+                        </div>
+                        <div class="mk-grp">
+                            <div class="mk-f">Background &mdash; Salmon House</div>
+                            <div class="mk-swatches">
+                                <span class="mk-sw" style="background:#b8442e"></span>
+                                <span class="mk-sw" style="background:#2f4f4f"></span>
+                                <span class="mk-sw" style="background:#e0b062"></span>
+                                <span class="mk-sw" style="background:#f4efe6"></span>
+                                <span class="mk-sw" style="background:#1c2a2a"></span>
+                                <span class="mk-in" style="flex:1;justify-content:center">custom&hellip;</span>
+                            </div>
+                        </div>
+                        <div class="mk-grp">
+                            <div class="mk-f">Arrange &mdash; align in section</div>
+                            <div class="mk-4">
+                                <button class="mk-btn ghost sm">&#9664;</button>
+                                <button class="mk-btn ghost sm">&#8596;</button>
+                                <button class="mk-btn ghost sm">&#9654;</button>
+                                <button class="mk-btn ghost sm">&#9650;</button>
+                            </div>
+                            <div class="mk-lbl" style="margin-top:4px">1 block selected</div>
+                        </div>
+                        <div class="mk-grp">
+                            <div class="mk-f">Layer Order</div>
+                            <div class="mk-4">
+                                <button class="mk-btn gray sm">Back</button>
+                                <button class="mk-btn gray sm">Bwd</button>
+                                <button class="mk-btn gray sm">Fwd</button>
+                                <button class="mk-btn gray sm">Front</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <p class="mk-cap">Settled &mdash; gear shown open. Switch to Basic user: the Brand becomes
+            a fact, not a control.</p>
+    </div>
+
+    <div class="col">
+        <div class="tradeoff">
+            <div>
+                <h3>New since the pitch</h3>
+                <ul>
+                    <li>Canvas footer &mdash; zoom left, last-published right.</li>
+                    <li>Brand control beside the sign&rsquo;s facts, with the venue&rsquo;s logo in it.</li>
+                    <li>Links behind a gear; Sign Out stays out.</li>
+                    <li>Palette swatches from the Brand, above every colour control.</li>
+                </ul>
+            </div>
+            <div>
+                <h3>Drawn but not yet built</h3>
+                <ul>
+                    <li>The Brand control and the Venue Logo palette item &mdash; step 4.</li>
+                    <li>The Workspace Theme item in the gear &mdash; step 5.</li>
+                    <li>Everything else is step 2, and lands first.</li>
+                </ul>
+            </div>
+            <div>
+                <h3>What a Basic user loses</h3>
+                <p>The Layout, Media and Brand palette groups, the Admin Panel link, and the
+                    ability to change the Brand &mdash; which they still see, because knowing
+                    which venue you are building for is not an admin privilege.</p>
+            </div>
+        </div>
     </div>
 </section>
 
