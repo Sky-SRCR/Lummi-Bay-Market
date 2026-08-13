@@ -1411,6 +1411,13 @@ foreach ($floorClean as $probe) {
 // this folder's name, which is a wrong answer nobody is told about rather than a page
 // that says so. Same shape as invariant 29's two doors, for the same reason: a rule
 // enforced at one of the places that needs it is enforced nowhere.
+//
+// `tools/rehearse_phase1.php` also builds a PDO and is deliberately **not** on this list.
+// It reads no credentials file at all: `--host`, `--db` and `--user` are required and it
+// refuses outright without `--confirm-copy`, so there is nothing for it to guess at. A
+// door is a place that resolves credentials from a folder name, not a place that
+// connects — which is why this list is two and not three, and why it is a list rather
+// than a grep for `new PDO`.
 $claimDoors = [
     ['db_connect.php',
      'every page and every sign connects through it'],

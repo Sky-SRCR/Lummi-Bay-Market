@@ -63,11 +63,20 @@ picker: a forged request naming an ungranted Display is refused.
 
 ```php
 <?php
+define('CREDENTIALS_FOR', 'lbm');                          // the folder the app runs from
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'silverad_lummi_market_drive_thru');
 define('DB_USER', 'your_user');
 define('DB_PASS', 'your_password');
 ```
+
+**`CREDENTIALS_FOR` is not optional.** One hosting account can hold more than one copy
+of this app, and two folders at the same depth walk up to the same `private/` directory
+— so a second copy with no credentials file of its own used to fall through to this one
+and connect to *this* database, silently and successfully. It now refuses unless this
+line names its folder. A copy that needs its own database gets its own file,
+`private/db_credentials_<folder>.php`, carrying its own `CREDENTIALS_FOR`. See
+[`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) §E.
 
 ### 2. Create the schema
 

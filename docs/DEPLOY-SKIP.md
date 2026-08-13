@@ -129,11 +129,18 @@ that came from).
 
 **The trap this exists to close.** `lbm-test/` sits at the same depth as `lbm/`, and
 credentials are found by walking two folders up to `private/`. Both folders reach the
-*same* file, so an unmodified copy in `lbm-test/` connects to the **live** database —
-and then behaves perfectly. Signing in converges schema on the live tables. Pressing
-Publish overwrites a real sign. Nothing warns you, because from the app's point of view
-nothing is wrong. There is no undo anywhere here, so the first symptom is a customer
-reading the wrong prices.
+*same* file, so an unmodified copy in `lbm-test/` connected to the **live** database —
+and then behaved perfectly. Signing in converges schema on the live tables. Pressing
+Publish overwrites a real sign. Nothing warned you, because from the app's point of view
+nothing was wrong. There is no undo anywhere here, so the first symptom is a customer
+reading the wrong prices. **This is not hypothetical: it is what the first rehearsal
+deploy did**, and Settings → This Server is what found it (HANDOFF §7).
+
+Two things close it, and the second is new. The rehearsal copy gets its own credentials
+file — below — and the shared file now names the install it belongs to, so a folder it
+does not name refuses to connect at all rather than falling through to it. **Forgetting
+the file is now a refusal instead of a silent success.** The pre-step for that is further
+down and it has to be done *before* the tree is uploaded.
 
 **So the rehearsal copy gets its own credentials file, and nothing in the tree
 changes.** `lib/install_paths.php` looks for a name-specific file first:
