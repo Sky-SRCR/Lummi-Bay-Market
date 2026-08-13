@@ -81,7 +81,7 @@ class ServerReport
      */
     private $server;
 
-    public function __construct(PDO $pdo, array $server = null)
+    public function __construct(PDO $pdo, ?array $server = null)
     {
         $this->pdo    = $pdo;
         $this->server = ($server === null) ? $_SERVER : $server;

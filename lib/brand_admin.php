@@ -200,8 +200,15 @@ class BrandAdmin
      */
     public function destroy(Brand $brand, $typedName)
     {
-        if (BrandStore::cleanName($typedName) === ''
-            || strcasecmp(BrandStore::cleanName($typedName), $brand->name()) !== 0) {
+        // One comparison, not two. The first draft also refused an empty typed name
+        // explicitly, and that clause was dead: `cleanName()` answers `''` for a blank
+        // box *and* for anything that is not a string, and `strcasecmp('', $name)` is
+        // already non-zero for every name a Brand can have — `isValidName()` refuses
+        // the empty one. A mutation run is what said so, and a dead clause is worth
+        // removing rather than keeping as decoration: the one in `typographyFor()`
+        // survived its mutant while still being able to change behaviour, which is the
+        // shape that actually bites (§4az).
+        if (strcasecmp(BrandStore::cleanName($typedName), $brand->name()) !== 0) {
             return BrandResult::invalid('confirm_name',
                 'Type the brand\'s name exactly to confirm. Nothing was deleted.');
         }

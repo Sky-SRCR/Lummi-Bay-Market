@@ -242,7 +242,7 @@ function basicLayoutFor(PDO $pdo, Display $display, $text)
  * Releasing here models what actually happens — the tab closes — and keeps every
  * lock assertion in the one section that is about locks.
  */
-function publishAs(LayoutStore $layouts, Display $display, array $elements, $stamp, $isAdmin = true, $actorId = 1, Background $bg = null)
+function publishAs(LayoutStore $layouts, Display $display, array $elements, $stamp, $isAdmin = true, $actorId = 1, ?Background $bg = null)
 {
     global $pdo;
     $result = $layouts->publish($display, new PublishRequest(
@@ -1668,6 +1668,7 @@ $nBrands = new BrandStore($nPdo);
 $nStyles = new BrandStyles($nPdo);
 $nDisp   = newTestDisplayStore($nPdo);
 $nAdmin  = new BrandAdmin($nPdo, $nBrands, $nStyles, $nDisp);
+$nAdminD = newTestDisplayAdmin($nPdo);
 
 // ---- The name rules ---------------------------------------------------------
 checkSame('Salmon House', BrandStore::cleanName('  Salmon   House  '),
@@ -1803,6 +1804,11 @@ checkSame(BrandResult::INVALID, $nAdmin->destroy($nSalmon, 'wrong name')->kind()
 checkSame(BrandResult::INVALID, $nAdmin->destroy($nSalmon, '')->kind(),
           'and a blank confirm is not a match either');
 
+checkSame(BrandResult::INVALID, $nAdmin->destroy($nSalmon, ['Salmon House'])->kind(),
+          'and a value that is not a string is not a confirmation');
+checkSame(true, $nAdmin->destroy($nSalmon, '  salmon   house  ')->kind() !== BrandResult::INVALID,
+          'but the confirm is folded the same way the name was, so spacing and case are not traps');
+
 $nWorn = $nAdmin->destroy($nSalmon, 'Salmon House');
 checkSame(BrandResult::CONFLICT, $nWorn->kind(), 'a Brand a sign still wears cannot be destroyed');
 checkMentions($nWorn->message(), 'Salmon House Board',
@@ -1810,8 +1816,25 @@ checkMentions($nWorn->message(), 'Salmon House Board',
 checkMentions($nWorn->message(), 'no undo', 'and says why it is not done automatically');
 checkSame(6, count($nStyles->all($nSalmon->id())), 'its standards are still there');
 
+// A venue with more boards than the sentence will list. The refusal has to stay a
+// sentence rather than becoming a wall of names, and it has to say how many it did
+// not print — "and 2 more" is the difference between a list and a list that lies by
+// omission. Nothing exercised this branch until a surviving mutant pointed at it.
+for ($nI = 2; $nI <= 8; $nI++) {
+    makeTestDisplay($nPdo, 'salmon-' . $nI, 'Salmon Board ' . $nI, 1920, 1080, $nSalmon->id());
+}
+$nMany = $nAdmin->destroy($nSalmon, 'Salmon House');
+checkSame(BrandResult::CONFLICT, $nMany->kind(), 'eight signs still refuse the delete');
+checkMentions($nMany->message(), '8 displays still wear', 'the count is the number of signs, not the number listed');
+checkMentions($nMany->message(), 'and 2 more', 'and the two it did not name are accounted for');
+check(strpos($nMany->message(), 'Salmon Board 8') === false,
+      'the eighth is genuinely not printed, so the truncation is doing something');
+for ($nI = 2; $nI <= 8; $nI++) {
+    $nAdminD->destroy(loadTestDisplay($nPdo, $nDisp->forTag('salmon-' . $nI)->id()), 'salmon-' . $nI, 1);
+}
+checkSame(1, count($nDisp->usingBrand($nSalmon->id())), 'and with them gone one wearer is left');
+
 // Moved off it, and now it goes — with its standards.
-$nAdminD = newTestDisplayAdmin($nPdo);
 $nAdminD->updateDetails(loadTestDisplay($nPdo, $nSign->id()),
                         ['title' => 'Salmon House Board', 'tag' => 'salmon-board',
                          'location' => '', 'brand_id' => $nCasino->id()]);
@@ -3184,7 +3207,7 @@ function storedHash(PDO $pdo, $accountId)
     $stmt->execute([intval($accountId)]);
     return (string)$stmt->fetchColumn();
 }
-function newCompletion(PDO $pdo, AccountStore $accounts = null)
+function newCompletion(PDO $pdo, ?AccountStore $accounts = null)
 {
     return new PasswordResetCompletion($pdo, new ResetTokenStore($pdo),
         $accounts ? $accounts : new AccountStore($pdo));
@@ -6070,7 +6093,7 @@ checkSame(2, count(elementsOf($vPdo, $vSign->id())), 'and lands as two elements'
 
 /** Try to publish this payload over the layout that is already there. */
 function refusedPublish(LayoutStore $layouts, DisplayStore $store, Display $sign, array $elements,
-                        $isAdmin = true, Background $bg = null)
+                        $isAdmin = true, ?Background $bg = null)
 {
     $fresh = $store->forId($sign->id());
     return $layouts->publish($fresh, new PublishRequest(
@@ -7263,4 +7286,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1949 : 1923);
+reportChecks(testIsMysql() ? 1956 : 1930);
