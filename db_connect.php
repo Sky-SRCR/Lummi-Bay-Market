@@ -101,8 +101,10 @@ ErrorPolicy::useAlerts(new AlertMailer(
 // with one value per run. It is handed over instead, and `lib/install_paths.php` holds
 // the reasoning and the sentences.
 //
-// `fail()` shows a visitor its $subject, never its $detail, which is why the detail can
-// name a directory outside the webroot: `login.php` is a page anybody can reach. The
+// `fail()` shows a visitor neither argument — the detail goes to the log, the subject
+// heads the admin alert, and what a visitor reads is `ErrorPolicy::sentence()`. That is
+// why the detail can name a directory outside the webroot: `login.php` is a page anybody
+// can reach, and the sentence it prints is the only part they see. The
 // path-free sentence replaces the default only on a page somebody is looking at — a
 // Screen keeps the kiosk notice that re-checks every 30 seconds, so a sign that came up
 // inside the window comes back on its own once the line is added, and an API caller
