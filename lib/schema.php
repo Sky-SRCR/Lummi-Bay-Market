@@ -420,12 +420,16 @@ class SchemaFacts
      * before and after, and a gate built on it would either never run or always run.
      *
      * Null — "run it and let schemaTry() swallow what that means" — is answered for
-     * a catalogue that could not be read at all and for one that recorded the index
-     * without its columns. Both are honestly "I did not look", and the plan's
-     * standing answer to that is the behaviour this file had before it started
-     * asking. False only when the key is already exactly these columns, in this
-     * order, and when the table is not there at all — a table this file creates
-     * declares its key in the CREATE, and one it does not create cannot be altered.
+     * a catalogue that could not be read at all, for one that recorded the index
+     * without its columns, and for a table the catalogue says has no PRIMARY at all.
+     * The first two are honestly "I did not look", and the plan's standing answer to
+     * that is the behaviour this file had before it started asking. The third is a
+     * table nothing here built, where `DROP PRIMARY KEY` will fail and reporting it
+     * would be noise about a database this app did not make.
+     *
+     * False only when the key is already exactly these columns, in this order, and
+     * when the table is not there at all — a table this file creates declares its key
+     * in the CREATE, and one it does not create cannot be altered.
      */
     public function needsPrimaryKey($table, array $wanted)
     {

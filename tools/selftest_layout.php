@@ -3628,6 +3628,53 @@ $plan = signageSchemaPlan(readSchemaFacts(fakeCatalogue($shape)));
 check(planWants($plan, 'MODIFY COLUMN display_id INT(11) NOT NULL'),
       'a column the catalogue reports as nullable is tightened');
 
+// ---- The re-key, which is the one statement that replaces structure ----------
+// The gate reads the PRIMARY's *columns*, because every table has a PRIMARY and an
+// existence test would answer the same before and after. So the property worth
+// asserting is both directions: a database still on the old key is asked for the
+// swap, and one already on the new key is asked for nothing — a second
+// `DROP PRIMARY KEY, ADD PRIMARY KEY` does not fail harmlessly, it rebuilds the table
+// every sign's typography lives in.
+$kShape = convergedSchemaShape();
+$kFacts = schemaFactsFrom($kShape);
+checkSame(false, $kFacts->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+          'a table already keyed on (brand_id, block_type) is not re-keyed');
+check(!planWants(schemaPlanFor($kShape), 'DROP PRIMARY KEY'),
+      'so a converged database is sent no DROP PRIMARY KEY at all');
+
+$kShape['indexes']['block_styles']['PRIMARY'] = ['block_type'];
+$kOld = schemaFactsFrom($kShape);
+checkSame(true, $kOld->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+          'a table still on the old single-column key is re-keyed');
+check(planWants(schemaPlanFor($kShape), 'DROP PRIMARY KEY, ADD PRIMARY KEY (brand_id, block_type)'),
+      'and the plan carries exactly that statement');
+
+// Order is the whole of a composite key. These are different keys, and a gate that
+// compared them as sets would call the re-key already done and leave the table on a
+// key whose first column is the block type — which is why the catalogue read orders
+// by SEQ_IN_INDEX rather than trusting the row order MySQL happens to return.
+$kShape['indexes']['block_styles']['PRIMARY'] = ['block_type', 'brand_id'];
+checkSame(true, schemaFactsFrom($kShape)->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+          'the same two columns in the other order is a different key, and is re-keyed');
+
+// A shape that recorded the index without its columns cannot answer, and "cannot
+// tell" has to mean null rather than an empty list — an empty list would compare
+// unequal and issue the rebuild on every request, for ever.
+$kShape['indexes']['block_styles']['PRIMARY'] = true;
+checkSame(null, schemaFactsFrom($kShape)->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+          'an index recorded without its columns answers "cannot tell", never a confident list');
+checkSame(null, schemaFactsFrom($kShape)->indexColumns('block_styles', 'PRIMARY'),
+          'and indexColumns says so directly');
+checkSame(null, SchemaFacts::unknown()->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+          'and so does a catalogue that could not be read at all');
+
+// The three-valued discipline the rest of this file has: a table that is not there is
+// a definite no, because the CREATE that makes it declares its own key.
+$kGone = convergedSchemaShape();
+unset($kGone['columns']['block_styles'], $kGone['indexes']['block_styles']);
+checkSame(false, schemaFactsFrom($kGone)->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+          'a table that is not there is not re-keyed');
+
 // A catalogue that answers but knows nothing about this app is not a database with
 // no tables — it is a question that did not land. Reading it as "everything is
 // missing" would issue two CREATE TABLEs and five foreign keys against a database
@@ -7341,4 +7388,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1982 : 1956);
+reportChecks(testIsMysql() ? 1991 : 1965);
