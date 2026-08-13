@@ -1,6 +1,6 @@
 # Roadmap v2 — Brands, Workspace Themes, and the Builder workbench
 
-Status: **step 1 built, steps 2–5 planned.** Settled in a grilling session on
+Status: **steps 1 and 2 built, steps 3–5 planned.** Settled in a grilling session on
 2026-08-13; the decisions are recorded here and the one that reverses a previous
 decision is in [ADR-0011](adr/0011-typography-and-colour-belong-to-a-brand.md).
 
@@ -77,10 +77,15 @@ stop after any of them. There is no CI or deploy pipeline — every change reach
 the sign by hand — so **step order is deployment order**, exactly as in v1.
 
 The furniture is built before the things that sit in it. Step 2 rebuilds the
-Builder's chrome and leaves an empty Brand slot in the nav and an empty
-Workspace Theme item in the gear; steps 4 and 5 fill them. The alternative order
-— Brands first — would build the Brand control twice, once in the old toolbar
-and once in the new nav.
+Builder's chrome and leaves room for a Brand control at the top of the left
+column and a Workspace Theme item in the gear; steps 4 and 5 fill them. The
+alternative order — Brands first — would build the Brand control twice, once in
+the old toolbar and once in the new chrome.
+
+Neither slot is stubbed out in the markup. A caption over an empty box reads as
+something that failed to load, so what step 2 left is a comment saying where the
+control goes and why — which is also why the left column's rule is emitted only
+when there is something above it to divide.
 
 ### Step 1 — Publish stops writing what the Brand owns · size S · risk Medium
 
@@ -146,6 +151,10 @@ Gates: `php -l`, `selftest_layout`, `check_invariants`, `check_doc_numbering`,
 `php tools/mutate.php` over every `lib/` file touched.
 
 ### Step 2 — The Builder workbench · size L · risk Medium
+
+**Done — 2026-08-13. Written up as §4ba.** Not deployed; like every step here it
+goes on its own. What follows is the plan as written, with what it got wrong
+marked.
 
 Option B, and the nav from the sketch. No schema, no new data — pure chrome, which
 is what makes it safe to land before the features that use it.
@@ -225,7 +234,26 @@ one gets a mutation run rather than a green line.
 **Done when** all six node suites pass against the new chrome, `help.php` matches
 what the page now looks like, and the browser pass is re-walked against
 `lbm-test/` — it is the only verification here a person does, and this step
-changes every page it describes.
+changes every page it describes. — **Two of three met.** The suites pass (editing
+175 → 182, undo 137 → 139, layout 1830 → 1831) and `help.php` is rewritten
+throughout: the palette, the gear, the canvas footer, *Arrange*, and "Inspector"
+retired as a word the app never used on screen. **The browser pass has not been
+re-walked, and this step is the one that most needs it** — nothing in this repo
+can see a three-column layout fail to be three columns.
+
+> **Two corrections while building.** The rail's resting state is not only the
+> sentence the plan specified: for an admin it carries the **canvas background**.
+> That control was in the retired bar and the plan gave it nowhere to go — the
+> left column is *what you can put on the sign*, and a background is not
+> something you put on. Same class of omission as the zoom controls, and found
+> the same way.
+>
+> The plan named three suite assertions to rewrite. There were **five**: the two
+> in `selftest_builder_readonly.js` and the one in `selftest_builder_undo.js` it
+> listed, plus `selftest_builder_uploads.js`'s three publish-line checks (the
+> wording changed to *Last published by*) and `selftest_layout.php`'s grep for
+> the old `d-pub` markup. Each was hand-mutated and seen to fail before its new
+> form was kept.
 
 Gates: `php -l`, `node --check` over the extracted script blocks of `builder.php`,
 all six node suites, `check_invariants`, `check_doc_numbering`, mutation runs over

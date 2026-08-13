@@ -6032,6 +6032,86 @@ module's own door, `LayoutRules` refuses a non-word `block_subtype` long before 
 reaches it, and removing the guard throws on an array offset rather than answering wrongly.
 That grade is recorded rather than engineered away.
 
+### 4ba. The panel that looked like a window, and the arithmetic behind it
+
+v2 step 2. No schema, no new data, no behaviour a server can see — the Builder's
+chrome, rebuilt as option B. It is in §4 rather than in the roadmap alone because
+the thing that started it was reported as a matter of taste and turned out to be a
+number.
+
+**The report.** *"The block properties window appears to overlay a top div. It gives
+a false feeling of the capability to drag the properties box around the screen."*
+That is a design complaint, and it was right, but the overlap it points at is not a
+design decision anybody made. `#inspector` was `position: fixed; right: 16px; top:
+100px`. Above it sat a stack of up to five full-width bars — nav, lock banner or one
+of the holder's four, the turned-off notice, the control bar, the align bar — whose
+combined height depended on which of them were showing, and on a 1080p window with
+the control bar wrapped to two lines it exceeded 100px. So the panel landed on the
+bar above it. **And the two things that made it worst arrived together**:
+`showInspector()` calls `updateAlignBar()`, so selecting a block revealed the align
+bar and the panel in the same event, and the panel's `top` had been chosen against a
+page that did not have one.
+
+**Why "looks draggable" follows from that, rather than being a separate problem.** A
+panel that is the only positioned thing on the page, that overlaps its neighbours,
+and that appears and disappears, has every property a window has except the one that
+would make it usable. Every fix short of the structural one is a better number for
+`top`, which is the same defect one window size later.
+
+**The fix is that there is nothing positioned any more.** `#workbench` is a flex row
+and the three columns are its children; a sibling cannot overlap a sibling. What that
+bought beyond the report:
+
+- **The rail stops disappearing.** `deselectAll()` used to set
+  `inspector.style.display = 'none'`, and it runs on every click on empty canvas — so
+  a 290px panel came off the screen and the canvas reflowed under the pointer,
+  repeatedly. It now swaps between two states and never moves.
+- **The resting state is not a placeholder.** For an admin it carries the canvas
+  background, which is a property of the canvas rather than of any block and had no
+  home once the control bar went. The left column is *what you can put on the sign*,
+  and a background is not something you put on.
+- **The stack of bars is gone as a category.** Four of the five were horizontal
+  strips competing for the same vertical space; `#align-bar` is the one that retired
+  outright, into an *Arrange* group in the rail beside the block it acts on.
+
+**One control had no home at all and nobody had noticed.** The zoom buttons lived in
+the control bar, and neither option B as pitched nor the nav sketch had a slot for
+them — an omission in the mockup rather than a decision, found while moving the
+publish line. That is what produced the canvas footer, which is where they belonged
+anyway: zoom is a property of how you are looking at the canvas, so it sits with the
+canvas. The publish line sits at the other end of the same strip, and it is drawn for
+**read-only Builders too**, which is the case it was originally written for.
+
+**The left column's rule is a boundary in the markup, not only a line.** Everything
+below it is an editing control and is not emitted for a read-only Builder; the block
+above it always is. `Switch display` has always sat outside the read-only branch —
+somebody looking at a sign they cannot edit still has to be able to leave it — and
+when the Brand control lands (step 4) the same will be true of knowing which venue
+you are looking at. So a read-only Builder now keeps a left column carrying those two
+things, which is more than it had.
+
+**Three checks were about the old chrome, and rewriting a check is where #50 lives.**
+Each was hand-mutated first and seen to fail before the new form was kept:
+
+| Was | Now |
+|---|---|
+| `emittedOnlyWhenEditable('<div id="align-bar">')` | the rail's own gate, plus *the align bar is gone rather than hidden* — asked of `id="align-bar"` and the lookup, because the prose explaining the retirement mentions the name several times |
+| `PRESENT` holding `control-bar` | the three ids a read-only page really gets: `palette`, `canvas-column`, `canvas-footer`, and `pub-state` inside it |
+| `inspector.style.display === 'none'` | the rail is in exactly one of its two states, and **the rail itself is never shown or hidden by either** — which is the property the display check was standing in for, and one the old code could not have had |
+
+The last row is the interesting one. The old assertion tested the mechanism; the new
+one tests the intent, and it can fail in a way the old one could not: a rail saying
+*"nothing selected"* above a populated set of block controls is a state the old code
+had no way to reach and the new code does.
+
+**What is still owed.** The browser pass describes every page this touched, and it
+gets re-walked — five of its seven defects were things a page did not *say*, which is
+the category no harness here is pointed at, and this step rewrote most of the saying.
+`interact.js` is still driven by nothing, and a CSS rule that does not apply at 1080p
+is invisible to all six suites. **A green gate is not a working screen**, and that
+sentence is load-bearing for this step in particular: nothing in this repo can see a
+three-column layout fail to be three columns.
+
 ---
 
 ## 5. Verification
