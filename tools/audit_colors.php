@@ -71,6 +71,31 @@ if ($host === null || $db === null || $user === null) {
         exit(2);
     }
     require_once $credentialsFile;
+
+    // And the second half of the same question, which the comment above was already
+    // describing without being able to enforce: finding a file is not being allowed to
+    // use it. An install with none of its own falls through to the shared file, and that
+    // is a guess — so the shared file names the install it belongs to and one it does not
+    // name is refused (invariant 32, §4aw). This is the second of the two doors, and it
+    // is the one nothing would have caught: `db_connect.php` refusing means somebody sees
+    // a page that says so, while an audit run from the wrong folder produces a report
+    // about the live database and prints it under this folder's name.
+    //
+    // Only on the fall-back path, which is where this whole block already lives. A run
+    // with --db names its own database and is not guessing at anything.
+    if ($credentialsFile === InstallPaths::sharedCredentialsFile(dirname(__DIR__))) {
+        $refusal = InstallPaths::sharedClaimRefusal(
+            dirname(__DIR__),
+            defined(InstallPaths::CLAIM) ? constant(InstallPaths::CLAIM) : null
+        );
+        if ($refusal !== '') {
+            fwrite(STDERR, $refusal . "\n\n"
+                . "Or name the database on the command line, which guesses at nothing:\n"
+                . "  php tools/audit_colors.php --host=HOST --db=NAME --user=USER --pass=PASS\n");
+            exit(2);
+        }
+    }
+
     if ($host === null) { $host = defined('DB_HOST') ? DB_HOST : null; }
     if ($db   === null) { $db   = defined('DB_NAME') ? DB_NAME : null; }
     if ($user === null) { $user = defined('DB_USER') ? DB_USER : null; }

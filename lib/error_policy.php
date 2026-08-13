@@ -102,6 +102,33 @@ class ErrorPolicy
         self::$sentence = (string)$sentence;
     }
 
+    /**
+     * The same, but only to somebody who is actually looking at a page.
+     *
+     * The override above is global by design — `api.php`'s public poll needs its one
+     * sentence whatever mode the process ends in. But some sentences are written for a
+     * person mid-deploy, naming a constant to add and a file to add it to, and the modes
+     * exist because that sentence must not be what a Screen puts on the board a customer
+     * reads prices off. `db_connect.php`'s credentials refusal is the case: a page gets
+     * the actionable sentence, a Screen keeps the kiosk notice that re-checks every 30
+     * seconds so the sign comes back on its own, and an API caller keeps the answer its
+     * script knows how to parse.
+     *
+     * `$mode` is a parameter, defaulting to this request's, because a rule about which
+     * mode gets what cannot be exercised by a suite that would have to change the mode
+     * to ask — and changing it is a global edit that outlives the check that made it.
+     *
+     * Returns whether the sentence was taken, so a caller — and the suite — can tell
+     * "said" from "deliberately not said".
+     */
+    public static function sayOnFailureToAPerson($sentence, $mode = null)
+    {
+        $mode = ($mode === null) ? self::$mode : self::knownMode($mode);
+        if ($mode !== self::PAGE) { return false; }
+        self::sayOnFailure($sentence);
+        return true;
+    }
+
     public static function useAlerts(AlertMailer $mailer)
     {
         self::$alerts = $mailer;

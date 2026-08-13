@@ -527,6 +527,35 @@ through the app again:
     as one token and 8.2 as four — matching only the 8.4 shape would have gone quietly
     blind in CI, which is the machine pinned to the floor, and would have looked exactly
     like a pass.
+32. **An install connects only to credentials that name it** (§4aw). One hosting account
+    can hold more than one copy of this app, and two folders at the same depth walk up to
+    the same `private/` directory. Resolution has looked for a folder-specific file first
+    for a while, and that was only ever half the rule: an install with no file of its own
+    fell through to the shared one and *connected*, which is a guess. The guess is
+    harmless exactly as long as every install on the account has the same owner — between
+    `lbm/` and `lbm-test/` it costs a rehearsal copy publishing over the store's own sign,
+    which is a thing that has actually happened here (HANDOFF §7), and with a third
+    install on the account it reaches a database nobody gave it. So the shared file
+    declares `CREDENTIALS_FOR`, and an install it does not name refuses. **Undeclared is
+    a refusal, not a pass**: a rule that engages only once somebody remembers to configure
+    it protects precisely the installs whose owner did not need protecting, and what keeps
+    that from being an outage is the *order of the deploy* — the line is an unused constant
+    to every version that came before it, so it goes on the server first (HANDOFF §5). Two
+    halves, and neither implies the other: `tools/check_invariants.php` holds the constant
+    to one spelling, because a second one fails as an install refusing for a line the admin
+    has already added; and it holds the question to being settled **before** `new PDO`,
+    because a `sharedClaimRefusal()` below the connection passes every other check, prints
+    the right sentence, and has opened somebody else's database to do it. That is invariant
+    29's rule about `move_uploaded_file()` in a second place. **And there are two doors**,
+    for invariant 29's other reason: `db_connect.php` is every page and every sign, and
+    `tools/audit_colors.php` deliberately does not include it — arming the alert mailer so
+    a mistyped `--host` emails the store's admins is not what an audit is for — so it
+    reaches the same credentials by the same module and needs the same answer. It is also
+    the worse of the two to miss: a refused page says so, while an audit run from the wrong
+    folder reports on the live database under this folder's name. The claim is compared to the
+    folder name only — not to `DB_NAME`, since an install pointed at the wrong database by
+    a typo in its *own* file is a different mistake with a different fix, and a rule that
+    conflated them would refuse the person who did everything right.
 
 ---
 
@@ -5692,6 +5721,128 @@ account must aim at a section before it can add, and `createBlock()` says so
 (`builder.php`'s "Please click on a section first to add content"). Worth checking against
 the locked-section change above — if the only section on the sign is locked, a basic
 account now has nowhere to add, which is correct and is a thing an admin has to know.
+
+### 4aw. Finding a file was never the same question as being allowed to use it
+
+Not from the audit list and not from the browser pass. This one came out of a
+conversation about what it would take to run this app for a second store, and the answer
+turned on a property the code already had and the *requirement* no longer did.
+
+`lib/install_paths.php` exists because two folders of this app on one hosting account
+walk up to the same `private/` directory, so an unmodified rehearsal copy in `lbm-test/`
+read the live install's credentials and connected to the live database — schema
+converged, Displays all present, publish overwrote a real sign, nothing anywhere said a
+word. The fix was to let the folder name choose the file: `db_credentials_lbm-test.php`
+if it is there, the shared `db_credentials.php` otherwise. That shipped, and it worked.
+It is also **not what happened next**: the first real rehearsal deploy went up without
+the specific file, and Settings → This Server read `lbm-test` beside
+`silverad_lummi_market_drive_thru` — the live database (HANDOFF §7). The folder logic was
+right. The fall-back was what connected.
+
+**The fall-back is a guess, and the module's own docblock said so in the voice of a
+promise.** *"The live install needs no `db_credentials_lbm.php`, and creating one is
+optional there for ever."* That is a backwards-compatibility guarantee, and it was
+correct when it was written: absent a specific file, use the shared one, so a deployment
+that had never heard of the feature was unaffected. What makes it wrong is not a defect
+in the code. **It is the requirement moving**, which is the part worth writing down,
+because nothing in the repo could have detected it. Two installs owned by the same person
+make a wrong guess cost that person their own sign — bad, recoverable by them, and
+covered by a documented human check (`docs/DEPLOY-SKIP.md` §E). A third install owned by
+somebody else makes the same guess reach somebody else's database, and at that point "a
+check the deployer runs before signing in a second time" is not a control at all. The
+blast radius changed owner; the code did not change at all.
+
+So the shared file now says who it is for, in one line, in a file that is not in this
+repo and cannot be reached by a browser:
+
+```php
+define('CREDENTIALS_FOR', 'lbm');
+```
+
+and an install that is not the one it names refuses to connect. `sharedClaimRefusal()`
+holds the rule, `db_connect.php` asks it, and the answer is a sentence naming the file,
+the line and the alternative — because it is read at the moment a deploy has gone wrong,
+by somebody who has never read this class.
+
+**Undeclared is refused too, and that is the whole of the change.** The tempting version
+treats a file that names nobody as a file that names everybody, so nothing breaks until
+somebody opts in. That version protects exactly the installs whose owner did not need
+protecting: the second store's folder, set up by whoever set it up, with a shared file
+nobody remembered to annotate, gets the old behaviour and the old outcome. A rule that
+engages only once somebody configures it is a documentation change wearing a code
+change's clothes.
+
+What that costs is one window, and the window is closed by **deploy order rather than by
+a softer rule**. `define('CREDENTIALS_FOR', 'lbm');` is an unused constant to every
+version of this app that came before this one — defined, never read, inert. So it goes on
+the server first and the tree goes up afterwards, and there is no moment when the live
+install is on the wrong side of the rule. That instruction is a row in HANDOFF §5, which
+is where the person standing at the FTP client will meet it; §4z is the entry about a
+deploy step that existed only in a write-up nobody was reading at the time. Get the order
+backwards and the failure is bounded and self-healing anyway: pages refuse, a Screen
+shows the kiosk notice that re-checks every 30 seconds, and the sign comes back on its
+own the moment the line lands.
+
+**Three shapes were decided against, and each for a reason the tree already contains.**
+
+*Comparing the claim to `DB_NAME`* would catch more mistakes and refuse the wrong people.
+An install pointed at the wrong database by a typo in its **own** credentials file is a
+different mistake with a different fix, and a rule that conflated the two would refuse
+somebody who did everything right — which is how a protection gets switched off.
+
+*Reading `CREDENTIALS_FOR` inside the rule* would have been one fewer parameter and
+untestable. A constant is process-wide and cannot be taken back, so a rule that read it
+could be exercised with exactly one value per run; handed over as an argument it is
+exercised with six. It is `Brand::pick()` and `ServerReport::phpVersionNote()` again, and
+it is the same reason `credentialsCandidates()` already took `$appDir` rather than reading
+`__DIR__`: the interesting cases are all directories and values this machine is not in.
+
+*Merging resolution and the claim into one function* reads tidier and answers neither
+question on its own. Which file is a fact about the disk; whether it may be used is a fact
+about that file's contents. `ServerReport` needs the first without the second, the suite
+needs to prove the two are independent, and `db_connect.php` needs to recognise the file
+it just loaded.
+
+**Two mechanical checks, and neither implies the other.** `tools/check_invariants.php`
+holds `CREDENTIALS_FOR` to a single spelling — `InstallPaths::CLAIM` everywhere else —
+because a second literal is not a duplicated string but a second answer to *what is that
+line called*, and it fails as an install refusing for a line the admin has already added.
+And it holds the question to being settled **before** `new PDO`: a `sharedClaimRefusal()`
+call sitting after the connection passes every rule in that file, passes the suite, prints
+exactly the right sentence, and has opened somebody else's database in order to do it.
+That is invariant 29's *"before `move_uploaded_file()`"* in a second place, and it is the
+half that presence alone cannot cover.
+
+**And there turned out to be two doors, which is invariant 29's other half arriving as
+well.** `db_connect.php` is every page and every sign. `tools/audit_colors.php` is the
+other, and it is not an oversight that it exists — its own comment explains that it
+deliberately does *not* include `db_connect.php`, because that installs the error policy
+and arms the alert mailer, and a mistyped `--host` should not email the store's admins
+because somebody ran an audit. So it asks `InstallPaths` directly, and the comment above
+that call already described this exact hazard a year before there was anything to enforce
+it with: *"with two installs on one account, a second opinion here would audit the live
+database while the app in this folder is pointed at a copy."*
+
+It is the worse of the two to have missed. A page that refuses says so to somebody who is
+standing there; an audit run from the wrong folder reads the live database, produces a
+perfectly correct report about it, and prints it under this folder's name — a substitute
+nobody is told about, which is #21 in the one place left that could still do it. The
+refusal is on the fall-back path only: a run given `--db` named its own database and is
+guessing at nothing. Both doors are held by the same check, over a list of two, because a
+rule enforced at one of the places that needs it is enforced nowhere.
+
+The Settings card gained a **Credentials** row beside **This install** and **Database**,
+and it is the row that does not require you to already know the answer. Telling
+`silverad_lummi_market_drive_thru` from `silverad_lummi_market_drive_thru_2` needs
+somebody who has seen both; telling *its own file* from *the shared one* does not.
+Reaching that page at all now means the claim was settled, so the shared case is reported
+as the positive it is rather than as something to go and verify.
+
+**What this is not.** It is not multi-tenancy. Nothing in the schema has a tenant axis
+and nothing here adds one — a second store is still a second folder, a second database
+and a second credentials file, set up by hand. What changed is that the setup can no
+longer half-happen in silence: the step somebody forgets is now a step that refuses
+rather than a step that works.
 
 ---
 

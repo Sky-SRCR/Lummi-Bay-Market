@@ -1402,21 +1402,39 @@ foreach ($floorClean as $probe) {
 //
 // Read out of the source with the comments dropped, so the block of prose in
 // db_connect.php explaining all of this cannot satisfy the check that it happens.
-$checked++;
-$connectCode = codeWithoutComments(file_get_contents($root . '/db_connect.php'));
-$askedAt     = strpos($connectCode, 'sharedClaimRefusal');
-$connectAt   = strpos($connectCode, 'new PDO');
-if ($askedAt !== false && $connectAt !== false && $askedAt < $connectAt) {
-    echo "  ok   db_connect.php settles whose credentials these are before it connects "
-       . "(invariant 32)\n";
-} else {
-    echo "  FAIL db_connect.php connects without settling whose credentials these are "
+//
+// **Two doors, and the second is the one nothing else would catch.** `db_connect.php`
+// is every page and every sign; `tools/audit_colors.php` deliberately does not include
+// it — arming the alert mailer so that a mistyped `--host` emails the store's admins is
+// not what an audit is for — and reaches the credentials through the same module. Run
+// from the wrong folder it produces a report about the live database and prints it under
+// this folder's name, which is a wrong answer nobody is told about rather than a page
+// that says so. Same shape as invariant 29's two doors, for the same reason: a rule
+// enforced at one of the places that needs it is enforced nowhere.
+$claimDoors = [
+    ['db_connect.php',
+     'every page and every sign connects through it'],
+    ['tools/audit_colors.php',
+     'it reaches the app\'s credentials without including db_connect.php'],
+];
+foreach ($claimDoors as $door) {
+    list($rel, $because) = $door;
+    $checked++;
+    $doorCode  = codeWithoutComments(file_get_contents($root . '/' . $rel));
+    $askedAt   = strpos($doorCode, 'sharedClaimRefusal');
+    $connectAt = strpos($doorCode, 'new PDO');
+    if ($askedAt !== false && $connectAt !== false && $askedAt < $connectAt) {
+        echo "  ok   $rel settles whose credentials these are before it connects "
+           . "(invariant 32)\n";
+        continue;
+    }
+    echo "  FAIL $rel connects without settling whose credentials these are "
        . "(invariant 32)\n";
     if ($askedAt === false) {
-        echo "       InstallPaths::sharedClaimRefusal() is never called. An install with no\n";
-        echo "       file of its own is back to using the shared one on the strength of\n";
-        echo "       being on the same account, which is somebody else's database as soon\n";
-        echo "       as somebody else is on it.\n";
+        echo "       InstallPaths::sharedClaimRefusal() is never called, and $because.\n";
+        echo "       An install with no file of its own is back to using the shared one on\n";
+        echo "       the strength of being on the same account, which is somebody else's\n";
+        echo "       database as soon as somebody else is on it.\n";
     } elseif ($connectAt === false) {
         echo "       and it no longer contains `new PDO` either, so this check is now\n";
         echo "       measuring something that moved. Point it at wherever the connection\n";
@@ -1424,9 +1442,10 @@ if ($askedAt !== false && $connectAt !== false && $askedAt < $connectAt) {
     } else {
         echo "       The check is there but it runs after the connection is open. A gate\n";
         echo "       below the thing it guards leaves exactly what it exists to prevent —\n";
-        echo "       here, a schema convergence on a database this install was never given.\n";
+        echo "       here, a schema convergence, or a report, against a database this\n";
+        echo "       install was never given.\n";
     }
-    $failures[] = 'db_connect.php connects before settling the credentials claim';
+    $failures[] = $rel . ' connects before settling the credentials claim';
 }
 
 // ---- The instrument itself -------------------------------------------------------

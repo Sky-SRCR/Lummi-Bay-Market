@@ -18,12 +18,15 @@ of the system.
 - **Live site:** https://srcresort.com/lbm/  (served from an `/lbm/` subfolder)
 - **Live database:** `silverad_lummi_market_drive_thru` (MySQL 5.7, localhost:3306)
 - **Rehearsal install:** https://www.srcresort.com/lbm-test/ against
-  `silverad_lummi_market_drive_thru_2`, a copy. **It is only isolated if
-  `/home/ACCOUNT/private/db_credentials_lbm-test.php` exists** — both folders walk up to
-  the same `private/` directory, so without that file the copy connects to the live
-  database and behaves perfectly while doing it. Settings → This Server reports **This
-  install** and **Database**; that card is the only thing in the app that can tell you.
-  See [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) §E.
+  `silverad_lummi_market_drive_thru_2`, a copy. It is isolated by
+  `/home/ACCOUNT/private/db_credentials_lbm-test.php` — both folders walk up to the same
+  `private/` directory, and without a file of its own the copy used to connect to the
+  live database and behave perfectly while doing it (it did exactly that, once, §7).
+  **It no longer can**: the shared file names the install it belongs to
+  (`define('CREDENTIALS_FOR', 'lbm');`) and a folder it does not name refuses to connect
+  rather than guess. Settings → This Server reports **This install**, **Credentials** and
+  **Database**. See [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) §E — **including the one
+  line that has to be added to the live credentials file before this build is uploaded.**
 - **PHP on this host: 8.2** — and this is now *observed twice*, not stated: the runtime
   reports **8.2.33**, and cPanel's MultiPHP Manager shows `srcresort.com` pinned
   explicitly to `ea-php82` (both 2026-08-11, §7). It is the reason the repo's floor is
@@ -100,7 +103,7 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
 | `lib/branding.php` | `BrandingConfig` / `BrandingWrite` — the **only** writer of `branding_config.php`, which every page of the app requires. Renders it, parses it, writes a temporary copy, reads that back byte for byte, and swaps it in with one `rename()`, so a reader gets the whole old file or the whole new one and a failed save leaves the site on exactly what it had |
-| `lib/install_paths.php` | Which install this folder is, and whose credentials it uses. Pure. One account can hold the live app and a rehearsal copy at the same depth, so a single shared credentials path made an unmodified copy connect to the **live** database in silence — the folder's own name selects `private/db_credentials_<folder>.php` when it exists, and the shared file otherwise, so no tracked file has to differ between the two |
+| `lib/install_paths.php` | Which install this folder is, and whose credentials it uses. Pure. One account can hold the live app and a rehearsal copy at the same depth, so a single shared credentials path made an unmodified copy connect to the **live** database in silence — the folder's own name selects `private/db_credentials_<folder>.php` when it exists, and the shared file otherwise, so no tracked file has to differ between the two. Answering *which file* is only half of it: the shared file declares `CREDENTIALS_FOR`, and an install it does not name is refused rather than connected (invariant 32) |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
 | `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **1778 checks** — and the same suite against real MySQL when `SELFTEST_MYSQL_DSN` is set, where it runs 1801. Run before pushing |
 | `tools/mutate.php` | `php tools/mutate.php lib/whatever.php` — breaks that file one way at a time and runs the suite each time, to answer whether the checks over it *can* fail (#50, invariant 30, §4aq). Minutes rather than seconds, so it is a tool to run over what you changed rather than a gate. `--list` shows what it would break without running anything |
@@ -189,7 +192,9 @@ anything, they hold every Display by role.
   the third, all silently. That file also has the five checks to run afterwards. It
   applies to **every** upload, not just the multi-display one.
 - `db_connect.php` expects `../../private/db_credentials.php` (outside webroot)
-  defining `DB_HOST/DB_NAME/DB_USER/DB_PASS`. Not in repo by design.
+  defining `DB_HOST/DB_NAME/DB_USER/DB_PASS`, and now also `CREDENTIALS_FOR` — the name
+  of the folder those credentials belong to, without which no install will use that file.
+  Not in repo by design.
 - The live `branding_config.php` still uses the default `SITE_NAME`
   ("Store Display System"), not "Lummi Bay Market". Which is also why overwriting it
   costs almost nothing *today* — the list above is what keeps that true once somebody
@@ -343,6 +348,7 @@ to do" — they are here because they will be noticed and are not faults.
 | **#33** · §4ao | **Nothing to do**, unless an account is meant to be adding to the library without holding a sign — check the grant matrix if so. An account with no display assigned now sees the Asset Library with an explanation where the add form was, and its uploads from the Builder are refused. Admins are unaffected, including on an installation with no Displays yet. | The library is shared by every sign and `uploads/` sits behind it, so neither is scoped to a Display and neither went through the check every other write does. A grant is what makes the library somebody's — a Display merely being switched off does not take it away. |
 | **#44** · §4ap | **Check it once, and read the card under it.** The store's time zone is a setting — Admin Panel → **Settings** → Store Time Zone — and every time on every page is drawn in it. The default is `America/Los_Angeles`, so a deploy that never touches it is already right for this store. Then read the three time-zone rows on **Settings → This Server**: the one to look at is the **database's session zone**, which nothing had ever shown. Anything other than a zero offset means the host refused the app's request for UTC. | `db_connect.php` now asks every connection for `+00:00`, suppressed rather than fatal, because a protection that cannot apply is reported and not applied — and that card is the only place it is reported. What a refusal costs is bounded: a creation date reading a few hours out. Separately, `last_published_at` is a DATETIME already written in the old frame, so one sentence per Display reads wrong until its next publish. |
 | **#46** · §4z | **Nothing to do**, twice over. `setup.php` deletes itself the moment the first admin exists, so the old "remember to delete it" step is no longer a step — it only needs *not re-uploading*. And `.htaccess` now denies `.md`, so a docs file that reaches the server is unreadable rather than serving `HANDOFF.md` and the paths in it. | Both are backstops for the upload that forgets, not instructions. A host that forbids the self-delete says so on the page instead of alerting. |
+| **An install now uses only credentials that name it** (§4aw, invariant 32) | **One line on the server, and it goes on FIRST — before the tree is uploaded, not after.** Add `define('CREDENTIALS_FOR', 'lbm');` to the top of `/home/ACCOUNT/private/db_credentials.php`, naming the folder the live app runs from. Then confirm on Admin Panel → Settings → This Server that the new **Credentials** row reads `db_credentials.php`. `lbm-test/` already has its own file and needs `define('CREDENTIALS_FOR', 'lbm-test');` added to that one. | Falling back to the shared credentials file was a guess, and it is only harmless while every install on the account has one owner — the rehearsal copy connected to the *live* database on the first attempt (§7) and behaved perfectly. The shared file now names the install it belongs to, and one it does not name refuses to connect. **An undeclared file names nobody, so it is refused too**, which is why the order matters: the line is an unused constant to every version of this app that came before this one, so adding it early costs nothing and there is no window in between. Add it afterwards instead and the window is real — every page and every sign refuses until the line lands, and a Screen then comes back on its own within 30 seconds. If it ever does happen, the error log and the alert email name the file and the exact line. |
 | **#50** · §4aq | **Nothing to do, and nothing to upload.** Every file it added or changed is under `tools/`, which goes to the server only with its own `.htaccess` and is never reached from a browser. No page, no query and no schema statement changed, so nothing on any sign moves. | It is a measuring instrument, not a feature: `tools/mutate.php` breaks a `lib/` file one way at a time and reports whether any check notices. The one thing worth carrying to the server visit is unrelated to this row — a *check* that could not fail was found in #44's own section, and the lesson is that a page which prints the right sentence in this process may be printing it for the wrong reason. |
 
 ## 6. The multi-display build (this branch)

@@ -3225,9 +3225,19 @@ $notNames = [
     ['an array',   ['lbm-test']],
     ['an empty string', ''],
 ];
+//
+// And answered as *names nobody*, which is the same sentence an undeclared file gets —
+// not as "belongs to the install named 1". A mutation sweep is what asked for this
+// second assertion: turning that guard's `||` into `&&` still refused every shape above,
+// because a `true` that reaches the next branch is not equal to the folder name either.
+// It was killed only by the "Array to string conversion" warning from printing the claim
+// into a sentence about who it belongs to — which is the harness noticing something
+// moved, not a check knowing what the line was for (invariant 30).
 foreach ($notNames as $shape) {
     check(InstallPaths::sharedClaimRefusal($test, $shape[1]) !== '',
           'a claim that is ' . $shape[0] . ' names no install and is refused');
+    checkSame($silent, InstallPaths::sharedClaimRefusal($test, $shape[1]),
+              'and is answered as naming nobody, not as belonging to ' . $shape[0]);
 }
 
 // Somebody else's file, which is the case this exists for.
@@ -4203,6 +4213,35 @@ checkSame('This sign is temporarily unavailable.', ErrorPolicy::sentence(ErrorPo
 ErrorPolicy::sayOnFailure('');
 checkSame('Temporarily unavailable. Please try again in a moment.', ErrorPolicy::sentence(ErrorPolicy::API),
           'and clearing the override restores the default');
+
+// The other override, for a sentence written for a person mid-deploy — the credentials
+// refusal names a constant to add and a file to add it to (§4aw). That is exactly the
+// sentence the modes exist to keep off a sign: `viewer.php` runs unattended on a TV,
+// where an instruction to edit a file outside the webroot is drawn on the board a
+// customer reads prices off, and where the kiosk notice it replaces is the thing that
+// re-checks every 30 seconds and brings the sign back on its own.
+//
+// The mode is passed rather than installed, which is what makes all three answerable in
+// one process: `install()` is a global edit that would outlive the check that made it.
+$deployNote = 'Add the line to the credentials file.';
+checkSame(true, ErrorPolicy::sayOnFailureToAPerson($deployNote, ErrorPolicy::PAGE),
+          'a sentence for a person is taken on a page somebody is looking at');
+checkSame($deployNote, ErrorPolicy::sentence(ErrorPolicy::PAGE),
+          'and it is what that page then says');
+ErrorPolicy::sayOnFailure('');
+checkSame(false, ErrorPolicy::sayOnFailureToAPerson($deployNote, ErrorPolicy::SCREEN),
+          'a Screen is not told to go and edit a file — nobody is standing there');
+checkSame('This sign is temporarily unavailable.', ErrorPolicy::sentence(ErrorPolicy::SCREEN),
+          'so it keeps the notice that re-checks every 30 seconds');
+checkSame(false, ErrorPolicy::sayOnFailureToAPerson($deployNote, ErrorPolicy::API),
+          'and neither is a script, which cannot act on a sentence');
+checkSame('Temporarily unavailable. Please try again in a moment.', ErrorPolicy::sentence(ErrorPolicy::API),
+          'so it keeps the answer its caller knows how to parse');
+// Refused, not merely ignored: a mode it declined must leave nothing behind for the
+// next failure in the same request to print.
+check(ErrorPolicy::sentence(ErrorPolicy::PAGE) !== $deployNote,
+      'a refusal stores nothing, so a later failure on the same request is unaffected');
+ErrorPolicy::sayOnFailure('');
 
 // ─────────────────────────────────────────────────────────────
 section('The error log');
@@ -6947,9 +6986,13 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
 //
-// And again for §4aw, the credentials claim: 27 checks added to the section on which
-// install this is, 1797 → 1824. Run, not summed. The MySQL figure moved by the same 27
+// And again for §4aw, the credentials claim: 32 checks added to the section on which
+// install this is, 1797 → 1829 — 27 of them, and then 5 more that a mutation sweep
+// asked for after the first figure had already been run and written down. Which is the
+// paragraph above happening: the second number was run too. And a third time, 1829 →
+// 1836, when the mode guard moved out of db_connect.php and into ErrorPolicy so that a
+// suite could ask it — which is what a page-shaped rule costs when it wants covering. The MySQL figure moved by the same 27
 // because nothing was added to the engine-only section, which is the difference of 23
 // staying 23 — the one check on that line worth making by arithmetic, because it is a
 // check *of* the arithmetic.
-reportChecks(testIsMysql() ? 1847 : 1824);
+reportChecks(testIsMysql() ? 1859 : 1836);

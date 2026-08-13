@@ -143,10 +143,11 @@ changes.** `lib/install_paths.php` looks for a name-specific file first:
 /home/ACCOUNT/private/db_credentials.php              <- the live one, untouched
 ```
 
-`db_credentials_lbm-test.php` is the live file with one line changed:
+`db_credentials_lbm-test.php` is the live file with two lines changed:
 
 ```php
 <?php
+define('CREDENTIALS_FOR', 'lbm-test');                     // the folder it is for
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'silverad_lummi_market_drive_thru_2');   // the copy
 define('DB_USER', 'your_user');
@@ -155,8 +156,37 @@ define('DB_PASS', 'your_password');
 
 Do **not** edit `lbm-test/db_connect.php` instead. A hand-edited tracked file survives
 only as long as somebody remembers it, reverts on the next upload, and what it reverts
-*to* is "the test folder points at the live database". The live install needs no file of
-its own, now or ever — absent a specific one, the shared file is used exactly as before.
+*to* is "the test folder points at the live database".
+
+### The one line that has to go on the server *before* the tree does
+
+**Do this first, on its own, and check it off.** Add one line to the top of the shared
+credentials file — the live one, `/home/ACCOUNT/private/db_credentials.php`:
+
+```php
+define('CREDENTIALS_FOR', 'lbm');
+```
+
+`lbm` is the *folder name* the live app runs from. If the app is ever moved to a
+differently-named folder, this line moves with it.
+
+**Why before, and why on its own.** Finding a file was never the same question as being
+allowed to use it, and the app now asks both: an install that reaches the shared file
+and is not named in it refuses to connect and says so, instead of connecting to a
+database nobody gave it. An undeclared file names nobody, so it is refused too — a rule
+that only engages once somebody remembers to configure it protects exactly the installs
+whose owner did not need protecting.
+
+That is a rule the live install has to be on the right side of before it meets it. It
+costs nothing to get right, because **the line is inert to every version of this app
+that came before this one**: an unused constant, defined and never read. Add it today,
+upload the tree next month, and there is no window in between where the sign is dark. Do
+it the other way round and there is — a short one, ending the moment somebody adds the
+line, and a Screen recovers on its own within 30 seconds of that.
+
+If a sign or an admin page ever *does* say the install was not told which database
+belongs to it, that is this and nothing else. The error log — and the alert email, if an
+admin has an address on file — names the file and the exact line to add.
 
 ### Uploading to `lbm-test/`
 
@@ -175,21 +205,40 @@ folder, not afterwards.
 
 ### The one check that proves it is isolated
 
-**Admin Panel → Settings → This Server** now reports **This install** and
-**Database**. On `lbm-test/` they must read `lbm-test` and
-`silverad_lummi_market_drive_thru_2`.
+**Admin Panel → Settings → This Server** now reports **This install**, **Credentials**
+and **Database**. On `lbm-test/` they must read `lbm-test`,
+`db_credentials_lbm-test.php` and `silverad_lummi_market_drive_thru_2`.
+
+**Credentials** is the row to read first, because it is the one that does not need you
+to already know the answer. `db_credentials_lbm-test.php` means this folder has a file
+of its own and no fall-back happened at all. `db_credentials.php` — the shared file —
+means it is using the live install's file *and has been named in it*, which on
+`lbm-test/` is a mistake somebody made in the shared file rather than a hazard the app
+missed.
 
 If **Database** says `silverad_lummi_market_drive_thru`, the per-install credentials
 file is missing or misnamed, and this folder is talking to the live sign. Stop, and do
-not publish. Nothing else in the app will tell you.
+not publish.
 
 Run that check **before** signing in a second time, not after — the sign-in that shows
 you the card is also the one that converges schema on whatever database it found.
 
+**What has changed is what happens when you forget.** This card used to be the only
+thing in the app that could tell you, so a folder set up wrongly worked perfectly until
+somebody thought to look. Now a folder that has not been given credentials of its own,
+and is not named in the shared file, does not connect at all — it prints a sentence and
+writes the fix to the log. The card is still worth reading; it is no longer the only
+thing standing between a rehearsal copy and a live sign.
+
 ## After you upload, five checks that catch a mistake from this list
 
 1. **Admin Panel → Settings → This Server** — the site name is the store's, not
-   "Store Display System" (A), and the upload limit is what it was (D).
+   "Store Display System" (A), and the upload limit is what it was (D). **Credentials**
+   and **Database** name the file and the database this folder is really using (E). On
+   the live install that is `db_credentials.php` and the live database; anywhere else it
+   is that folder's own file. Reaching this page at all means the app was satisfied the
+   credentials were this install's — a folder that was not named in the file it found
+   never got as far as a page to show you.
 2. **Admin Panel → Settings → Errors and Alerts** — it names a writable path and
    says who an alert would reach. *"Nowhere to write"* means the log folder was
    deleted or its permissions changed (C), and until it is fixed nothing that goes

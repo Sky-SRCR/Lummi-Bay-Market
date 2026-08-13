@@ -109,6 +109,22 @@ edited in place and every change reaches the sign by hand.
   rather than trusting the green line. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
   for the reason they always did: they cover a host that moves, and what they prevent
   is silent.
+- **An install connects only to credentials that name it.** One account can hold more than
+  one copy of this app, and two folders at the same depth walk up to the same `private/`
+  directory. `InstallPaths` looks for `db_credentials_<folder>.php` first — but finding a
+  file was never the same question as being allowed to use it, and falling through to the
+  shared one is a **guess** that is harmless only while every install has the same owner.
+  It has already cost this repo one deploy: `lbm-test` came up talking to the live
+  database and behaved perfectly. So the shared file declares `CREDENTIALS_FOR` and an
+  install it does not name refuses — `sharedClaimRefusal()` decides,
+  `db_connect.php` asks **before** `new PDO`, and `check_invariants.php` holds both that
+  ordering and the constant's one spelling. **Undeclared is a refusal**, because a rule
+  that engages once somebody remembers to configure it protects only the installs whose
+  owner did not need protecting; the live install crosses it by *deploy order* instead —
+  the line is an unused constant to every earlier version, so it goes on the server first
+  (HANDOFF §5). The claim is compared to the folder name and not to `DB_NAME`: a typo
+  inside an install's own file is a different mistake, and conflating them refuses the
+  person who did everything right.
 - **Nothing that has been published can be taken back.** Publishing overwrites; a
   deleted Display, a swept asset row and a saved brand standard are gone. Prefer
   refusing a write to merging one. The **one** exception is the Builder's Undo

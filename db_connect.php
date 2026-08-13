@@ -116,9 +116,7 @@ if ($credentialsFile !== ''
     );
 
     if ($refusal !== '') {
-        if (ErrorPolicy::mode() === ErrorPolicy::PAGE) {
-            ErrorPolicy::sayOnFailure(InstallPaths::REFUSAL_SENTENCE);
-        }
+        ErrorPolicy::sayOnFailureToAPerson(InstallPaths::REFUSAL_SENTENCE);
         ErrorPolicy::fail(
             'credentials-not-claimed',
             $refusal,
