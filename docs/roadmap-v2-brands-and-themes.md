@@ -133,15 +133,32 @@ rail as an *Arrange* group and `#align-bar` retires.
 dimensions · `OFF` when off · `View ↗` · `⇄` when more than one is switchable │
 *(empty Brand slot)* │ spacer │ `Undo` `Publish` │ `jporter` `Sign Out` `⚙`. The
 role chip leaves the Builder. The gear becomes the account-and-settings menu and
-holds the role as text, `Last published by …`, Asset Library, Admin Panel
-(admins), Help, and *(an empty Workspace Theme slot)*.
+holds the role as text, Asset Library, Admin Panel (admins), Help, and *(an empty
+Workspace Theme slot)*.
 
-**A note against this step's own nav.** `builder.php:635` says the publish line
-exists to answer *"is what I'm looking at live, and did somebody else change
-it?"*, and it was deliberately given to read-only Builders too. Behind a click it
-stops answering at a glance. Building it in the gear as instructed; if it wants
-to come back out, the cheap half-measure is a dot on the gear when the sign has
-been published by somebody else since the page opened.
+**Canvas footer**, a thin strip along the bottom of the canvas column — between
+the palette and the rail, so both stay full-height columns and the three-column
+structure survives. It carries the two things that are facts rather than
+controls-you-reach-for:
+
+- left: the zoom controls — `Fit` · `100%` · `−` · `+` · `79%`
+- right: `Last published by jporter 9/13/25 11:42am`, muted
+
+**Zoom had nowhere else to go.** It lived in the old control bar, and neither
+option B as pitched nor the nav sketch has a slot for it — an omission in the
+mockup rather than a decision. The footer is where it belongs anyway: it is a
+property of how you are looking at the canvas, so it sits with the canvas rather
+than with the sign's identity.
+
+The publish line is here rather than in the gear because of what
+`builder.php:635` says it is for — *"is what I'm looking at live, and did somebody
+else change it?"* — a question that has to answer at a glance or not at all.
+Behind a click it stopped answering; in the nav it crowded the bar the sketch
+was clearing. The footer is quiet and still on screen. It is drawn for
+**read-only Builders too**, which is the case it was originally written for:
+somebody who cannot edit still needs to know whether the sign moved under them.
+The `pub-state` node and the script that refreshes it after a publish move here
+with it.
 
 **`lastPublishDescription()`** changes format to `n/j/y g:ia`, in `lib/displays.php`
 and therefore in all three places that print it.
