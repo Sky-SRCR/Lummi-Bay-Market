@@ -61,7 +61,7 @@ now answers 404. What the live server said, once asked:
 | `HANDOFF.md`, `README.md`, `CLAUDE.md`, `docs/BUILD-REFERENCE.md` | 404 | Never uploaded. The `.md` deny is a backstop, not a fix for a live exposure. |
 | `.git/config` | 404 | The repository has never been uploaded. |
 | `schema.sql` | 403 | The root `.htaccess` is deployed and its `FilesMatch` blocks work on this host. |
-| `lib/schema.php` | 404 | `lib/` was not on the server *at the time of this probe*. **The build went live on 2026-08-13**, so `lib/` is there now and this row no longer describes the server. Re-ask it: the answer must be **403**, from `lib/.htaccess`. A **404** means the folder is there and its `.htaccess` is not — which is what an FTP client that skips dotfiles produces — and **200** means the same thing on a host that serves what it cannot deny. |
+| `lib/schema.php` | 404 | `lib/` is not in `lbm/` — the multi-display build is still undeployed there, confirmed by shell on 2026-08-13. It **is** in `lbm-test/`, where the same request must answer **403** rather than 404, because a 403 is `lib/.htaccess` denying the folder and a 404 can also mean that file never arrived. Many FTP clients skip dotfiles by default, so ask it of each install after any upload — `ls -la <install>/lib/.htaccess` answers it outright if you have a shell. |
 
 **And it will not need deleting by hand again.** `setup.php` now removes itself: at the
 end of a successful setup, and otherwise on the first request that finds it already

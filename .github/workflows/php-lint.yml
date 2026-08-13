@@ -18,10 +18,11 @@ name: PHP lint and self-test
 # below the floor: a person choosing an older version by hand.
 #
 # This comment said "the version has still never been observed" until 2026-08-13, on
-# the reasoning that the screen reporting it shipped with the undeployed build and
-# Cloudflare strips it from every response header. Both true, and neither was the only
-# way to look: cPanel says it to whoever is signed in. Recorded because a stale note in
-# the file that decides the floor is how a pin comes to be treated as a guess.
+# the reasoning that the screen reporting it ships with the build that is undeployed on
+# the sign and Cloudflare strips it from every response header. Both true, and neither
+# was the only way to look: cPanel says it to whoever is signed in. Recorded because a
+# stale note in the file that decides the floor is how a pin comes to be treated as a
+# guess.
 #
 # The other half was real. CI ran neither the consistency greps nor the rehearsal,
 # so three of the four things BUILD-REFERENCE §5 asks for before every push were
@@ -50,9 +51,14 @@ jobs:
       matrix:
         # The version the code is tested on, and as of 2026-08-11 the version the
         # host was read to be running: 8.2.33, with ea-php82 pinned explicitly.
-        # Settings → This Server reports it on the live install now that the build
-        # is deployed there, so this line has a fact to be checked against rather
-        # than an assumption to be held — change it when that card disagrees.
+        # That reading came from cPanel, which needs no deploy — Settings → This
+        # Server reports the same figure from inside the app, in lbm-test/ today
+        # and on the sign after the cutover. So this line has a fact to be checked
+        # against rather than an assumption to hold; change it when they disagree.
+        #
+        # Note for anyone running the tools by hand on that host: cPanel Terminal
+        # gives the *system* default PHP, which is 8.3 there, not this domain's pin.
+        # /opt/cpanel/ea-php82/root/usr/bin/php is the one that matches CI.
         php: ['8.2']
 
     services:

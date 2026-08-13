@@ -20,13 +20,18 @@
 // domain against a system default of 8.3. A person and a configuration screen, both dated,
 // neither of them a reading this code took — which is why it is recorded that way.
 //
-// **The build went live on 2026-08-13, so this card now runs where the question is.** Its
-// job was always going to change at that moment: from a page that could not answer to the
-// one place inside the app where the version, the three clocks, the upload ceiling and the
-// converged columns can be read at all. Nothing else here observes any of them, and the
+// **This card runs in `lbm-test/` and not yet on the sign.** That distinction is the whole
+// of its remaining job: `public_html/lbm/` is still the single-sign app, so the version,
+// the three clocks, the upload ceiling and the converged columns are readable for the
+// rehearsal install and for nothing else. Nothing else here observes any of them, and the
 // floor in `ASSUMED_PHP` is load-bearing rather than cautious — so what this card
 // contradicts is a host upgraded, downgraded or moved to a different account, and it is
 // worth opening after any hosting change rather than only after a deploy.
+//
+// It is also the answer to "which database am I actually looking at", which is why the
+// isolation guarantee in DEPLOY-SKIP §E points here: two installs that walk up to the same
+// `private/` directory behave identically while reading different databases, and this card
+// is the only page that names the one it found.
 //
 // The second half is the same problem wearing different clothes. Invariant 10 says
 // the live database is behind the repo and every schema change is an idempotent

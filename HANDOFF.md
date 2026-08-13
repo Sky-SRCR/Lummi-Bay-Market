@@ -32,44 +32,55 @@ of the system.
 - **Stack:** vanilla PHP (PDO, `ERRMODE_EXCEPTION`, real prepared statements),
   no framework, inline CSS/JS. Uses `interact.js` in the builder for drag/resize.
 
-> **The multi-display build is live.** Reported by the store owner on **2026-08-13**: the
-> browser-pass six went to the live install and the app works there. This line said "has
-> never run live" for three phases and it is the sentence to trust least in this file, so
-> it carries its date and its source — the deploy was made from a chair this repo cannot
-> see, and nothing here has read the live server. What replaced *rehearsing* is
-> **checking**, and the four checks are below.
+> **The multi-display build runs in `lbm-test/` and has never run live.** Two folders sit
+> side by side on the same account and only one of them has this build:
 >
-> The rehearsal install `lbm-test/` did its job first: it signed in on 2026-08-12,
-> converged schema against its own database, and then had the browser pass walked over it
-> in full ([`docs/browser-pass.md`](docs/browser-pass.md), work-lanes lane 0) — ten
-> sections, seven defects, all fixed and re-checked in the browser. Undo, the Viewer, the
-> read-only Builder and both timezone questions came through clean.
+> | Folder | What is in it |
+> |---|---|
+> | `public_html/lbm/` | **The sign.** Still the single-sign app, untouched by every phase of this work. Nothing in §6 has been deployed here. |
+> | `public_html/lbm-test/` | **The whole build**, against the copy database `_2`, on the production host. Everything since Phase 1 has been rehearsed and walked here. |
 >
-> **Four things to do on the live install, in this order, none of which changes a file:**
+> `lbm-test/` signed in on 2026-08-12, converged schema against its own database, and had
+> the browser pass walked over it in full on 2026-08-13
+> ([`docs/browser-pass.md`](docs/browser-pass.md), work-lanes lane 0) — ten sections, seven
+> defects, all fixed and re-checked in the browser. Undo, the Viewer, the read-only Builder
+> and both timezone questions came through clean.
 >
-> 1. **Request `lib/schema.php` in a browser. It must answer 403, not 404 and never 200.**
->    `lib/` is unreachable because `lib/.htaccess` denies it, and **many FTP clients skip
->    dotfiles by default** — so the one upload mistake that leaves no trace is the folder
->    arriving without the file that protects it — `/lbm/lib/schema.php` is the URL. Same
->    for `tools/.htaccess`; §3's file map carries both rows.
-> 2. **Admin Panel → Settings → This Server**, and read the whole card: which install and
->    database it found, the three time-zone rows (the database's session zone must be
->    `+00:00`), the upload ceiling, and the PHP version — that last one is a fact CI is
->    pinned to, and the card is now the only place it can be read from inside the app.
-> 3. **Settings → Database Structure — every row green.** A red
->    `canvas_elements.display_id` reads *"Nothing is scoped to a Display. Do not publish."*
->    and means it. This is also the only thing that would show a convergence that stopped
->    half-way on a database that lagged the repo — the one case CI cannot cover, and its
->    own comments say so.
-> 4. **`php tools/audit_colors.php`**, read-only, against the live database; §3 says what
->    it reports. One unreadable stored colour makes its Display refuse **every** publish,
->    and that state was reachable long before this build.
+> **This block said "the build is live" for one commit on 2026-08-13. It was wrong**, and
+> the correction is worth more than the claim was: "the six files are on the live install"
+> was read as the live *sign* and meant the live *rehearsal* — the install that is actually
+> running, on the production host, which is exactly what `lbm-test/` is. Nothing in this
+> repo can tell the two apart, because nothing in it reads that server. **So a statement
+> about which folder holds what needs a shell or a screenshot, not a sentence** — and the
+> two commands that settle it in seconds are:
 >
-> **Then re-run the browser pass against live**, which is not the same walk: it is a
-> different database with the shop's own data. Expect two things §5 warns about — the
-> first press of a layer button on each Display renumbering blocks nobody selected, and
-> every `last_published_at` written before #44 reading shifted until that Display is next
-> published.
+> ```
+> find "$HOME" -name viewer.php        # every install on the account
+> ls -la "$HOME"/public_html/lbm/lib   # the sign has no lib/ until the cutover
+> ```
+>
+> Paths as of 2026-08-13, from a cPanel Terminal session: the home is **`/home1/silveradmin`**
+> — with a **1** — so the two installs are `/home1/silveradmin/public_html/lbm/` and
+> `…/lbm-test/`.
+>
+> **What is still owed is the cutover itself**, and it is the 22-step visit in
+> [`docs/roadmap-multi-display.md`](roadmap-multi-display.md) plus the §5 rows below, not a
+> file copy. Two things not to shortcut on the way:
+>
+> - **Do not copy this build's files into `lbm/` piecemeal.** `lbm/` has no `lib/`, so a
+>   page from this build lands next to modules that are not there, and the first request
+>   for it is a fatal on a page a customer may be looking at. The visit converges schema on
+>   the *first authenticated request*, which is why its order is a list rather than advice.
+> - **The colour audit is a step of that visit, not a check before it** (roadmap step 4a).
+>   `tools/audit_colors.php` reads `displays`, and `displays` does not exist until
+>   convergence creates it — so run it against the live database *after* the first sign-in,
+>   where it answers the question that matters: whether any stored colour is one this build
+>   will refuse to publish.
+>
+> **And re-run the browser pass after the cutover.** It is not the same walk: same code,
+> the shop's own data. Expect two things §5 warns about — the first press of a layer button
+> on each Display renumbering blocks nobody selected, and every `last_published_at` written
+> before #44 reading shifted until that Display is next published.
 
 ## 2. Git / branch
 

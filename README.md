@@ -191,9 +191,9 @@ module map and the invariants any change has to preserve.
   `srcresort.com` pinned explicitly to `ea-php82` against a system default of 8.3. The pin
   being explicit is what keeps the floor from drifting when the host moves its default.
   This paragraph said "nothing here has observed it" until 2026-08-13, on the true but
-  incomplete reasoning that the app's own card ships with a build that was undeployed and
-  Cloudflare hides the version from every header — cPanel was the third place to look, and
-  the build is live now besides. Modern syntax is
+  incomplete reasoning that the app's own card ships with a build that is undeployed on the
+  live sign and Cloudflare hides the version from every header. cPanel was the third place
+  to look, and it does not need a deploy to answer. Modern syntax is
   allowed, and today no file uses any — which is what keeps the floor one line to lower
   again. Be deliberate about spending it: a declared floor that turns out wrong is a
   parse error, and a parse error in a file a Screen loads is a blank sign in the shop.
