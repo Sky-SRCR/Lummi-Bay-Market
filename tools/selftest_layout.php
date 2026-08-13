@@ -1783,6 +1783,24 @@ checkMentions($nBad->message(), 'Palette colour 2', 'in the words the form puts 
 checkSame(['#aabbcc', '#ddeeff'], $nBrands->forId($nSalmon->id())->palette(),
           'and nothing was saved — a refusal is whole, never a partial write');
 
+// The default background is the same question `Background` answers for a Display, so
+// it gets the same answer: refused, not replaced. Blank is the *other* case and has
+// to stay distinguishable from it — a Brand created from a name alone carries no
+// background at all, and refusing that would make the ordinary create impossible.
+$nBadBg = $nAdmin->updateDetails($nBrands->forId($nSalmon->id()),
+    ['name' => 'Salmon House', 'bg_type' => 'color', 'bg_val' => 'darkish blue']);
+checkSame(BrandResult::INVALID, $nBadBg->kind(), 'a default background that is not a colour is refused');
+checkSame('bg_val', $nBadBg->field(), 'naming the field');
+checkSame('#102030', $nBrands->forId($nSalmon->id())->backgroundValue(),
+          'and the stored one is untouched, never replaced with a substitute (#21)');
+checkSame(true, $nAdmin->create(['name' => 'No Background Given'])->isOk(),
+          'while supplying none at all is the ordinary create, not a refusal');
+checkSame(Background::DEFAULT_COLOR,
+          $nBrands->otherBrandNamed('No Background Given')->backgroundValue(),
+          'and it lands on the app\'s documented default');
+// Cleared again, so the count the destroy checks below rest on stays what they say.
+$nAdmin->destroy($nBrands->otherBrandNamed('No Background Given'), 'No Background Given');
+
 // A row that got past this app — hand-edited, or written before the rule. The
 // swatch is not offered, and the tab says which value it could not use rather than
 // leaving a palette one colour short with no explanation (#21).
@@ -7286,4 +7304,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1956 : 1930);
+reportChecks(testIsMysql() ? 1961 : 1935);

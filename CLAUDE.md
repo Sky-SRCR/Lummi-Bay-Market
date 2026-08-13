@@ -12,7 +12,7 @@ edited in place and every change reaches the sign by hand.
 | [`CONTEXT.md`](CONTEXT.md) | The domain language. Use these words — Display, Viewer, Screen, screen name tag, canvas, grant, edit lock — in code, comments and UI copy. |
 | [`docs/roadmap-multi-display.md`](docs/roadmap-multi-display.md) | The phased plan and its current status. |
 | [`docs/reviewed-decisions.md`](docs/reviewed-decisions.md) | **The 51-item list from the adversarial audit, with what each was decided to be.** All 50 numbered items are now Done — which closes the audit, not the app: nothing on that list was ever the browser pass. The numbering the owner uses. Two numbering traps are documented there; read them before quoting an issue number. |
-| [`docs/browser-pass.md`](docs/browser-pass.md) | **The only verification in this project that a person does, walked in full on 2026-08-13 against `lbm-test/`.** Its outcome table is at the top: seven defects, §4as–§4ax, five of them things a page did not *say* rather than wrong answers a suite could have caught. Read it before assuming a green gate means a working screen. v1 is live, so re-running it against the live install is owed now rather than after something — it is a list, not a receipt. |
+| [`docs/browser-pass.md`](docs/browser-pass.md) | **The only verification in this project that a person does, walked in full on 2026-08-13 against `lbm-test/`.** Its outcome table is at the top: seven defects, §4as–§4ax, five of them things a page did not *say* rather than wrong answers a suite could have caught. Read it before assuming a green gate means a working screen. **Three re-walks are owed and the table at the top names them**: the live install (v1 is live), `lbm-test/` for the step-2 workbench, and Display Branding, which this pass has no step for at all. It is a list, not a receipt. |
 | [`docs/adr/`](docs/adr/) | Decisions with their rejected alternatives. Don't re-litigate one without reading it. |
 | [`HANDOFF.md`](HANDOFF.md) | Deployment facts: live URLs, credentials layout, what is and isn't in the repo. |
 | [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) | **What not to overwrite, upload or delete when files go to the server.** Read before any upload — the repo and the server hold different files, and uploading the tree reverts live branding and restores `setup.php` silently. |
@@ -22,8 +22,9 @@ edited in place and every change reaches the sign by hand.
 
 - **Data access lives in `lib/`.** Page scripts are thin adapters. Nothing
   outside `lib/layout_store.php` may write SQL against `canvas_elements`, nothing
-  outside `lib/displays.php` against `displays`, and nothing outside
-  `lib/assets.php` against `assets`.
+  outside `lib/displays.php` against `displays`, nothing outside `lib/assets.php`
+  against `assets`, nothing outside `lib/brand_styles.php` against `block_styles`,
+  and nothing outside `lib/brands.php` against `brands` (invariant 33).
 - **Deep modules**: small interface, substantial implementation. A new query
   means a new method on the module, not a `$pdo` handed to a caller.
 - **A new schema statement goes into `signageSchemaPlan()`, with its gate.**
@@ -39,8 +40,8 @@ edited in place and every change reaches the sign by hand.
   `repairSchemaAfterFailure()` — the one guarded door, which refuses inside a
   transaction, refuses twice on one request, and refuses again for five minutes.
 - **A change spanning two tables is one transaction, held by a use-case module.**
-  `DisplayAdmin`, `AccountAdmin` and `PasswordResetCompletion` are the three, and they
-  are the same shape on purpose: the module owns `beginTransaction`, writes no SQL
+  `DisplayAdmin`, `AccountAdmin`, `BrandAdmin` and `PasswordResetCompletion` are the
+  four, and they are the same shape on purpose: the module owns `beginTransaction`, writes no SQL
   itself, rolls back quietly, and returns a result the page turns into a sentence. A
   page doing the writes itself cannot roll back what already landed, so the message it
   prints is chosen by which line threw rather than by what is now true.

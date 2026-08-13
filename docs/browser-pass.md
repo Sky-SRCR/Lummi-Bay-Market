@@ -32,6 +32,21 @@ of it applies again to the live sign — which is the one thing this pass does n
 2026-08-13 — so re-running it there is owed *now*, not after something. It has not been
 done.
 
+**And v2 has since rewritten most of what it describes.** Three debts have accumulated,
+and they are separate:
+
+| Owed | Why | Where |
+|---|---|---|
+| A re-walk against the **live** install | v1 is live and this pass has only ever been run against `lbm-test/` | this whole list |
+| A re-walk of every step against `lbm-test/` for the **workbench** | step 2 rebuilt the Builder's chrome — three columns, a docked rail, a canvas footer, a new nav — so every screen this pass describes has moved. Nothing in this repo can see a three-column layout fail to be three columns | §4ba |
+| A walk of **Admin Panel → Display Branding**, which this pass has no step for | step 3 replaced a single typography table with a list of Brands, a palette editor, a logo picker and a delete confirm — and the Displays tab gained a Brand dropdown on two forms. The suite reads that file's *source*; nothing renders it | §4bb |
+
+The third one is the gap worth naming precisely, because it is the shape five of this
+pass's seven defects had: the panel's checks are `checkMentions()` over
+`admin_panel.php`'s text. A variable that is never assigned, a form field that posts
+under the wrong name, a swatch drawn in a colour the CSSOM discards — all of them pass a
+grep and none of them survive a person opening the page.
+
 **Do it in `lbm-test/`.** It exists for this. As of 2026-08-12 it is isolated against
 `silverad_lummi_market_drive_thru_2` and the multi-display build runs there.
 
