@@ -5831,6 +5831,26 @@ refusal is on the fall-back path only: a run given `--db` named its own database
 guessing at nothing. Both doors are held by the same check, over a list of two, because a
 rule enforced at one of the places that needs it is enforced nowhere.
 
+**The sweep, and what it changed.** `php tools/mutate.php lib/install_paths.php` — 34
+mutants, 27 killed, 7 survived. The first run killed 17 by assertion and 10 by
+diagnostic, and one of those diagnostics was worth chasing: turning the `||` in
+`if (!is_string($claim) || $claim === '')` into `&&` still refused every non-name in the
+suite, because a `true` that falls through to the next branch is not equal to the folder
+name either. It died only on the *"Array to string conversion"* warning raised by
+printing an array into a sentence about who those credentials belong to — the harness
+noticing something moved, not a check knowing what the line was for. What was missing was
+an assertion that a claim which is not a name is answered as **naming nobody**, in the
+same words an undeclared file gets, rather than as belonging to the install named `1`.
+Five checks later that guard is killed by assertion, and the grades read 19 / 8.
+
+The seven survivors are one shape: `===` → `==`, and one `!==` → `!=`, between two values
+that are strings by the time the line runs. `installName()` returns a string or `''`;
+`$claim` reaches the second and third comparisons only through `!is_string($claim) ||`,
+which is what makes the loose operator identical to the strict one there. That is the
+guard being right rather than a check being missing, and it is the same reason four of
+those seven have survived every sweep since the file was written. Written down here
+because invariant 30 asks for the reason, not for the line to go.
+
 The Settings card gained a **Credentials** row beside **This install** and **Database**,
 and it is the row that does not require you to already know the answer. Telling
 `silverad_lummi_market_drive_thru` from `silverad_lummi_market_drive_thru_2` needs
