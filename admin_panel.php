@@ -1638,9 +1638,17 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     // the form does not quietly store a substitute over it (#21).
                     $slot = $openBrand->paletteSlot($i);
                 ?>
+                    <?php /* Picking a colour clears the "empty" tick, because otherwise the
+                            two controls contradict each other and the tick wins silently —
+                            somebody chooses a colour for an empty slot, saves, and the slot
+                            is still empty with nothing saying why. The `<input type="color">`
+                            has to keep a value even when the slot is empty (a browser gives
+                            it black regardless), which is the whole reason the tick exists:
+                            "empty" cannot be said by leaving the box alone. */ ?>
                     <span style="display:inline-flex; align-items:center; gap:4px;">
                         <input type="color" name="b_<?= Markup::text($field) ?>"
-                               value="<?= Markup::text(Color::read($slot) !== '' ? Color::read($slot) : '#ffffff') ?>">
+                               value="<?= Markup::text(Color::read($slot) !== '' ? Color::read($slot) : '#ffffff') ?>"
+                               oninput="paletteSlotChosen(this)">
                         <label style="font-size:12px; color:#7f8c8d;">
                             <input type="checkbox" name="b_<?= Markup::text($field) ?>_unset" value="1"
                                    <?= $slot === '' ? 'checked' : '' ?>> empty
@@ -2572,6 +2580,16 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
     function toggleEdit(id) {
         var row = document.getElementById('edit-' + id);
         row.classList.toggle('open');
+    }
+
+    // Choosing a palette colour means the slot is not empty. Without this the tick
+    // box and the swatch disagree, and the tick wins on the server — a colour picked
+    // for an empty slot would be discarded with nothing saying so.
+    function paletteSlotChosen(input) {
+        var group = input.parentNode;
+        if (!group) { return; }
+        var box = group.querySelector('input[type=checkbox]');
+        if (box) { box.checked = false; }
     }
 
     function updatePreview(type) {

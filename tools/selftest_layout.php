@@ -6994,6 +6994,43 @@ $aThrew = false;
 try { SiteChrome::pick('no_such_colour', '#ffffff'); } catch (Throwable $e) { $aThrew = true; }
 checkSame(true, $aThrew, 'a colour this app does not have is a mistake, not an answer');
 
+// ---- The Display Branding forms and their handler agree about field names ----
+// Grep-shaped on purpose, and it is worth saying what that does and does not buy.
+// Nothing here renders the page, so this cannot see a broken layout — that is the
+// browser pass's job and it is owed for this tab. What it *can* see is the failure a
+// rendered page would not shout about either: a form posting `b_palette_1_unset` at a
+// handler reading `b_palette_1_clear` looks perfectly fine on screen and silently
+// drops what somebody typed. The two halves are written 700 lines apart in one file,
+// which is exactly the distance a rename survives.
+foreach (['b_name', 'b_id', 'b_bg', 'b_logo', 'b_confirm_name'] as $bF) {
+    check(strpos($panel, 'name="' . $bF . '"') !== false, 'the Display Branding form posts ' . $bF);
+    check(strpos($panel, "\$_POST['" . $bF . "']") !== false,
+          'and the handler reads it back under the same name');
+}
+
+// The palette's twelve fields are not literals on either side: the form emits them
+// from `BrandStore::paletteFields()` and the handler reads them back from the same
+// list. That is stronger than matching names — one list means they cannot drift — so
+// what is asserted is that both halves really do come from it, rather than one of
+// them having been spelled out by hand at some point and left behind.
+checkMentions($panel, 'BrandStore::paletteFields()', 'the palette form is built from the one list of slots');
+checkSame(2, substr_count($panel, 'BrandStore::paletteFields()'),
+          'and so is the handler that reads it back — both halves, no third copy');
+checkMentions($panel, "\$_POST['b_' . \$_pf . '_unset']",
+              'the handler reads each slot\'s empty tick, which is how "no colour" is said at all');
+
+// The three actions the tab offers, each reaching its use case rather than SQL.
+foreach (['action_create_brand', 'action_save_brand', 'action_delete_brand'] as $bA) {
+    checkMentions($panel, "\$_POST['" . $bA . "']", 'the panel handles ' . $bA);
+}
+checkMentions($panel, '$brandAdmin->create(',        'creating a Brand goes through BrandAdmin');
+checkMentions($panel, '$brandAdmin->updateDetails(', 'and so does saving one');
+checkMentions($panel, '$brandAdmin->destroy(',       'and destroying one');
+checkMentions($panel, 'editedByAnyoneElseUsingBrand',
+              'and the lock refusal is the narrowed one, not the old install-wide question');
+check(strpos($panel, 'editedByAnyoneElse(') === false,
+      'the install-wide refusal is gone from the panel entirely, not merely unused');
+
 // What the Branding tab and the audit both read.
 checkSame([], SiteChrome::unreadable(SiteChrome::DEFAULTS), 'a config that reads has nothing to report');
 checkSame([], SiteChrome::unreadable([]),              'and neither has one that defines nothing yet');
@@ -7304,4 +7341,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1961 : 1935);
+reportChecks(testIsMysql() ? 1982 : 1956);
