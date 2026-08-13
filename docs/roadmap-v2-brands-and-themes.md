@@ -121,20 +121,40 @@ Gates: `php -l`, `selftest_layout`, `check_invariants`, `check_doc_numbering`,
 Option B, and the nav from the sketch. No schema, no new data — pure chrome, which
 is what makes it safe to land before the features that use it.
 
-**Layout.** A grouped left palette (Layout · Text · Media · Canvas) replaces the
-add-block buttons in the top bar. The properties panel becomes a **docked right
-rail** — a sibling of the canvas in a flex row, so the overlap that started this
-is arithmetically impossible rather than nudged out of the way, and the panel
-stops looking like a window that can be dragged. The rail keeps a resting state
+**Layout.** A left column replaces the add-block buttons in the top bar, in two
+parts divided by a rule. The properties panel becomes a **docked right rail** — a
+sibling of the canvas in a flex row, so the overlap that started this is
+arithmetically impossible rather than nudged out of the way, and the panel stops
+looking like a window that can be dragged. The rail keeps a resting state
 ("Select a block to edit it") rather than vanishing. Align tools move into the
 rail as an *Arrange* group and `#align-bar` retires.
 
+**The left column, above the rule** — *which sign this is, and the way off it*:
+*(an empty Brand slot)* and `⇄ Switch sign`, when more than one is switchable.
+
+**The left column, below the rule** — *what you can put on it*: grouped
+add-block items (Layout · Text · Media · Brand assets).
+
+**The rule is a boundary in the markup, not only a line.** Everything below it is
+an editing control and is not emitted for a read-only Builder; the block above it
+always is. `Switch display` sits outside the read-only branch today for a reason —
+somebody looking at a sign they cannot edit still has to be able to leave it — and
+a person who cannot edit still needs to know which venue they are looking at. A
+read-only Builder therefore keeps a left column carrying those two things and
+nothing under them, which is more than it has today.
+
 **Nav**, left to right: `LUMMI BAY MARKET` (text, no logo) │ display title · tag ·
-dimensions · `OFF` when off · `View ↗` · `⇄` when more than one is switchable │
-*(empty Brand slot)* │ spacer │ `Undo` `Publish` │ `jporter` `Sign Out` `⚙`. The
-role chip leaves the Builder. The gear becomes the account-and-settings menu and
-holds the role as text, Asset Library, Admin Panel (admins), Help, and *(an empty
-Workspace Theme slot)*.
+dimensions · `OFF` when off · `View ↗` │ spacer │ `Undo` `Publish` │ `jporter`
+`Sign Out` `⚙`. The role chip leaves the Builder. The gear becomes the
+account-and-settings menu and holds the role as text, Asset Library, Admin Panel
+(admins), Help, and *(an empty Workspace Theme slot)*.
+
+**Why the Brand and Switch are not in the nav.** They were, in the first draft of
+this spec, and both had to be squeezed to icons to fit a bar that was being
+cleared on purpose. A bare `⇄` is not a clean bar, it is an unreadable one — it
+failed the first time it was shown to the person who specified the bar. The left
+column has width for words, and the two controls read as a sequence there that
+they never did in the nav.
 
 **Canvas footer**, a thin strip along the bottom of the canvas column — between
 the palette and the rail, so both stay full-height columns and the three-column
@@ -222,9 +242,10 @@ narrowed refusal, plus `php tools/mutate.php lib/brands.php` and over
 
 ### Step 4 — Brands in the Builder · size M · risk Medium
 
-The Brand slot from step 2 gets its control: `[logo] Brand: Salmon House ▾` for
-admins, the same as plain text for basic accounts — they should know which venue
-they are building for and be unable to change it.
+The Brand slot at the top of step 2's left column gets its control: the venue's
+logo and `Salmon House ▾` for admins, the same without the chevron for basic
+accounts and for read-only Builders — they should know which venue they are
+building for and be unable to change it.
 
 Picking one **repaints the canvas in the browser and writes nothing**. Publish
 writes `brand_id` beside the layout, refusing the whole publish on an invalid

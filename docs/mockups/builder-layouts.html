@@ -446,6 +446,28 @@ td:first-child { color: var(--ink-muted); }
 .mk-gear-menu .gi.on { background: #34495e; }
 .mk-gear-menu .gf { font-size: 9.5px; padding: 2px 7px; color: #8fa6bb; line-height: 1.4; }
 .mk-gear-menu .gd { height: 1px; background: #3a4d5f; margin: 3px 0; }
+/* The always-rendered top of the left column: which sign, and how to leave it. */
+.mk-pal-top {
+    border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 4px;
+    display: flex; flex-direction: column; gap: 4px;
+}
+.mk-pal-top .cap {
+    font-size: 8.5px; text-transform: uppercase; letter-spacing: .12em;
+    color: #6b8299; font-weight: 700;
+}
+.mk-pal-top .brandbtn {
+    display: flex; align-items: center; gap: 6px; background: #22303d;
+    border: 1px solid #4a6278; border-radius: 4px; padding: 4px 7px; font-size: 10px;
+}
+.mk-pal-top .brandbtn.flat { background: none; border-color: transparent; padding-left: 0; color: var(--dim); }
+.mk-pal-top .brandbtn .lg {
+    width: 16px; height: 16px; border-radius: 3px; background: #b8442e; color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 8px; font-weight: 700; flex-shrink: 0;
+}
+.mk-pal-top .brandbtn .nm { flex: 1; min-width: 0; }
+.mk-pal-top .switch { font-size: 9.5px; color: #8fa6bb; padding-left: 1px; }
+
 .mk-swatches { display: flex; gap: 3px; margin-bottom: 4px; }
 .mk-sw { width: 15px; height: 15px; border-radius: 2px; border: 1px solid #4a6278; flex-shrink: 0; }
 
@@ -1177,9 +1199,20 @@ footer {
             <strong>canvas footer</strong> is new: it carries the zoom controls, which B as
             pitched had simply lost, and the last-published line, which belongs on screen because
             the question it answers &mdash; <em>is what I&rsquo;m looking at live?</em> &mdash;
-            has to answer at a glance. And the <strong>Brand control</strong> sits with the
-            sign&rsquo;s other facts, while the Workspace Theme sits in the gear with the
-            person&rsquo;s: two pickers, opposite ends of the bar, describing different nouns.</p>
+            has to answer at a glance.</p>
+        <p>And the <strong>Brand control and Switch sign moved out of the nav</strong>, to the top
+            of the left column above <em>Layout</em>. They went to the nav first and were squeezed
+            into icons to fit; a bare <code>&#8646;</code> is not a clean bar, it is an unreadable
+            one. The left column has the width for words. It also reads as a sequence now &mdash;
+            <em>which sign and whose brand</em>, then <em>what you can put on it</em> &mdash; with
+            a rule between the two so a click meant for <em>Section</em> never lands on a Brand.</p>
+        <p><strong>That rule is also a boundary in the markup.</strong> Everything below it is an
+            editing control and isn&rsquo;t emitted for a read-only Builder; the block above it
+            always is. Switch sign is outside the read-only branch today for a reason &mdash;
+            somebody looking at a sign they can&rsquo;t edit still has to be able to leave it
+            &mdash; and a person who can&rsquo;t edit still needs to know which venue they&rsquo;re
+            looking at. So a read-only Builder keeps a left column with those two things and
+            nothing under them.</p>
     </div>
 
     <div class="col-wide mk-frame">
@@ -1194,9 +1227,6 @@ footer {
                         <span class="d">1920 &times; 1080</span>
                     </span>
                     <span class="mk-link">View &#8599;</span>
-                    <span class="mk-link">&#8646;</span>
-                    <span class="mk-brand-ctl admin-only"><span class="lg">SH</span> Brand: Salmon House &#9662;</span>
-                    <span class="mk-brand-plain basic-only"><span class="lg">SH</span> Brand: Salmon House</span>
                     <span class="mk-spacer"></span>
                     <button class="mk-btn gray">&#8630; Undo</button>
                     <button class="mk-btn publish">&#10003; Publish</button>
@@ -1218,7 +1248,17 @@ footer {
                 </div>
 
                 <div class="mk-body">
-                    <div class="mk-pal">
+                    <div class="mk-pal" style="width:174px">
+                        <!-- Always rendered, read-only Builders included: which sign this is,
+                             and the way off it. Everything below the rule is gated. -->
+                        <div class="mk-pal-top">
+                            <div class="cap">Brand</div>
+                            <div class="brandbtn admin-only"><span class="lg">SH</span>
+                                <span class="nm">Salmon House</span> &#9662;</div>
+                            <div class="brandbtn flat basic-only"><span class="lg">SH</span>
+                                <span class="nm">Salmon House</span></div>
+                            <div class="switch">&#8646; Switch sign</div>
+                        </div>
                         <div class="mk-pal-h admin-only">Layout</div>
                         <div class="mk-pal-b admin-only"><span class="ic">&#9707;</span> Section</div>
                         <div class="mk-pal-h">Text</div>
@@ -1232,7 +1272,7 @@ footer {
                         <div class="mk-pal-b admin-only"><span class="ic">&#9636;</span> Table</div>
                         <div class="mk-pal-b admin-only"><span class="ic">&#9654;</span> Marquee</div>
                         <div class="mk-pal-b admin-only"><span class="ic">&#9658;</span> Video</div>
-                        <div class="mk-pal-h admin-only">Brand</div>
+                        <div class="mk-pal-h admin-only">Brand assets</div>
                         <div class="mk-pal-b admin-only"><span class="ic">&#9873;</span> Venue Logo</div>
                         <div class="mk-pal-b admin-only"><span class="ic">&#9633;</span> Background</div>
                         <div class="mk-spacer"></div>
@@ -1314,7 +1354,7 @@ footer {
             </div>
         </div>
         <p class="mk-cap">Settled &mdash; gear shown open. Switch to Basic user: the Brand becomes
-            a fact, not a control.</p>
+            a fact, not a control, and Switch sign stays.</p>
     </div>
 
     <div class="col">
@@ -1323,7 +1363,7 @@ footer {
                 <h3>New since the pitch</h3>
                 <ul>
                     <li>Canvas footer &mdash; zoom left, last-published right.</li>
-                    <li>Brand control beside the sign&rsquo;s facts, with the venue&rsquo;s logo in it.</li>
+                    <li>Brand and Switch sign at the top of the left column, above the rule.</li>
                     <li>Links behind a gear; Sign Out stays out.</li>
                     <li>Palette swatches from the Brand, above every colour control.</li>
                 </ul>
