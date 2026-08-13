@@ -220,24 +220,75 @@ if ($hasGrants) {
     report($accountRule === 'CASCADE', "and so does a deleted account (ON DELETE $accountRule)");
 }
 
+// ---- brands: the identity every sign wears (ADR-0011) -----------------------
+// The riskiest part of this migration, and the part no self-test can reach: it
+// re-keys a table in place on a database that is driving signs. Everything below is
+// asked of the real catalogue after convergence has run.
+heading('Brands, and the re-key that has to happen exactly once');
+
+$hasBrands = false;
+try {
+    $pdo->query("SELECT 1 FROM brands LIMIT 1");
+    $hasBrands = true;
+} catch (Exception $e) {}
+report($hasBrands, 'the brands table exists');
+
+$brandRows = [];
+if ($hasBrands) {
+    $brandRows = $pdo->query("SELECT id, name FROM brands ORDER BY id ASC")->fetchAll();
+    report(count($brandRows) > 0,
+        'at least one Brand exists for every sign to wear (' . count($brandRows) . ')');
+    if ($brandRows) {
+        echo "  brand 1 is \"" . $brandRows[0]['name'] . "\" — the name an admin sees first\n";
+    }
+}
+
+// The re-key itself. `block_styles` was keyed on block_type alone; a database where
+// this did not land has one set of standards for the whole property, and the second
+// Brand an admin creates cannot have its own — the insert collides on the old key.
+$bsKey = [];
+foreach ($pdo->query("SHOW KEYS FROM block_styles WHERE Key_name = 'PRIMARY'")->fetchAll() as $k) {
+    $bsKey[intval($k['Seq_in_index'])] = $k['Column_name'];
+}
+ksort($bsKey);
+$bsKey = array_values($bsKey);
+report($bsKey === ['brand_id', 'block_type'],
+    'block_styles is keyed on (brand_id, block_type) (' . implode(', ', $bsKey) . ')');
+
+$bsCols = [];
+foreach ($pdo->query("SHOW COLUMNS FROM block_styles")->fetchAll() as $c) { $bsCols[$c['Field']] = $c; }
+report(isset($bsCols['brand_id']), 'block_styles.brand_id exists');
+report(isset($bsCols['brand_id']) && $bsCols['brand_id']['Null'] === 'NO',
+    'and is NOT NULL, so no set of standards belongs to no Brand');
+
+// The backfill, checked as rows rather than as structure. A row left unbranded is
+// invisible to every scoped read — the venue's typography would simply stop applying.
+$orphanStyles = intval($pdo->query(
+    "SELECT COUNT(*) FROM block_styles bs LEFT JOIN brands b ON bs.brand_id = b.id
+      WHERE b.id IS NULL")->fetchColumn());
+report($orphanStyles === 0, "no set of standards points at a Brand that is gone (found $orphanStyles)");
+
 // ---- block_styles: the rows Brand Standards edits ---------------------------
 // Seeding them is a *step*, and a step's failure is reported but not fatal, so this
 // is the only place that says whether the rows are really there on this database. A
 // missing row makes the Brand Standards form a silent no-op: it saves with
-// UPDATE … WHERE block_type = ?, so the field reverts on reload and nothing says why.
-$styled = [];
-try {
-    foreach ($pdo->query("SELECT block_type FROM block_styles")->fetchAll() as $row) {
-        $styled[] = $row['block_type'];
+// UPDATE … WHERE brand_id = ? AND block_type = ?, so the field reverts on reload and
+// nothing says why. Asked per Brand, because that is what the key is now.
+foreach ($brandRows as $brandRow) {
+    $styled = [];
+    try {
+        $q = $pdo->prepare("SELECT block_type FROM block_styles WHERE brand_id = ?");
+        $q->execute([$brandRow['id']]);
+        foreach ($q->fetchAll() as $row) { $styled[] = $row['block_type']; }
+    } catch (Exception $e) {
+        // No table. The report below names every type as missing, which is the truth.
     }
-} catch (Exception $e) {
-    // No table. The report below names every type as missing, which is the truth.
+    $missingStyles = array_values(array_diff(BrandStyles::types(), $styled));
+    report(count($missingStyles) === 0,
+        'every branded block type has a typography row for "' . $brandRow['name'] . '" ('
+        . (count($missingStyles) ? 'missing: ' . implode(', ', $missingStyles) : 'all '
+          . count(BrandStyles::types()) . ' present') . ')');
 }
-$missingStyles = array_values(array_diff(BrandStyles::types(), $styled));
-report(count($missingStyles) === 0,
-    'every branded block type has a typography row ('
-    . (count($missingStyles) ? 'missing: ' . implode(', ', $missingStyles) : 'all '
-      . count(BrandStyles::types()) . ' present') . ')');
 
 // The edit-lock columns. lock_taken_at arrives after `displays` already exists on
 // any database that converged for an earlier phase, so it is added by its own
@@ -248,6 +299,26 @@ foreach ($pdo->query("SHOW COLUMNS FROM displays")->fetchAll() as $c) {
 }
 report(isset($dcols['lock_holder_id']),   'displays.lock_holder_id exists');
 report(isset($dcols['lock_taken_at']),    'displays.lock_taken_at exists');
+
+// The other half of the Brand migration, and the one that can empty a shop: a sign
+// with no Brand renders its branded blocks from its own stored typography, which
+// invariant 32 has just stopped publish writing — so an unbranded Display is a sign
+// whose prices go 16px Arial black on the next publish. Added nullable, backfilled,
+// then tightened, and it is the tighten that proves the backfill left nothing behind.
+report(isset($dcols['brand_id']), 'displays.brand_id exists');
+report(isset($dcols['brand_id']) && $dcols['brand_id']['Null'] === 'NO',
+    'and is NOT NULL, so no sign is left without an identity');
+
+$unbranded = intval($pdo->query(
+    "SELECT COUNT(*) FROM displays d LEFT JOIN brands b ON d.brand_id = b.id
+      WHERE b.id IS NULL")->fetchColumn());
+report($unbranded === 0, "every sign wears a Brand that exists (found $unbranded that do not)");
+
+// RESTRICT, not CASCADE or SET NULL. Deleting a Brand three signs wear must be
+// refused rather than quietly repainting or destroying them — there is no undo.
+$brandRule = deleteRule($pdo, $opts['db'], 'displays', 'brand_id');
+report($brandRule === 'RESTRICT' || $brandRule === 'NO ACTION',
+    "a Brand in use cannot be deleted out from under its signs (ON DELETE $brandRule)");
 report(isset($dcols['lock_activity_at']), 'displays.lock_activity_at exists');
 
 $store  = new DisplayStore($pdo);
@@ -303,8 +374,8 @@ report(count($leftDdl) === 0,
 foreach ($leftDdl as $why) { echo "  still wanted: $why\n"; }
 
 // Two steps have to remain: no catalogue can answer "are there any rows".
-report($steps === ['seed_block_styles', 'seed_legacy_display'],
-    'and only the two row counts remain (' . implode(', ', $steps) . ')');
+report($steps === ['seed_first_brand', 'seed_block_styles', 'seed_legacy_display'],
+    'and only the three row counts remain (' . implode(', ', $steps) . ')');
 
 // ---- The premise invariant 21 rests on --------------------------------------
 
@@ -349,7 +420,7 @@ $tagB   = 'rehearsal-b-' . $suffix;
 
 // Direct inserts: DisplayStore::create() arrives in Phase 3, and this tool
 // switches to it then.
-$mk = $pdo->prepare("INSERT INTO displays (tag,title,canvas_width,canvas_height) VALUES (?,?,?,?)");
+$mk = $pdo->prepare("INSERT INTO displays (tag,title,canvas_width,canvas_height,brand_id) VALUES (?,?,?,?,1)");
 $mk->execute([$tagA, 'Rehearsal A', 1920, 1080]);
 $mk->execute([$tagB, 'Rehearsal B', 1080, 1920]);
 

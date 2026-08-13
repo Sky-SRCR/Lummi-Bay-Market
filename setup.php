@@ -6,6 +6,9 @@
 // ============================================================
 require_once 'db_connect.php';
 require_once 'config.php';
+require_once __DIR__ . '/lib/brands.php';
+require_once __DIR__ . '/lib/brand_styles.php';
+require_once __DIR__ . '/lib/brand_admin.php';
 
 /**
  * Delete this file, and answer whether it is really gone.
@@ -49,15 +52,19 @@ $success = '';
 $removed = false;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $username = trim($_POST['username'] ?? '');
-    $email    = trim($_POST['email']    ?? '');
-    $password = $_POST['password']      ?? '';
-    $confirm  = $_POST['confirm']       ?? '';
+    $username  = trim($_POST['username'] ?? '');
+    $email     = trim($_POST['email']    ?? '');
+    $password  = $_POST['password']      ?? '';
+    $confirm   = $_POST['confirm']       ?? '';
+    $brandName = BrandStore::cleanName($_POST['brand'] ?? '');
 
-    if (!$username || !$email || !$password) {
+    if (!$username || !$email || !$password || $brandName === '') {
         $error = 'All fields are required.';
     } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $error = 'Please enter a valid email address.';
+    } elseif (!BrandStore::isValidName($brandName)) {
+        $error = 'That brand name cannot be used — ' . BrandStore::NAME_MAX
+               . ' characters or fewer, and no control characters.';
     } elseif (strlen($password) < 8) {
         $error = 'Password must be at least 8 characters.';
     } elseif ($password !== $confirm) {
@@ -66,12 +73,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $hash = password_hash($password, PASSWORD_DEFAULT);
         $stmt = $pdo->prepare("INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, 'admin')");
         $stmt->execute([$username, $email, $hash]);
+
+        // The first Brand. Every Display wears one and `displays.brand_id` is NOT
+        // NULL, so an installation with none is one where no sign can be created at
+        // all (ADR-0011). schema.sql seeds a generically-named Brand so the column
+        // has something to point at from the first moment; what this does is give it
+        // the venue's real name, because "Store Brand" on the Display Branding tab
+        // reads like something the install left half-done.
+        //
+        // Never fatal. The account is what this page exists to create and it is
+        // already made; a database that cannot take this — one restored from before
+        // Brands existed, say — gets its first Brand from convergence on the first
+        // signed-in page load instead, named after SITE_NAME. Failing the whole setup
+        // over a label would strand somebody with no way in.
+        $brandNote = '';
+        try {
+            $brands = new BrandStore($pdo);
+            $admin  = new BrandAdmin($pdo, $brands, new BrandStyles($pdo), new DisplayStore($pdo));
+            $existing = $brands->all();
+            $res = count($existing) === 1
+                ? $admin->updateDetails($existing[0], [
+                      'name'    => $brandName,
+                      'bg_type' => $existing[0]->backgroundType(),
+                      'bg_val'  => $existing[0]->backgroundValue(),
+                  ])
+                : $admin->create(['name' => $brandName]);
+            if (!$res->isOk()) {
+                $brandNote = ' The brand "' . $brandName . '" could not be saved ('
+                           . $res->message() . ') — set it in Admin Panel → Display Branding.';
+            }
+        } catch (Throwable $e) {
+            $brandNote = ' The brand could not be created yet; it will appear as soon as you '
+                       . 'sign in, and you can rename it in Admin Panel → Display Branding.';
+        }
+
         // The account exists, so this page's work is done. Only now is it safe to go.
         $removed = removeSelf();
         $success = 'Admin account created! You can now sign in.'
                  . ($removed
                      ? ' This setup page has deleted itself.'
-                     : ' Please delete setup.php from your server — it could not delete itself.');
+                     : ' Please delete setup.php from your server — it could not delete itself.')
+                 . $brandNote;
     }
 }
 ?>
@@ -114,6 +156,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <input type="password" name="password" required>
         <label>Confirm Password</label>
         <input type="password" name="confirm" required>
+        <label>Venue / brand name</label>
+        <input type="text" name="brand" value="<?= Markup::text($_POST['brand'] ?? '') ?>"
+               placeholder="Salmon House" maxlength="<?= intval(BrandStore::NAME_MAX) ?>" required>
+        <p style="font-size:12px; color:#7f8c8d; margin:-10px 0 16px;">
+            Every display wears a brand — its typography, palette and logo. You can add more
+            later, one per venue.
+        </p>
         <button type="submit" class="btn">Create Admin Account</button>
     </form>
     <?php endif; ?>

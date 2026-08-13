@@ -159,7 +159,7 @@ if (!defined('LEGACY_DISPLAY_TAG')) {
 // then return thousands of rows to answer a question about eight tables.
 if (!defined('SCHEMA_TABLES')) {
     define('SCHEMA_TABLES', [
-        'users', 'password_resets', 'assets', 'block_styles',
+        'users', 'password_resets', 'assets', 'block_styles', 'brands',
         'canvas_elements', 'canvas_settings', 'displays', 'display_permissions',
     ]);
 }
@@ -183,26 +183,29 @@ if (!defined('SCHEMA_BLOCK_SUBTYPE_ENUM')) {
     define('SCHEMA_BLOCK_SUBTYPE_ENUM', LayoutRules::enumSql(LayoutRules::BLOCK_SUBTYPES));
 }
 
-// The six branded block types, seeded as one statement. One row per type must
-// exist for Brand Standards to be editable at all: that form saves with
-// UPDATE … WHERE block_type = ?, so a missing row makes the save a silent no-op —
-// the field reverts on reload and nothing says why. INSERT IGNORE, so the store's
-// own numbers are never touched; this only fills gaps. All six are listed rather
-// than just the two a later build added, because the four originals are missing on
-// a database that predates them (schema.sql seeds the same set).
-if (!defined('SCHEMA_BLOCK_STYLE_SEED')) {
-    define('SCHEMA_BLOCK_STYLE_SEED', "INSERT IGNORE INTO block_styles
-        (block_type,font_family,font_size,font_color,font_weight,font_style,line_height) VALUES
-        ('section_header','Arial',36,'#ffffff','bold','normal',1.30),
-        ('item_title','Arial',24,'#ffffff','bold','normal',1.30),
-        ('item_title_2','Arial',24,'#27ae60','bold','normal',1.30),
-        ('price','Arial',30,'#e74c3c','bold','normal',1.20),
-        ('price_2','Arial',30,'#e74c3c','bold','normal',1.20),
-        ('description','Arial',16,'#bdc3c7','normal','normal',1.40)");
-}
-if (!defined('SCHEMA_BLOCK_STYLE_COUNT')) {
-    define('SCHEMA_BLOCK_STYLE_COUNT', 6);
-}
+// The six branded block types and where each one starts. One row per type **per
+// Brand** must exist for Brand Standards to be editable at all: that form saves
+// with UPDATE … WHERE brand_id = ? AND block_type = ?, so a missing row makes the
+// save a silent no-op — the field reverts on reload and nothing says why. All six
+// are listed rather than just the two a later build added, because the four
+// originals are missing on a database that predates them (schema.sql seeds the
+// same set).
+//
+// The values themselves are `BrandStyles::STARTING_POINTS`, not a list here, for the
+// reason the ENUMs above are built from LayoutRules: "written once" has to include
+// the other writers. There are three now — this file seeds the Brand it creates for
+// a database that predates Brands, `BrandAdmin` seeds every Brand made afterwards,
+// and `schema.sql` writes them for a fresh install — and three copies is three
+// chances for a new Brand to start somewhere the last one did not.
+//
+// Rows rather than one INSERT string, which is what re-keying on the Brand cost this
+// seed. The statement has to name a `brand_id` now, and it inserts only the
+// (Brand, type) pairs that are actually absent rather than sending all six behind an
+// `INSERT IGNORE`: the ignoring form is spelled differently on the two engines this
+// app is tested against, so a seed written that way is one the SQLite fixture can
+// never execute — which is #11's rule, and the reason the old one never ran in a
+// test at all.
+require_once __DIR__ . '/brand_styles.php';
 
 /**
  * What the database catalogue says is already there.
@@ -216,7 +219,7 @@ if (!defined('SCHEMA_BLOCK_STYLE_COUNT')) {
 class SchemaFacts
 {
     private $columns;       // table => column => ['type' => string, 'nullable' => bool]
-    private $indexes;       // table => index name => true
+    private $indexes;       // table => index name => list of columns, or true for "exists, columns unknown"
     private $constraints;   // table => constraint name => true
     private $known;
 
@@ -294,6 +297,24 @@ class SchemaFacts
     {
         if (!$this->known) { return null; }
         return isset($this->indexes[strtolower($table)][strtolower($index)]);
+    }
+
+    /**
+     * Which columns an index is over, in order — or null when that cannot be said.
+     *
+     * Null covers three different "cannot say"s on purpose, because the caller does
+     * the same thing with all of them: no catalogue was read, the index is not there,
+     * or the facts were built by a caller that only recorded *that* the index exists.
+     * That last one is why the value may be `true` rather than a list: every shape
+     * written before an index's columns mattered says `true`, and reading `true` as
+     * "over no columns" would answer a confident wrong list rather than "I did not
+     * look".
+     */
+    public function indexColumns($table, $index)
+    {
+        if ($this->hasIndex($table, $index) !== true) { return null; }
+        $cols = $this->indexes[strtolower($table)][strtolower($index)];
+        return is_array($cols) ? $cols : null;
     }
 
     /** True / false / null. */
@@ -385,6 +406,37 @@ class SchemaFacts
     }
 
     /**
+     * Does this table's PRIMARY KEY have to be re-made over these columns?
+     *
+     * The one statement in the plan that *replaces* structure rather than adding it:
+     * `block_styles` was keyed by `block_type` alone and is keyed by
+     * `(brand_id, block_type)` once a Brand owns a set of standards (ADR-0011). So
+     * this is the gate that most needs to be right — `DROP PRIMARY KEY, ADD PRIMARY
+     * KEY` run a second time against an already re-keyed table does not fail
+     * harmlessly the way a duplicate `ADD COLUMN` does, it rebuilds the table.
+     *
+     * Answering from the *columns* rather than from the index's existence is the
+     * whole point: every table here has a PRIMARY, so `hasIndex()` says yes both
+     * before and after, and a gate built on it would either never run or always run.
+     *
+     * Null — "run it and let schemaTry() swallow what that means" — is answered for
+     * a catalogue that could not be read at all and for one that recorded the index
+     * without its columns. Both are honestly "I did not look", and the plan's
+     * standing answer to that is the behaviour this file had before it started
+     * asking. False only when the key is already exactly these columns, in this
+     * order, and when the table is not there at all — a table this file creates
+     * declares its key in the CREATE, and one it does not create cannot be altered.
+     */
+    public function needsPrimaryKey($table, array $wanted)
+    {
+        if ($this->tableMissing($table)) { return false; }
+        if (!$this->known)               { return null; }
+        $has = $this->indexColumns($table, 'PRIMARY');
+        if ($has === null)               { return null; }
+        return array_map('strtolower', $has) !== array_map('strtolower', $wanted);
+    }
+
+    /**
      * Skip only when the constraint is definitely there.
      *
      * Unlike a column, an absent table does *not* mean skip: the two tables this
@@ -455,14 +507,18 @@ function readSchemaFacts(PDO $pdo)
         // put every CREATE TABLE in the plan against a database that has them.
         if (!$columns) { return SchemaFacts::unknown(); }
 
+        // Ordered by SEQ_IN_INDEX, because a composite key is its columns *in order*
+        // — `(brand_id, block_type)` and `(block_type, brand_id)` are different keys,
+        // and a gate that compared them as sets would call a re-key already done.
         $indexes = [];
         $stmt = $pdo->prepare(
-            "SELECT TABLE_NAME AS t, INDEX_NAME AS n
+            "SELECT TABLE_NAME AS t, INDEX_NAME AS n, COLUMN_NAME AS c
                FROM information_schema.STATISTICS
-              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ($marks)"
+              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ($marks)
+              ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"
         );
         $stmt->execute($tables);
-        foreach ($stmt->fetchAll() as $row) { $indexes[$row['t']][$row['n']] = true; }
+        foreach ($stmt->fetchAll() as $row) { $indexes[$row['t']][$row['n']][] = (string)$row['c']; }
 
         $constraints = [];
         $stmt = $pdo->prepare(
@@ -573,9 +629,83 @@ function signageSchemaPlan(SchemaFacts $facts)
          "ALTER TABLE canvas_elements MODIFY COLUMN block_subtype "
          . SCHEMA_BLOCK_SUBTYPE_ENUM . " DEFAULT 'free'");
 
-    // ---- block_styles: one row per branded block type -----------------------
-    // A row count, not a catalogue fact, so it is a step. Skipped outright when the
-    // catalogue says there is no table to seed into.
+    // ---- brands: the identity a sign wears (ADR-0011) -----------------------
+    // A Brand is a named, reusable identity several Displays share: the six branded
+    // block-type standards, a palette offered as swatches, a logo asset and a default
+    // canvas background. It exists because the installation stopped being one store —
+    // it drives signs in several venues on one property, and one set of colours across
+    // all of them is not a shared look, it is a defect that reaches every screen.
+    $sql($facts->needsTableCreate('brands'), 'brands table', "CREATE TABLE IF NOT EXISTS brands (
+        id            INT(11)      NOT NULL AUTO_INCREMENT,
+        name          VARCHAR(80)  NOT NULL,
+        logo_asset_id INT(11)      DEFAULT NULL COMMENT 'the venue logo, placed by the Builder in one click',
+        bg_type       ENUM('color','image') NOT NULL DEFAULT 'color',
+        bg_val        VARCHAR(255) NOT NULL DEFAULT '#1a1a2e',
+        palette_1     VARCHAR(7)   DEFAULT NULL,
+        palette_2     VARCHAR(7)   DEFAULT NULL,
+        palette_3     VARCHAR(7)   DEFAULT NULL,
+        palette_4     VARCHAR(7)   DEFAULT NULL,
+        palette_5     VARCHAR(7)   DEFAULT NULL,
+        palette_6     VARCHAR(7)   DEFAULT NULL,
+        created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        UNIQUE KEY name (name),
+        KEY logo_asset_id (logo_asset_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // SET NULL rather than CASCADE: a logo tidied out of the Asset Library must not
+    // take the venue's colours and typography with it. The Brand loses its logo and
+    // says so; every sign wearing it keeps rendering.
+    $sql($facts->needsConstraint('brands', 'brands_ibfk_1'), 'Brand → logo asset',
+         "ALTER TABLE brands ADD CONSTRAINT brands_ibfk_1
+          FOREIGN KEY (logo_asset_id) REFERENCES assets (id) ON DELETE SET NULL");
+
+    // Always, and on a known need for the reason given at the Display seed below:
+    // only a row count can say whether the first Brand is there, and every backfill
+    // after this one has nothing to point at until it is.
+    $step(true, 'seed_first_brand');
+
+    // ---- block_styles: one row per branded block type, per Brand ------------
+    // Re-keyed from `block_type` alone onto `(brand_id, block_type)`. Added nullable,
+    // backfilled, tightened, then re-keyed — the same order `canvas_elements.display_id`
+    // uses below and for the same reason: the live table already holds the store's six
+    // rows, and a NOT NULL column with no default cannot be added to a table with rows
+    // in it.
+    //
+    // The tighten is written out rather than left to the re-key. MySQL silently
+    // converts a nullable column into a PRIMARY KEY as NOT NULL, so relying on that
+    // would work and would leave the `MODIFY` in the plan on the next request too —
+    // the catalogue was read before either ran, so both gates were decided together.
+    // An ALTER that "does nothing" takes the same metadata lock as one that does.
+    $sql($facts->needsColumn('block_styles', 'brand_id'), 'block_styles.brand_id',
+         "ALTER TABLE block_styles ADD COLUMN brand_id INT(11) DEFAULT NULL");
+
+    $step($facts->needsNotNull('block_styles', 'brand_id'), 'backfill_block_style_brand');
+
+    $sql($facts->needsNotNull('block_styles', 'brand_id'), 'block_styles.brand_id is NOT NULL',
+         "ALTER TABLE block_styles MODIFY COLUMN brand_id INT(11) NOT NULL");
+
+    // The one statement here that replaces structure instead of adding it, which is
+    // why its gate reads the key's *columns* rather than asking whether a PRIMARY
+    // exists. Every table has one, so an existence test would answer the same before
+    // and after and this would either never run or run on every request — and unlike
+    // a duplicate ADD COLUMN, a second DROP/ADD PRIMARY KEY does not fail harmlessly,
+    // it rebuilds the table.
+    $sql($facts->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+         'block_styles re-keyed on (brand_id, block_type)',
+         "ALTER TABLE block_styles DROP PRIMARY KEY, ADD PRIMARY KEY (brand_id, block_type)");
+
+    // CASCADE, unlike the logo above: a Brand's standards are part of the Brand and
+    // mean nothing without it. Deleting a Brand that any Display still wears is
+    // refused long before this — by BrandStore, naming the Displays — so what this
+    // cascades is the standards of a Brand nobody was using.
+    $sql($facts->needsConstraint('block_styles', 'block_styles_ibfk_1'), 'brand standards → Brand',
+         "ALTER TABLE block_styles ADD CONSTRAINT block_styles_ibfk_1
+          FOREIGN KEY (brand_id) REFERENCES brands (id) ON DELETE CASCADE");
+
+    // A row count, not a catalogue fact, so it is a step. Runs after the re-key
+    // because what it seeds is six rows *for each Brand*, which it cannot write
+    // until the column those rows are keyed by is there.
     //
     // Its need is `true`, not `null`, on a host whose catalogue cannot be read — and
     // that is deliberate, because the need never came from the catalogue in the
@@ -626,11 +756,13 @@ function signageSchemaPlan(SchemaFacts $facts)
         lock_holder_id    INT(11)      DEFAULT NULL COMMENT 'edit lock holder',
         lock_taken_at     DATETIME     DEFAULT NULL COMMENT 'when the holder started editing',
         lock_activity_at  DATETIME     DEFAULT NULL COMMENT 'last real interaction by the holder',
+        brand_id          INT(11)      NOT NULL COMMENT 'the Brand this sign wears (ADR-0011)',
         created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (id),
         UNIQUE KEY tag (tag),
         KEY last_published_by (last_published_by),
-        KEY lock_holder_id (lock_holder_id)
+        KEY lock_holder_id (lock_holder_id),
+        KEY brand_id (brand_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
     // CREATE TABLE above is a no-op on a database that already has `displays`, so
@@ -649,10 +781,46 @@ function signageSchemaPlan(SchemaFacts $facts)
          "ALTER TABLE displays ADD CONSTRAINT displays_ibfk_2
           FOREIGN KEY (lock_holder_id) REFERENCES users (id) ON DELETE SET NULL");
 
+    // The Brand every existing sign wears. Added nullable, backfilled, tightened —
+    // the same three steps as `canvas_elements.display_id` below, and for the same
+    // reason: the live `displays` table already holds every sign in the shop.
+    //
+    // Absent from this plan when convergence *creates* `displays`, because the CREATE
+    // above declares it — which is what `needsColumn()` answers false for a missing
+    // table about. The seed below then supplies it, and it can, because the first
+    // Brand is seeded further up this same plan.
+    $sql($facts->needsColumn('displays', 'brand_id'), 'displays.brand_id',
+         "ALTER TABLE displays ADD COLUMN brand_id INT(11) DEFAULT NULL");
+
     // Always, and on a known need for the reason given above the block-style seed:
     // only a row count can say whether the drive-thru Display is there, and a fresh
     // install from schema.sql has the table with nothing in it.
     $step(true, 'seed_legacy_display');
+
+    // Every sign that predates Brands wears the one the seed just made. Runs while
+    // the column can still hold a NULL, exactly like the display_id backfill: a row
+    // that arrives unbranded later — a partly applied migration, a hand edit — would
+    // otherwise render with no standards at all and nothing would say why.
+    $step($facts->needsNotNull('displays', 'brand_id'), 'backfill_display_brand');
+
+    // Only succeeds once nothing is NULL, which is the condition worth enforcing:
+    // ADR-0011 makes this NOT NULL because a sign with no identity has no sensible
+    // rendering, and a Display left unbranded is one whose branded blocks would fall
+    // back to their own columns — which invariant 32 has just stopped publish writing.
+    $sql($facts->needsNotNull('displays', 'brand_id'), 'displays.brand_id is NOT NULL',
+         "ALTER TABLE displays MODIFY COLUMN brand_id INT(11) NOT NULL");
+    $sql($facts->needsIndex('displays', 'brand_id'), 'displays.brand_id indexed',
+         "ALTER TABLE displays ADD KEY brand_id (brand_id)");
+
+    // No ON DELETE clause, so the default RESTRICT stands, and that is the point:
+    // deleting a Brand a Display still wears is refused by BrandStore with a sentence
+    // naming the signs, and this is the database saying the same thing to anything
+    // that reaches the table another way. The alternative — SET NULL or CASCADE —
+    // would repaint or destroy three signs in a restaurant on one click, which is
+    // the merge the standing rule refuses (ADR-0011).
+    $sql($facts->needsConstraint('displays', 'displays_ibfk_3'), 'Display → Brand',
+         "ALTER TABLE displays ADD CONSTRAINT displays_ibfk_3
+          FOREIGN KEY (brand_id) REFERENCES brands (id)");
 
     // ---- canvas_elements.display_id ----------------------------------------
     // Added nullable, backfilled, then tightened — in that order, because the live
@@ -984,30 +1152,191 @@ function runSchemaStep(PDO $pdo, $step, &$error = null)
 {
     $error = '';
     switch ($step) {
-        case 'seed_block_styles':    return seedBlockStyles($pdo, $error);
-        case 'backfill_auto_pooled': return backfillPooledMarker($pdo, $error);
-        case 'seed_legacy_display':  return seedLegacyDisplay($pdo, $error);
-        case 'backfill_display_id':  return backfillDisplayId($pdo, $error);
+        case 'seed_first_brand':            return seedFirstBrand($pdo, $error);
+        case 'backfill_block_style_brand':  return backfillBlockStyleBrand($pdo, $error);
+        case 'seed_block_styles':           return seedBlockStyles($pdo, $error);
+        case 'backfill_auto_pooled':        return backfillPooledMarker($pdo, $error);
+        case 'seed_legacy_display':         return seedLegacyDisplay($pdo, $error);
+        case 'backfill_display_brand':      return backfillDisplayBrand($pdo, $error);
+        case 'backfill_display_id':         return backfillDisplayId($pdo, $error);
     }
     return true;   // an unknown step is nothing to do, not a failure to report
 }
 
 /**
- * Fill in any missing branded block type. Counts first: a read that finds all six
- * costs less than a six-row INSERT IGNORE, and unlike the insert it takes no locks
- * on a table the Brand Standards form may be saving to at the same moment.
+ * Create the first Brand, which every existing sign and every existing set of
+ * standards is then pointed at.
+ *
+ * Named after `SITE_NAME`, so the store's own name is what an admin opening Display
+ * Branding for the first time sees — not "Brand 1", which reads like something the
+ * upgrade left half-done. Guarded rather than assumed: this file is includable
+ * without `config.php` (see the header), so the constant may genuinely not be there.
+ *
+ * Does nothing once any Brand exists — including when an admin has already renamed
+ * this one, for the same reason `seedLegacyDisplay()` stands off a renamed tag.
+ */
+function seedFirstBrand(PDO $pdo, &$error = null)
+{
+    $error = '';
+    try {
+        $count = $pdo->query("SELECT COUNT(*) FROM brands")->fetchColumn();
+    } catch (Throwable $e) {
+        $error = 'the brands table is not there: ' . $e->getMessage();
+        return false;   // CREATE TABLE above failed; nothing to seed into
+    }
+    if (intval($count) > 0) { return true; }
+
+    try {
+        $pdo->prepare("INSERT INTO brands (name) VALUES (?)")->execute([firstBrandName()]);
+        return true;
+    } catch (Throwable $e) {
+        // A unique-name collision means another request seeded it between the count
+        // and this insert — the same race `seedLegacyDisplay()` answers, on the same
+        // first-request-after-a-deploy. The Brand exists, which is all this was for.
+        if (firstBrandId($pdo) > 0) { return true; }
+
+        $error = 'the first Brand could not be created: ' . $e->getMessage();
+        return false;
+    }
+}
+
+/**
+ * What to call the Brand every existing sign is about to wear.
+ *
+ * Pure and separate so the self-test can put a long name, an empty one and a
+ * missing constant through it — none of which this process can be in more than one
+ * of at a time, which is §4o's reason for every other pure rule in this file.
+ *
+ * A name too long for the column falls back to the generic rather than being cut:
+ * `substr()` counts bytes and the column counts characters, so trimming a name with
+ * one multi-byte character in it can hand MySQL a string ending mid-character —
+ * which is refused outright, turning a cosmetic problem into a Brand that was never
+ * created. An admin renames this on the first visit either way.
+ */
+function firstBrandName()
+{
+    $fallback = 'Store Brand';
+    if (!defined('SITE_NAME') || !is_string(SITE_NAME)) { return $fallback; }
+    $name = trim(SITE_NAME);
+    if ($name === '' || strlen($name) > 80) { return $fallback; }
+    return $name;
+}
+
+/**
+ * The Brand unbranded rows belong to: the oldest one. Returns 0 when there is none.
+ *
+ * Deliberately not "the one named after SITE_NAME" the way `legacyDisplayId()` looks
+ * for its tag first. A tag is a URL contract a person may deliberately keep; a Brand
+ * name is a label, and matching on it would hand every unbranded row to whichever
+ * Brand happened to share the store's name after somebody renamed things.
+ */
+function firstBrandId(PDO $pdo)
+{
+    try {
+        $id = $pdo->query("SELECT id FROM brands ORDER BY id ASC LIMIT 1")->fetchColumn();
+        return $id ? intval($id) : 0;
+    } catch (Throwable $e) {
+        return 0;
+    }
+}
+
+/** Point every set of standards that predates Brands at the first one. */
+function backfillBlockStyleBrand(PDO $pdo, &$error = null)
+{
+    $error   = '';
+    $brandId = firstBrandId($pdo);
+    if (!$brandId) {
+        // Nothing to backfill to, which means the seed above did not manage to make
+        // the first Brand. That is the failure worth reporting; this is its
+        // consequence, and the tighten after it refuses for the same reason.
+        $error = 'there is no Brand to hand the existing standards to';
+        return false;
+    }
+    return schemaTry($pdo, "UPDATE block_styles SET brand_id = " . intval($brandId)
+                         . " WHERE brand_id IS NULL", $error);
+}
+
+/** Point every sign that predates Brands at the first one. */
+function backfillDisplayBrand(PDO $pdo, &$error = null)
+{
+    $error   = '';
+    $brandId = firstBrandId($pdo);
+    if (!$brandId) {
+        $error = 'there is no Brand to hand the existing displays to';
+        return false;
+    }
+    return schemaTry($pdo, "UPDATE displays SET brand_id = " . intval($brandId)
+                         . " WHERE brand_id IS NULL", $error);
+}
+
+/**
+ * Fill in any missing branded block type, for every Brand.
+ *
+ * Counts first: a read that finds them all costs less than the inserts, and unlike
+ * an insert it takes no locks on a table the Brand Standards form may be saving to
+ * at the same moment.
+ *
+ * Only the absent (Brand, type) pairs are written, computed rather than left to an
+ * `INSERT IGNORE` — which MySQL and SQLite spell differently, so the ignoring form
+ * was a statement the fixture could never execute and therefore never did (#11).
+ * Existing rows are not touched: the store's own numbers win, and this only fills
+ * gaps.
  */
 function seedBlockStyles(PDO $pdo, &$error = null)
 {
     $error = '';
+
     try {
-        $have = intval($pdo->query("SELECT COUNT(*) FROM block_styles")->fetchColumn());
+        $brandIds = [];
+        foreach ($pdo->query("SELECT id FROM brands ORDER BY id ASC")->fetchAll() as $row) {
+            $brandIds[] = intval($row['id']);
+        }
+    } catch (Throwable $e) {
+        $error = 'the brands table could not be read: ' . $e->getMessage();
+        return false;
+    }
+    if (!$brandIds) {
+        $error = 'there is no Brand to hold the branded block standards';
+        return false;
+    }
+
+    try {
+        $have = [];
+        foreach ($pdo->query("SELECT brand_id, block_type FROM block_styles")->fetchAll() as $row) {
+            $have[intval($row['brand_id']) . '|' . $row['block_type']] = true;
+        }
     } catch (Throwable $e) {
         $error = 'block_styles could not be read: ' . $e->getMessage();
         return false;   // no table to count, and none to seed into
     }
-    if ($have >= SCHEMA_BLOCK_STYLE_COUNT) { return true; }
-    return schemaTry($pdo, SCHEMA_BLOCK_STYLE_SEED, $error);
+    if (count($have) >= count($brandIds) * count(BrandStyles::STARTING_POINTS)) { return true; }
+
+    $insert = "INSERT INTO block_styles
+        (brand_id,block_type,font_family,font_size,font_color,font_weight,font_style,line_height)
+        VALUES (?,?,?,?,?,?,?,?)";
+    try {
+        $stmt = $pdo->prepare($insert);
+    } catch (Throwable $e) {
+        $error = 'the branded block standards could not be seeded: ' . $e->getMessage();
+        return false;
+    }
+
+    $ok = true;
+    foreach ($brandIds as $brandId) {
+        foreach (BrandStyles::STARTING_POINTS as $type => $values) {
+            if (isset($have[$brandId . '|' . $type])) { continue; }
+            try {
+                $stmt->execute(array_merge([$brandId, $type], $values));
+            } catch (Throwable $e) {
+                // Carry on rather than stopping: one refused row must not leave the
+                // other five types of that Brand — or every later Brand — unseeded,
+                // since each missing row is its own silently-unsaveable form field.
+                $error = 'a branded block standard could not be seeded: ' . $e->getMessage();
+                $ok    = false;
+            }
+        }
+    }
+    return $ok;
 }
 
 /**
@@ -1074,11 +1403,22 @@ function seedLegacyDisplay(PDO $pdo, &$error = null)
         // No canvas_settings (fresh install) — defaults are the same ones it held.
     }
 
+    // The Brand the first sign wears. Supplied rather than left out, because on a
+    // fresh install the CREATE TABLE above declares `brand_id NOT NULL` and there is
+    // no default for it to fall back on. Seeded further up this same plan, so by here
+    // it is there — and when it is not, saying so beats an insert failing on a
+    // constraint whose name means nothing to whoever reads the alert.
+    $brandId = firstBrandId($pdo);
+    if (!$brandId) {
+        $error = 'there is no Brand for the drive-thru Display to wear';
+        return false;
+    }
+
     try {
         $pdo->prepare(
-            "INSERT INTO displays (tag, title, location, canvas_width, canvas_height, bg_type, bg_val, is_active)
-             VALUES (?, ?, NULL, 1920, 1080, ?, ?, 1)"
-        )->execute([LEGACY_DISPLAY_TAG, 'Drive-Thru', $bgType, $bgVal]);
+            "INSERT INTO displays (tag, title, location, canvas_width, canvas_height, bg_type, bg_val, is_active, brand_id)
+             VALUES (?, ?, NULL, 1920, 1080, ?, ?, 1, ?)"
+        )->execute([LEGACY_DISPLAY_TAG, 'Drive-Thru', $bgType, $bgVal, $brandId]);
         return true;
     } catch (Throwable $e) {
         // A unique-tag collision means another request seeded it between the count

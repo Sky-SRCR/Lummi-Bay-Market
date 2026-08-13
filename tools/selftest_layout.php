@@ -743,7 +743,7 @@ checkSame($before, $driveT->backgroundValue(),
 // two doors was deliberate and visible rather than assumed. There is no difference
 // left to assert, so what it checks is the refusal: nothing stored, and said so.
 $panelSign = makeTestDisplay($pdo, 'panel-bg', 'Panel Colour');
-$admin     = new DisplayAdmin($pdo, $store, $layouts, new GrantStore($pdo));
+$admin     = new DisplayAdmin($pdo, $store, $layouts, new GrantStore($pdo), new BrandStore($pdo));
 $panelWas  = loadTestDisplay($pdo, $panelSign->id())->backgroundValue();
 $res = $admin->setBackgroundColor($panelSign, 'nonsense');
 checkSame(false, $res->isOk(), 'the admin panel refuses a colour it cannot read');
@@ -811,7 +811,7 @@ $store  = new DisplayStore($pdo);
 $admin  = newTestDisplayAdmin($pdo);
 $layouts = newTestLayoutStore($pdo);
 
-$res = $admin->create(['title' => 'Drive-Thru', 'canvas_width' => 1920, 'canvas_height' => 1080]);
+$res = $admin->create(['brand_id' => 1, 'title' => 'Drive-Thru', 'canvas_width' => 1920, 'canvas_height' => 1080]);
 check($res->isOk(), 'a Display is created from a title and a canvas size alone');
 $driveT = $res->display();
 checkSame('drive-thru', $driveT->tag(), 'its tag was suggested from its title');
@@ -820,17 +820,17 @@ checkSame(true, $driveT->isActive(), 'it is active from the moment it exists');
 check(strpos($res->message(), 'viewer.php?display=drive-thru') !== false,
       'and the confirmation gives the address to point a Screen at');
 
-$res = $admin->create(['title' => 'Second Drive-Thru', 'tag' => 'drive-thru',
+$res = $admin->create(['brand_id' => 1, 'title' => 'Second Drive-Thru', 'tag' => 'drive-thru',
                        'canvas_width' => 1920, 'canvas_height' => 1080]);
 checkSame(DisplayResult::CONFLICT, $res->kind(), 'a tag already in use is refused');
 checkSame('tag', $res->field(), 'and the refusal names the field to fix');
 checkSame(1, $store->count(), 'nothing was created');
 
-$res = $admin->create(['title' => '', 'canvas_width' => 1920, 'canvas_height' => 1080]);
+$res = $admin->create(['brand_id' => 1, 'title' => '', 'canvas_width' => 1920, 'canvas_height' => 1080]);
 checkSame(DisplayResult::INVALID, $res->kind(), 'a Display with no title is refused');
-$res = $admin->create(['title' => 'Bad Tag', 'tag' => 'Lobby_1', 'canvas_width' => 1920, 'canvas_height' => 1080]);
+$res = $admin->create(['brand_id' => 1, 'title' => 'Bad Tag', 'tag' => 'Lobby_1', 'canvas_width' => 1920, 'canvas_height' => 1080]);
 checkSame(DisplayResult::INVALID, $res->kind(), 'a tag with an underscore is refused');
-$res = $admin->create(['title' => 'No Size', 'canvas_width' => 0, 'canvas_height' => 0]);
+$res = $admin->create(['brand_id' => 1, 'title' => 'No Size', 'canvas_width' => 0, 'canvas_height' => 0]);
 checkSame(DisplayResult::INVALID, $res->kind(), 'a Display with no canvas size is refused');
 checkSame('canvas_width', $res->field(), 'and the refusal points at the size');
 checkSame(1, $store->count(), 'still nothing created');
@@ -840,13 +840,13 @@ $res = publishAs($layouts, $driveT, layoutWith('Drive-thru $9.99'), '0');
 check($res->isOk(), 'the drive-thru gets a layout to duplicate');
 $driveT = loadTestDisplay($pdo, $driveT->id());
 
-$res = $admin->create(['title' => 'Portrait Board', 'canvas_width' => 1080, 'canvas_height' => 1920,
+$res = $admin->create(['brand_id' => 1, 'title' => 'Portrait Board', 'canvas_width' => 1080, 'canvas_height' => 1920,
                        'duplicate_from' => 'drive-thru']);
 checkSame(DisplayResult::INVALID, $res->kind(), 'duplicating into a different shape is refused (ADR-0004)');
 check(strpos($res->message(), '1920 × 1080') !== false, 'and the refusal states the shape it would have copied');
 checkSame(1, $store->count(), 'the Display was not created either');
 
-$res = $admin->create(['title' => 'Lobby', 'canvas_width' => 1920, 'canvas_height' => 1080,
+$res = $admin->create(['brand_id' => 1, 'title' => 'Lobby', 'canvas_width' => 1920, 'canvas_height' => 1080,
                        'duplicate_from' => 'drive-thru']);
 check($res->isOk(), 'duplicating from an identically sized Display works');
 $lobby = $res->display();
@@ -866,7 +866,7 @@ checkSame(intval($copiedSection['id']), intval($copiedText['section_id']),
 checkSame('Drive-thru $9.99', $copiedText['manual_content'], 'the content came across');
 checkSame(10, intval($copiedSection['x_pos']), 'and so did the positions');
 
-$res = $admin->create(['title' => 'Third', 'canvas_width' => 1920, 'canvas_height' => 1080,
+$res = $admin->create(['brand_id' => 1, 'title' => 'Third', 'canvas_width' => 1920, 'canvas_height' => 1080,
                        'duplicate_from' => 'no-such-display']);
 checkSame(DisplayResult::INVALID, $res->kind(), 'duplicating from a Display that does not exist is refused');
 
@@ -876,7 +876,7 @@ checkSame(false, $layouts->copyLayout($driveT, loadTestDisplay($pdo, $lobby->id(
 // ---- Editing -----------------------------------------------------------------
 checkSame('lobby', $lobby->tag(), 'the duplicate was tagged from its own title, not the original\'s');
 
-$res = $admin->updateDetails($lobby, ['title' => 'Lobby Screen', 'tag' => 'lobby-screen',
+$res = $admin->updateDetails($lobby, ['brand_id' => 1, 'title' => 'Lobby Screen', 'tag' => 'lobby-screen',
                                       'location' => 'Front entrance']);
 check($res->isOk(), 'title, tag and location can be edited');
 $lobby = $res->display();
@@ -885,15 +885,15 @@ checkSame('Front entrance', $lobby->location(), 'the location is stored');
 check(strpos($res->message(), 'viewer.php?display=lobby-screen') !== false,
       'a rename says what address the Screen must be pointed at now');
 
-$res = $admin->updateDetails($lobby, ['title' => 'Lobby Screen', 'tag' => 'lobby-screen']);
+$res = $admin->updateDetails($lobby, ['brand_id' => 1, 'title' => 'Lobby Screen', 'tag' => 'lobby-screen']);
 check($res->isOk() && strpos($res->message(), 'address changed') === false,
       'saving without changing the tag does not claim the address changed');
 
-$res = $admin->updateDetails($lobby, ['title' => 'Lobby Screen', 'tag' => 'drive-thru']);
+$res = $admin->updateDetails($lobby, ['brand_id' => 1, 'title' => 'Lobby Screen', 'tag' => 'drive-thru']);
 checkSame(DisplayResult::CONFLICT, $res->kind(), 'renaming onto another Display\'s tag is refused');
 checkSame('lobby-screen', $store->forId($lobby->id())->tag(), 'and the tag is unchanged');
 
-$res = $admin->updateDetails($lobby, ['title' => 'Lobby', 'tag' => '']);
+$res = $admin->updateDetails($lobby, ['brand_id' => 1, 'title' => 'Lobby', 'tag' => '']);
 check($res->isOk() && $res->display()->tag() === 'lobby',
       'clearing the tag re-suggests it from the title rather than failing');
 $lobby = $res->display();
@@ -1568,7 +1568,7 @@ checkSame(0, count(elementsOf($pdo, $sign->id())),
 setTestForeignKeys($pdo, true);
 
 // ─────────────────────────────────────────────────────────────
-section('Brand Standards: shared typography, and what may change it');
+section('Brand Standards: a Brand\'s typography, and what may change it');
 
 $pdo   = newTestDb();
 $store = newTestDisplayStore($pdo);
@@ -1576,29 +1576,68 @@ $brand = new BrandStyles($pdo);
 $one   = makeTestDisplay($pdo, 'one', 'Sign One');
 $two   = makeTestDisplay($pdo, 'two', 'Sign Two');
 
-checkSame(null, $store->editedByAnyoneElse(1), 'nobody is editing anything to begin with');
+// A second Brand, and a sign wearing it. This is what the narrowed refusal needs to
+// be *shown* rather than asserted: with one Brand, "refuse while anyone is editing
+// anything" and "refuse while anyone is editing a sign wearing this Brand" are the
+// same rule and no test could tell them apart.
+$brandB = makeTestBrand($pdo, 'Salmon House');
+$three  = makeTestDisplay($pdo, 'three', 'Sign Three', 1920, 1080, $brandB);
+
+checkSame(null, $store->editedByAnyoneElseUsingBrand(1, 1), 'nobody is editing anything to begin with');
 $store->claimLock($two, 2);
-$busy = $store->editedByAnyoneElse(1);
-check($busy !== null,        'a lock held by another account is visible to the whole installation');
+$busy = $store->editedByAnyoneElseUsingBrand(1, 1);
+check($busy !== null,        'a lock held by another account on a sign wearing this Brand is visible');
 checkSame('two', $busy ? $busy->tag() : '', 'and it names which Display');
-checkSame(null, $store->editedByAnyoneElse(2), 'the holder is not blocked by their own lock');
+checkSame(null, $store->editedByAnyoneElseUsingBrand(2, 1), 'the holder is not blocked by their own lock');
+
+// The narrowing itself (ADR-0011). Sign Two is being edited and wears Brand 1;
+// editing Brand 2 is nobody's business but the Salmon House's.
+checkSame(null, $store->editedByAnyoneElseUsingBrand(1, $brandB),
+          'somebody editing a sign wearing another Brand does not block this one');
+$store->claimLock($three, 2);
+$busyB = $store->editedByAnyoneElseUsingBrand(1, $brandB);
+checkSame('three', $busyB ? $busyB->tag() : '', 'and the sign wearing it does block it');
 
 ageTestLock($pdo, $two->id(), LockState::IDLE_LAPSE_SECONDS + 60);
-checkSame(null, $store->editedByAnyoneElse(1), 'a lapsed lock does not block a brand change');
+checkSame(null, $store->editedByAnyoneElseUsingBrand(1, 1), 'a lapsed lock does not block a brand change');
+
+checkSame([$one->id(), $two->id()], array_map(function ($d) { return $d->id(); }, $store->usingBrand(1)),
+          'a Brand knows which signs wear it, which is what makes a delete refusal name them');
+checkSame(1, count($store->usingBrand($brandB)), 'and the other Brand has its own');
 
 // Absent means untouched — the defect that reset every sign to black Arial 16.
-$before = $brand->all();
-checkSame(0, $brand->save([]), 'a save carrying no typography writes nothing');
-checkSame($before, $brand->all(), 'and leaves every stored style exactly as it was');
+$before = $brand->all(1);
+checkSame(0, $brand->save(1, []), 'a save carrying no typography writes nothing');
+checkSame($before, $brand->all(1), 'and leaves every stored style exactly as it was');
 
-checkSame(1, $brand->save(['price' => ['font_family' => 'Georgia', 'font_size' => 44,
-                                       'font_color' => '#00FF00', 'font_weight' => 'bold',
-                                       'font_style' => 'normal', 'line_height' => 1.25]]),
+checkSame(1, $brand->save(1, ['price' => ['font_family' => 'Georgia', 'font_size' => 44,
+                                          'font_color' => '#00FF00', 'font_weight' => 'bold',
+                                          'font_style' => 'normal', 'line_height' => 1.25]]),
           'a save carrying one type writes one row');
-$after = $brand->all();
+$after = $brand->all(1);
 checkSame('Georgia', $after['price']['font_family'],   'the submitted family is stored');
 checkSame('#00ff00', $after['price']['font_color'],    'a colour is normalised to lowercase hex');
 checkSame($before['item_title'], $after['item_title'], 'and the five types it did not carry are untouched');
+
+// The whole point of the re-key: two Brands' rows for one block type are two rows.
+// On the old single-column key this save would have overwritten the row above.
+checkSame('Arial', $brand->all($brandB)['price']['font_family'],
+          'a second Brand keeps its own price typography when the first one changes');
+checkSame(1, $brand->save($brandB, ['price' => ['font_family' => 'Verdana', 'font_size' => 30,
+                                                'font_color' => '#123456', 'font_weight' => 'bold',
+                                                'font_style' => 'normal', 'line_height' => 1.2]]),
+          'and saving the second Brand writes its own row');
+checkSame('Verdana', $brand->all($brandB)['price']['font_family'], 'which really changed');
+checkSame('Georgia',  $brand->all(1)['price']['font_family'],
+          'and left the first Brand exactly as it was — the re-key, proved');
+
+checkSame(0, $brand->seedFor($brandB), 'seeding a Brand that already has its six writes nothing');
+checkSame(6, $brand->seedFor(makeTestBrandRow($pdo, 'Casino Floor')),
+          'and a Brand with none gets all six');
+
+$brandGone = makeTestBrand($pdo, 'Doomed');
+checkSame(6, $brand->deleteFor($brandGone), 'destroying a Brand takes its six standards with it');
+checkSame([], $brand->all($brandGone),      'leaving none behind for an id that is never reused');
 
 // Every one of these reaches every sign within 30 seconds with no publish, so a
 // value that cannot render must never be stored in the first place.
@@ -1630,7 +1669,7 @@ section('Publish never writes what a Brand paints (invariant 32)');
 // thing on the afternoon of a deploy — cannot write one either.
 
 // Who is painted and who is not, asked of the standards this install really has.
-$stored = $brand->all();
+$stored = $brand->all(1);
 check(BrandStyles::paints('text', 'price', $stored),       'a price block is painted by Brand Standards');
 check(!BrandStyles::paints('text', 'free', $stored),       'a free text block owns its own typography');
 check(!BrandStyles::paints('image', 'price', $stored),     'and only a text block reads these columns at all');
@@ -3129,7 +3168,7 @@ $server = new ServerReport($sPdo);
 
 check($server->isConverged(), 'a fully converged database reports as converged');
 $columns = $server->convergence();
-checkSame(8, count($columns), 'and every runtime-added column is accounted for');
+checkSame(10, count($columns), 'and every runtime-added column is accounted for');
 foreach ($columns as $col) {
     check($col['ok'], 'present: ' . $col['table'] . '.' . $col['column']);
     checkSame('', $col['note'], 'with nothing to warn about for ' . $col['column']);
@@ -3304,15 +3343,15 @@ section('Convergence asks the catalogue before it alters anything');
 $converged = schemaPlanFor(convergedSchemaShape());
 checkSame(0, count(planStatements($converged)),
           'a converged database is issued no ALTER or CREATE at all');
-checkSame(['seed_block_styles', 'seed_legacy_display'], planSteps($converged),
-          'only the two steps a catalogue cannot answer are left, and both are a small COUNT');
+checkSame(['seed_first_brand', 'seed_block_styles', 'seed_legacy_display'], planSteps($converged),
+          'only the three steps a catalogue cannot answer are left, and each is a small COUNT');
 
 // The fallback has to be the old behaviour exactly, or a host whose catalogue
 // cannot be read would quietly stop converging.
 $blind = signageSchemaPlan(SchemaFacts::unknown());
-checkSame(21, count(planStatements($blind)),
+checkSame(31, count(planStatements($blind)),
           'a database whose catalogue cannot be read is issued every statement, as before');
-checkSame(4, count(planSteps($blind)), 'and every step');
+checkSame(7, count(planSteps($blind)), 'and every step');
 checkSame(false, SchemaFacts::unknown()->known(), 'and it says so rather than answering false');
 checkSame(null, SchemaFacts::unknown()->hasColumn('assets', 'auto_pooled'),
           'an unknown catalogue answers "cannot tell", never "not there"');
@@ -3357,7 +3396,7 @@ check(planWants($plan, 'MODIFY COLUMN display_id INT(11) NOT NULL'),
 // that has them all.
 $empty = readSchemaFacts(fakeCatalogue(['columns' => [], 'indexes' => [], 'constraints' => []]));
 checkSame(false, $empty->known(), 'a catalogue with nothing to say about this app is unknown, not empty');
-checkSame(21, count(planStatements(signageSchemaPlan($empty))),
+checkSame(31, count(planStatements(signageSchemaPlan($empty))),
           'so it falls back to trying everything rather than creating what already exists');
 
 // Two things about a catalogue this app does not control, both of which decide
@@ -3552,9 +3591,10 @@ checkSame(true, $absent->needsConstraint('canvas_elements', 'canvas_elements_ibf
           'but its foreign key is still wanted, because no CREATE TABLE here declares one');
 check(!planWants($plan, 'MODIFY COLUMN'), 'so the plan sends it no MODIFY');
 check(!planWants($plan, 'ADD KEY'),       'and no ADD KEY');
-checkSame(['seed_block_styles', 'seed_legacy_display', 'canvas_elements → displays'],
+checkSame(['seed_first_brand', 'seed_block_styles', 'seed_legacy_display',
+           'canvas_elements → displays'],
           planOrder($plan),
-          'leaving the two steps and the one statement that is not redundant, and nothing else');
+          'leaving the three steps and the one statement that is not redundant, and nothing else');
 
 // The same rule one level down: a column that is absent from a table that is *there*
 // is added by its own ADD COLUMN, or not at all. MODIFY has nothing to work on, and
@@ -3574,15 +3614,34 @@ check(!in_array('seed_block_styles', planSteps(schemaPlanFor($shape)), true),
 
 // ---- The steps, and what a failure now looks like ----------------------------
 
-// SQLite rejects `INSERT IGNORE`, which makes it a useful witness: a true return
-// can only mean the count found all six types and the statement was never sent.
-// That is the whole technique, so this pair stays on SQLite even on a MySQL run —
-// where the statement is valid, is sent, and succeeds, which proves the opposite
-// thing. Both are worth knowing; the MySQL half is checked at the end of the file.
+// The seed used to be one `INSERT IGNORE`, which SQLite rejects — so on this engine
+// a `true` return could only ever mean "the count found all six and nothing was
+// sent", and the inserting half of the function had never run in a test at all.
+// Re-keying on the Brand replaced it with a computed set of plain INSERTs, which
+// both engines run, so the seed can now be watched actually seeding.
 $bPdo = newSqliteTestDb();
 checkSame(true, seedBlockStyles($bPdo), 'a complete set of branded block types is not re-seeded');
 $bPdo->exec("DELETE FROM block_styles WHERE block_type = 'price_2'");
-checkSame(false, seedBlockStyles($bPdo), 'a missing one makes it try the seed');
+checkSame(true, seedBlockStyles($bPdo), 'a missing one is put back');
+checkSame(6, count((new BrandStyles($bPdo))->all(1)), 'so the Brand has all six again');
+
+// A second Brand with no standards at all is six more rows, not zero: the seed is
+// per Brand now, and a Brand created by a hand-written INSERT is exactly the state
+// that used to leave a whole venue's typography form silently saving nothing.
+makeTestBrandRow($bPdo, 'Unseeded Venue');
+checkSame(true, seedBlockStyles($bPdo), 'a Brand with no standards at all is seeded');
+checkSame(6, count((new BrandStyles($bPdo))->all(2)), 'with its own six rows');
+checkSame('Arial', (new BrandStyles($bPdo))->all(2)['price']['font_family'],
+          'started from BrandStyles::STARTING_POINTS rather than from the other Brand');
+
+// And the cascade of a Brand that could not be created: nothing to seed *for*.
+$bNoBrand = newSqliteTestDb();
+$bNoBrand->exec("DELETE FROM block_styles");
+$bNoBrand->exec("DELETE FROM displays");
+$bNoBrand->exec("DELETE FROM brands");
+$bErr = 'untouched';
+checkSame(false, seedBlockStyles($bNoBrand, $bErr), 'with no Brand there is nothing to seed for');
+checkMentions($bErr, 'no Brand', 'and it says that rather than naming a column');
 
 checkSame(true, runSchemaStep(newTestDb(), 'no_such_step'),
           'a step name nothing knows is nothing to do, not a failure');
@@ -3826,7 +3885,8 @@ $yPdo   = newTestDb();
 $yStore = newTestDisplayStore($yPdo);
 $yLobby = makeTestDisplay($yPdo, 'lobby', 'Lobby');
 $yDeli  = makeTestDisplay($yPdo, 'deli', 'Deli Case');
-$yBreak = new DisplayAdmin($yPdo, $yStore, newTestLayoutStore($yPdo), new RefusingGrantStore($yPdo));
+$yBreak = new DisplayAdmin($yPdo, $yStore, newTestLayoutStore($yPdo), new RefusingGrantStore($yPdo),
+                           new BrandStore($yPdo));
 grantTestAccess($yPdo, $yLobby->id(), 2);
 $yStore->claimLock($yLobby, 2);
 
@@ -4119,7 +4179,7 @@ check(strpos($res->message(), 'cannot sign in') === false,
 // theirs.
 $wStore->claimLock(loadTestDisplay($wPdo, $wDrive->id()), 2);
 $res = $wAdmin->updateDetails(loadTestDisplay($wPdo, $wDrive->id()), [
-    'tag' => 'drive-through', 'title' => 'Drive-Thru', 'location' => '',
+    'brand_id' => 1, 'tag' => 'drive-through', 'title' => 'Drive-Thru', 'location' => '',
 ]);
 checkSame(true, $res->isOk(), 'a screen name tag can be renamed');
 checkSame('drive-through', loadTestDisplay($wPdo, $wDrive->id())->tag(), 'and really changes');
@@ -4133,7 +4193,7 @@ checkMentions($res->message(), 'still theirs',
 // With nobody editing, there is nothing to say about a reload.
 $wStore->releaseLockOn($wDrive->id(), 2);
 $res = $wAdmin->updateDetails(loadTestDisplay($wPdo, $wDrive->id()), [
-    'tag' => 'drive-thru', 'title' => 'Drive-Thru', 'location' => '',
+    'brand_id' => 1, 'tag' => 'drive-thru', 'title' => 'Drive-Thru', 'location' => '',
 ]);
 check(strpos($res->message(), 'reload') === false,
       'renaming a display nobody has open says nothing about anybody reloading');
@@ -4437,9 +4497,9 @@ foreach ($blindPlan as $entry) {
     if ($entry['need'] === null) { $guessed[] = $entry['why']; }
     if ($entry['need'] === true) { $certain[] = $entry['why']; }
 }
-checkSame(23, count($guessed), 'with no catalogue, every statement in the plan is a guess');
-checkSame(['seed_block_styles', 'seed_legacy_display'], $certain,
-          'and the only certainties are the two steps that ask the rows, not the catalogue');
+checkSame(35, count($guessed), 'with no catalogue, every statement in the plan is a guess');
+checkSame(['seed_first_brand', 'seed_block_styles', 'seed_legacy_display'], $certain,
+          'and the only certainties are the three steps that ask the rows, not the catalogue');
 $statementNeeds = [];
 foreach ($blindPlan as $entry) {
     if (isset($entry['sql'])) { $statementNeeds[] = $entry['need']; }
@@ -4822,8 +4882,8 @@ checkSame('#1a1a2e', $blankBg->query("SELECT bg_val FROM displays")->fetchColumn
 // catch block is written for, and nothing else in one process can produce it.
 $racePdo = newTestDb();
 $racePdo->exec("CREATE TRIGGER seed_race BEFORE INSERT ON displays BEGIN
-    INSERT INTO displays (tag,title,canvas_width,canvas_height)
-        VALUES ('" . LEGACY_DISPLAY_TAG . "','Drive-Thru',1920,1080);
+    INSERT INTO displays (tag,title,canvas_width,canvas_height,brand_id)
+        VALUES ('" . LEGACY_DISPLAY_TAG . "','Drive-Thru',1920,1080,1);
     SELECT RAISE(FAIL, 'UNIQUE constraint failed: displays.tag');
 END");
 $err = 'untouched';
@@ -6096,7 +6156,7 @@ $cPdo   = newTestDb();
 $cStore = new DisplayStore($cPdo);
 $cAdmin = newTestDisplayAdmin($cPdo);
 
-$res = $cAdmin->create(['title' => 'Deli Board', 'canvas_width' => 1920,
+$res = $cAdmin->create(['brand_id' => 1, 'title' => 'Deli Board', 'canvas_width' => 1920,
                         'canvas_height' => 1080, 'bg_val' => 'darkish blue']);
 checkSame(false, $res->isOk(), 'a Display is not created with a background nobody can read');
 checkSame(DisplayResult::INVALID, $res->kind(), 'it is invalid input rather than a database failure');
@@ -6104,12 +6164,12 @@ checkSame('bg_val', $res->field(), 'and the refusal points at the swatch');
 checkMentions($res->message(), '#1a1a2e', 'saying what a colour looks like, since the form was wrong about it');
 checkSame(0, count($cStore->all()), 'and no Display was created — not one in the wrong colour');
 
-$res = $cAdmin->create(['title' => 'Deli Board', 'canvas_width' => 1920, 'canvas_height' => 1080]);
+$res = $cAdmin->create(['brand_id' => 1, 'title' => 'Deli Board', 'canvas_width' => 1920, 'canvas_height' => 1080]);
 checkSame(true, $res->isOk(), 'a form that named no colour at all is fine');
 checkSame(DisplayAdmin::DEFAULT_BACKGROUND, $res->display()->backgroundValue(),
           'and gets the default, which is what "nothing supplied" has always meant');
 
-$res = $cAdmin->create(['title' => 'Bakery', 'canvas_width' => 1920,
+$res = $cAdmin->create(['brand_id' => 1, 'title' => 'Bakery', 'canvas_width' => 1920,
                         'canvas_height' => 1080, 'bg_val' => '#AABBCC']);
 checkSame(true, $res->isOk(), 'a real colour creates a Display');
 checkSame('#aabbcc', $res->display()->backgroundValue(), 'stored the one way the app stores colours');
@@ -6569,7 +6629,7 @@ $aLay   = newTestLayoutStore($aPdo);
 // the database. Named here rather than left to default, or every count below would
 // depend on what `branding_config.php` happens to hold on the machine running this.
 $aBrand = SiteChrome::DEFAULTS;
-$aAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo), $aBrand);
+$aAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo), new BrandStore($aPdo), $aBrand);
 
 $aDrive = makeTestDisplay($aPdo, 'drive-thru', 'Drive-Thru Menu');
 $aPatio = makeTestDisplay($aPdo, 'patio', 'Patio Board');
@@ -6709,7 +6769,7 @@ checkSame('puce',   $aBadCfg[0]['value'], 'quoting what is actually in the file'
 // of its own — because this one is the only colour in the app that no sign uses, and
 // a finding that read like the others would send somebody to the shop floor over a
 // navigation bar.
-$aCfgAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo),
+$aCfgAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo), new BrandStore($aPdo),
                             ['accent' => 'puce'] + SiteChrome::DEFAULTS);
 $found = $aCfgAudit->findings();
 checkSame(3, count($found), 'a brand colour nobody can read joins the audit');
@@ -6796,9 +6856,9 @@ foreach ([['font_family', 'Arial; }'], ['font_color', 'puce'], ['font_size', 900
           ['font_weight', 'heavy'], ['font_style', 'oblique'], ['line_height', 40]] as $aPair) {
     $aRow = [$aPair[0] => $aPair[1]] + $aRaw;
     $aSaveStore = new BrandStyles(newTestDb());
-    $aSaveStore->save(['price' => $aRow]);
+    $aSaveStore->save(1, ['price' => $aRow]);
     $aDrawn = BrandStyles::readable($aRow)[$aPair[0]];
-    $aKept  = $aSaveStore->all()['price'][$aPair[0]];
+    $aKept  = $aSaveStore->all(1)['price'][$aPair[0]];
     // Numerically for the two numeric columns, by the same rule unrenderable() uses:
     // readable() answers what CSS takes — a float — and the column answers what a
     // DECIMAL(4,2) round-trips to, which is '5.00' on MySQL and 5 on SQLite. The
@@ -6814,7 +6874,7 @@ foreach ([['font_family', 'Arial; }'], ['font_color', 'puce'], ['font_size', 900
 // tidied would report nothing and would be believed.
 $aRawPdo = newTestDb();
 $aRawPdo->prepare("UPDATE block_styles SET font_color = 'gold' WHERE block_type = 'price'")->execute();
-checkSame('gold', (new BrandStyles($aRawPdo))->all()['price']['font_color'],
+checkSame('gold', (new BrandStyles($aRawPdo))->all(1)['price']['font_color'],
           'all() hands back what is stored, not what renders');
 
 // And the page that draws them uses the reader, not the row. Cross-file, because the
@@ -6867,10 +6927,14 @@ checkSame([], $mStatements,
 // an empty database, but it is still asked, so they are not expected to be empty.
 check(is_array(planSteps($mPlan)), 'and the row-level steps are still offered');
 
-// ---- The seed, sent rather than refused -----------------------------------------
-// The SQLite half of this pair is up in the convergence section, where `INSERT
-// IGNORE` being invalid is used as the witness that the statement was never sent.
-// Here it is valid, so the opposite is provable: a missing row really is restored.
+// ---- The seed, against the engine the shop runs ---------------------------------
+// This pair used to be the only place the seed was executed at all: it was one
+// `INSERT IGNORE`, which SQLite rejects, so the SQLite half could only ever witness
+// the statement *not* being sent. Re-keying on the Brand replaced it with computed
+// plain INSERTs that both engines run, and the SQLite half up in the convergence
+// section now watches it seed for real. What is still worth asking only here is
+// whether MySQL agrees — the composite primary key is what makes a second Brand's
+// six rows six more rows rather than a duplicate-key error.
 $mSeed = newTestDb();
 checkSame(true, seedBlockStyles($mSeed), 'a complete set of branded block types is not re-seeded');
 $mSeed->exec("DELETE FROM block_styles WHERE block_type = 'price_2'");
@@ -6879,7 +6943,14 @@ checkSame(6, intval($mSeed->query("SELECT COUNT(*) FROM block_styles")->fetchCol
           'leaving all six branded types on the table');
 checkSame('#e74c3c', $mSeed->query(
     "SELECT font_color FROM block_styles WHERE block_type = 'price'")->fetchColumn(),
-    'and INSERT IGNORE left the store\'s own values alone');
+    'and the store\'s own values were left alone');
+
+// A second Brand on the real engine: six more rows under the composite key, which
+// on the pre-ADR-0011 key would have been six duplicate-key failures.
+makeTestBrandRow($mSeed, 'Second Venue');
+checkSame(true, seedBlockStyles($mSeed), 'a second Brand is seeded too');
+checkSame(12, intval($mSeed->query("SELECT COUNT(*) FROM block_styles")->fetchColumn()),
+          'and MySQL keeps both Brands\' rows, which is the whole point of the re-key');
 
 // ---- The row lock, actually taken -----------------------------------------------
 // `SELECT … FOR UPDATE` is the statement the SQLite fixture replaces, which made the
@@ -6995,4 +7066,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1854 : 1831);
+reportChecks(testIsMysql() ? 1879 : 1853);

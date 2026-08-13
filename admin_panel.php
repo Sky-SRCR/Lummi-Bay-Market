@@ -7,6 +7,9 @@ require_once __DIR__ . '/lib/layout_store.php';
 require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/display_admin.php';
 require_once __DIR__ . '/lib/brand_styles.php';
+require_once __DIR__ . '/lib/brands.php';
+require_once __DIR__ . '/lib/brand_admin.php';
+require_once __DIR__ . '/lib/assets.php';
 require_once __DIR__ . '/lib/branding.php';
 require_once __DIR__ . '/lib/server_report.php';
 require_once __DIR__ . '/lib/password_resets.php';
@@ -51,7 +54,13 @@ ensureSignageSchema($pdo);
 $displayStore = new DisplayStore($pdo);
 $layoutStore  = new LayoutStore($pdo, $displayStore);
 $grantStore   = new GrantStore($pdo);
-$displayAdmin = new DisplayAdmin($pdo, $displayStore, $layoutStore, $grantStore);
+// Brands are administered through BrandAdmin for the same reason Displays go through
+// DisplayAdmin: creating one writes a `brands` row *and* six `block_styles` rows, and
+// half of that landing is a Brand whose typography form saves nothing and says nothing.
+$brandStore   = new BrandStore($pdo);
+$brandStyles  = new BrandStyles($pdo);
+$brandAdmin   = new BrandAdmin($pdo, $brandStore, $brandStyles, $displayStore);
+$displayAdmin = new DisplayAdmin($pdo, $displayStore, $layoutStore, $grantStore, $brandStore);
 
 // Accounts are closed, never deleted, so an id number can never come back into
 // service under a different person (lib/accounts.php). `closed_at` used to be added
@@ -247,6 +256,7 @@ if (UploadLimit::bodyWasDropped($_SERVER, $_POST, $_FILES)) {
             'canvas_width'   => $_POST['d_width']    ?? '',
             'canvas_height'  => $_POST['d_height']   ?? '',
             'bg_val'         => $_POST['d_bg']       ?? '',
+            'brand_id'       => $_POST['d_brand']    ?? '',
             'duplicate_from' => $startFrom,
         ]);
         $msg     = $res->message();
@@ -265,6 +275,11 @@ if (UploadLimit::bodyWasDropped($_SERVER, $_POST, $_FILES)) {
                 'title'    => $_POST['d_title']    ?? '',
                 'tag'      => $_POST['d_tag']      ?? '',
                 'location' => $_POST['d_location'] ?? '',
+                // Declared by the form, like every other field on it. Changing it
+                // repaints that sign within 30 seconds with no publish — the Admin
+                // Panel's ordinary contract, and the reason the Builder's own Brand
+                // control is staged behind Publish instead (ADR-0011, decision 6).
+                'brand_id' => $_POST['d_brand']    ?? '',
             ]);
             $msg     = $res->message();
             $msgType = $res->isOk() ? 'success' : 'error';
@@ -531,20 +546,99 @@ if (UploadLimit::bodyWasDropped($_SERVER, $_POST, $_FILES)) {
         $tab = 'settings';
     }
 
+    // Create a Brand — the row and its six sets of standards, in one transaction.
+    if (isset($_POST['action_create_brand'])) {
+        $tab = 'brand';
+        $res = $brandAdmin->create(['name' => $_POST['b_name'] ?? '']);
+        $msg     = $res->message();
+        $msgType = $res->isOk() ? 'success' : 'error';
+        // Land on the Brand that was just made, so its typography form is the one on
+        // screen rather than whichever Brand happened to be selected before.
+        if ($res->isOk() && $res->brand()) { $_GET['brand'] = (string)$res->brand()->id(); }
+    }
+
+    // Save a Brand's name, logo, default background and palette.
+    if (isset($_POST['action_save_brand'])) {
+        $tab   = 'brand';
+        $brand = $brandStore->forId($_POST['b_id'] ?? 0);
+        if (!$brand) {
+            $msg = 'That brand no longer exists.'; $msgType = 'error';
+        } else {
+            $_GET['brand'] = (string)$brand->id();
+            $fields = ['name'          => $_POST['b_name'] ?? '',
+                       'logo_asset_id' => $_POST['b_logo'] ?? '',
+                       'bg_type'       => 'color',
+                       'bg_val'        => $_POST['b_bg']   ?? ''];
+            // An `<input type="color">` always submits *something*, so "this slot is
+            // empty" cannot be said by leaving it blank — the box would post the black
+            // it fell back to and the palette would gain a colour nobody chose. The
+            // tick box beside each one is how the form says it, and it is read here as
+            // the slot being cleared. Every slot is named whether it was filled in or
+            // not, which is the grant matrix's rule: a browser posts only the ticked
+            // boxes, so an unticked box and a field that was never on the page look
+            // identical, and only a declared axis tells them apart.
+            foreach (BrandStore::paletteFields() as $_pf) {
+                $fields[$_pf] = empty($_POST['b_' . $_pf . '_unset'])
+                    ? ($_POST['b_' . $_pf] ?? '') : '';
+            }
+            unset($_pf);
+
+            // Narrowed from "anyone editing anything" to "anyone editing a sign
+            // wearing this Brand" (ADR-0011). The refusal names the Display and the
+            // holder, because "somebody is editing" is not something a person can act
+            // on without going to look.
+            $busy = $displayStore->editedByAnyoneElseUsingBrand($user['id'], $brand->id());
+            if ($busy) {
+                $msg     = $busy->editingSentence()
+                         . ' That display wears this brand, and a brand change reaches every'
+                         . ' screen wearing it within 30 seconds without a publish, so it'
+                         . ' cannot change while somebody is editing one. Try again once they'
+                         . ' are finished.';
+                $msgType = 'error';
+            } else {
+                $res     = $brandAdmin->updateDetails($brand, $fields);
+                $msg     = $res->message();
+                $msgType = $res->isOk() ? 'success' : 'error';
+            }
+        }
+    }
+
+    // Delete a Brand, with its name typed back. Refused while any sign wears it.
+    if (isset($_POST['action_delete_brand'])) {
+        $tab   = 'brand';
+        $brand = $brandStore->forId($_POST['b_id'] ?? 0);
+        if (!$brand) {
+            $msg = 'That brand no longer exists.'; $msgType = 'error';
+        } else {
+            $res     = $brandAdmin->destroy($brand, $_POST['b_confirm_name'] ?? '');
+            $msg     = $res->message();
+            $msgType = $res->isOk() ? 'success' : 'error';
+            if (!$res->isOk()) { $_GET['brand'] = (string)$brand->id(); }
+        }
+    }
+
     // Save brand standards
     if (isset($_POST['action_save_styles'])) {
         $types = ['section_header','item_title','item_title_2','price','price_2','description'];
         $tab   = 'brand';
 
-        // The same refusal the API makes: this table is shared by every Display and
-        // reaches every Screen on the next poll with no publish, so a held edit lock
-        // anywhere is a claim on it.
-        $busy = $displayStore->editedByAnyoneElse($user['id']);
-        if ($busy) {
+        $brand = $brandStore->forId($_POST['b_id'] ?? 0);
+        if ($brand) { $_GET['brand'] = (string)$brand->id(); }
+
+        // The same refusal the API makes, narrowed to the Brand being edited: these
+        // rows reach every Screen *wearing this Brand* on the next poll with no
+        // publish, so a live lock on one of those signs is a claim on them. Somebody
+        // working a sign wearing a different Brand is nothing to do with this save
+        // (ADR-0011) — the one place this work makes the app less restrictive.
+        $busy = $brand ? $displayStore->editedByAnyoneElseUsingBrand($user['id'], $brand->id()) : null;
+        if (!$brand) {
+            $msg     = 'That brand no longer exists, so nothing was saved.';
+            $msgType = 'error';
+        } elseif ($busy) {
             $msg     = $busy->editingSentence()
-                     . ' Brand standards apply to every display and reach every screen'
-                     . ' within 30 seconds without a publish, so they cannot change while'
-                     . ' somebody is editing. Try again once they are finished.';
+                     . ' That display wears this brand, and brand standards reach every screen'
+                     . ' wearing it within 30 seconds without a publish, so they cannot change'
+                     . ' while somebody is editing one. Try again once they are finished.';
             $msgType = 'error';
         } else {
             // Only the types this form actually carried. The loop used to write all
@@ -566,9 +660,10 @@ if (UploadLimit::bodyWasDropped($_SERVER, $_POST, $_FILES)) {
                     'line_height' => $_POST["bs_{$t}_lh"]     ?? null,
                 ];
             }
-            $saved = (new BrandStyles($pdo))->save($submitted);
+            $saved = $brandStyles->save($brand->id(), $submitted);
             $msg = $saved
-                ? 'Brand standards saved. Every screen picks them up within 30 seconds — no publishing needed.'
+                ? 'Brand standards for "' . $brand->name() . '" saved. Every screen wearing it '
+                  . 'picks them up within 30 seconds — no publishing needed.'
                 : 'Nothing was saved: that form arrived with no typography in it.';
             $msgType = $saved ? 'success' : 'error';
         }
@@ -621,7 +716,25 @@ $canvasPresets = [
     ['1280×720 — Landscape, smaller screen',           1280,  720],
     ['1920×540 — Wide strip / ticker',                 1920,  540],
 ];
-$styles = (new BrandStyles($pdo))->all();
+// ---- Brands, and which one the Display Branding tab is showing --------------
+// Every Brand for the list and for the Display forms' dropdowns; one of them is
+// "open", and its standards are what the typography table below edits.
+$brands = $brandStore->all();
+
+// The Brand on screen. From the query string so the list can link to each one, and
+// from the POST handlers above so a refused save redraws the Brand it refused. A
+// value naming no Brand falls back to the first rather than erroring: the tab has to
+// render something, and there is always at least one Brand on a converged database.
+$openBrand = $brandStore->forId($_GET['brand'] ?? 0);
+if (!$openBrand && $brands) { $openBrand = $brands[0]; }
+
+// Which signs wear each Brand — for the count on every row of the list, and for the
+// sentence on the delete confirm. Asked once here rather than once per row.
+$brandWearers = [];
+foreach ($brands as $_b) { $brandWearers[$_b->id()] = $displayStore->usingBrand($_b->id()); }
+unset($_b);
+
+$styles = $openBrand ? $brandStyles->all($openBrand->id()) : [];
 // Read raw, above, because ColorAudit reads the same method and an audit whose source
 // had already been tidied would find nothing. What the form draws goes through
 // BrandStyles::readable(); this is the list of places the two differ, which is what the
@@ -633,6 +746,18 @@ foreach ($styles as $_bsType => $_bsRow) {
     }
 }
 unset($_bsType, $_bsRow, $_bsBad);
+
+// The same for the palette: a stored slot this app cannot read is named rather than
+// quietly dropped from the swatch row (#21).
+$paletteBad = $openBrand ? $openBrand->unreadablePalette() : [];
+
+// The library rows a Brand's logo can point at. Images only — a text snippet is not
+// a logo, and offering one would produce a Brand whose logo block renders a price.
+$logoChoices = [];
+foreach ((new AssetLibrary($pdo))->all() as $_asset) {
+    if (($_asset['type'] ?? '') === 'image') { $logoChoices[] = $_asset; }
+}
+unset($_asset);
 $typeLabels = [
     'section_header' => 'Section Header',
     'item_title'     => 'Item Title',
@@ -1007,6 +1132,17 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                 </span>
             </div>
             <div class="display-facts">
+                <?php /* Which brand this sign wears, from the list read once above rather
+                        than a query per card. Named "brand missing" rather than left blank
+                        when the id points nowhere: on a converged database it cannot happen
+                        (brand_id is NOT NULL and foreign-keyed), and a silent gap would be
+                        the one state worth noticing rendering as the ordinary one. */ ?>
+                <?php $dBrandName = '';
+                      foreach ($brands as $_db) {
+                          if ($_db->id() === $d->brandId()) { $dBrandName = $_db->name(); }
+                      }
+                      unset($_db); ?>
+                <strong><?= Markup::text($dBrandName !== '' ? $dBrandName : 'brand missing') ?></strong> brand ·
                 <strong><?= Markup::text($d->dimensionsLabel()) ?></strong> <?= Markup::text($d->orientation()) ?>
                 &nbsp;·&nbsp; <?= intval($count) ?> element<?= $count === 1 ? '' : 's' ?>
                 <?php if ($d->location() !== ''): ?>
@@ -1086,6 +1222,17 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                             <input type="text" name="d_tag" value="<?= Markup::text($d->tag()) ?>"
                                    data-original-tag="<?= Markup::text($d->tag()) ?>"
                                    pattern="[a-z0-9\-]{2,32}" style="width:170px;" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Brand</label>
+                            <select name="d_brand" style="width:170px;">
+                                <?php foreach ($brands as $b): ?>
+                                    <option value="<?= intval($b->id()) ?>"
+                                        <?= $d->brandId() === $b->id() ? 'selected' : '' ?>>
+                                        <?= Markup::text($b->name()) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
                         <div class="form-group">
                             <label>Location (for reference)</label>
@@ -1335,10 +1482,25 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                         <label>Background colour</label>
                         <input type="color" name="d_bg" value="#1a1a2e">
                     </div>
+                    <div class="form-group">
+                        <?php /* Required, and deliberately not defaulted to the first brand:
+                                on a property with a restaurant, a bar and a casino floor
+                                there is no obvious answer, and the wrong one repaints the
+                                sign within thirty seconds of it being created. */ ?>
+                        <label>Brand</label>
+                        <select name="d_brand" style="width:180px;" required>
+                            <option value="">Choose a brand…</option>
+                            <?php foreach ($brands as $b): ?>
+                                <option value="<?= intval($b->id()) ?>"><?= Markup::text($b->name()) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                 </div>
                 <p class="hint" style="font-size:12px;">
                     The tag is the display's address: <code>viewer.php?display=<span id="tag-echo">lobby-screen</span></code>.
                     Lowercase letters, numbers and hyphens. Leave it blank and it is taken from the title.
+                    The brand is where this display's typography, palette and logo come from —
+                    it can be changed later, and the change reaches the screen within 30 seconds.
                 </p>
             </div>
 
@@ -1376,11 +1538,156 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 <!-- ============================================================ -->
 <div id="tab-brand" style="display:<?= $tab==='brand'?'block':'none' ?>">
     <div class="card">
-        <h2>Brand Standards — Locked Text Styles</h2>
+        <h2>Brands</h2>
         <p style="font-size:13px; color:#7f8c8d; margin-bottom:16px;">
-            These styles apply to the six branded text blocks, on every display. Basic users
-            cannot change them. Changes reach every screen within 30 seconds — no publishing
-            needed, because a screen reads this typography on each poll.
+            A brand is one venue's look: its typography, its palette, its logo and the canvas
+            background its screens start from. Several displays can wear one brand, so a
+            restaurant with three boards has one red, edited once. Every display wears exactly
+            one.
+        </p>
+        <table class="bs-table" style="margin-bottom:16px;">
+            <thead>
+                <tr><th>Brand</th><th>Displays wearing it</th><th>Palette</th><th></th></tr>
+            </thead>
+            <tbody>
+            <?php foreach ($brands as $b):
+                $wearers = $brandWearers[$b->id()] ?? [];
+                $isOpen  = $openBrand && $openBrand->id() === $b->id();
+            ?>
+                <tr<?= $isOpen ? ' style="background:#f4f8fb;"' : '' ?>>
+                    <td><strong><?= Markup::text($b->name()) ?></strong></td>
+                    <td style="font-size:13px; color:#555;">
+                        <?php if ($wearers): ?>
+                            <?php $names = [];
+                                  foreach ($wearers as $w) { $names[] = $w->title(); } ?>
+                            <?= Markup::text(implode(', ', $names)) ?>
+                        <?php else: ?>
+                            <span style="color:#7f8c8d;">nothing yet</span>
+                        <?php endif; ?>
+                    </td>
+                    <td>
+                        <?php /* Through palette(), which answers what will actually render.
+                                A slot holding something that is not a colour is named in the
+                                notice below rather than drawn as a swatch nobody chose. The
+                                inline colour is a validated `#rrggbb`, which is the one shape
+                                allowed into a style attribute without escaping — escaping
+                                stops a value ending the attribute, not the declaration. */ ?>
+                        <?php foreach ($b->palette() as $swatch): ?>
+                            <span style="display:inline-block; width:18px; height:18px; border-radius:3px;
+                                         border:1px solid #ccc; vertical-align:middle;
+                                         background:<?= Markup::text($swatch) ?>;"></span>
+                        <?php endforeach; ?>
+                        <?php if (!$b->palette()): ?>
+                            <span style="font-size:12px; color:#7f8c8d;">none set</span>
+                        <?php endif; ?>
+                    </td>
+                    <td>
+                        <?php if (!$isOpen): ?>
+                            <a href="admin_panel.php?tab=brand&amp;brand=<?= intval($b->id()) ?>"
+                               style="font-size:13px;">Open</a>
+                        <?php else: ?>
+                            <span style="font-size:13px; color:#7f8c8d;">open below</span>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+
+        <form method="POST" style="display:flex; gap:8px; align-items:center;">
+            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
+            <input type="text" name="b_name" placeholder="New brand name — e.g. Salmon House"
+                   maxlength="<?= intval(BrandStore::NAME_MAX) ?>" required style="max-width:320px;">
+            <button type="submit" name="action_create_brand" class="btn btn-green">Add Brand</button>
+        </form>
+    </div>
+
+<?php if ($openBrand): ?>
+    <div class="card">
+        <h2><?= Markup::text($openBrand->name()) ?> — palette, logo and background</h2>
+        <p style="font-size:13px; color:#7f8c8d; margin-bottom:16px;">
+            The palette is <em>offered</em> wherever a colour is picked for a display wearing this
+            brand — never enforced, so a block with its own colour keeps it. Leave a slot empty to
+            drop it from the row.
+        </p>
+        <?php if ($paletteBad): ?>
+            <div style="border-left:4px solid #e67e22; background:#fff8f0; border-radius:4px;
+                        padding:10px 14px; margin-bottom:16px;">
+                <strong style="color:#e67e22; font-size:13px;">Stored palette colours that cannot be used</strong>
+                <ul style="font-size:13px; color:#555; margin:6px 0 0 18px;">
+                    <?php foreach ($paletteBad as $bad): ?>
+                        <li><?= Markup::text($bad['label']) ?> is stored as
+                            <?= Markup::text(Color::describe($bad['value'])) ?>, so it is not
+                            offered as a swatch at all.</li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
+        <?php endif; ?>
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
+            <input type="hidden" name="b_id" value="<?= intval($openBrand->id()) ?>">
+            <label style="display:block; font-size:13px; font-weight:600; margin-bottom:4px;">Name</label>
+            <input type="text" name="b_name" value="<?= Markup::text($openBrand->name()) ?>"
+                   maxlength="<?= intval(BrandStore::NAME_MAX) ?>" required style="max-width:320px;">
+
+            <label style="display:block; font-size:13px; font-weight:600; margin:14px 0 4px;">Palette</label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <?php foreach (BrandStore::paletteFields() as $i => $field):
+                    // The *stored* value, not the rendered one: a slot holding something
+                    // unreadable is reported above and left in the box as it is, so saving
+                    // the form does not quietly store a substitute over it (#21).
+                    $slot = $openBrand->paletteSlot($i);
+                ?>
+                    <span style="display:inline-flex; align-items:center; gap:4px;">
+                        <input type="color" name="b_<?= Markup::text($field) ?>"
+                               value="<?= Markup::text(Color::read($slot) !== '' ? Color::read($slot) : '#ffffff') ?>">
+                        <label style="font-size:12px; color:#7f8c8d;">
+                            <input type="checkbox" name="b_<?= Markup::text($field) ?>_unset" value="1"
+                                   <?= $slot === '' ? 'checked' : '' ?>> empty
+                        </label>
+                    </span>
+                <?php endforeach; ?>
+            </div>
+
+            <label style="display:block; font-size:13px; font-weight:600; margin:14px 0 4px;">
+                Default canvas background
+            </label>
+            <input type="color" name="b_bg"
+                   value="<?= Markup::text(Color::read($openBrand->backgroundValue()) !== ''
+                                           ? Color::read($openBrand->backgroundValue())
+                                           : Background::DEFAULT_COLOR) ?>">
+
+            <label style="display:block; font-size:13px; font-weight:600; margin:14px 0 4px;">
+                Venue logo (Asset Library)
+            </label>
+            <select name="b_logo">
+                <option value="">— none —</option>
+                <?php foreach ($logoChoices as $asset): ?>
+                    <option value="<?= intval($asset['id']) ?>"
+                        <?= $openBrand->logoAssetId() === intval($asset['id']) ? 'selected' : '' ?>>
+                        <?= Markup::text($asset['label'] !== '' ? $asset['label'] : $asset['content']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+            <p style="font-size:12px; color:#7f8c8d; margin-top:6px;">
+                The builder can place this in one click. Screens never draw it by themselves —
+                a fixed corner cannot be right for both a landscape menu board and a portrait
+                specials board.
+            </p>
+
+            <div style="margin-top:16px;">
+                <button type="submit" name="action_save_brand" class="btn btn-green">Save Brand</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>Brand Standards for <?= Markup::text($openBrand->name()) ?> — Locked Text Styles</h2>
+        <p style="font-size:13px; color:#7f8c8d; margin-bottom:16px;">
+            These styles apply to the six branded text blocks, on every display wearing
+            <strong><?= Markup::text($openBrand->name()) ?></strong>. Basic users cannot change
+            them. Changes reach those screens within 30 seconds — no publishing needed, because
+            a screen reads this typography on each poll.
         </p>
         <?php if ($styleBad): ?>
             <!-- Nothing this form can submit produces one of these — BrandStyles
@@ -1491,12 +1798,45 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                 </tbody>
             </table>
             <div style="margin-top:16px;">
+                <input type="hidden" name="b_id" value="<?= intval($openBrand->id()) ?>">
                 <button type="submit" name="action_save_styles" class="btn btn-green">
                     Save Brand Standards
                 </button>
             </div>
         </form>
     </div>
+
+    <div class="card" style="border-left:4px solid #e74c3c;">
+        <h2 style="color:#c0392b;">Delete <?= Markup::text($openBrand->name()) ?></h2>
+        <?php $openWearers = $brandWearers[$openBrand->id()] ?? []; ?>
+        <?php if ($openWearers): ?>
+            <p style="font-size:13px; color:#555;">
+                <?= count($openWearers) === 1 ? 'One display wears' : count($openWearers) . ' displays wear' ?>
+                this brand, so it cannot be deleted:
+                <?php $names = [];
+                      foreach ($openWearers as $w) { $names[] = $w->title(); } ?>
+                <strong><?= Markup::text(implode(', ', $names)) ?></strong>.
+                Move <?= count($openWearers) === 1 ? 'it' : 'them' ?> to another brand first —
+                reassigning <?= count($openWearers) === 1 ? 'it' : 'them' ?> automatically would
+                repaint <?= count($openWearers) === 1 ? 'that screen' : 'those screens' ?> within
+                30 seconds, and there is no undo.
+            </p>
+        <?php else: ?>
+            <p style="font-size:13px; color:#555; margin-bottom:10px;">
+                Nothing wears this brand. Deleting it removes its six sets of typography as
+                well, and cannot be undone. Type <strong><?= Markup::text($openBrand->name()) ?></strong>
+                to confirm.
+            </p>
+            <form method="POST" style="display:flex; gap:8px; align-items:center;">
+                <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
+                <input type="hidden" name="b_id" value="<?= intval($openBrand->id()) ?>">
+                <input type="text" name="b_confirm_name" placeholder="Type the brand name"
+                       required style="max-width:320px;">
+                <button type="submit" name="action_delete_brand" class="btn btn-red">Delete Brand</button>
+            </form>
+        <?php endif; ?>
+    </div>
+<?php endif; ?>
 </div>
 
 <!-- ============================================================ -->

@@ -279,7 +279,12 @@ class LayoutStore
         // Brand Standards belongs to BrandStyles, which is the only writer of that
         // table; reading it through the same module keeps one definition of what a
         // stored style looks like.
-        $styles = $this->brandStyles()->all();
+        //
+        // Scoped to the Brand this sign wears (ADR-0011). It used to be every row in
+        // the table, which was the same answer for every Display because there was
+        // only ever one set — so this key's *shape* is unchanged and neither client
+        // needed touching. What changed is which six rows fill it.
+        $styles = $this->brandStyles()->all($display->brandId());
 
         $display_ = $display->toClientArray();
 
@@ -406,7 +411,14 @@ class LayoutStore
 
         // Sections come first in the result set, so a child's parent is always
         // already in the map by the time the child is inserted.
-        $brandStandards = $this->brandStyles()->all();
+        //
+        // The **target's** Brand, not the source's: these rows are about to belong to
+        // that sign, and what decides whether a column is the Brand's to paint is the
+        // Brand the row will be read under. A duplicate into a differently branded
+        // Display is an ordinary thing to do — same dimensions is the only rule
+        // ADR-0004 imposes — and asking the source would decide a target row's
+        // typography from a venue it is not part of.
+        $brandStandards = $this->brandStyles()->all($target->brandId());
         $idMap  = [];
         $copied = 0;
         foreach ($rows as $row) {
@@ -1014,7 +1026,9 @@ class LayoutStore
 
         // Read once, outside the loop: the answer is the same for every element and
         // this runs inside the publish transaction, a line at a time down the sign.
-        $brandStandards = $this->brandStyles()->all();
+        // Scoped to the Brand this sign wears, which is the same question the two
+        // renderers ask of the snapshot they were given (invariant 32, ADR-0011).
+        $brandStandards = $this->brandStyles()->all($display->brandId());
 
         $order = 0;
         foreach ($elements as $el) {

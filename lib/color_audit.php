@@ -50,6 +50,7 @@ require_once __DIR__ . '/site_chrome.php';
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/layout_store.php';
 require_once __DIR__ . '/brand_styles.php';
+require_once __DIR__ . '/brands.php';
 
 class ColorAudit
 {
@@ -63,6 +64,7 @@ class ColorAudit
     private $displays;
     private $layouts;
     private $styles;
+    private $brands;
     private $brand;
 
     /**
@@ -73,11 +75,12 @@ class ColorAudit
      *                          ever exercise the values this machine happens to hold.
      */
     public function __construct(DisplayStore $displays, LayoutStore $layouts, BrandStyles $styles,
-                                array $brand = null)
+                                BrandStore $brands, ?array $brand = null)
     {
         $this->displays = $displays;
         $this->layouts  = $layouts;
         $this->styles   = $styles;
+        $this->brands   = $brands;
         $this->brand    = $brand;
     }
 
@@ -133,22 +136,53 @@ class ColorAudit
             }
         }
 
-        // Brand Standards are shared, so one bad row is every sign at once. Last in
-        // the list and first in consequence — which is why the sentence says so
-        // rather than leaving it to be inferred from the empty scope.
-        foreach ($this->styles->all() as $type => $row) {
-            $stored = isset($row['font_color']) ? $row['font_color'] : '';
-            if ($stored === '' || Color::isColor($stored)) { continue; }
-            $cosmetic[] = [
-                'kind'  => self::WRONG_ON_SIGN,
-                'scope' => '',
-                'what'  => 'the Brand Standards colour for ' . $type,
-                'value' => $stored,
-                'consequence' => 'Every ' . $type . ' block on every sign renders in whatever '
-                               . 'the browser inherits — black text on a dark canvas — because '
-                               . 'this value is cleaned on the way in and not on the way out.',
-                'fix'   => 'Settings → Brand Standards → ' . $type . ' → colour.',
-            ];
+        // A Brand's standards are shared by every sign wearing it, so one bad row is a
+        // whole venue at once. Read through allByBrand() rather than a query per Brand
+        // — and rather than per *Display*, which would skip the standards of a Brand
+        // nothing is currently assigned to. Those are exactly the rows nobody is
+        // looking at, and the next Display assigned to that Brand inherits them.
+        $names = [];
+        foreach ($this->brands->all() as $brand) { $names[$brand->id()] = $brand->name(); }
+
+        foreach ($this->styles->allByBrand() as $brandId => $rows) {
+            // A Brand id with no Brand behind it — standards orphaned by a hand-deleted
+            // row. Named by number so the finding still points somewhere.
+            $brandName = isset($names[$brandId]) ? $names[$brandId] : 'brand #' . $brandId;
+
+            foreach ($rows as $type => $row) {
+                $stored = isset($row['font_color']) ? $row['font_color'] : '';
+                if ($stored === '' || Color::isColor($stored)) { continue; }
+                $cosmetic[] = [
+                    'kind'  => self::WRONG_ON_SIGN,
+                    'scope' => '',
+                    'what'  => 'the ' . $brandName . ' brand standard colour for ' . $type,
+                    'value' => $stored,
+                    'consequence' => 'Every ' . $type . ' block on every sign wearing '
+                                   . $brandName . ' renders in whatever the browser inherits — '
+                                   . 'black text on a dark canvas — because this value is '
+                                   . 'cleaned on the way in and not on the way out.',
+                    'fix'   => 'Settings → Display Branding → ' . $brandName . ' → ' . $type . ' → colour.',
+                ];
+            }
+        }
+
+        // The palette is offered as swatches and never enforced, so an unreadable slot
+        // paints nothing — it simply is not offered. Reported anyway, and this is the
+        // #21 line: a swatch that quietly vanishes looks like a palette somebody chose
+        // to leave short, so nobody investigates and the value stays wrong.
+        foreach ($this->brands->all() as $brand) {
+            foreach ($brand->unreadablePalette() as $bad) {
+                $cosmetic[] = [
+                    'kind'  => self::WRONG_ON_SIGN,
+                    'scope' => '',
+                    'what'  => strtolower($bad['label']) . ' on the ' . $brand->name() . ' brand',
+                    'value' => $bad['value'],
+                    'consequence' => 'That swatch is not offered when somebody picks a colour for '
+                                   . 'a sign wearing ' . $brand->name() . '. Nothing on a screen is '
+                                   . 'wrong; the palette is one colour short and does not say why.',
+                    'fix'   => 'Settings → Display Branding → ' . $brand->name() . ' → palette.',
+                ];
+            }
         }
 
         // Last, because it is the only one no customer ever sees. Still reported: the

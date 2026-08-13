@@ -1,9 +1,20 @@
 <?php
 // ============================================================
-// BRAND STANDARDS — the shared typography of the branded blocks
+// BRAND STANDARDS — the typography a Brand paints its blocks with
 // ============================================================
-// One row per branded block type in `block_styles`, shared by every Display
-// (ADR decision C). This module is the only place that writes that table.
+// One row per branded block type **per Brand** in `block_styles`. This module is
+// the only place that writes that table.
+//
+// It was one row per block type, shared by every Display (roadmap decision C), and
+// ADR-0011 reversed that: the installation stopped being one store, and one set of
+// colours across a restaurant, a bar and a casino floor is not a shared look but a
+// defect that reaches every screen. The table is keyed on `(brand_id, block_type)`
+// now, and every method here takes the Brand it is about.
+//
+// **Re-scoped and not replaced**, which is the whole of what changed. Both
+// properties below are exactly what they were; they are now promises about one
+// Brand's six rows rather than about the installation's six. Nothing about
+// validation, rendering or the absent-versus-unreadable line moved.
 //
 // It exists because there were two writers — the Admin Panel form and the
 // Builder's api.php endpoint — and they disagreed about the thing that matters
@@ -60,6 +71,31 @@ class BrandStyles
         'line_height' => 1.4,
     ];
 
+    /**
+     * Where each branded block type starts, for a Brand that has just been created.
+     *
+     * Starting points and not a copy of anybody's values — the store edits these in
+     * Admin Panel → Display Branding and its own numbers win. They differ per type on
+     * purpose, which is what makes a new Brand look like a sign rather than like six
+     * identical lines, and it is also why DEFAULTS above is *not* this list: a
+     * fallback that guessed `price` meant red would be inventing a brand rather than
+     * reporting one.
+     *
+     * Owned here rather than in `lib/schema.php`, which is what re-keying on the
+     * Brand made necessary: convergence seeds these for a database that predates
+     * Brands, `BrandAdmin` seeds them for every Brand created afterwards, and
+     * `schema.sql` writes them for a fresh install. Three writers of one list is
+     * three chances for a new Brand to start somewhere the last one did not.
+     */
+    const STARTING_POINTS = [
+        'section_header' => ['Arial', 36, '#ffffff', 'bold',   'normal', 1.30],
+        'item_title'     => ['Arial', 24, '#ffffff', 'bold',   'normal', 1.30],
+        'item_title_2'   => ['Arial', 24, '#27ae60', 'bold',   'normal', 1.30],
+        'price'          => ['Arial', 30, '#e74c3c', 'bold',   'normal', 1.20],
+        'price_2'        => ['Arial', 30, '#e74c3c', 'bold',   'normal', 1.20],
+        'description'    => ['Arial', 16, '#bdc3c7', 'normal', 'normal', 1.40],
+    ];
+
     /** Each field in the words the Brand Standards form puts above its column. */
     const FIELD_LABELS = [
         'font_family' => 'Font family',
@@ -76,7 +112,7 @@ class BrandStyles
     }
 
     /**
-     * Every stored style, keyed by block type — what a snapshot carries.
+     * One Brand's stored styles, keyed by block type — what a snapshot carries.
      *
      * **Raw, on purpose.** These rows are cleaned on the way *in*, which is only a
      * promise about values this module wrote; a row edited by hand, or written before
@@ -84,12 +120,42 @@ class BrandStyles
      * one into what will actually render, and `ColorAudit` reads this method rather
      * than that one — an audit whose source had already been tidied would find
      * nothing and say so.
+     *
+     * A Brand with no rows answers `[]`, and that is a meaningful answer rather than
+     * an error: `paints()` reads it as "the Brand paints nothing here, so the block's
+     * own values are load-bearing", which is what both renderers already do with an
+     * empty `blockStyles[sub]`. Convergence seeds all six for every Brand, so it is a
+     * half-seeded install rather than a design — but it is reachable, and stripping a
+     * column on the strength of a row that is not there is how a price becomes 16px
+     * Arial black on a wall.
      */
-    public function all()
+    public function all($brandId)
+    {
+        $stmt = $this->pdo->prepare("SELECT * FROM block_styles WHERE brand_id = ?");
+        $stmt->execute([intval($brandId)]);
+
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $out[$row['block_type']] = $row;
+        }
+        return $out;
+    }
+
+    /**
+     * Every Brand's styles at once, keyed by brand id and then by block type.
+     *
+     * For the two callers that are about the *installation* rather than about one
+     * sign: `ColorAudit`, which reports every stored colour this app cannot read
+     * wherever it lives, and the tool that prints it. Reading these one Brand at a
+     * time would be a query per Brand to answer a question about all of them, and an
+     * audit that skipped a Brand because nothing pointed at it would miss exactly the
+     * rows nobody is looking at.
+     */
+    public function allByBrand()
     {
         $out = [];
-        foreach ($this->pdo->query("SELECT * FROM block_styles")->fetchAll() as $row) {
-            $out[$row['block_type']] = $row;
+        foreach ($this->pdo->query("SELECT * FROM block_styles ORDER BY brand_id ASC")->fetchAll() as $row) {
+            $out[intval($row['brand_id'])][$row['block_type']] = $row;
         }
         return $out;
     }
@@ -222,13 +288,13 @@ class BrandStyles
      * exist is not created here — see the seed in lib/schema.php, which is what
      * guarantees all six exist.
      */
-    public function save(array $styles)
+    public function save($brandId, array $styles)
     {
         $stmt = $this->pdo->prepare(
             "UPDATE block_styles
                 SET font_family = ?, font_size = ?, font_color = ?,
                     font_weight = ?, font_style = ?, line_height = ?
-              WHERE block_type = ?"
+              WHERE brand_id = ? AND block_type = ?"
         );
 
         $saved = 0;
@@ -242,11 +308,65 @@ class BrandStyles
                 self::cleanWeight($s['font_weight'] ?? null),
                 self::cleanStyle($s['font_style'] ?? null),
                 self::formatLineHeight($s['line_height'] ?? null),
+                intval($brandId),
                 $type,
             ]);
             $saved++;
         }
         return $saved;
+    }
+
+    /**
+     * Give a new Brand the six rows it needs to be editable at all.
+     *
+     * Called by `BrandAdmin` inside its transaction, and by nothing else — a Brand
+     * without these is one whose Brand Standards form saves nothing and says nothing,
+     * because that form is six `UPDATE`s and an `UPDATE` that matches no row is a
+     * silent success. That is the same defect convergence seeds against for the
+     * Brand it creates itself.
+     *
+     * Only the types that are actually missing are written, so this is safe to call
+     * against a Brand that already has some — a half-finished create, or a Brand made
+     * before a seventh branded type existed. It never overwrites: the store's own
+     * numbers win.
+     *
+     * @return int rows written
+     */
+    public function seedFor($brandId)
+    {
+        $brandId = intval($brandId);
+        $have    = $this->all($brandId);
+
+        $stmt = $this->pdo->prepare(
+            "INSERT INTO block_styles
+             (brand_id, block_type, font_family, font_size, font_color, font_weight, font_style, line_height)
+             VALUES (?,?,?,?,?,?,?,?)"
+        );
+
+        $written = 0;
+        foreach (self::STARTING_POINTS as $type => $values) {
+            if (isset($have[$type])) { continue; }
+            $stmt->execute(array_merge([$brandId, $type], $values));
+            $written++;
+        }
+        return $written;
+    }
+
+    /**
+     * Drop one Brand's standards, for a Brand being destroyed.
+     *
+     * Explicit rather than left to `block_styles_ibfk_1`'s ON DELETE CASCADE, for
+     * invariant 10's reason: that constraint is added by convergence and may never
+     * have applied on a live database, and six rows keyed to a Brand that is gone are
+     * rows nothing will ever read or clean up again.
+     *
+     * @return int rows removed
+     */
+    public function deleteFor($brandId)
+    {
+        $stmt = $this->pdo->prepare("DELETE FROM block_styles WHERE brand_id = ?");
+        $stmt->execute([intval($brandId)]);
+        return $stmt->rowCount();
     }
 
     // ---- Validation ---------------------------------------------------------

@@ -108,7 +108,8 @@ try {
 SiteChrome::load();
 
 $displays = new DisplayStore($pdo);
-$audit    = new ColorAudit($displays, new LayoutStore($pdo, $displays), new BrandStyles($pdo));
+$audit    = new ColorAudit($displays, new LayoutStore($pdo, $displays), new BrandStyles($pdo),
+                           new BrandStore($pdo));
 
 try {
     $findings = $audit->findings();

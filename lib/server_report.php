@@ -258,6 +258,8 @@ class ServerReport
             ['assets',          'auto_pooled',     'The Library tidy-up falls back to the "Auto: " label prefix.'],
             ['displays',        'lock_taken_at',   'A read-only Builder cannot say since when.'],
             ['canvas_elements', 'display_id',      'Nothing is scoped to a Display. Do not publish.'],
+            ['block_styles',    'brand_id',        'Brand Standards are not keyed to a brand, so every display shares one set and Display Branding can only edit the first. Do not create a second brand.'],
+            ['displays',        'brand_id',        'No display knows which brand it wears, so its branded blocks fall back to their own stored typography. Do not publish.'],
         ];
 
         $out = [];

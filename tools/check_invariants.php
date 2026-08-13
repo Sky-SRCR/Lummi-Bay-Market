@@ -143,6 +143,21 @@ $rules = [
                   . 'Standards reset every sign to black Arial 16',
     ],
     [
+        'name'   => '`brands` has one writer',
+        'regex'  => '/(INTO|UPDATE|FROM|JOIN|TABLE)\s+`?brands`?\b/i',
+        'in'     => '',
+        // lib/brands.php owns the table. lib/schema.php creates it and seeds the first
+        // Brand, exactly as it does for `displays`. BrandAdmin composes the two tables a
+        // Brand spans and writes no SQL itself, so it is deliberately *not* here — if it
+        // appears, it has started reaching past BrandStore.
+        'expect' => ['lib/brands.php', 'lib/schema.php',
+                     'tools/rehearse_phase1.php', 'tools/selftest_layout.php',
+                     'tools/test_fixture.php'],
+        'why'    => 'a Brand is what several signs read their typography, palette and logo '
+                  . 'from, so a second writer is a venue repainted by a page that did not '
+                  . 'know it was the one deciding (ADR-0011, invariant 33)',
+    ],
+    [
         'name'   => 'one module encodes JSON',
         'regex'  => '/json_encode\s*\(/',
         'in'     => '',

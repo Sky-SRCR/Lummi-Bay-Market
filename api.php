@@ -40,6 +40,7 @@ require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/layout_store.php';
 require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/brand_styles.php';
+require_once __DIR__ . '/lib/brands.php';
 require_once __DIR__ . '/lib/display_request.php';
 require_once __DIR__ . '/lib/assets.php';
 require_once __DIR__ . '/lib/upload_limits.php';
@@ -550,31 +551,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'take_over_lock') {
 // ============================================================
 // POST: save_brand_styles  (admin only)
 // ============================================================
-// Brand Standards typography is shared by every Display, so this endpoint is
-// deliberately not Display-scoped.
+// Brand Standards typography belongs to a Brand rather than to a Display, so this
+// endpoint is scoped to a Brand and deliberately not Display-scoped (ADR-0011).
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_brand_styles') {
     if (!$isAdmin) { HttpReply::json(['status'=>'error','message'=>'Admins only.'], 403); exit; }
 
-    // Brand Standards is the edit that reaches every sign without a publish, so the
-    // edit lock covers it too — see DisplayStore::editedByAnyoneElse. Refused while
-    // anybody else is mid-edit anywhere, because the typography they are sizing
-    // blocks against would change under them within 30 seconds and nothing would
-    // tell them.
-    $busy = $displays->editedByAnyoneElse(currentUser()['id']);
+    // Which Brand's standards, asked before anything else: it is the scope every
+    // check below is about. An id that names no Brand is refused rather than
+    // defaulted — falling back to the first Brand would edit a venue nobody named.
+    $brand = (new BrandStore($pdo))->forId($_POST['brand_id'] ?? 0);
+    if (!$brand) {
+        HttpReply::json(['status' => 'error', 'reason' => 'invalid',
+                         'message' => 'That brand does not exist. Nothing was saved.']);
+        exit;
+    }
+
+    // Editing a Brand reaches every sign wearing it without a publish, so the edit
+    // lock covers it too — see DisplayStore::editedByAnyoneElseUsingBrand. Refused
+    // while anybody else is mid-edit *on a sign wearing this Brand*, because the
+    // typography they are sizing blocks against would change under them within 30
+    // seconds and nothing would tell them. Narrowed from "anyone editing anything"
+    // by ADR-0011: somebody working a casino floor board cannot be affected by the
+    // Salmon House red changing.
+    $busy = $displays->editedByAnyoneElseUsingBrand(currentUser()['id'], $brand->id());
     if ($busy) {
         HttpReply::json([
             'status'  => 'error',
             'reason'  => 'locked',
             'message' => $busy->editingSentence()
-                       . ' Brand standards apply to every display, and reach every screen'
-                       . ' within 30 seconds without a publish, so they cannot change while'
-                       . ' somebody is editing. Try again once they are finished.',
+                       . ' That display wears the ' . $brand->name() . ' brand, and a brand'
+                       . ' change reaches every screen wearing it within 30 seconds without a'
+                       . ' publish, so it cannot change while somebody is editing one.'
+                       . ' Try again once they are finished.',
         ]);
         exit;
     }
 
     $data  = json_decode($_POST['styles_data'] ?? '[]', true) ?: [];
-    $saved = (new BrandStyles($pdo))->save($data);
+    $saved = (new BrandStyles($pdo))->save($brand->id(), $data);
 
     // Reporting how many rows were written, rather than an unconditional success.
     // The UPDATE matches on block_type, so on a database missing a row it wrote

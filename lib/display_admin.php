@@ -47,6 +47,7 @@
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/layout_store.php';
 require_once __DIR__ . '/grants.php';
+require_once __DIR__ . '/brands.php';
 require_once __DIR__ . '/color.php';
 
 /**
@@ -130,16 +131,21 @@ class DisplayAdmin
     private $displays;
     private $layouts;
     private $grants;
+    private $brands;
 
     /**
      * @param PDO $pdo transaction boundaries only — this module writes no SQL
      */
-    public function __construct(PDO $pdo, DisplayStore $displays, LayoutStore $layouts, GrantStore $grants)
+    public function __construct(PDO $pdo, DisplayStore $displays, LayoutStore $layouts,
+                                GrantStore $grants, BrandStore $brands)
     {
         $this->pdo      = $pdo;
         $this->displays = $displays;
         $this->layouts  = $layouts;
         $this->grants   = $grants;
+        // Only ever asked "is this a real Brand?" — a Display names one, it does not
+        // own one, so nothing here writes to `brands`.
+        $this->brands   = $brands;
     }
 
     /**
@@ -666,7 +672,27 @@ class DisplayAdmin
                 'Another display already uses the screen name tag "' . $tag . '". Choose a different one.');
         }
 
-        $clean = ['title' => $title, 'tag' => $tag, 'location' => $location];
+        // `displays.brand_id` is NOT NULL, so this is a required field and not a
+        // defaulted one (ADR-0011). Falling back to "the first Brand" would be the
+        // form quietly choosing a venue's identity for a sign — on a property with a
+        // restaurant, a bar and a casino floor there is no obvious answer, and the
+        // wrong one repaints the sign within thirty seconds of it being created.
+        //
+        // Changing it on an existing Display is allowed, and it is immediate: every
+        // Screen showing that sign picks the new typography up on its next poll with
+        // no publish. That is the Admin Panel's normal contract — it turns Displays
+        // off and deletes them from the same page. The *Builder's* Brand control is
+        // staged instead, written by Publish, because the Builder promises that
+        // nothing on it reaches a sign until then (ADR-0011, decision 6).
+        $brand = $this->brands->forId(isset($in['brand_id']) ? $in['brand_id'] : 0);
+        if (!$brand) {
+            return DisplayResult::invalid('brand_id',
+                'Choose a brand for this display. Every display wears one — it is where its '
+                . 'typography, palette and logo come from.');
+        }
+
+        $clean = ['title' => $title, 'tag' => $tag, 'location' => $location,
+                  'brand_id' => $brand->id()];
         return null;
     }
 

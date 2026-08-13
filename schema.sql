@@ -98,17 +98,73 @@ CREATE TABLE IF NOT EXISTS assets (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ─────────────────────────────────────────────────────────────
--- block_styles — Brand Standards: typography per branded block type, keyed by
--- block_type and shared by every Display (a deliberate choice — per-Display
--- typography is a clean later addition, see the roadmap's "out of scope").
+-- brands — a named, reusable visual identity a Display wears (ADR-0011).
 --
--- One row per branded block type has to exist. The Brand Standards form saves
--- with `UPDATE … WHERE block_type = ?`, so a missing row is not created by using
--- the UI — the save silently does nothing. The seed below is why a fresh install
--- has something to edit; lib/schema.php seeds the same rows at runtime for a
--- database that predates them.
+-- The six branded block-type standards (in block_styles, keyed by brand), a
+-- palette of colours offered as swatches, a logo asset and a default canvas
+-- background. Several Displays share one: a venue with three boards has one red,
+-- edited once.
+--
+-- This replaces the "one set of standards for the whole install" of roadmap
+-- decision C. The installation stopped being one store — it drives signs in
+-- several venues on one property — and one set of colours across a restaurant, a
+-- bar and a casino floor is not a shared look but a defect that reaches every
+-- screen.
+--
+-- `name` is UNIQUE so a person picking one on a form can tell them apart. The
+-- palette is six ordered slots and deliberately not named roles: it is offered and
+-- never enforced, and a role is an instruction. The logo is a library row the
+-- Builder can place in one click — the Viewer never draws it by itself, because a
+-- fixed corner and size cannot be right for both a landscape menu board and a
+-- portrait specials board (ADR-0004).
+-- ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS brands (
+    id            INT(11)      NOT NULL AUTO_INCREMENT,
+    name          VARCHAR(80)  NOT NULL,
+    logo_asset_id INT(11)      DEFAULT NULL COMMENT 'the venue logo, placed by the Builder in one click',
+    bg_type       ENUM('color','image') NOT NULL DEFAULT 'color',
+    bg_val        VARCHAR(255) NOT NULL DEFAULT '#1a1a2e',
+    palette_1     VARCHAR(7)   DEFAULT NULL,
+    palette_2     VARCHAR(7)   DEFAULT NULL,
+    palette_3     VARCHAR(7)   DEFAULT NULL,
+    palette_4     VARCHAR(7)   DEFAULT NULL,
+    palette_5     VARCHAR(7)   DEFAULT NULL,
+    palette_6     VARCHAR(7)   DEFAULT NULL,
+    created_at    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY name (name),
+    KEY logo_asset_id (logo_asset_id),
+    -- SET NULL: a logo tidied out of the Asset Library must not take the venue's
+    -- colours and typography with it.
+    CONSTRAINT brands_ibfk_1 FOREIGN KEY (logo_asset_id) REFERENCES assets (id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- The Brand a fresh install starts with, so `displays.brand_id NOT NULL` has
+-- something to point at before anybody has opened the Admin Panel. Named
+-- generically because this file cannot read SITE_NAME; setup.php asks for the
+-- venue's name and renames this one, and on an existing database convergence
+-- creates the first Brand named after SITE_NAME instead (lib/schema.php).
+-- The id is explicit so the standards below can reference it.
+INSERT IGNORE INTO brands (id, name) VALUES (1, 'Store Brand');
+
+-- ─────────────────────────────────────────────────────────────
+-- block_styles — Brand Standards: typography per branded block type, per Brand.
+--
+-- Keyed on (brand_id, block_type). It was keyed on block_type alone and shared by
+-- every Display until ADR-0011 reversed that; lib/schema.php re-keys a live
+-- database in place, adding the column nullable, backfilling every row to the
+-- first Brand, tightening it, and only then swapping the primary key.
+--
+-- One row per branded block type has to exist **for each Brand**. The Brand
+-- Standards form saves with `UPDATE … WHERE brand_id = ? AND block_type = ?`, so a
+-- missing row is not created by using the UI — the save silently does nothing. The
+-- seed below is why a fresh install has something to edit; BrandStyles::seedFor()
+-- does it for every Brand created afterwards, and lib/schema.php does it at runtime
+-- for a database that predates them. All three take their values from
+-- BrandStyles::STARTING_POINTS, which is the only copy.
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS block_styles (
+    brand_id    INT(11)      NOT NULL,
     block_type  VARCHAR(50)  NOT NULL,
     font_family VARCHAR(100) DEFAULT 'Arial',
     font_size   INT(11)      DEFAULT 16,
@@ -117,20 +173,24 @@ CREATE TABLE IF NOT EXISTS block_styles (
     font_style  VARCHAR(20)  DEFAULT 'normal',
     line_height DECIMAL(4,2) DEFAULT 1.40,
     updated_at  TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (block_type)
+    PRIMARY KEY (brand_id, block_type),
+    -- CASCADE, unlike the logo above: a Brand's standards are part of the Brand and
+    -- mean nothing without it. Deleting a Brand any Display still wears is refused
+    -- by BrandAdmin long before this, naming the signs.
+    CONSTRAINT block_styles_ibfk_1 FOREIGN KEY (brand_id) REFERENCES brands (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Starting points for a fresh install, not a copy of the live values — the store
 -- edits these in Admin Panel → Display Branding and its own numbers win.
 -- INSERT IGNORE, so re-running this file never overwrites what is there.
 INSERT IGNORE INTO block_styles
-    (block_type, font_family, font_size, font_color, font_weight, font_style, line_height) VALUES
-    ('section_header', 'Arial', 36, '#ffffff', 'bold',   'normal', 1.30),
-    ('item_title',     'Arial', 24, '#ffffff', 'bold',   'normal', 1.30),
-    ('item_title_2',   'Arial', 24, '#27ae60', 'bold',   'normal', 1.30),
-    ('price',          'Arial', 30, '#e74c3c', 'bold',   'normal', 1.20),
-    ('price_2',        'Arial', 30, '#e74c3c', 'bold',   'normal', 1.20),
-    ('description',    'Arial', 16, '#bdc3c7', 'normal', 'normal', 1.40);
+    (brand_id, block_type, font_family, font_size, font_color, font_weight, font_style, line_height) VALUES
+    (1, 'section_header', 'Arial', 36, '#ffffff', 'bold',   'normal', 1.30),
+    (1, 'item_title',     'Arial', 24, '#ffffff', 'bold',   'normal', 1.30),
+    (1, 'item_title_2',   'Arial', 24, '#27ae60', 'bold',   'normal', 1.30),
+    (1, 'price',          'Arial', 30, '#e74c3c', 'bold',   'normal', 1.20),
+    (1, 'price_2',        'Arial', 30, '#e74c3c', 'bold',   'normal', 1.20),
+    (1, 'description',    'Arial', 16, '#bdc3c7', 'normal', 'normal', 1.40);
 
 -- ─────────────────────────────────────────────────────────────
 -- displays — one row per configured sign (a Display). Carries the canvas
@@ -164,13 +224,20 @@ CREATE TABLE IF NOT EXISTS displays (
     lock_holder_id    INT(11)      DEFAULT NULL COMMENT 'edit lock holder',
     lock_taken_at     DATETIME     DEFAULT NULL COMMENT 'when the holder started editing',
     lock_activity_at  DATETIME     DEFAULT NULL COMMENT 'last real interaction by the holder',
+    brand_id          INT(11)      NOT NULL COMMENT 'the Brand this sign wears (ADR-0011)',
     created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY tag (tag),
     KEY last_published_by (last_published_by),
     KEY lock_holder_id (lock_holder_id),
+    KEY brand_id (brand_id),
     CONSTRAINT displays_ibfk_1 FOREIGN KEY (last_published_by) REFERENCES users (id) ON DELETE SET NULL,
-    CONSTRAINT displays_ibfk_2 FOREIGN KEY (lock_holder_id) REFERENCES users (id) ON DELETE SET NULL
+    CONSTRAINT displays_ibfk_2 FOREIGN KEY (lock_holder_id) REFERENCES users (id) ON DELETE SET NULL,
+    -- No ON DELETE clause, so RESTRICT stands: deleting a Brand a sign still wears is
+    -- refused by BrandAdmin with a sentence naming the signs, and this is the database
+    -- saying the same thing to anything that reaches the table another way. SET NULL or
+    -- CASCADE would repaint or destroy three signs in a restaurant on one click.
+    CONSTRAINT displays_ibfk_3 FOREIGN KEY (brand_id) REFERENCES brands (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ─────────────────────────────────────────────────────────────
