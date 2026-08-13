@@ -10,10 +10,15 @@
 //
 // That file should contain:
 //   <?php
+//   define('CREDENTIALS_FOR', 'lbm');            // the folder this app runs from
 //   define('DB_HOST', 'localhost');
 //   define('DB_NAME', 'your_database_name');
 //   define('DB_USER', 'your_database_user');
 //   define('DB_PASS', 'your_database_password');
+//
+// The first line is what stops a second copy of this app on the same account from
+// picking this file up and connecting to a database that is not its own. See
+// lib/install_paths.php and docs/DEPLOY-SKIP.md §E.
 //
 // dirname(__DIR__) points one level above this file's parent
 // folder (i.e. above public_html / www).
@@ -51,8 +56,9 @@ require_once __DIR__ . '/lib/brand.php';
 // Which credentials this install uses, and why it is not simply one shared path:
 // two copies of this app in two folders on one account walk up to the same place, so
 // an unmodified rehearsal copy used to connect to the *live* database in silence.
-// `lib/install_paths.php` has the whole reasoning. The order is folder-specific
-// first, shared second, so the live install's behaviour is exactly what it was.
+// `lib/install_paths.php` has the whole reasoning. The order is folder-specific first,
+// shared second — and reaching the shared one is not the end of it, because that file
+// now says which install it belongs to. See the refusal below the alert channel.
 require_once __DIR__ . '/lib/install_paths.php';
 $credentialsFile = InstallPaths::credentialsFile(__DIR__);
 
@@ -76,6 +82,50 @@ ErrorPolicy::useAlerts(new AlertMailer(
     ErrorPolicy::stateDir(),
     defined('SITE_NAME') ? SITE_NAME : ''
 ));
+
+// ── Are the credentials it found this install's? ──────────────
+// The lookup above answers *which file*, and until now that was taken to be the whole
+// question: an install with no file of its own fell through to the shared one and
+// connected. That fall-through is a guess, and it is harmless only while every install
+// on the account belongs to the same person. So the shared file now names the install
+// it is for, and one that is not named in it refuses.
+//
+// Placed here on purpose — after the alert channel is armed, before anything connects.
+// After, so a deploy that has gone wrong reaches an admin's inbox rather than only a
+// log nobody is watching; before, because the entire point is that this database is not
+// opened. `require_once` above has already defined the DB_* constants either way, and
+// nothing has used them yet.
+//
+// The claim is read here rather than inside the rule because a constant is process-wide
+// and cannot be taken back: a rule that read `CREDENTIALS_FOR` itself could be tested
+// with one value per run. It is handed over instead, and `lib/install_paths.php` holds
+// the reasoning and the sentences.
+//
+// `fail()` shows a visitor its $subject, never its $detail, which is why the detail can
+// name a directory outside the webroot: `login.php` is a page anybody can reach. The
+// path-free sentence replaces the default only on a page somebody is looking at — a
+// Screen keeps the kiosk notice that re-checks every 30 seconds, so a sign that came up
+// inside the window comes back on its own once the line is added, and an API caller
+// keeps the answer its script knows how to parse.
+if ($credentialsFile !== ''
+    && $credentialsFile === InstallPaths::sharedCredentialsFile(__DIR__)) {
+
+    $refusal = InstallPaths::sharedClaimRefusal(
+        __DIR__,
+        defined(InstallPaths::CLAIM) ? constant(InstallPaths::CLAIM) : null
+    );
+
+    if ($refusal !== '') {
+        if (ErrorPolicy::mode() === ErrorPolicy::PAGE) {
+            ErrorPolicy::sayOnFailure(InstallPaths::REFUSAL_SENTENCE);
+        }
+        ErrorPolicy::fail(
+            'credentials-not-claimed',
+            $refusal,
+            'This install has not been given credentials of its own'
+        );
+    }
+}
 
 try {
     $pdo = new PDO(

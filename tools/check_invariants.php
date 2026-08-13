@@ -302,6 +302,19 @@ $rules = [
         'why'    => 'a read and a write that disagree about who holds a sign disagree silently '
                   . '(§4t)',
     ],
+    [
+        'name'   => 'the credentials claim is spelled in one place',
+        'regex'  => '/\bCREDENTIALS_FOR\b/',
+        'in'     => '',
+        // `InstallPaths::CLAIM` is the name everywhere else — db_connect.php reads it,
+        // ServerReport prints it, the suite asserts against it. A second literal is not
+        // a duplicated string: it is a second answer to "what is that line called", and
+        // the way it fails is an install refusing for a line the admin has already
+        // added, spelled the way the other copy says.
+        'expect' => ['lib/install_paths.php'],
+        'why'    => 'the constant an admin types into a file outside the repo has to be the '
+                  . 'one the app looks for (invariant 32, §4aw)',
+    ],
 
     // ---- Four that used to be on the by-eye list (#50) --------------------------
     // Each was listed at the bottom of this file, and in §5, as something no pattern
@@ -1376,9 +1389,49 @@ foreach ($floorClean as $probe) {
     }
 }
 
+// ---- The refusal happens before the connection, not beside it --------------------
+// Invariant 32. The rule above proves the constant is spelled once; this proves the
+// question is asked at all, and asked in time. Both halves are needed and neither
+// implies the other — a `sharedClaimRefusal()` call sitting *after* `new PDO` would
+// pass every rule in this file, pass the self-test, print the right sentence, and have
+// already opened somebody else's database to do it.
+//
+// Ordering rather than presence, because presence is the easy half and the wrong half.
+// This is the same shape as invariant 29's "before `move_uploaded_file()`": a gate below
+// the thing it guards leaves precisely what it exists to prevent.
+//
+// Read out of the source with the comments dropped, so the block of prose in
+// db_connect.php explaining all of this cannot satisfy the check that it happens.
+$checked++;
+$connectCode = codeWithoutComments(file_get_contents($root . '/db_connect.php'));
+$askedAt     = strpos($connectCode, 'sharedClaimRefusal');
+$connectAt   = strpos($connectCode, 'new PDO');
+if ($askedAt !== false && $connectAt !== false && $askedAt < $connectAt) {
+    echo "  ok   db_connect.php settles whose credentials these are before it connects "
+       . "(invariant 32)\n";
+} else {
+    echo "  FAIL db_connect.php connects without settling whose credentials these are "
+       . "(invariant 32)\n";
+    if ($askedAt === false) {
+        echo "       InstallPaths::sharedClaimRefusal() is never called. An install with no\n";
+        echo "       file of its own is back to using the shared one on the strength of\n";
+        echo "       being on the same account, which is somebody else's database as soon\n";
+        echo "       as somebody else is on it.\n";
+    } elseif ($connectAt === false) {
+        echo "       and it no longer contains `new PDO` either, so this check is now\n";
+        echo "       measuring something that moved. Point it at wherever the connection\n";
+        echo "       went before trusting the line above it.\n";
+    } else {
+        echo "       The check is there but it runs after the connection is open. A gate\n";
+        echo "       below the thing it guards leaves exactly what it exists to prevent —\n";
+        echo "       here, a schema convergence on a database this install was never given.\n";
+    }
+    $failures[] = 'db_connect.php connects before settling the credentials claim';
+}
+
 // ---- The instrument itself -------------------------------------------------------
 // Every rule above is read through codeWithoutComments(), so what that function drops
-// decides what all thirty-two of them can see. It gained HTML comments in #50, and the
+// decides what every one of them can see. It gained HTML comments in #50, and the
 // decision it embodies — a comment holding PHP is code and stays — is worth an
 // assertion rather than a paragraph, because both halves fail silently: dropping too
 // little is the false positive #44 hit, and dropping too much blinds every rule to

@@ -3171,6 +3171,104 @@ checkSame($instDir . '/private/db_credentials_lbm-test.php', InstallPaths::crede
           'and the moment its own file exists that wins, which is what isolates the rehearsal copy');
 
 // ─────────────────────────────────────────────────────────────
+section('The shared credentials file says which install it belongs to');
+
+// Everything above answers *which file*. Falling through to the shared one is a guess,
+// and the guess is only harmless while every install on the account has the same owner:
+// between `lbm/` and `lbm-test/` a wrong guess overwrites the store's own sign, and
+// between two owners it reaches somebody else's database. So the shared file names the
+// install it is for, and one it does not name refuses instead of connecting.
+//
+// The claim is passed in rather than read, which is the whole reason this is testable:
+// `CREDENTIALS_FOR` is a constant, a constant cannot be un-defined, and a rule that read
+// it directly could be exercised with exactly one value per run.
+$live = '/home/acct/public_html/lbm';
+$test = '/home/acct/public_html/lbm-test';
+
+checkSame('/home/acct/private/db_credentials.php', InstallPaths::sharedCredentialsFile($test),
+          'the shared file is named once, and it is the one two installs both reach');
+check(InstallPaths::sharedCredentialsFile($test) !== InstallPaths::sharedCredentialsFile('/home/other/public_html/lbm'),
+      'and it is per account, not per host — a second account has its own private dir');
+$named = InstallPaths::credentialsCandidates($test);
+check(InstallPaths::sharedCredentialsFile($test) !== $named[0],
+      'a named install\'s own file is never the shared one, so the two questions cannot collide');
+checkSame(InstallPaths::sharedCredentialsFile($test), $named[1],
+      'and the shared one is exactly the candidate this rule is about');
+
+// The one shape that connects.
+checkSame('', InstallPaths::sharedClaimRefusal($live, 'lbm'),
+          'an install the shared file names may use it, which is the live install today');
+checkSame('', InstallPaths::sharedClaimRefusal($test, 'lbm-test'),
+          'and so may any other install, if the file is the one that names it');
+
+// Undeclared is refused rather than waved through. A rule that only engages once
+// somebody remembers to configure it protects exactly the installs whose owner did not
+// need protecting — and the live sign crosses this by deploy order, not by a softer
+// rule: the line is an unused constant to every version that came before it, so it goes
+// on the server first and the tree goes up afterwards.
+$silent = InstallPaths::sharedClaimRefusal($test, null);
+check($silent !== '', 'a shared file that names nobody is refused, not guessed at');
+checkMentions($silent, InstallPaths::CLAIM, 'and the refusal names the line to add');
+checkMentions($silent, 'lbm-test', 'and the install it would have to name');
+checkMentions($silent, '/home/acct/private/db_credentials.php', 'and the file to add it to');
+checkMentions($silent, '/home/acct/private/db_credentials_lbm-test.php',
+              'and the other way out, which is a file of this install\'s own');
+
+// A claim that is not a name does not name this install. These are the shapes nobody
+// means to write — a `true` from a define with the value left off, a stray number, an
+// array from a copied line — and every one of them has to be a refusal, because the
+// only value that may return '' is a match.
+$notNames = [
+    ['true',       true],
+    ['false',      false],
+    ['zero',       0],
+    ['an array',   ['lbm-test']],
+    ['an empty string', ''],
+];
+foreach ($notNames as $shape) {
+    check(InstallPaths::sharedClaimRefusal($test, $shape[1]) !== '',
+          'a claim that is ' . $shape[0] . ' names no install and is refused');
+}
+
+// Somebody else's file, which is the case this exists for.
+$other = InstallPaths::sharedClaimRefusal($test, 'lbm');
+check($other !== '', 'a shared file naming another install is refused by this one');
+checkMentions($other, 'lbm-test', 'the refusal says which install is asking');
+checkMentions($other, '/home/acct/private/db_credentials_lbm-test.php',
+              'and names the file to create, which is the fix in the usual case');
+check($other !== $silent,
+      'and it is not the sentence for a file that names nobody — what to do next differs');
+
+// Directory names on Linux, so the comparison is the filesystem's, not English's.
+check(InstallPaths::sharedClaimRefusal($test, 'LBM-TEST') !== '',
+      'the claim is compared case-sensitively, because LBM and lbm are two folders');
+check(InstallPaths::sharedClaimRefusal($test, ' lbm-test') !== '',
+      'and a claim with a stray space is a different name, not a near miss to accept');
+
+// No usable folder name means no claim could match it and no per-install file could be
+// built for it, so this refusal asks for a rename instead of naming a file that cannot
+// exist — and it must not invent one out of the shape it just refused.
+$unnamed = InstallPaths::sharedClaimRefusal('/home/acct/public_html/we b', 'we b');
+check($unnamed !== '', 'an install whose folder is not a usable name is refused too');
+checkMentions($unnamed, 'Rename', 'and is told the one thing that would fix it');
+check(strpos($unnamed, 'db_credentials_') === false,
+      'and is never handed a per-install filename built out of what was just refused');
+
+// Resolution and the claim are separate questions, deliberately. This is the fixture
+// from the block above — only the shared file present — and the answer to "which file"
+// is unchanged while the answer to "may I use it" is no. A function that mixed them
+// could not be asked either one on its own.
+$claimDir = newTestStateDir();
+mkdir($claimDir . '/public_html/lbm-test', 0777, true);
+mkdir($claimDir . '/private', 0777, true);
+file_put_contents($claimDir . '/private/db_credentials.php', "<?php\n");
+checkSame($claimDir . '/private/db_credentials.php',
+          InstallPaths::credentialsFile($claimDir . '/public_html/lbm-test'),
+          'with only the shared file on disk it is still what resolution answers');
+check(InstallPaths::sharedClaimRefusal($claimDir . '/public_html/lbm-test', null) !== '',
+      'and the claim is what decides whether that answer may be used');
+
+// ─────────────────────────────────────────────────────────────
 section('Convergence asks the catalogue before it alters anything');
 
 // This file's statements are MySQL-only, so the SQLite fixture cannot run them —
@@ -6848,4 +6946,10 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1820 : 1797);
+//
+// And again for §4aw, the credentials claim: 27 checks added to the section on which
+// install this is, 1797 → 1824. Run, not summed. The MySQL figure moved by the same 27
+// because nothing was added to the engine-only section, which is the difference of 23
+// staying 23 — the one check on that line worth making by arithmetic, because it is a
+// check *of* the arithmetic.
+reportChecks(testIsMysql() ? 1847 : 1824);

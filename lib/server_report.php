@@ -114,7 +114,36 @@ class ServerReport
         //
         // The name is not a credential. The host, the user and the password are not
         // reported, and a database name is already in `HANDOFF.md`.
-        $out['This install'] = [InstallPaths::installName(dirname(__DIR__)), ''];
+        $appRoot = dirname(__DIR__);
+        $out['This install'] = [InstallPaths::installName($appRoot), ''];
+
+        // And which credentials file it got that database out of. The row above and the
+        // one below are both facts about *this* install; this one is the fact about the
+        // file between them, and it is the difference between reading the database name
+        // and recognising it. Somebody who has never seen the live database name cannot
+        // tell it from a copy's; they can tell "its own file" from "the shared one".
+        //
+        // Reaching this page at all means the claim was settled — an install using the
+        // shared file without being named in it never got as far as a connection
+        // (db_connect.php) — so the shared case is reported as the positive it is
+        // rather than as something to go and verify.
+        //
+        // The file's *name*, not its path. The path is one `dirname` from the webroot,
+        // which this card has no reason to print beside the row naming the folder.
+        $credentials = InstallPaths::credentialsFile($appRoot);
+        $isShared    = $credentials === InstallPaths::sharedCredentialsFile($appRoot);
+        if ($credentials === '') {
+            $out['Credentials'] = ['None found',
+                'No credentials file was found outside the webroot, so the app is running '
+                . 'on the placeholder constants in db_connect.php.'];
+        } else {
+            $out['Credentials'] = [basename($credentials),
+                $isShared
+                    ? 'The shared file, which names this install in ' . InstallPaths::CLAIM
+                      . '. An install it does not name is refused rather than connected.'
+                    : 'This install\'s own file, so no other copy of the app on this '
+                      . 'account can reach this database by falling back to it.'];
+        }
 
         $dbName = defined('DB_NAME') ? (string)DB_NAME : '';
         $out['Database'] = [$dbName !== '' ? $dbName : 'unknown',
