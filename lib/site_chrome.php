@@ -1,7 +1,22 @@
 <?php
 // ============================================================
-// WHAT THE STORE'S OWN COLOURS ARE
+// WHAT THE APPLICATION'S OWN COLOURS ARE
 // ============================================================
+// This class was called `Brand`, and the name was wrong by this project's own
+// vocabulary. `CONTEXT.md` gives **Brand** one meaning — *what a customer sees on
+// a TV* — and what this file holds is the opposite of that: the navigation bar,
+// the accent and the text colour of the application an employee works in, which
+// CONTEXT.md calls a **Workspace Theme**. Nothing here reaches a Screen.
+//
+// It went unnoticed while there was only one of either. ADR-0011 gives the
+// sign-facing Brand a table, a module and a picker, so the word had to go back to
+// the thing the vocabulary says owns it (`lib/brands.php`), and this had to be
+// called what it is. `SiteChrome` rather than `WorkspaceTheme` deliberately: a
+// Workspace Theme is per-person and chosen, and this is neither yet — it is one
+// set of colours for the whole install, read out of a generated file. Step 5 of
+// the v2 roadmap is what turns it into the other, and it keeps these four method
+// names when it does, so every page's call site survives that change too.
+//
 // `branding_config.php` is not a table. It is a PHP file the Admin Panel writes
 // and a person edits — its own header says "edit this file directly to update
 // branding after initial setup" — and what it holds is then interpolated straight
@@ -44,7 +59,7 @@
 
 require_once __DIR__ . '/color.php';
 
-class Brand
+class SiteChrome
 {
     /**
      * What each colour is when the config does not say, or does not say a colour.
@@ -123,7 +138,7 @@ class Brand
      * The logo's path, or '' when there is none.
      *
      * Not validated the way a colour is, and deliberately: it lands in
-     * `src="{{ Markup::text(Brand::logo()) }}"`, where escaping *is* the right tool
+     * `src="{{ Markup::text(SiteChrome::logo()) }}"`, where escaping *is* the right tool
      * and does the whole job — an attribute value cannot end early once both quote
      * characters are entities. The reason the colours need more is that a `<style>`
      * block has no such boundary, not that config values are untrusted in general.

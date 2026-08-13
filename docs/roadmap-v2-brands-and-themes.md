@@ -326,7 +326,7 @@ publish payload.
 
 A `workspace_themes` table and a `users.workspace_theme_id`. Today's
 `branding_config.php` values become a seeded theme named "Store default", and
-`Brand::navBg()` and its three siblings stop reading the file directly and start
+`SiteChrome::navBg()` and its three siblings stop reading the file directly and start
 answering *"the theme this request should use"*. Every page keeps calling the
 same four methods. **The account is passed in, never read from `$_SESSION`** — a
 static that reaches for session state is the hidden coupling this codebase has

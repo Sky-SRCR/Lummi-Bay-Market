@@ -192,7 +192,7 @@ $switchable = count($actor->openable($displayStore->all()));
 
 // The nine generated constants this page reads are defined by config.php, which
 // auth.php requires above — one list of names and defaults, in lib/branding.php.
-// The four that are colours are then read back through Brand::, not escaped: they
+// The four that are colours are then read back through SiteChrome::, not escaped: they
 // land in the <style> block below, where there is no delimiter for an entity to
 // neutralise and a value that is not a colour is CSS.
 
@@ -217,15 +217,15 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 
 /* ── Nav ── */
 #top-nav {
-    background: <?= Brand::navBg() ?>; padding: 0 16px; display: flex; align-items: center;
-    gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid <?= Brand::navBorder() ?>;
+    background: <?= SiteChrome::navBg() ?>; padding: 0 16px; display: flex; align-items: center;
+    gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid <?= SiteChrome::navBorder() ?>;
 }
-#top-nav .brand { font-weight: bold; font-size: 14px; color: <?= Brand::text() ?>; }
+#top-nav .brand { font-weight: bold; font-size: 14px; color: <?= SiteChrome::text() ?>; }
 #top-nav .user-badge { margin-left: 20px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #bdc3c7; white-space: nowrap; flex-shrink: 0; }
 #top-nav .nav-spacer { flex: 1; }
 #top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px; padding: 5px 9px; border-radius: 3px; }
 #top-nav a:hover { background: #2c3e50; color: #fff; }
-#top-nav .nav-sep { border-left: 1px solid <?= Brand::navBorder() ?>; height: 20px; margin: 0 2px; }
+#top-nav .nav-sep { border-left: 1px solid <?= SiteChrome::navBorder() ?>; height: 20px; margin: 0 2px; }
 /* The account-and-settings menu. Everything that is a *destination* rather than a
    thing you do to this sign lives behind it — Asset Library, Admin Panel, Help —
    plus the role, which was a chip in the nav and is a fact about you rather than
@@ -246,7 +246,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #gear-menu a { display: block; color: #dfe6ec; font-size: 12px; padding: 6px 8px;
                border-radius: 3px; text-decoration: none; }
 #gear-menu a:hover { background: #2c3e50; color: #fff; }
-.btn.publish-btn { background: <?= Brand::accent() ?>; }
+.btn.publish-btn { background: <?= SiteChrome::accent() ?>; }
 /* While a publish is in flight. The button being visibly out of action is what
    stops the second click happening at all; the guard in publishCanvas() is what
    catches the one that happens anyway. */

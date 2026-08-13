@@ -231,13 +231,13 @@ $rules = [
         // branding_config.php is the file itself. lib/branding.php holds the canonical
         // list of the eight names and renders the define() lines (§4y) — naming them is
         // what that module is for. admin_panel.php names four of them as the keys of a
-        // save, not as values it paints with. lib/brand.php is the only *reader*.
+        // save, not as values it paints with. lib/site_chrome.php is the only *reader*.
         //
         // A page other than these is a page that has gone back to interpolating
         // whatever the file holds into its own stylesheet. The self-test is listed
         // because it pins a value to prove a save leaves the other seven alone; the
         // rule is about pages, and there is nowhere else for a test of it to live.
-        'expect' => ['admin_panel.php', 'branding_config.php', 'lib/brand.php',
+        'expect' => ['admin_panel.php', 'branding_config.php', 'lib/site_chrome.php',
                      'lib/branding.php', 'tools/selftest_layout.php'],
         'why'    => 'these land in a <style> block, where there is no delimiter to escape '
                   . 'and a value that is not a colour is CSS — Color::read() is what makes '
@@ -602,7 +602,7 @@ if (!$badInScript) {
 //                 urlencode(), rawurlencode(), and date() with a literal format. Each
 //                 returns only digits, or only characters no parser is looking for —
 //                 no quote, no angle bracket, no backslash — whatever it is handed.
-//   a colour      Brand::navBg() and its three siblings, which return `#rrggbb` or a
+//   a colour      SiteChrome::navBg() and its three siblings, which return `#rrggbb` or a
 //                 default because Color::read() decided (§4ai). The one case in this
 //                 app where escaping would have been the wrong tool: they land in a
 //                 <style> block, which has no delimiter to escape.
@@ -634,7 +634,7 @@ if (!$badInScript) {
 $SAFE_CALLS  = ['count', 'intval', 'intdiv', 'floatval', 'number_format',
                 'urlencode', 'rawurlencode', 'date'];
 $SAFE_STATIC = ['Markup::text', 'Markup::jsInAttr', 'HttpReply::jsValue',
-                'Brand::navBg', 'Brand::navBorder', 'Brand::accent', 'Brand::text'];
+                'SiteChrome::navBg', 'SiteChrome::navBorder', 'SiteChrome::accent', 'SiteChrome::text'];
 
 /**
  * Every `define('NAME', <number>);` in config.php, as 'NAME'.

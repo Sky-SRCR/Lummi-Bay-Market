@@ -6568,7 +6568,7 @@ $aLay   = newTestLayoutStore($aPdo);
 // The fourth argument is the store's own branding, which lives in a file rather than
 // the database. Named here rather than left to default, or every count below would
 // depend on what `branding_config.php` happens to hold on the machine running this.
-$aBrand = Brand::DEFAULTS;
+$aBrand = SiteChrome::DEFAULTS;
 $aAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo), $aBrand);
 
 $aDrive = makeTestDisplay($aPdo, 'drive-thru', 'Drive-Thru Menu');
@@ -6666,40 +6666,40 @@ section('The colours that are not in the database at all (#15, second half)');
 // app where escaping is the wrong tool, because a `<style>` has no delimiter for an
 // entity to neutralise and a value that is not a colour is simply more CSS.
 //
-// Every check below goes through `Brand::pick()` rather than the constants, for the
+// Every check below goes through `SiteChrome::pick()` rather than the constants, for the
 // reason the module says: `define()` cannot be undone, so a rule reachable only
 // through the constants could only ever be tested with the one value this machine
 // holds.
 
-checkSame('#3498db', Brand::pick('accent', '#3498db'), 'a colour that reads is the colour');
-checkSame('#3498db', Brand::pick('accent', '#3498DB'), 'in the one case this app stores it in');
-checkSame('#3498db', Brand::pick('accent', null),      'an absent value is the documented default');
-checkSame('#3498db', Brand::pick('accent', ''),        'and so is a blank one');
-checkSame('#1a252f', Brand::pick('nav_bg', 'darkblue'),
+checkSame('#3498db', SiteChrome::pick('accent', '#3498db'), 'a colour that reads is the colour');
+checkSame('#3498db', SiteChrome::pick('accent', '#3498DB'), 'in the one case this app stores it in');
+checkSame('#3498db', SiteChrome::pick('accent', null),      'an absent value is the documented default');
+checkSame('#3498db', SiteChrome::pick('accent', ''),        'and so is a blank one');
+checkSame('#1a252f', SiteChrome::pick('nav_bg', 'darkblue'),
           'a CSS colour keyword is not a colour this app stores, so it is the default');
-checkSame('#3498db', Brand::pick('accent', ['#fff']),
+checkSame('#3498db', SiteChrome::pick('accent', ['#fff']),
           'and neither is an array, which is what a hand-built config could hold');
 
 // The shape that made this worth doing: escaped, it is still a closed rule and a new
 // one, because nothing in a stylesheet is looking for an entity.
 $aInject = '#fff; } body { background: url(https://example.invalid/x)';
-checkSame('#3498db', Brand::pick('accent', $aInject),
+checkSame('#3498db', SiteChrome::pick('accent', $aInject),
           'a value that closes the rule and opens another is refused, not escaped');
 checkSame(true, strpos(Markup::text($aInject), 'body {') !== false,
           'which matters because escaping leaves that value doing exactly what it said');
 
 // Each colour falls back to its own default, not to one shared "some colour".
-checkSame('#0d1b24', Brand::pick('nav_border', 'nope'), 'the border falls back to the border default');
-checkSame('#ffffff', Brand::pick('text', 'nope'),       'and the nav text to its own');
+checkSame('#0d1b24', SiteChrome::pick('nav_border', 'nope'), 'the border falls back to the border default');
+checkSame('#ffffff', SiteChrome::pick('text', 'nope'),       'and the nav text to its own');
 
 $aThrew = false;
-try { Brand::pick('no_such_colour', '#ffffff'); } catch (Throwable $e) { $aThrew = true; }
+try { SiteChrome::pick('no_such_colour', '#ffffff'); } catch (Throwable $e) { $aThrew = true; }
 checkSame(true, $aThrew, 'a colour this app does not have is a mistake, not an answer');
 
 // What the Branding tab and the audit both read.
-checkSame([], Brand::unreadable(Brand::DEFAULTS), 'a config that reads has nothing to report');
-checkSame([], Brand::unreadable([]),              'and neither has one that defines nothing yet');
-$aBadCfg = Brand::unreadable(['accent' => 'puce'] + Brand::DEFAULTS);
+checkSame([], SiteChrome::unreadable(SiteChrome::DEFAULTS), 'a config that reads has nothing to report');
+checkSame([], SiteChrome::unreadable([]),              'and neither has one that defines nothing yet');
+$aBadCfg = SiteChrome::unreadable(['accent' => 'puce'] + SiteChrome::DEFAULTS);
 checkSame(1, count($aBadCfg),        'one value nobody can read is one thing to report');
 checkSame('accent', $aBadCfg[0]['key'],   'named by the field it is');
 checkSame('Accent', $aBadCfg[0]['label'], 'in the words the Branding form uses');
@@ -6710,7 +6710,7 @@ checkSame('puce',   $aBadCfg[0]['value'], 'quoting what is actually in the file'
 // a finding that read like the others would send somebody to the shop floor over a
 // navigation bar.
 $aCfgAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo),
-                            ['accent' => 'puce'] + Brand::DEFAULTS);
+                            ['accent' => 'puce'] + SiteChrome::DEFAULTS);
 $found = $aCfgAudit->findings();
 checkSame(3, count($found), 'a brand colour nobody can read joins the audit');
 checkSame(ColorAudit::WRONG_IN_APP, $found[2]['kind'], 'under the kind that touches no sign');

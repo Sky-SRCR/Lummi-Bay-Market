@@ -217,7 +217,7 @@ layout, drawn on the board a customer reads prices off.
 - **A colour in a `<style>` block is validated, never escaped.** Escaping is for a
   delimiter and a stylesheet has none — `#fff; } body { … }` survives `Markup::text()`
   intact and is a closed rule and a new one. The store's brand colours go through
-  `Brand::navBg()` and its three siblings, which answer `#rrggbb` or the documented
+  `SiteChrome::navBg()` and its three siblings, which answer `#rrggbb` or the documented
   default because `Color::read()` decided. No page names a `BRAND_*` constant. The same
   holds one boundary further in, inside a `style` **attribute**: escaping stops a value
   ending the attribute and not the declaration, so a stored Brand Standards row is drawn

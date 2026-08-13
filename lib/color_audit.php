@@ -26,7 +26,7 @@
 //                                  discards what it cannot parse and says nothing.
 //   branding_config.php         →  not a table and not a sign: the store's own colours,
 //                                  interpolated into the `<style>` block on the Builder,
-//                                  the Help page and the sign-in page. `Brand::` answers
+//                                  the Help page and the sign-in page. `SiteChrome::` answers
 //                                  the documented default for one it cannot read, so
 //                                  nothing looks broken and nothing says why. Worth
 //                                  reporting because that file is generated, is
@@ -46,7 +46,7 @@
 // it takes no writes — the one of these three that reads and never writes.
 
 require_once __DIR__ . '/color.php';
-require_once __DIR__ . '/brand.php';
+require_once __DIR__ . '/site_chrome.php';
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/layout_store.php';
 require_once __DIR__ . '/brand_styles.php';
@@ -68,7 +68,7 @@ class ColorAudit
     /**
      * @param array|null $brand key => raw brand colour, or null to read the real
      *                          `branding_config.php`. Passed in for the same reason
-     *                          `Brand::pick()` is pure: a `define()` cannot be undone,
+     *                          `SiteChrome::pick()` is pure: a `define()` cannot be undone,
      *                          so a test that could only reach the constants could only
      *                          ever exercise the values this machine happens to hold.
      */
@@ -154,14 +154,14 @@ class ColorAudit
         // Last, because it is the only one no customer ever sees. Still reported: the
         // pages look deliberate, so nobody investigates, and the value stays wrong
         // until someone opens the Branding tab for an unrelated reason.
-        foreach (Brand::unreadable($this->brand) as $bad) {
+        foreach (SiteChrome::unreadable($this->brand) as $bad) {
             $cosmetic[] = [
                 'kind'  => self::WRONG_IN_APP,
                 'scope' => '',
                 'what'  => 'the ' . $bad['label'] . ' colour in branding_config.php',
                 'value' => $bad['value'],
                 'consequence' => 'The Builder, the Help page and the sign-in page draw the '
-                               . 'default ' . Brand::DEFAULTS[$bad['key']] . ' instead. No sign '
+                               . 'default ' . SiteChrome::DEFAULTS[$bad['key']] . ' instead. No sign '
                                . 'uses this colour, so nothing on the shop floor is wrong.',
                 'fix'   => 'Settings → Branding → ' . $bad['label'] . '. Saving that form '
                          . 'rewrites the file.',

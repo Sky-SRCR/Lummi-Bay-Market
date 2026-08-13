@@ -67,7 +67,7 @@
 // than substituting in silence (#21).
 //
 // Depends on nothing but `BrandingConfig`, which owns the file the setting lives in.
-// It does not open that file a second way, for the reason `lib/brand.php` gives: two
+// It does not open that file a second way, for the reason `lib/site_chrome.php` gives: two
 // readers is how the two of them come to disagree about what a missing value means.
 
 require_once __DIR__ . '/branding.php';
@@ -92,7 +92,7 @@ class StoreClock
 
     /**
      * Make sure the generated branding file has been read, for a caller with no app
-     * around it — the same service `Brand::load()` performs, and for the same
+     * around it — the same service `SiteChrome::load()` performs, and for the same
      * reason. Every page already has this through `config.php`.
      */
     public static function load()
@@ -136,7 +136,7 @@ class StoreClock
      * The zone for a stored value, or the documented default when it is not one.
      *
      * Pure — the stored value is passed in rather than read — for the reason
-     * `Brand::pick()` is (§4o): a `define()` cannot be undone, so a rule reachable
+     * `SiteChrome::pick()` is (§4o): a `define()` cannot be undone, so a rule reachable
      * only through the constant could only ever be tested with the one value this
      * process happens to hold.
      */
@@ -157,7 +157,7 @@ class StoreClock
      *
      * Absent is not unreadable: a config written before this setting existed simply
      * does not define it, and the default is the right answer with nothing for
-     * anybody to go and fix. Same distinction `Brand::unreadable()` draws, and it is
+     * anybody to go and fix. Same distinction `SiteChrome::unreadable()` draws, and it is
      * the whole difference between a notice worth reading and one on every screen.
      *
      * @param mixed $stored the raw value, or null to read the constant

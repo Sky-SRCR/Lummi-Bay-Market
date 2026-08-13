@@ -8,7 +8,7 @@ $isAdmin = isAdmin();
 
 // The BRAND_* constants this page's CSS reads are defined by config.php, which
 // auth.php requires above — one list of eight names and defaults, in lib/branding.php.
-// The four that are colours are then read back through Brand::, not escaped: they
+// The four that are colours are then read back through SiteChrome::, not escaped: they
 // land in the <style> block below, where there is no delimiter for an entity to
 // neutralise and a value that is not a colour is CSS.
 ?>
@@ -25,17 +25,17 @@ body { background: #1e2b38; color: #d0d8e0; min-height: 100vh; }
 
 /* ── Nav ── */
 #top-nav {
-    background: <?= Brand::navBg() ?>;
+    background: <?= SiteChrome::navBg() ?>;
     padding: 0 20px; display: flex; align-items: center; gap: 14px;
-    height: 46px; border-bottom: 1px solid <?= Brand::navBorder() ?>;
+    height: 46px; border-bottom: 1px solid <?= SiteChrome::navBorder() ?>;
     position: sticky; top: 0; z-index: 100;
 }
 #top-nav .brand { font-weight: bold; font-size: 14px;
-                  color: <?= Brand::text() ?>; margin-right: auto; }
+                  color: <?= SiteChrome::text() ?>; margin-right: auto; }
 #top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px;
              padding: 5px 9px; border-radius: 3px; }
 #top-nav a:hover { background: #2c3e50; color: #fff; }
-#top-nav a.active { background: <?= Brand::accent() ?>; color: #fff; }
+#top-nav a.active { background: <?= SiteChrome::accent() ?>; color: #fff; }
 .role-tag { background: <?= $isAdmin ? '#e74c3c' : '#3498db' ?>; color: #fff;
             font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
             text-transform: uppercase; margin-left: 4px; }
@@ -71,7 +71,7 @@ h1.page-title { font-size: 26px; color: #fff; margin-bottom: 6px; }
     font-size: 18px; color: #fff; border-bottom: 2px solid #2c3e50;
     padding-bottom: 10px; margin-bottom: 20px;
 }
-.help-section h3 { font-size: 14px; color: <?= Brand::accent() ?>;
+.help-section h3 { font-size: 14px; color: <?= SiteChrome::accent() ?>;
                    margin: 24px 0 8px; text-transform: uppercase; letter-spacing: .8px; }
 .help-section p { font-size: 14px; line-height: 1.7; color: #c0cad4; margin-bottom: 10px; }
 .help-section ul, .help-section ol { padding-left: 20px; margin-bottom: 10px; }
@@ -99,7 +99,7 @@ kbd {
 .steps li { counter-increment: step; display: flex; gap: 12px; margin-bottom: 10px; }
 .steps li::before {
     content: counter(step); min-width: 24px; height: 24px; border-radius: 50%;
-    background: <?= Brand::accent() ?>; color: #fff; font-size: 12px;
+    background: <?= SiteChrome::accent() ?>; color: #fff; font-size: 12px;
     font-weight: bold; display: flex; align-items: center; justify-content: center;
     flex-shrink: 0; margin-top: 2px;
 }
@@ -133,8 +133,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
 <!-- ── Nav ── -->
 <div id="top-nav">
-    <?php if (Brand::logo()): ?>
-        <img src="<?= Markup::text(Brand::logo()) ?>" alt="Logo"
+    <?php if (SiteChrome::logo()): ?>
+        <img src="<?= Markup::text(SiteChrome::logo()) ?>" alt="Logo"
              style="max-height:32px; max-width:120px; object-fit:contain;">
     <?php else: ?>
         <span class="brand"><?= Markup::text(SITE_NAME) ?></span>
@@ -1010,9 +1010,9 @@ function onScroll() {
         // nothing, so an entity stays an entity and a backslash stays a backslash —
         // and a value ending in one escapes the quote that was supposed to close this
         // string. HttpReply::jsValue() produces the literal, quotes included (#15).
-        // Brand::accent() answers a colour or the documented default, so this is the
+        // SiteChrome::accent() answers a colour or the documented default, so this is the
         // only place the value is asked about and the only place it is escaped.
-        a.style.borderLeftColor = (target === active) ? <?= HttpReply::jsValue(Brand::accent()) ?> : 'transparent';
+        a.style.borderLeftColor = (target === active) ? <?= HttpReply::jsValue(SiteChrome::accent()) ?> : 'transparent';
         a.style.color = (target === active) ? '#fff' : '';
         a.style.background = (target === active) ? '#22303f' : '';
     });

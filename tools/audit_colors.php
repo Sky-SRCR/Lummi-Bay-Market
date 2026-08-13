@@ -105,7 +105,7 @@ try {
 // the pages rather than in a table, so --host and --db say nothing about which one is
 // read: it is always this checkout's. Worth knowing when auditing a copy — the brand
 // findings describe the machine the script is on, not the database it connected to.
-Brand::load();
+SiteChrome::load();
 
 $displays = new DisplayStore($pdo);
 $audit    = new ColorAudit($displays, new LayoutStore($pdo, $displays), new BrandStyles($pdo));

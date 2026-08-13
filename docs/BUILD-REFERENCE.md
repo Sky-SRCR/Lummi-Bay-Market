@@ -3829,7 +3829,7 @@ things:**
 | a door | `Markup::text()`, `Markup::jsInAttr()`, `HttpReply::jsValue()` — the three functions that exist to answer this |
 | a literal | a quoted string or a number, written in the source |
 | a safe call | `count`, `intval`, `intdiv`, `floatval`, `number_format`, `urlencode`, `rawurlencode`, and `date()` with a literal format — each returns only digits, or only characters no parser is looking for, whatever it is handed |
-| a colour | `Brand::navBg()` and its three siblings, which return `#rrggbb` because `Color::read()` decided (§4ai) |
+| a colour | `SiteChrome::navBg()` and its three siblings, which return `#rrggbb` because `Color::read()` decided (§4ai) |
 | a number | a class constant whose declaration in `lib/` is a numeric literal — **resolved**, not assumed, so `Foo::BAR = 'x <b>'` does not pass |
 
 and a ternary is safe when both branches are, a concatenation when every piece is.
@@ -3854,7 +3854,7 @@ well as this one — different questions about the same line, and both have to h
 
 **Verified by injection, twenty times.** Ten shapes that must fail — `<?= $u['name'] ?>`,
 `$x . $y`, `date($fmt)`, `strtoupper($x)`, an unknown class constant, a ternary with
-one unsafe branch, `Brand::logo()` (a path, not a colour), `$a ?: 'fallback'` (the
+one unsafe branch, `SiteChrome::logo()` (a path, not a colour), `$a ?: 'fallback'` (the
 Elvis form echoes its condition), `'a' . $b . 'c'`, and `Markup::text($a) . $b` — and
 ten that must pass, including a parenthesised nested ternary that a first version got
 wrong and now does not.
@@ -3882,14 +3882,14 @@ a new one. There is no delimiter for an entity to neutralise. What is needed the
 not "make these characters inert" but **"this is a colour"** — and `lib/color.php`
 already knew how to decide that (§4ac).
 
-`lib/brand.php` is the reader. `Brand::accent()` answers `#rrggbb` or the documented
+`lib/site_chrome.php` is the reader. `SiteChrome::accent()` answers `#rrggbb` or the documented
 default, `Color::read()` having decided which; `tools/check_invariants.php` holds the
 `BRAND_*` constants to that one file, so a page naming one is a page that has gone
 back to interpolating whatever is in the config.
 
 **It also collected the defaults, which had been written out four times** — once each
 in `login.php`, `help.php`, `builder.php` and `admin_panel.php`, agreeing only because
-nobody had yet had a reason to change one. Those four blocks are gone; `Brand::load()`
+nobody had yet had a reason to change one. Those four blocks are gone; `SiteChrome::load()`
 reads the config file, and `db_connect.php` calls it beside `lib/markup.php` for the
 same reason it requires that: a page that forgot would be a fatal error on a live
 screen.
@@ -3913,7 +3913,7 @@ uses** and a finding that read like the others would send somebody to the shop f
 over a navigation bar; and the Branding tab opens with a notice naming each field and
 quoting what is stored.
 
-`Brand::pick()` and `Brand::unreadable()` are pure, taking the stored value rather
+`SiteChrome::pick()` and `SiteChrome::unreadable()` are pure, taking the stored value rather
 than reading it, for the reason `layout_rules.php` is (§4o): `define()` cannot be
 undone, so a rule reachable only through the constants could only ever be tested with
 the one value the machine running the suite happens to hold.
@@ -4704,7 +4704,7 @@ control three inches above the card that reports the server's clock and the data
 which is where somebody who has noticed a wrong time will actually be looking.
 
 `StoreClock` in `lib/store_clock.php` is what the string means, and it is shaped like
-`lib/brand.php` on purpose — same problem, same file, same one-way door for a bad
+`lib/site_chrome.php` on purpose — same problem, same file, same one-way door for a bad
 value:
 
 - **A fixed offset is not a timezone.** `+08:00` and `PST` both construct a perfectly
@@ -6528,7 +6528,7 @@ grep -rn "htmlspecialchars(" --include=*.php . # lib/markup.php, which names bot
                                               # §4ah
 grep -rn "BRAND_NAV_BG\|BRAND_NAV_BORDER\|BRAND_ACCENT\|BRAND_TEXT" --include=*.php .
                                               # branding_config.php is the file; admin_panel.php writes
-                                              # it; lib/brand.php is the only reader. A page naming one
+                                              # it; lib/site_chrome.php is the only reader. A page naming one
                                               # is a page interpolating whatever the config holds into
                                               # its own <style> block, where escaping is not what makes
                                               # a value safe — §4ai

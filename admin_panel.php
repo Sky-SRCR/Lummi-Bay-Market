@@ -95,7 +95,7 @@ $branding = new BrandingConfig(__DIR__);
 $branding->load();
 $brand      = $branding->current();
 
-// The four colours are read back through Brand:: rather than taken from the config
+// The four colours are read back through SiteChrome:: rather than taken from the config
 // as stored — the same reader the Builder, the Help page and the sign-in page draw
 // their stylesheets from, so what this form offers as "what is there now" is what
 // those pages are actually painting. Handing an unreadable stored value to a
@@ -106,12 +106,12 @@ $brand      = $branding->current();
 // There is no writer here. `writeBrandingConfig()` lived on this page until §4y and
 // the branch this came from still carried it; `$branding->save()` below is the only
 // way the file is written now, and it is the only thing that names it.
-$brandBad   = Brand::unreadable();
+$brandBad   = SiteChrome::unreadable();
 $curLogo    = $brand['BRAND_LOGO'];
-$curNavBg   = Brand::navBg();
-$curBorder  = Brand::navBorder();
-$curAccent  = Brand::accent();
-$curText    = Brand::text();
+$curNavBg   = SiteChrome::navBg();
+$curBorder  = SiteChrome::navBorder();
+$curAccent  = SiteChrome::accent();
+$curText    = SiteChrome::text();
 $curSite    = $brand['SITE_NAME'];
 $curMail    = $brand['MAIL_FROM'];
 $curMailN   = $brand['MAIL_FROM_NAME'];
