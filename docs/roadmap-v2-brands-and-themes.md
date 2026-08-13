@@ -1,0 +1,300 @@
+# Roadmap v2 — Brands, Workspace Themes, and the Builder workbench
+
+Status: **planned, nothing built.** Settled in a grilling session on 2026-08-13;
+the decisions are recorded here and the one that reverses a previous decision is
+in [ADR-0011](adr/0011-typography-and-colour-belong-to-a-brand.md).
+
+v1 is **live and running**, and `lbm-test/` is still standing. That is the whole
+of why this roadmap looks different from
+[`roadmap-multi-display.md`](roadmap-multi-display.md), which was written as one
+big cutover ending in a 22-step deployment visit. There is no backlog to clear
+here: each step below is deployable on its own, and each can be rehearsed against
+`lbm-test/` before it touches the shop — which closes the one gap
+[`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) §5 lists as covered by no suite, *"the
+rehearsal against a database that genuinely lags the repo."*
+
+Three documents are stale as of this being written and are corrected in step 1:
+the status line of `roadmap-multi-display.md` (PR #3 is merged), the "what is
+left is the live deploy" framing in [`work-lanes.md`](work-lanes.md), and the
+"re-run against the live install after the deploy" note in
+[`browser-pass.md`](browser-pass.md).
+
+## Why
+
+The installation stopped being one store. It drives signs in several venues on
+one property — restaurants, bars, a casino floor — each already branded in the
+physical world, each wanting its own colours and its own logo on its own boards.
+One set of colours across all of them is not the shared-look feature decision C
+was protecting; it is a defect that reaches every screen.
+
+Separately, and for a different audience: the Builder's own chrome is a stack of
+up to five horizontal bars with a properties panel floating over them, and a
+role-gated toolbar that shows a basic account four buttons and six gaps. That is
+a workspace problem, not a sign problem, and the two must not be solved with the
+same word — see the language note below.
+
+## The language, first
+
+**Brand** is what a customer sees on a TV. **Workspace Theme** is what an
+employee sees while working. They share no storage, no audience, no admin
+surface and no vocabulary, and the word *theme* never appears on anything that
+reaches a Screen. Both terms, and **Brand palette**, are defined in
+[`CONTEXT.md`](../CONTEXT.md) with `_Avoid_` lines pointing at each other.
+
+This is not tidiness. The two pickers land on the same page in step 5, and the
+sentence "I changed the theme and the sign looks wrong" has to be unambiguous
+when it is said at nine at night by somebody standing in a restaurant.
+
+## Decisions
+
+The sixteen settled in the grilling session, compressed. Where one reverses or
+narrows an existing decision, the ADR is named.
+
+| # | Decision |
+|---|---|
+| 1 | Two nouns — **Brand** (sign-facing) and **Workspace Theme** (application-facing). Never one word. |
+| 2 | A Brand is **named and reusable**; several Displays share one. Content, layout, canvas size and screen name tag stay per-Display. ADR-0011. |
+| 3 | A Brand carries the six branded block-type standards, a **palette**, a logo asset and a default canvas background. |
+| 4 | The palette is **offered as swatches, never enforced**. A block with its own colour keeps it. |
+| 5 | The Brand's logo is a named asset the Builder can place in one click, and it is shown inside the Builder's Brand control. **The Viewer never draws it automatically** — a fixed corner and size cannot be right for both a landscape menu board and a portrait specials board (ADR-0004). |
+| 6 | **Brand edits are immediate** across the venue, as Brand Standards has always been. **Brand assignment is staged**: picking one repaints the Builder canvas in the browser and is written by Publish, on the path `applyBackground()` already takes. |
+| 7 | The Brand Standards lock refusal **narrows** from "anyone editing anything" to "anyone editing a Display using this Brand", naming the Display and the holder. Narrows ADR-0007's amendment. |
+| 8 | `displays.brand_id` is **`NOT NULL`**. Deleting a Brand in use is **refused**, naming the Displays. Ids are never reused. |
+| 9 | Upgrade **seeds Brand #1** from today's global `block_styles`, named after `SITE_NAME`; every existing Display points at it and no sign moves. Fresh setup cannot finish without a first Brand. |
+| 10 | A Workspace Theme has **12 roles** — 6 chrome, 5 status, 1 canvas-overlay. Status colours and the selection outline/handles **are** themable, at the admin's discretion. |
+| 11 | **The canvas is never themable.** `#builder-canvas` and everything drawn on it belong to the Brand. Enforced by a check, not by convention. |
+| 12 | A Workspace Theme applies to **every signed-in page**, not only the Builder. `login.php` and the Viewer are unaffected by construction. Site Branding becomes **the default theme**. |
+| 13 | Admins create themes; everyone selects one. Admins own their own legibility policy — contrast is **warned about, not refused**. |
+| 14 | The **theme picker always renders un-themed**, and "use the store default" works from any state. A preference you cannot reverse is not a preference. |
+| 15 | The Builder becomes **option B**: left palette, centre canvas, right rail with a resting state. Align tools become *Arrange* in the rail; the align bar retires; the properties panel is docked, never floating. |
+| 16 | `lastPublishDescription()` changes to `n/j/y g:ia` in **all three** places that use it — the Builder, the Admin Panel's Displays tab, and the refused-publish message. One sentence, one format. |
+
+## Steps
+
+Each step leaves the app coherent and is independently deployable, so work can
+stop after any of them. There is no CI or deploy pipeline — every change reaches
+the sign by hand — so **step order is deployment order**, exactly as in v1.
+
+The furniture is built before the things that sit in it. Step 2 rebuilds the
+Builder's chrome and leaves an empty Brand slot in the nav and an empty
+Workspace Theme item in the gear; steps 4 and 5 fill them. The alternative order
+— Brands first — would build the Brand control twice, once in the old toolbar
+and once in the new nav.
+
+### Step 1 — Publish stops writing what the Brand owns · size S · risk Medium
+
+**This is a bug fix, and it lands alone.** `applyBlockStyle()` (`builder.php:1830`)
+writes the shared standard into a node's inline style; `serializeBlock()`
+(`builder.php:3126`) reads those same inline styles back out and publishes them
+into the element's own `font_*` columns. Every publish already bakes the global
+standards into every branded element's own row.
+
+It is invisible today, because the values are identical for every Display and the
+branded-subtype branch ignores those columns at render. Brands would make it two
+live faults:
+
+- **A stale-brand fossil.** Change a block's subtype from `price` to `free` a
+  month later and it inherits whichever Brand was selected at its last publish —
+  possibly a venue it was never part of. Nothing says so.
+- **A phantom undo step.** `snapshotCanvas()` serializes through
+  `serializeBlock()`, so switching Brands changes the snapshot string although no
+  element changed. The next real edit pushes a step recording a difference nobody
+  made — what `BUILD-REFERENCE.md` calls "invariant 27 the other way round: a
+  history holding an entry for something that never changed."
+
+**What changes.** For a branded subtype, publish sends nothing for the six
+typography fields and the server leaves those columns untouched — the *absent
+means untouched* property `BrandStyles` already promises for its own table. The
+undo snapshot stops carrying brand-derived values.
+
+**Done when** a mutation run over the touched files kills the new checks with the
+`assertion` grade, and `selftest_builder_undo.js` proves that re-applying block
+styles does not move the snapshot. Also corrects the three stale documents named
+at the top of this file.
+
+Gates: `php -l`, `selftest_layout`, `check_invariants`, `check_doc_numbering`,
+`selftest_builder_undo.js`, `selftest_builder_editing.js`, and
+`php tools/mutate.php` over every `lib/` file touched.
+
+### Step 2 — The Builder workbench · size L · risk Medium
+
+Option B, and the nav from the sketch. No schema, no new data — pure chrome, which
+is what makes it safe to land before the features that use it.
+
+**Layout.** A grouped left palette (Layout · Text · Media · Canvas) replaces the
+add-block buttons in the top bar. The properties panel becomes a **docked right
+rail** — a sibling of the canvas in a flex row, so the overlap that started this
+is arithmetically impossible rather than nudged out of the way, and the panel
+stops looking like a window that can be dragged. The rail keeps a resting state
+("Select a block to edit it") rather than vanishing. Align tools move into the
+rail as an *Arrange* group and `#align-bar` retires.
+
+**Nav**, left to right: `LUMMI BAY MARKET` (text, no logo) │ display title · tag ·
+dimensions · `OFF` when off · `View ↗` · `⇄` when more than one is switchable │
+*(empty Brand slot)* │ spacer │ `Undo` `Publish` │ `jporter` `Sign Out` `⚙`. The
+role chip leaves the Builder. The gear becomes the account-and-settings menu and
+holds the role as text, `Last published by …`, Asset Library, Admin Panel
+(admins), Help, and *(an empty Workspace Theme slot)*.
+
+**A note against this step's own nav.** `builder.php:635` says the publish line
+exists to answer *"is what I'm looking at live, and did somebody else change
+it?"*, and it was deliberately given to read-only Builders too. Behind a click it
+stops answering at a glance. Building it in the gear as instructed; if it wants
+to come back out, the cheap half-measure is a dot on the gear when the sign has
+been published by somebody else since the page opened.
+
+**`lastPublishDescription()`** changes format to `n/j/y g:ia`, in `lib/displays.php`
+and therefore in all three places that print it.
+
+**What this costs, honestly.** `help.php` describes the old toolbar and must be
+rewritten. Three assertions in the node suites are about the old chrome and must
+change — `selftest_builder_readonly.js:93` (the align bar is emitted only when
+editable), `:109` (the id list including `control-bar`), and
+`selftest_builder_undo.js:745` (`inspector.style.display === 'none'` when put
+away, which becomes "the rail shows its resting state and no block control is
+populated" — a stronger check than a display property). **A rewritten check is a
+check that has to be re-proved able to fail**, which is #50's whole lesson; each
+one gets a mutation run rather than a green line.
+
+**Done when** all six node suites pass against the new chrome, `help.php` matches
+what the page now looks like, and the browser pass is re-walked against
+`lbm-test/` — it is the only verification here a person does, and this step
+changes every page it describes.
+
+Gates: `php -l`, `node --check` over the extracted script blocks of `builder.php`,
+all six node suites, `check_invariants`, `check_doc_numbering`, mutation runs over
+the rewritten checks.
+
+### Step 3 — Brands: data and the admin surface · size L · risk **High**
+
+Risk lives here, as it did in v1's phase 1, and for the same reason: this step
+converges schema on a live database that is driving signs.
+
+**Schema.** A `brands` table (name, palette roles, logo asset, default canvas
+background). `block_styles` re-keyed on `(brand_id, block_type)`.
+`displays.brand_id` `NOT NULL`. Every statement goes into `signageSchemaPlan()`
+**with its gate**, and the gate answers `null` rather than `false` when it cannot
+tell — an ungated `schemaTry()` re-runs on every signed-in page load, and an
+`ALTER` locks the table every sign's layout lives in.
+
+**Convergence seeds Brand #1** from the existing global `block_styles` rows,
+names it after `SITE_NAME`, and backfills every `displays.brand_id`. An install
+that never makes a second Brand renders identically to today. This is the piece
+that must be **rehearsed on a copy of live data** before it goes near the shop.
+
+**A new module, `lib/brands.php`,** becomes the only writer of `brands`, and
+`BrandStyles` is re-scoped rather than replaced — it keeps the two properties it
+already promises (*absent means untouched*, *every stored value renders*) and
+gains a Brand to be about. Nothing outside those two modules writes either table.
+
+**Admin Panel → Display Branding** becomes a list of Brands, each opening to its
+standards, palette, logo and default background. Deleting a Brand in use is
+refused, naming the Displays. The lock refusal narrows to the Brand and says
+which Display and who holds it.
+
+**Setup** gains a required first Brand — fresh installs only; `setup.php` deleted
+itself on this host in 2026-08-07 and the live path is convergence.
+
+**Done when** a database built from `schema.sql` has nothing left for convergence
+to do, a rehearsal against a copy of live data leaves every sign rendering
+identically, and the Displays tab shows each Display's Brand.
+
+Gates: the standing set, plus `selftest_layout` sections for the seeding and the
+narrowed refusal, plus `php tools/mutate.php lib/brands.php` and over
+`lib/brand_styles.php`.
+
+### Step 4 — Brands in the Builder · size M · risk Medium
+
+The Brand slot from step 2 gets its control: `[logo] Brand: Salmon House ▾` for
+admins, the same as plain text for basic accounts — they should know which venue
+they are building for and be unable to change it.
+
+Picking one **repaints the canvas in the browser and writes nothing**. Publish
+writes `brand_id` beside the layout, refusing the whole publish on an invalid
+value rather than half-applying, on `applyBackground()`'s path. The palette
+appears as swatches above every colour control in the rail — marquee text and
+background, section, free text, canvas background. The palette item "Venue Logo"
+drops an image block already linked to the Brand's asset.
+
+Because step 1 landed, cycling Brands moves no undo snapshot and bakes nothing
+into an element row.
+
+**Done when** switching Brands in the Builder changes only what is drawn,
+publishing writes the Brand that was selected at that moment, and a read-only
+Builder renders its Display's Brand while offering no control to change it.
+
+Gates: the standing set, all six node suites, and a new
+`selftest_builder_brands.js` covering the preview, the read-only case and the
+publish payload.
+
+### Step 5 — Workspace Themes · size M · risk Low
+
+A `workspace_themes` table and a `users.workspace_theme_id`. Today's
+`branding_config.php` values become a seeded theme named "Store default", and
+`Brand::navBg()` and its three siblings stop reading the file directly and start
+answering *"the theme this request should use"*. Every page keeps calling the
+same four methods. **The account is passed in, never read from `$_SESSION`** — a
+static that reaches for session state is the hidden coupling this codebase has
+spent its history removing.
+
+Twelve roles: nav background, nav text, accent, work area, panel, panel border,
+five status roles covering all seven of today's banners, and the canvas selection
+outline and handles. **Never `#builder-canvas` or anything drawn on it** —
+enforced in `tools/check_invariants.php`, so a later change cannot quietly extend
+the reach.
+
+**Admin Panel → Site Branding** gains theme creation with a live preview and a
+contrast **warning** — "Nav text on Nav background is hard to read" — that does
+not block the save. The picker in the Builder's gear is rendered in fixed,
+un-themed colours and offers "use the store default", because the control for
+changing your theme is otherwise drawn in your theme.
+
+**Done when** a signed-in person's chosen theme paints every page they can reach,
+the sign-in page and the Viewer are provably unaffected, and a theme whose every
+colour is identical still leaves its own picker legible.
+
+Gates: the standing set, plus a `check_invariants` rule that no canvas colour
+resolves through a theme, plus `selftest_layout` sections for resolution and
+fallback.
+
+## Risks and watch-items
+
+- **Step 3's convergence is the one that can empty a shop.** `brand_id NOT NULL`
+  on a live `displays` table, and a re-key of `block_styles`, both while signs are
+  polling. Rehearse on `lbm-test/` against a copy of live data; back up first;
+  the ALTERs lock tables the layouts live in.
+- **A Brand edit is still instant and still irreversible**, now across a venue.
+  Nothing in this plan makes it undoable, and the ADR says so rather than leaving
+  it to be discovered.
+- **`php -l` cannot see the floor.** This container runs PHP 8.4 and the shop runs
+  8.2 (`ea-php82`, pinned explicitly). Invariant 31's denylist catches seven
+  constructs and twenty functions and prints that it is a denylist. A construct
+  not seen before is still worth looking up.
+- **Section letters are allocated by `check_doc_numbering.php`, not counted.** It
+  prints the next free letter on every run; four branches once answered that
+  question by counting, and all four answered it the same way. No letter is
+  written down here on purpose — the tool refuses a document that cites a
+  write-up which does not exist yet, which is how it caught the first draft of
+  this very line.
+- **Invariant numbers cannot be reserved** the way a section letter can
+  ([`work-lanes.md`](work-lanes.md) item 4). The four this plan implies —
+  publish sends no brand-owned typography; no canvas colour resolves through a
+  theme; nothing outside `lib/brands.php` writes `brands`; nothing outside
+  `lib/workspace_themes.php` writes `workspace_themes` — take their numbers when
+  they land, not here.
+- **The browser pass is a list, not a receipt.** Step 2 rewrites every page it
+  describes, and five of its seven defects were things a screen did not *say* —
+  the category no harness here is pointed at. It gets re-walked.
+
+## Out of scope
+
+- **Undoing a Brand edit.** A draft-and-apply step on a Brand is a real feature
+  and a different one; assignment is stageable, editing is not.
+- **Per-block override of Brand Standards.** The six branded types exist so that
+  a price looks like a price; an override switch returns the app to the state
+  this project is fixing.
+- **A Viewer-drawn logo.** Decision 5, and the reasoning is in ADR-0011.
+- **Themable canvas.** Decision 11, permanently.
+- **Venue as an entity.** A Brand stands for a venue today. If a venue ever needs
+  facts of its own — an address, opening hours a sign reads — that is a new noun
+  and a new conversation.

@@ -94,9 +94,9 @@ _Avoid_: ban, block, suspension
 
 **Text block**:
 A canvas element that displays words. Its content is **plain text** — styling
-(font, size, colour, weight, alignment) comes from Brand Standards and the
-block's own properties, never from markup inside the text. See
-docs/adr/0002.
+(font, size, colour, weight, alignment) comes from the Brand Standards of the
+Display's Brand and from the block's own properties, never from markup inside
+the text. See docs/adr/0002.
 _Avoid_: label, caption, rich text
 
 **Asset**:
@@ -118,3 +118,37 @@ Asset a person made, renamed or uploaded, even when nothing uses it. Changes
 nothing on any sign — which is why it needs no publish and no confirmation
 beyond the count.
 _Avoid_: clean up, garbage collect, prune, purge
+
+### Branding & appearance
+
+Two words that must never merge. A **Brand** is what a customer sees on a TV; a
+**Workspace Theme** is what an employee sees while working. Nothing named
+"theme" ever reaches a Screen.
+
+**Brand**:
+A named visual identity for signs — one venue's typography, colours, logo and
+default canvas background. Reusable: every Display carries exactly one, and the
+several Displays of a single venue share it, so the identity is edited in one
+place rather than copied.
+_Avoid_: theme, skin, style set, template, brand standard
+
+**Brand Standards**:
+The typography half of a Brand — one setting per branded block type, applied to
+every block of that type on any Display using that Brand. A block cannot
+override them, which is what makes a price on one sign look like a price on the
+next.
+_Avoid_: block styles, global fonts, defaults
+
+**Brand palette**:
+The named colours a Brand carries, offered as swatches wherever a colour is
+picked for a Display. Offered and never enforced — a block with its own colour
+keeps it.
+_Avoid_: theme colours, colour scheme, swatch set
+
+**Workspace Theme**:
+The appearance of the application itself for one signed-in person — navigation,
+panels, work area, status colours and the canvas selection outline. Created by
+an admin, chosen by anyone, and never visible on a Screen or on the sign-in
+page. It never paints the canvas, which is a picture of the sign rather than
+part of the application.
+_Avoid_: builder theme, brand, skin, dark mode, colour preference
