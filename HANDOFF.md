@@ -132,7 +132,7 @@ it is the standing contract, with the invariants and where later work attaches.
 | `reset_password.php` | 2-step emailed 6-digit passcode reset (30-min expiry) |
 | `setup.php` | First-run admin creation; self-disables once a user exists and then **deletes itself** — at the end of a successful setup, or on the first request that finds it disabled. It reads the answer back from disk, so it never claims to have gone while it is still being served |
 | `setup_branding.php` | Redirect shim → `admin_panel.php?tab=branding` |
-| `builder.php` | ~3050-line canvas editor for one Display, mostly inline JS. The heart of the app. Also the read-only mode and the lock heartbeat |
+| `builder.php` | ~5500-line canvas editor for one Display, mostly inline JS. The heart of the app. Also the read-only mode, the lock heartbeat, and the Brand a sign wears — staged there and written by Publish |
 | `admin_panel.php` | Six tabs: User Management, **Displays** (+ the grant matrix), Display Branding, Site Branding, Settings, Work Area |
 | `crud.php` | Asset Library (text/image/video), shared by every Display |
 | `api.php` | JSON API: `get_layout` (public), `get_editor_layout`, `get_assets`, `upload_file`, `upload_video`, `publish`, `hold_lock`, `lock_state`, `release_lock`, `take_over_lock`, `save_brand_styles`, `get_canvas_elements`, `set_element_hidden`, `delete_canvas_element` |

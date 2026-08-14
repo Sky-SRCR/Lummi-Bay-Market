@@ -135,3 +135,17 @@ element changed, which is invariant 27 the other way round. Publish now sends
 nothing for the six typography fields of a branded subtype, and `LayoutStore`
 stores the documented defaults whatever it is sent, because the Brand owns them.
 That fix landed on its own, before the feature that activates it.
+
+**The asymmetry above has one collision, and it was found by building it**
+(2026-08-14, BUILD-REFERENCE §4bc). Staged in the Builder and immediate in the
+Admin Panel means a Builder tab that loaded *before* an admin moved that sign to
+another Brand is holding the old venue — and its next Publish is a perfectly
+valid request that puts the old one straight back, silently, across the venue. So
+a Brand move from the panel advances the layout stamp, and ADR-0006 refuses that
+publish in the sentence it already had: *this display changed since you opened
+it, nothing was saved, reload and re-apply*. Deliberately a comparison rather than
+a bump on every details save — an ordinary rename must not refuse a colleague's
+publish, and that case has its own answer (the Builder is told the address moved
+and keeps its lock). The general shape is worth stating: **where a staged surface
+and an immediate one write the same column, the immediate one has to invalidate
+the staged one**, or the staged surface silently wins by being slower.
