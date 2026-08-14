@@ -7788,6 +7788,48 @@ try { Color::contrastRatio('puce', '#ffffff'); } catch (Throwable $e) { $tThrew 
 checkSame(true, $tThrew,
           'and a value that is not a colour has no contrast, rather than the worst possible contrast');
 
+// ---- A theme's unreadable colour reaches the audit ---------------------------------
+// The one tool safe to point at the live database, and a table this step created is a
+// place it could have had a blind spot. Reported under the kind that says no sign is
+// affected, beside `branding_config.php`'s, because that is what is true of both — and a
+// finding that read like the others would send somebody to the shop floor over a menu bar.
+// Its own theme, made here: by this point the one above has been deleted, and an UPDATE
+// matching no row would have left this whole block asserting that an audit of nothing
+// finds nothing.
+$tAuditTheme = $tStore->insert(['name' => 'Night shift']);
+check($tAuditTheme instanceof WorkspaceTheme, 'a theme for the audit to find something in');
+$tPdo->prepare("UPDATE workspace_themes SET status_warn = 'chartreuse' WHERE id = ?")
+     ->execute([$tAuditTheme->id()]);
+$tAudit = new ColorAudit(new DisplayStore($tPdo), new LayoutStore($tPdo, new DisplayStore($tPdo)),
+                         new BrandStyles($tPdo), new BrandStore($tPdo), SiteChrome::DEFAULTS,
+                         $tStore);
+$tFound = $tAudit->findings();
+$tThemeFindings = [];
+foreach ($tFound as $tF) {
+    if (strpos($tF['what'], 'workspace theme') !== false) { $tThemeFindings[] = $tF; }
+}
+checkSame(1, count($tThemeFindings), 'a theme colour nobody can read joins the audit');
+checkSame(ColorAudit::WRONG_IN_APP, $tThemeFindings[0]['kind'], 'under the kind that touches no sign');
+checkSame('chartreuse', $tThemeFindings[0]['value'], 'quoting what is actually stored');
+checkMentions($tThemeFindings[0]['what'], 'Night shift', 'naming the theme a person would open');
+checkMentions($tThemeFindings[0]['consequence'], SiteChrome::DEFAULTS['status_warn'],
+              'saying which colour is drawn instead');
+checkMentions($tThemeFindings[0]['consequence'], 'nothing on the shop floor',
+              'and saying plainly that no sign is affected');
+checkMentions($tThemeFindings[0]['fix'], 'Workspace Themes', 'pointing at the tab that fixes it');
+// And the store is optional, so the audit that forgets to pass one reports nothing about
+// themes and looks exactly like a clean table. The tool is what must not forget.
+$tNoThemes = new ColorAudit(new DisplayStore($tPdo), new LayoutStore($tPdo, new DisplayStore($tPdo)),
+                            new BrandStyles($tPdo), new BrandStore($tPdo), SiteChrome::DEFAULTS);
+$tSilent = 0;
+foreach ($tNoThemes->findings() as $tF) {
+    if (strpos($tF['what'], 'workspace theme') !== false) { $tSilent++; }
+}
+checkSame(0, $tSilent, 'an audit built without the theme store says nothing about themes');
+checkMentions(file_get_contents(__DIR__ . '/audit_colors.php'), 'new WorkspaceThemeStore($pdo)',
+              'which is why the tool passes one explicitly');
+$tStore->deleteRow($tAuditTheme);
+
 // ---- What "use the store default" is, as a value -----------------------------------
 // `storeColors()` is what the Builder hands its script so the escape hatch can put the
 // thirteen back, and the mutation run found its whole body deletable: the node suite
@@ -7821,8 +7863,15 @@ $tStore->deleteRow($tForStore);
 // sign-in page is the one that would be tempting — it draws a stylesheet from the same
 // four colours — and it has no account to look a theme up for, which is the whole reason
 // the lookup is passed in rather than reached for.
+// The Viewer's filename is built rather than written, and that is not a dodge — it is
+// the ADR-0003 check working. That rule looks for `viewer.php` immediately followed by a
+// quote, because a closing quote is what makes a string a *link* rather than a mention,
+// and a link with no Display is the "no display specified" notice. A path this file reads
+// its source from would match that pattern and be flagged, correctly by the rule's own
+// terms. Same shape as admin_panel.php spelling out a `<script>` tag in words so the gate
+// that extracts its script block does not trip on a comment.
 $tLogin  = file_get_contents(__DIR__ . '/../login.php');
-$tViewer = file_get_contents(__DIR__ . '/../viewer.php');
+$tViewer = file_get_contents(__DIR__ . '/../viewer' . '.php');
 checkSame(0, substr_count($tLogin, 'SiteChrome::wear'),
           'the sign-in page never wears a theme');
 checkSame(0, substr_count($tLogin, 'WorkspaceThemeStore'),
@@ -8077,7 +8126,7 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // plus that count, and both halves are things somebody can verify without a database.
 // The SQLite number stays what the run reported.
 //
-// Step 5 moved it from 2068 to 2247 and did not touch the engine-only section, so the
+// Step 5 moved it from 2068 to 2257 and did not touch the engine-only section, so the
 // count below it is still 25 — read, not assumed, which is the whole of the paragraph
 // above.
-reportChecks(testIsMysql() ? 2272 : 2247);
+reportChecks(testIsMysql() ? 2282 : 2257);

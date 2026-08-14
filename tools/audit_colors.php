@@ -108,8 +108,12 @@ try {
 SiteChrome::load();
 
 $displays = new DisplayStore($pdo);
+// `null` for the brand colours means "read this checkout's branding_config.php", which is
+// what the paragraph above is about. The theme store is the opposite: it is a real table
+// on whatever database --host and --db named, and it is passed explicitly because an audit
+// that quietly skipped a table would report a clean run over one it never opened.
 $audit    = new ColorAudit($displays, new LayoutStore($pdo, $displays), new BrandStyles($pdo),
-                           new BrandStore($pdo));
+                           new BrandStore($pdo), null, new WorkspaceThemeStore($pdo));
 
 try {
     $findings = $audit->findings();

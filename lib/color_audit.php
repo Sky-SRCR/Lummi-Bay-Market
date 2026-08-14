@@ -51,6 +51,8 @@ require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/layout_store.php';
 require_once __DIR__ . '/brand_styles.php';
 require_once __DIR__ . '/brands.php';
+// The other noun's table, for the one finding here that no customer can ever see.
+require_once __DIR__ . '/workspace_themes.php';
 
 class ColorAudit
 {
@@ -66,6 +68,7 @@ class ColorAudit
     private $styles;
     private $brands;
     private $brand;
+    private $themes;
 
     /**
      * @param array|null $brand key => raw brand colour, or null to read the real
@@ -75,13 +78,15 @@ class ColorAudit
      *                          ever exercise the values this machine happens to hold.
      */
     public function __construct(DisplayStore $displays, LayoutStore $layouts, BrandStyles $styles,
-                                BrandStore $brands, ?array $brand = null)
+                                BrandStore $brands, ?array $brand = null,
+                                ?WorkspaceThemeStore $themes = null)
     {
         $this->displays = $displays;
         $this->layouts  = $layouts;
         $this->styles   = $styles;
         $this->brands   = $brands;
         $this->brand    = $brand;
+        $this->themes   = $themes;
     }
 
     /**
@@ -200,6 +205,33 @@ class ColorAudit
                 'fix'   => 'Settings → Branding → ' . $bad['label'] . '. Saving that form '
                          . 'rewrites the file.',
             ];
+        }
+
+        // And the same question one table further out (v2 step 5). A Workspace Theme's
+        // columns are NOT NULL with defaults, so nothing the form can do produces one of
+        // these — this is for a row somebody has been in with a database client, which is
+        // the same door `branding_config.php` above is reported through and the same one
+        // `tools/audit_colors.php` exists for. The store is optional so a caller with no
+        // themes table to reach cannot be stopped from auditing everything else; the
+        // self-test asserts that `audit_colors.php` does pass one, because an audit that
+        // quietly skips a table is worse than one that cannot run.
+        if ($this->themes !== null) {
+            foreach ($this->themes->all() as $theme) {
+                foreach ($theme->unreadable() as $bad) {
+                    $cosmetic[] = [
+                        'kind'  => self::WRONG_IN_APP,
+                        'scope' => '',
+                        'what'  => 'the ' . $bad['label'] . ' colour of the ' . $theme->name()
+                                 . ' workspace theme',
+                        'value' => $bad['value'],
+                        'consequence' => 'Anybody wearing that theme sees the default '
+                                       . SiteChrome::DEFAULTS[$bad['key']] . ' instead. No sign '
+                                       . 'uses this colour, so nothing on the shop floor is wrong.',
+                        'fix'   => 'Settings → Site Branding → Workspace Themes → ' . $theme->name()
+                                 . ' → ' . $bad['label'] . '.',
+                    ];
+                }
+            }
         }
 
         return array_merge($blocking, $cosmetic);
