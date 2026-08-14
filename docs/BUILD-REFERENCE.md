@@ -6514,11 +6514,15 @@ A formula from a standard is a safer thing to write twice than a decision would 
 **Three visible changes on an install with no theme, all deliberate.** The Display
 picker's notice was its own dark red beside the off banner's, two banners meaning the same
 thing in two colours with no reason written down. The Help page was drawn in its own
-slightly different blues, and a theme cannot paint "almost the work area". And the **Admin
-Panel's nav ignored Site Branding entirely** — a shop that set `BRAND_NAV_BG` got it on
-the Builder, the Help page and the sign-in page, and a stock `#1a252f` there; it reaches
-the roles now, so that bar will change to match the rest of the app on a shop that has
-customised it.
+slightly different blues, and a theme cannot paint "almost the work area". And **two pages'
+navs ignored Site Branding entirely** — the Admin Panel's and the Asset Library's, both
+hardcoded, so a shop that set its own navigation colour got it on the Builder, the Help
+page and the sign-in page and a stock `#1a252f` on those two; they reach the roles now, so
+those bars will change to match the rest of the app on a shop that has customised it. The
+Asset Library was the one page this step almost missed: it is signed-in, reachable from the
+gear, and decision 12 says a theme applies to every signed-in page, so a themed Builder
+beside an unthemed library would have been the plan's own promise broken in the one place
+nobody looks.
 
 **What a theme does not paint, and why the Admin Panel wears fewer roles.** That page is a
 light document — white cards on `#f0f2f5` — and only its nav bar and its buttons are

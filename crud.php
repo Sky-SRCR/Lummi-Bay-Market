@@ -19,6 +19,8 @@ require_once __DIR__ . '/lib/assets.php';
 // for: a transitive include is not a dependency, and until now this page carried
 // that ceiling as a number of its own instead of asking (see below).
 require_once __DIR__ . '/lib/upload_limits.php';
+// What this employee's screen is painted in (v2 step 5) — never a sign.
+require_once __DIR__ . '/lib/workspace_themes.php';
 requireCurrentAccount($pdo);   // all roles can access; delete is admin-only below
 $me = currentUser();
 
@@ -26,6 +28,13 @@ $me = currentUser();
 // is the only one that needs `assets.auto_pooled`, and an admin who never opens
 // the admin panel would otherwise be tidying against the label prefix alone.
 ensureSignageSchema($pdo);
+
+// The Workspace Theme this account chose, after convergence because the column it
+// reads is one the plan adds. This page is a light document with a chrome nav, like
+// the Admin Panel, so what a theme paints here is the bar and the buttons — the roles
+// reach every signed-in page and how much of a page they paint depends on how much of
+// it is chrome.
+SiteChrome::wear((new WorkspaceThemeStore($pdo))->forAccount($me['id']));
 
 // The sentence this page prints, and which colour it prints in. Declared here rather
 // than beside the CREATE branch below, because the guard on the next line is now the
@@ -364,11 +373,20 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
     <meta charset="UTF-8">
     <title>Asset Library — <?= Markup::text(SITE_NAME) ?></title>
     <style>
+        /* The Workspace Theme's thirteen roles (v2 step 5), one validated echo. This page's
+           nav was a literal #1a252f, so like the Admin Panel's it was one of the two places
+           in the app that ignored Site Branding entirely — a shop that set its own
+           navigation colour got it everywhere but here. Reaching the roles fixes that as a
+           side effect. (Naming the constant would fail the §5 grep that keeps every page
+           away from it, and the grep is right: it reads text, and a comment is text.) */
+        :root {
+<?= SiteChrome::styleVariables() ?>
+        }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-        nav { background:#1a252f; padding:0 20px; display:flex; align-items:center; gap:18px; height:50px; margin-bottom:24px; }
-        nav .brand { color:#fff; font-weight:bold; font-size:15px; margin-right:auto; }
+        nav { background:var(--nav-bg); padding:0 20px; display:flex; align-items:center; gap:18px; height:50px; margin-bottom:24px; }
+        nav .brand { color:var(--nav-text); font-weight:bold; font-size:15px; margin-right:auto; }
         nav a { color:#bdc3c7; text-decoration:none; font-size:13px; padding:6px 10px; border-radius:4px; }
-        nav a:hover, nav a.active { background:#2c3e50; color:#fff; }
+        nav a:hover, nav a.active { background:var(--work-area); color:#fff; }
         .role-tag { background: <?= isAdmin() ? '#e74c3c' : '#3498db' ?>; color:#fff; font-size:10px;
                     font-weight:bold; padding:1px 6px; border-radius:8px; margin-left:4px; }
 
@@ -394,7 +412,7 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
         /* Indeterminate, and that is the honest shape: a plain form POST emits no
            progress events, so there is no percentage to show. It says "working". */
         .file-busy { margin-top: 6px; height: 4px; background: #e6e9ed; border-radius: 2px; overflow: hidden; }
-        .file-busy-bar { width: 40%; height: 100%; background: #3498db; border-radius: 2px;
+        .file-busy-bar { width: 40%; height: 100%; background: var(--accent); border-radius: 2px;
                          animation: file-busy-slide 1.1s ease-in-out infinite; }
         @keyframes file-busy-slide {
             0%   { margin-left: -40%; }
@@ -421,7 +439,7 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
         }
         .btn-green  { background: #2ecc71; color: #fff; }
         .btn-green:hover  { background: #27ae60; }
-        .btn-blue   { background: #3498db; color: #fff; }
+        .btn-blue   { background: var(--accent); color: #fff; }
         .btn-blue:hover   { background: #2980b9; }
         .btn-red    { background: #e74c3c; color: #fff; }
         .btn-red:hover    { background: #c0392b; }
