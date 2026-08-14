@@ -6503,6 +6503,16 @@ dark and the glyph is light, so nobody who has never made a theme sees any chang
 `RequestScheme::isSecure()`'s shape: a protection that cannot apply is reported rather than
 applied flat.
 
+**A closed account had to let go of its theme.** Found by asking what
+`accountsUsing()` would say about somebody who can never sign in again: a closed account
+keeps its `workspace_theme_id`, so `users_ibfk_1` refuses that theme's deletion for ever
+and the Admin Panel's refusal names a person who will never use it. That is the edit
+lock's rule one table further out — *a change to what somebody may reach frees what they
+are holding* — and `AccountAdmin::close()` now clears it inside the same transaction that
+revokes the grants and releases the locks. Closure and not suspension: a suspended account
+is coming back and keeps its choice, which is the distinction `markClosed()` exists to
+draw.
+
 **One rule is now written in two languages, deliberately.** The contrast warning has to
 appear while somebody drags a colour picker, which cannot ask the server per frame. Only
 the *arithmetic* is duplicated — WCAG's luminance formula — while the threshold and the

@@ -7710,6 +7710,25 @@ $tAccounts->chooseWorkspaceTheme(1, 0);
 $tAccounts->chooseWorkspaceTheme(2, 0);
 checkSame([], $tStore->accountsUsing($tOne), 'and nobody once they have moved off it');
 
+// Closing an account frees its theme, which is the edit lock's rule one table further
+// out: a change to what somebody may reach frees what they are holding. A closed account
+// can never sign in to move itself off a theme, so without this the theme is pinned for
+// ever by somebody who will never use it — and the Admin Panel's refusal names them.
+$tAccounts->chooseWorkspaceTheme(2, $tOne->id());
+checkSame(['clerk'], $tStore->accountsUsing($tOne), 'a colleague is on the theme');
+$tClose = newTestAccountAdmin($tPdo)->close(2, 1);
+checkSame(true, $tClose->isOk(), 'and their account is closed');
+checkSame([], $tStore->accountsUsing($tOne),
+          'which frees the theme — nobody is holding it who could never let go');
+// Suspension is not closure, and the difference is that one of them is coming back.
+$tPdo->exec("UPDATE users SET closed_at = NULL, is_active = 1 WHERE id = 2");
+$tAccounts->chooseWorkspaceTheme(2, $tOne->id());
+$tPdo->exec("UPDATE users SET is_active = 0 WHERE id = 2");
+checkSame(['clerk'], $tStore->accountsUsing($tOne),
+          'while a suspended account keeps its choice, because it may be turned back on');
+$tPdo->exec("UPDATE users SET is_active = 1 WHERE id = 2");
+$tAccounts->chooseWorkspaceTheme(2, 0);
+
 // ---- Names, on a picker ------------------------------------------------------------
 checkSame(null, $tStore->otherThemeNamed('Daylight'), 'a name nothing uses is free');
 checkSame($tOne->id(), $tStore->otherThemeNamed('night SHIFT')->id(),
@@ -8012,7 +8031,7 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // plus that count, and both halves are things somebody can verify without a database.
 // The SQLite number stays what the run reported.
 //
-// Step 5 moved it from 2068 to 2232 and did not touch the engine-only section, so the
+// Step 5 moved it from 2068 to 2236 and did not touch the engine-only section, so the
 // count below it is still 25 — read, not assumed, which is the whole of the paragraph
 // above.
-reportChecks(testIsMysql() ? 2257 : 2232);
+reportChecks(testIsMysql() ? 2261 : 2236);

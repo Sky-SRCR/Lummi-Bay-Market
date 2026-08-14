@@ -562,6 +562,19 @@ class AccountAdmin
             // for a full idle window under a name no banner would print.
             $this->displays->releaseLocksHeldBy($accountId);
 
+            // And the Workspace Theme they had chosen, which is the same rule one table
+            // further out: a change to what somebody may reach frees what they are
+            // holding. A closed account cannot sign in, so it can never move itself off a
+            // theme — and while it points at one, `users_ibfk_1` refuses that theme's
+            // deletion and the Admin Panel names a person who will never use it again.
+            // Nothing about the account changes visibly; the pointer was only ever a
+            // preference, and there is nobody left to have it.
+            //
+            // **Closure and not suspension**, and the difference is the whole reason this
+            // is safe: a suspended account is coming back and keeps its choice, a closed
+            // one is permanent. Same distinction `markClosed()` exists to draw.
+            $this->accounts->chooseWorkspaceTheme($accountId, 0);
+
             if (!$this->accounts->markClosed($accountId)) {
                 $this->pdo->rollBack();
                 return AccountResult::failed(
