@@ -55,6 +55,10 @@ require_once __DIR__ . '/../lib/schema.php';
 require_once __DIR__ . '/../lib/branding.php';
 require_once __DIR__ . '/../lib/color_audit.php';
 require_once __DIR__ . '/../lib/markup.php';
+// The Workspace Theme half of step 5. `site_chrome.php` arrives with color_audit.php
+// above, but named here too: a transitive include is not a dependency, and this
+// fixture's own tables include the one that module reads.
+require_once __DIR__ . '/../lib/workspace_themes.php';
 
 // ---- Which engine is under the suite ----------------------------------------
 
@@ -229,7 +233,36 @@ function newSqliteTestDb()
         last_failed_at TEXT DEFAULT NULL,
         locked_until TEXT DEFAULT NULL,
         email TEXT NOT NULL DEFAULT '' UNIQUE,
-        closed_at TEXT DEFAULT NULL
+        closed_at TEXT DEFAULT NULL,
+        -- Nullable with no default, exactly as the live column is. NULL means the store
+        -- default, which is what every account means until it picks a theme.
+        -- No REFERENCES clause, and that is not laziness — SQLite enforces foreign keys
+        -- only when `PRAGMA foreign_keys` is on, so declaring one here would assert a
+        -- refusal this engine may not perform, and the refusal the app depends on is
+        -- `WorkspaceThemeStore`'s own, which names the accounts.
+        workspace_theme_id INTEGER DEFAULT NULL
+    )");
+
+    // The thirteen chrome roles, one column each, NOT NULL with today's colour as the
+    // default — the same shape as the live table, because `SiteChrome::pick()` falls
+    // back per role and a fixture with nullable columns could not tell a theme that
+    // stores a bad colour from one that stores nothing.
+    $pdo->exec("CREATE TABLE workspace_themes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        nav_bg TEXT NOT NULL DEFAULT '#1a252f',
+        nav_border TEXT NOT NULL DEFAULT '#0d1b24',
+        nav_text TEXT NOT NULL DEFAULT '#ffffff',
+        accent TEXT NOT NULL DEFAULT '#3498db',
+        work_area TEXT NOT NULL DEFAULT '#2c3e50',
+        panel TEXT NOT NULL DEFAULT '#1a252f',
+        panel_border TEXT NOT NULL DEFAULT '#34495e',
+        status_good TEXT NOT NULL DEFAULT '#27ae60',
+        status_warn TEXT NOT NULL DEFAULT '#7d6608',
+        status_bad TEXT NOT NULL DEFAULT '#7b3f3f',
+        status_busy TEXT NOT NULL DEFAULT '#4b3869',
+        status_note TEXT NOT NULL DEFAULT '#7a4a12',
+        selection TEXT NOT NULL DEFAULT '#e74c3c'
     )");
 
     $pdo->exec("CREATE TABLE displays (
@@ -575,16 +608,23 @@ function convergedSchemaShape()
             // the "a converged database is issued no DDL" check pass for the wrong
             // reason — by never asking.
             'users'               => [
-                'id'              => $col('int(11)'),
-                'failed_attempts' => $col('int(11)'),
-                'last_failed_at'  => $col('datetime', true),
-                'locked_until'    => $col('datetime', true),
-                'closed_at'       => $col('datetime', true),
+                'id'                 => $col('int(11)'),
+                'failed_attempts'    => $col('int(11)'),
+                'last_failed_at'     => $col('datetime', true),
+                'locked_until'       => $col('datetime', true),
+                'closed_at'          => $col('datetime', true),
+                // Nullable, and there is nothing to tighten it to: null is the answer
+                // "use the store default" rather than a value waiting to be backfilled.
+                'workspace_theme_id' => $col('int(11)', true),
             ],
+            // One column is enough to say the table is there, as for `brands`: it is
+            // created whole by one statement, so no ALTER of it has a gate to answer.
+            'workspace_themes'    => ['id' => $col('int(11)')],
         ],
         'indexes' => [
             'canvas_elements' => ['PRIMARY' => true, 'display_id' => true],
             'displays'        => ['PRIMARY' => true, 'tag' => true, 'brand_id' => true],
+            'users'           => ['PRIMARY' => true, 'workspace_theme_id' => true],
             // Spelled out as columns rather than `true`, because this is the one key
             // whose *columns* a gate reads: the re-key from `block_type` alone is
             // skipped only when the catalogue says the key is already these two, in
@@ -600,6 +640,7 @@ function convergedSchemaShape()
                                       'display_permissions_ibfk_2' => true],
             'brands'              => ['brands_ibfk_1' => true],
             'block_styles'        => ['block_styles_ibfk_1' => true],
+            'users'               => ['users_ibfk_1' => true],
         ],
     ];
 }

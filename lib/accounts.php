@@ -275,6 +275,39 @@ class AccountStore
         return true;
     }
 
+    /**
+     * Record which Workspace Theme this account wants its screens painted in.
+     *
+     * `$themeId` of 0 is not a missing answer, it is the answer **"use the store
+     * default"** — decision 14, which says a preference you cannot reverse is not a
+     * preference — and it stores NULL. So the one write covers both directions and
+     * there is no separate "clear it" path that could be the one somebody forgot to
+     * offer.
+     *
+     * Here rather than in `WorkspaceThemeStore` because the column is on `users`: which
+     * theme exists is a fact about the theme, which theme somebody chose is a fact
+     * about the account, and this class is the one that writes an account's row. That
+     * module *reads* it, joined, for the reason its own docblock gives.
+     *
+     * **Whether the theme exists is not checked here.** The caller has just read it out
+     * of the store to offer it, `users_ibfk_1` refuses an id that is not a theme from
+     * underneath, and a check in this method would be a second opinion that can be
+     * stale by the time the UPDATE runs anyway. What is checked is the account, for the
+     * reason `setPassword()` gives: an UPDATE matching no row and an UPDATE that
+     * changed nothing report the same zero on MySQL.
+     *
+     * @return bool false when the id names no account
+     */
+    public function chooseWorkspaceTheme($accountId, $themeId)
+    {
+        $accountId = intval($accountId);
+        if (!$this->rowExists($accountId)) { return false; }
+        $themeId = intval($themeId);
+        $this->pdo->prepare("UPDATE users SET workspace_theme_id = ? WHERE id = ?")
+                  ->execute([$themeId > 0 ? $themeId : null, $accountId]);
+        return true;
+    }
+
     /** The role this account holds now — what a change of role is measured against. */
     public function roleOf($accountId)
     {

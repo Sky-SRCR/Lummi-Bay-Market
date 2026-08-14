@@ -50,6 +50,40 @@ SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- ─────────────────────────────────────────────────────────────
+-- workspace_themes — what the application itself is painted in.
+--
+-- The other noun (v2 roadmap decision 1): a Brand is what a customer sees on a TV,
+-- a Workspace Theme is what an employee's screen is painted in. Nothing here ever
+-- reaches a Screen. Thirteen roles, each NOT NULL with today's colour as its
+-- default, so a theme is never half a set of colours — and no column for anything
+-- drawn on the canvas, which belongs to the Brand (decision 11).
+--
+-- Created before `users`, because `users` points at it. There is deliberately no
+-- seeded row: the store default is `branding_config.php` plus these defaults,
+-- answered by SiteChrome when no theme is worn, so a fresh install with no themes
+-- at all looks exactly as it always has.
+-- ─────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS workspace_themes (
+    id            INT(11)     NOT NULL AUTO_INCREMENT,
+    name          VARCHAR(80) NOT NULL,
+    nav_bg        VARCHAR(7)  NOT NULL DEFAULT '#1a252f',
+    nav_border    VARCHAR(7)  NOT NULL DEFAULT '#0d1b24',
+    nav_text      VARCHAR(7)  NOT NULL DEFAULT '#ffffff',
+    accent        VARCHAR(7)  NOT NULL DEFAULT '#3498db',
+    work_area     VARCHAR(7)  NOT NULL DEFAULT '#2c3e50',
+    panel         VARCHAR(7)  NOT NULL DEFAULT '#1a252f',
+    panel_border  VARCHAR(7)  NOT NULL DEFAULT '#34495e',
+    status_good   VARCHAR(7)  NOT NULL DEFAULT '#27ae60',
+    status_warn   VARCHAR(7)  NOT NULL DEFAULT '#7d6608',
+    status_bad    VARCHAR(7)  NOT NULL DEFAULT '#7b3f3f',
+    status_busy   VARCHAR(7)  NOT NULL DEFAULT '#4b3869',
+    status_note   VARCHAR(7)  NOT NULL DEFAULT '#7a4a12',
+    selection     VARCHAR(7)  NOT NULL DEFAULT '#e74c3c',
+    PRIMARY KEY (id),
+    UNIQUE KEY name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ─────────────────────────────────────────────────────────────
 -- users — builder accounts (+ account-keyed login lockout state).
 -- ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS users (
@@ -72,9 +106,21 @@ CREATE TABLE IF NOT EXISTS users (
     -- publish record silently change whose they are. Distinct from is_active on
     -- purpose — inactive is a suspension an admin can undo, closed is permanent.
     closed_at       DATETIME     NULL DEFAULT NULL,
+    -- Which Workspace Theme this account chose — added at runtime by
+    -- signageSchemaPlan(). NULL is not a missing answer: it means "use the store
+    -- default", which is `branding_config.php` plus the documented defaults, and it
+    -- is what every account means until somebody picks something else. The foreign
+    -- key is declared with the table it points at, below, because this file creates
+    -- `users` first.
+    workspace_theme_id INT(11)   DEFAULT NULL,
     PRIMARY KEY (id),
     UNIQUE KEY username (username),
-    UNIQUE KEY email (email)
+    UNIQUE KEY email (email),
+    KEY workspace_theme_id (workspace_theme_id),
+    -- No ON DELETE clause, so RESTRICT: deleting a theme somebody chose is refused.
+    -- SET NULL would move people back to the store default on one click without
+    -- telling them, which is the merge invariant 5 exists to prevent.
+    CONSTRAINT users_ibfk_1 FOREIGN KEY (workspace_theme_id) REFERENCES workspace_themes (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ─────────────────────────────────────────────────────────────

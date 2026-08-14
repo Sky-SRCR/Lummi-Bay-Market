@@ -156,11 +156,14 @@ if (!defined('LEGACY_DISPLAY_TAG')) {
 // The tables convergence has an opinion about. The catalogue read is filtered to
 // these rather than asking for the whole database, because on shared hosting one
 // MySQL database can hold several applications and `information_schema` would
-// then return thousands of rows to answer a question about eight tables.
+// then return thousands of rows to answer a question about ten tables. (Eight when
+// this was written; `brands` and `workspace_themes` arrived with the v2 roadmap and
+// the count is corrected here rather than left to drift.)
 if (!defined('SCHEMA_TABLES')) {
     define('SCHEMA_TABLES', [
         'users', 'password_resets', 'assets', 'block_styles', 'brands',
         'canvas_elements', 'canvas_settings', 'displays', 'display_permissions',
+        'workspace_themes',
     ]);
 }
 
@@ -719,6 +722,73 @@ function signageSchemaPlan(SchemaFacts $facts)
     // plan is the other way round: its need is the catalogue's word, and without the
     // catalogue it is a guess. See reportSchemaFailures().
     $step(!$facts->tableMissing('block_styles'), 'seed_block_styles');
+
+    // ---- workspace_themes: what the application itself is painted in --------
+    // The other noun (decision 1): a Brand is what a customer sees on a TV, a
+    // Workspace Theme is what an employee's screen is painted in. Nothing here ever
+    // reaches a Screen, which is why the columns are named after *roles in the
+    // chrome* — nav, work area, panel, the status colours, the canvas selection
+    // outline — and why there is no column for anything drawn on the canvas
+    // (decision 11, and a check refuses one).
+    //
+    // Thirteen colour columns, one per role, each `NOT NULL` with today's value as
+    // its default. So a row is complete by construction: a theme is never half a set
+    // of colours, and a column added to this table later starts every existing theme
+    // at the value the app was already using. `SiteChrome::ROLES` is the same list,
+    // and `selftest_layout` asserts that this statement and that constant name the
+    // same thirteen — two lists is how they come to disagree, and only one of them
+    // can be read by the database.
+    //
+    // **There is no seed, and that is a change from the plan.** It said today's
+    // `branding_config.php` values "become a seeded theme named Store default". A
+    // seeded row is a *copy* of that file, and the first time somebody edits Site
+    // Branding the copy disagrees with the file while still being called the store
+    // default — the same two-readers defect `SiteChrome::load()`'s docblock refuses
+    // for the file itself. So the store default is not a row at all: it is
+    // `branding_config.php` plus the documented defaults, answered by `SiteChrome`
+    // when no theme is worn, and `users.workspace_theme_id IS NULL` is how an account
+    // says it wants that. Nothing is inserted here, nothing is backfilled, and
+    // convergence therefore cannot repaint anybody's screen.
+    $sql($facts->needsTableCreate('workspace_themes'), 'workspace_themes table',
+         "CREATE TABLE IF NOT EXISTS workspace_themes (
+        id            INT(11)     NOT NULL AUTO_INCREMENT,
+        name          VARCHAR(80) NOT NULL,
+        nav_bg        VARCHAR(7)  NOT NULL DEFAULT '#1a252f',
+        nav_border    VARCHAR(7)  NOT NULL DEFAULT '#0d1b24',
+        nav_text      VARCHAR(7)  NOT NULL DEFAULT '#ffffff',
+        accent        VARCHAR(7)  NOT NULL DEFAULT '#3498db',
+        work_area     VARCHAR(7)  NOT NULL DEFAULT '#2c3e50',
+        panel         VARCHAR(7)  NOT NULL DEFAULT '#1a252f',
+        panel_border  VARCHAR(7)  NOT NULL DEFAULT '#34495e',
+        status_good   VARCHAR(7)  NOT NULL DEFAULT '#27ae60',
+        status_warn   VARCHAR(7)  NOT NULL DEFAULT '#7d6608',
+        status_bad    VARCHAR(7)  NOT NULL DEFAULT '#7b3f3f',
+        status_busy   VARCHAR(7)  NOT NULL DEFAULT '#4b3869',
+        status_note   VARCHAR(7)  NOT NULL DEFAULT '#7a4a12',
+        selection     VARCHAR(7)  NOT NULL DEFAULT '#e74c3c',
+        PRIMARY KEY (id),
+        UNIQUE KEY name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // Which theme an account chose. Nullable, and null is not a missing answer — it
+    // is the answer "use the store default", which is what every account has until
+    // somebody picks something else and what decision 14 says must work from any
+    // state. So there is no backfill and no `NOT NULL` to tighten to later: the
+    // column arrives meaning exactly what every existing row wants it to mean.
+    $sql($facts->needsColumn('users', 'workspace_theme_id'), 'users.workspace_theme_id',
+         "ALTER TABLE users ADD COLUMN workspace_theme_id INT(11) DEFAULT NULL");
+    $sql($facts->needsIndex('users', 'workspace_theme_id'), 'users.workspace_theme_id indexed',
+         "ALTER TABLE users ADD KEY workspace_theme_id (workspace_theme_id)");
+
+    // No `ON DELETE` clause, so RESTRICT: deleting a theme somebody has chosen is
+    // refused. The alternative — SET NULL — would move three people back to the store
+    // default on one click without telling them, which is the merge invariant 5 exists
+    // to prevent, and the same reasoning `displays_ibfk_3` carries for a Brand in use.
+    // `WorkspaceThemeStore` refuses it first and names the accounts; this is what
+    // covers a database this app is not the only thing writing to.
+    $sql($facts->needsConstraint('users', 'users_ibfk_1'), 'account → Workspace Theme',
+         "ALTER TABLE users ADD CONSTRAINT users_ibfk_1
+          FOREIGN KEY (workspace_theme_id) REFERENCES workspace_themes (id)");
 
     // ---- assets: which rows a publish made, rather than a person ------------
     // Publishing copies a text block's content into the library and points the

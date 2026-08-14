@@ -3630,7 +3630,7 @@ checkSame(['seed_first_brand', 'seed_block_styles', 'seed_legacy_display'], plan
 // The fallback has to be the old behaviour exactly, or a host whose catalogue
 // cannot be read would quietly stop converging.
 $blind = signageSchemaPlan(SchemaFacts::unknown());
-checkSame(31, count(planStatements($blind)),
+checkSame(35, count(planStatements($blind)),
           'a database whose catalogue cannot be read is issued every statement, as before');
 checkSame(7, count(planSteps($blind)), 'and every step');
 checkSame(false, SchemaFacts::unknown()->known(), 'and it says so rather than answering false');
@@ -3724,7 +3724,7 @@ checkSame(false, schemaFactsFrom($kGone)->needsPrimaryKey('block_styles', ['bran
 // that has them all.
 $empty = readSchemaFacts(fakeCatalogue(['columns' => [], 'indexes' => [], 'constraints' => []]));
 checkSame(false, $empty->known(), 'a catalogue with nothing to say about this app is unknown, not empty');
-checkSame(31, count(planStatements(signageSchemaPlan($empty))),
+checkSame(35, count(planStatements(signageSchemaPlan($empty))),
           'so it falls back to trying everything rather than creating what already exists');
 
 // Two things about a catalogue this app does not control, both of which decide
@@ -4825,7 +4825,7 @@ foreach ($blindPlan as $entry) {
     if ($entry['need'] === null) { $guessed[] = $entry['why']; }
     if ($entry['need'] === true) { $certain[] = $entry['why']; }
 }
-checkSame(35, count($guessed), 'with no catalogue, every statement in the plan is a guess');
+checkSame(39, count($guessed), 'with no catalogue, every statement in the plan is a guess');
 checkSame(['seed_first_brand', 'seed_block_styles', 'seed_legacy_display'], $certain,
           'and the only certainties are the three steps that ask the rows, not the catalogue');
 $statementNeeds = [];
@@ -7323,7 +7323,10 @@ checkSame(true, strpos(Markup::text($aInject), 'body {') !== false,
 
 // Each colour falls back to its own default, not to one shared "some colour".
 checkSame('#0d1b24', SiteChrome::pick('nav_border', 'nope'), 'the border falls back to the border default');
-checkSame('#ffffff', SiteChrome::pick('text', 'nope'),       'and the nav text to its own');
+// The role is `nav_text` since step 5 named all thirteen of them consistently; the
+// *method* is still `SiteChrome::text()`, because every page and every check says so
+// and the point of that step was that no call site changes.
+checkSame('#ffffff', SiteChrome::pick('nav_text', 'nope'),   'and the nav text to its own');
 
 $aThrew = false;
 try { SiteChrome::pick('no_such_colour', '#ffffff'); } catch (Throwable $e) { $aThrew = true; }
@@ -7500,6 +7503,233 @@ checkMentions($panel, 'BrandStyles::unrenderable(',
 // it, so the check is on the render rather than on the loop above it.
 checkMentions($panel, 'if ($styleBad):',
               'and puts them on the tab, which is the whole point of working them out');
+
+// ─────────────────────────────────────────────────────────────
+section('A Workspace Theme paints a person, and a store default paints everybody else');
+
+// The second of CONTEXT.md's two nouns (v2 roadmap decision 1, step 5). What is being
+// checked here is a *resolution*: three layers — a worn theme, then
+// `branding_config.php`, then the documented default — with one direction and one
+// function that knows the order. It matters because the two ways it could go wrong are
+// both silent. A layer read in the wrong order paints a screen the colour of somebody
+// else's preference; a layer read where it does not belong let the Branding form offer
+// a theme's colours as the store's and save them over the shop's own.
+//
+// `SiteChrome::wear(null)` is left set at the end of each part on purpose. This is one
+// process, the static outlives a section, and a check further down this file that
+// happened to ask for a colour would otherwise be answered by whatever the last theme
+// here was — which is the class of defect §4am's mutation run exists to find.
+
+$tPdo   = newTestDb();
+$tStore = new WorkspaceThemeStore($tPdo);
+
+// ---- The store default: no theme, no row, no change --------------------------------
+SiteChrome::wear(null);
+checkSame(0, $tStore->count(), 'a database that has converged has no themes in it at all');
+checkSame(null, SiteChrome::worn(), 'and nothing is being worn');
+checkSame(SiteChrome::DEFAULTS['work_area'], SiteChrome::workArea(),
+          'so the work area is the colour it was a literal in builder.php');
+checkSame(SiteChrome::DEFAULTS['status_bad'], SiteChrome::statusBad(),
+          'and so is every status colour');
+checkSame(SiteChrome::DEFAULTS['selection'], SiteChrome::selection(),
+          'and the selection outline');
+
+// The thirteen and the table agree. Two lists, one of them readable only by MySQL, so
+// the check is that the plan's own statement names a column for every role — a role
+// added to ROLES with no column would resolve to its default on every screen for ever
+// and nothing else here would notice.
+$tCreate = '';
+foreach (signageSchemaPlan(SchemaFacts::unknown()) as $tEntry) {
+    if (isset($tEntry['sql']) && strpos($tEntry['sql'], 'CREATE TABLE IF NOT EXISTS workspace_themes') !== false) {
+        $tCreate = $tEntry['sql'];
+    }
+}
+check($tCreate !== '', 'the plan carries a statement creating workspace_themes');
+checkSame(13, count(SiteChrome::ROLES), 'there are thirteen chrome roles');
+checkSame(count(SiteChrome::ROLES), count(SiteChrome::DEFAULTS),
+          'and every one of them has a documented default');
+foreach (SiteChrome::ROLES as $tRole => $tMeta) {
+    check(preg_match('/^\s*' . preg_quote($tRole, '/') . '\s+VARCHAR\(7\)\s+NOT NULL DEFAULT \'([^\']+)\'/m',
+                     $tCreate, $tHit) === 1,
+          'the table has a NOT NULL column for ' . $tRole);
+    checkSame(SiteChrome::DEFAULTS[$tRole], isset($tHit[1]) ? $tHit[1] : '',
+              'and the column starts where the documented default is');
+    check($tMeta[0] !== '', 'and the role has words a person can pick it by');
+}
+checkSame(13, preg_match_all('/VARCHAR\(7\)/', $tCreate),
+          'and the table has no fourteenth colour column that no role names');
+
+// The four that Site Branding still owns, and the nine that are a theme's alone.
+$tConfigBacked = array_keys(SiteChrome::FIELDS);
+checkSame(4, count($tConfigBacked), 'four roles are backed by branding_config.php');
+foreach ($tConfigBacked as $tKey) {
+    check(isset(SiteChrome::ROLES[$tKey]), $tKey . ' is one of the thirteen roles');
+}
+check(!isset(SiteChrome::FIELDS['selection']),
+      'and the canvas selection outline is not something the Branding form can set');
+
+// ---- A worn theme wins, per role ---------------------------------------------------
+$tOne = $tStore->insert(['name' => 'Night shift', 'nav_bg' => '#101820', 'accent' => '#ffcc00',
+                         'work_area' => '#050505', 'status_bad' => '#ff0000']);
+check($tOne instanceof WorkspaceTheme, 'a theme can be created');
+checkSame('Night shift', $tOne->name(), 'under the name it was given');
+checkSame('#101820', $tOne->colorFor('nav_bg'), 'holding the colour it was given');
+checkSame(SiteChrome::DEFAULTS['panel'], $tOne->colorFor('panel'),
+          'and the documented default for a role the form did not carry');
+
+SiteChrome::wear($tOne);
+checkSame('#101820', SiteChrome::navBg(), 'wearing it, the nav is the theme\'s colour');
+checkSame('#ffcc00', SiteChrome::accent(), 'and so is the accent');
+checkSame('#050505', SiteChrome::workArea(), 'and the work area');
+checkSame('#ff0000', SiteChrome::statusBad(), 'and the status colour');
+checkSame($tOne->id(), SiteChrome::worn()->id(), 'and the page can say which theme it is wearing');
+
+// The Branding form's own reads must not go through the theme. This is the defect that
+// was one edit away: an admin wearing a theme opens Site Branding, is shown the
+// theme's colours as "what is there now", and saves them into the store's own file.
+checkSame(SiteChrome::DEFAULTS['nav_bg'], SiteChrome::configColor('nav_bg'),
+          'while the Branding form is still shown what the config holds, not what is worn');
+checkSame([], SiteChrome::unreadable(),
+          'and the audit still reports on the config rather than on a theme');
+
+SiteChrome::wear(null);
+checkSame(SiteChrome::DEFAULTS['nav_bg'], SiteChrome::navBg(),
+          'taking the theme off puts every role back');
+
+// ---- A theme that stores something nobody can read --------------------------------
+// The column defaults make this state unreachable through the form, so it is built the
+// way it would really arise: somebody in a database client.
+$tPdo->prepare("UPDATE workspace_themes SET nav_bg = 'darkblue', panel = '' WHERE id = ?")
+     ->execute([$tOne->id()]);
+$tBad = $tStore->forId($tOne->id());
+SiteChrome::wear($tBad);
+checkSame(SiteChrome::DEFAULTS['nav_bg'], SiteChrome::navBg(),
+          'an unreadable colour in a worn theme falls back to the documented default');
+checkSame('#ffcc00', SiteChrome::accent(),
+          'and the roles either side of it are unaffected — the fallback is per role');
+$tBadList = $tBad->unreadable();
+checkSame(2, count($tBadList), 'and the theme can say which of its values it could not use');
+checkSame('nav_bg', $tBadList[0]['key'], 'named by the role it is');
+checkSame('Navigation background', $tBadList[0]['label'], 'in the words the theme form uses');
+checkSame('darkblue', $tBadList[0]['value'], 'quoting what is actually stored');
+SiteChrome::wear(null);
+$tPdo->prepare("UPDATE workspace_themes SET nav_bg = '#101820', panel = '#1a252f' WHERE id = ?")
+     ->execute([$tOne->id()]);
+
+// ---- What the browser is handed ----------------------------------------------------
+// Resolved, not raw: `style.setProperty()` discards a value it cannot read in silence,
+// which is §4ax's defect one boundary further out.
+$tClient = $tStore->forId($tOne->id())->toClientArray();
+checkSame(13, count($tClient['colors']), 'the client payload carries every role');
+checkSame('#101820', $tClient['colors']['nav_bg'], 'resolved to a colour a browser will take');
+$tPdo->prepare("UPDATE workspace_themes SET status_note = 'puce' WHERE id = ?")->execute([$tOne->id()]);
+checkSame(SiteChrome::DEFAULTS['status_note'],
+          $tStore->forId($tOne->id())->toClientArray()['colors']['status_note'],
+          'and an unreadable one is resolved there too, rather than sent for the CSSOM to drop');
+$tPdo->prepare("UPDATE workspace_themes SET status_note = '#7a4a12' WHERE id = ?")->execute([$tOne->id()]);
+
+// The variable names three separate things have to agree about.
+checkSame('--nav-bg', SiteChrome::varName('nav_bg'), 'a role is drawn through a named custom property');
+checkSame('--status-good', SiteChrome::varName('status_good'), 'with underscores as hyphens');
+$tThrew = false;
+try { SiteChrome::varName('not_a_role'); } catch (Throwable $e) { $tThrew = true; }
+checkSame(true, $tThrew, 'and a role this app does not have is a mistake, not a name');
+$tVars = SiteChrome::styleVariables();
+foreach (array_keys(SiteChrome::ROLES) as $tRole) {
+    checkMentions($tVars, SiteChrome::varName($tRole) . ':', 'the :root block declares ' . $tRole);
+}
+// Every line of it, shape and all — which is what makes the block safe to print into a
+// `<style>` unescaped: a stylesheet has no delimiter for escaping to neutralise, so the
+// property that matters is that nothing here can be anything but a colour.
+$tVarLines = array_filter(array_map('trim', explode("\n", $tVars)), 'strlen');
+checkSame(13, count($tVarLines), 'the :root block is thirteen declarations and nothing else');
+$tShapely = 0;
+foreach ($tVarLines as $tLine) {
+    if (preg_match('/^--[a-z-]+: #[0-9a-f]{6};$/', $tLine) === 1) { $tShapely++; }
+}
+checkSame(13, $tShapely, 'and every one of them is a role name and a six-digit colour');
+
+// ---- Which theme an account is wearing ---------------------------------------------
+checkSame(null, $tStore->forAccount(1), 'an account that has chosen nothing wears the store default');
+$tAccounts = new AccountStore($tPdo);
+checkSame(true, $tAccounts->chooseWorkspaceTheme(1, $tOne->id()), 'an account can choose a theme');
+checkSame($tOne->id(), $tStore->forAccount(1)->id(), 'and is wearing it on the next request');
+checkSame(null, $tStore->forAccount(2), 'while a colleague is unaffected');
+checkSame(true, $tAccounts->chooseWorkspaceTheme(1, 0), 'and "use the store default" is one write away');
+checkSame(null, $tStore->forAccount(1), 'which puts them back with everybody else');
+checkSame(false, $tAccounts->chooseWorkspaceTheme(99999, $tOne->id()),
+          'an id that names no account is refused rather than reported as saved');
+checkSame(null, $tStore->forAccount(0),      'and no account has no theme');
+checkSame(null, $tStore->forAccount('7abc'), 'nor does a mangled id, which intval() would have read as 7');
+
+// A theme somebody is wearing cannot be deleted out from under them, and the refusal
+// can say whose screens it would have changed.
+$tAccounts->chooseWorkspaceTheme(2, $tOne->id());
+checkSame(['clerk'], $tStore->accountsUsing($tOne), 'the store can name who is wearing a theme');
+$tAccounts->chooseWorkspaceTheme(1, $tOne->id());
+checkSame(2, count($tStore->accountsUsing($tOne)), 'all of them, not the first one it found');
+$tAccounts->chooseWorkspaceTheme(1, 0);
+$tAccounts->chooseWorkspaceTheme(2, 0);
+checkSame([], $tStore->accountsUsing($tOne), 'and nobody once they have moved off it');
+
+// ---- Names, on a picker ------------------------------------------------------------
+checkSame(null, $tStore->otherThemeNamed('Daylight'), 'a name nothing uses is free');
+checkSame($tOne->id(), $tStore->otherThemeNamed('night SHIFT')->id(),
+          'one that differs only in case is the same name on a list');
+checkSame(null, $tStore->otherThemeNamed('Night shift', $tOne->id()),
+          'and a theme may keep its own name while being renamed');
+checkSame('Night shift', PickerName::clean("  Night   shift "), 'a typed name is folded, not invented');
+checkSame('', PickerName::clean(['Night shift']),
+          'and something that is not a string is not a name badly written');
+checkSame(false, PickerName::isValid(''), 'a blank name is refused');
+checkSame(false, PickerName::isValid(str_repeat('x', PickerName::MAX + 1)),
+          'so is one longer than the column, rather than being truncated to fit');
+checkSame(false, PickerName::isValid("Night\tshift"), 'and one with a control character in it');
+checkSame(PickerName::MAX, BrandStore::NAME_MAX,
+          'and a Brand asks the same rule rather than carrying a second copy of it');
+
+// ---- The colour rules the form leans on --------------------------------------------
+checkSame('#ffcc00', WorkspaceThemeStore::cleanColor('#FFCC00'), 'a colour is stored one way');
+checkSame('', WorkspaceThemeStore::cleanColor('goldenrod'), 'and something that is not one is not');
+$tSubmitted = ['nav_bg' => '#ffffff', 'accent' => 'puce', 'status_warn' => ['#fff']];
+$tUnread    = WorkspaceThemeStore::unreadableIn($tSubmitted);
+checkSame(2, count($tUnread), 'a submitted set says everything wrong with it at once');
+checkSame(true, array_key_exists('accent', $tUnread), 'naming the field that was typed wrong');
+checkSame(true, array_key_exists('status_warn', $tUnread), 'and the one that was not even a string');
+checkSame([], WorkspaceThemeStore::unreadableIn(['name' => 'x']),
+          'while a role the payload never mentioned is not a complaint about a colour');
+
+// A whole-row save, for the reason BrandStore::updateDetails() is whole-row.
+$tSaved = $tStore->updateDetails($tStore->forId($tOne->id()),
+                                 ['name' => 'Night shift', 'nav_bg' => '#222222']);
+checkSame('#222222', $tSaved->colorFor('nav_bg'), 'a save writes what it was given');
+checkSame(SiteChrome::DEFAULTS['accent'], $tSaved->colorFor('accent'),
+          'and puts a role the form did not carry back to its documented default, never to NULL');
+SiteChrome::wear($tSaved);
+checkSame(SiteChrome::DEFAULTS['accent'], SiteChrome::accent(),
+          'which is a colour the page can draw either way');
+SiteChrome::wear(null);
+
+$tStore->deleteRow($tSaved);
+checkSame(0, $tStore->count(), 'and a theme nobody is wearing can be removed');
+checkSame(null, $tStore->forId($tSaved->id()), 'leaving nothing behind to point at');
+
+// ---- Contrast: warned about, never refused (decision 13) ---------------------------
+checkSame(21.0, round(Color::contrastRatio('#000000', '#ffffff'), 1),
+          'black on white is the widest two colours get');
+checkSame(1.0, round(Color::contrastRatio('#3498db', '#3498db'), 1),
+          'and a colour on itself is the narrowest');
+checkSame(true, Color::hardToRead('#ffffff', '#1a252f') === false,
+          'today\'s nav text on today\'s nav background is readable');
+checkSame(true, Color::hardToRead('#7f8c8d', '#8fa6bb'),
+          'two mid greys are not, which is the case the warning exists for');
+checkSame(true, Color::hardToRead('#101820', '#101820'),
+          'and a theme whose two nav colours are identical is warned about');
+checkSame(Color::READABLE_RATIO, 4.5, 'the threshold is named once rather than typed into a form');
+$tThrew = false;
+try { Color::contrastRatio('puce', '#ffffff'); } catch (Throwable $e) { $tThrew = true; }
+checkSame(true, $tThrew,
+          'and a value that is not a colour has no contrast, rather than the worst possible contrast');
 
 // ─────────────────────────────────────────────────────────────
 // Everything above this line runs on both engines. What follows can only be asked
@@ -7689,4 +7919,8 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // *counted*, and there are 25 of them. The MySQL figure is this file's SQLite number
 // plus that count, and both halves are things somebody can verify without a database.
 // The SQLite number stays what the run reported.
-reportChecks(testIsMysql() ? 2093 : 2068);
+//
+// Step 5 moved it from 2068 to 2200 and did not touch the engine-only section, so the
+// count below it is still 25 — read, not assumed, which is the whole of the paragraph
+// above.
+reportChecks(testIsMysql() ? 2225 : 2200);

@@ -34,6 +34,9 @@
 // (ADR-0004, and decision 5 of the v2 roadmap).
 
 require_once __DIR__ . '/color.php';
+// For the name rules, which a Workspace Theme needs in exactly the same shape — see
+// that file's header for why they left this one.
+require_once __DIR__ . '/picker_name.php';
 // For `Background`, which already decides what a canvas background may be — a
 // six-digit colour or a path inside this server's own uploads — and refuses rather
 // than substituting. A Brand's default background is the same question asked about
@@ -291,7 +294,7 @@ class BrandChoice
 class BrandStore
 {
     /** Column width, so a too-long name is refused rather than truncated by MySQL. */
-    const NAME_MAX = 80;
+    const NAME_MAX = PickerName::MAX;
 
     /**
      * How many colours a Brand may offer.
@@ -353,64 +356,34 @@ class BrandStore
      * The *other* Brand already using this name, or null. `$exceptId` lets a Brand
      * keep its own name while renaming.
      *
-     * Compared case-insensitively in PHP rather than left to the database, because
-     * the two engines disagree: MySQL's default collation makes "Salmon House" and
-     * "salmon house" the same name and refuses the second with a unique-key error,
-     * and SQLite's does not. A rule that answers differently per engine is a rule the
-     * self-test cannot state.
-     *
-     * Answers the Brand rather than a yes/no so the refusal can quote **its** name
-     * instead of the one that was typed. Those differ exactly when the comparison did
-     * the work it exists for — somebody typing "salmon house" is told the clash is
-     * with "Salmon House", which is the string they will actually find in the list.
-     * A predicate could only ever echo the input back.
+     * The comparison itself — case-insensitive, in PHP rather than in the database,
+     * answering the clashing row rather than a yes/no — is `PickerName::clashIn()`,
+     * with the reasoning for both of those choices. This method stays because the
+     * *list* is the part only a store can supply, and because its name is what
+     * `BrandAdmin` and every check already say.
      */
     public function otherBrandNamed($name, $exceptId = 0)
     {
-        $name = self::cleanName($name);
-        if ($name === '') { return null; }
-        foreach ($this->all() as $brand) {
-            if ($brand->id() === intval($exceptId)) { continue; }
-            if (strcasecmp($brand->name(), $name) === 0) { return $brand; }
-        }
-        return null;
+        return PickerName::clashIn($this->all(), $name, $exceptId);
     }
 
     // ---- Name rules ---------------------------------------------------------
 
-    /**
-     * Fold input toward a usable name without inventing one: trim, collapse runs of
-     * whitespace.
-     *
-     * Anything that is not a string is not a name badly written — it is not a name
-     * (#27). `(string)$array` yields the word "Array", which is a perfectly valid
-     * Brand name, so the caller would go on to create one nobody asked for.
-     */
+    // Both of these are `PickerName`'s rules, and the reasoning is written down there
+    // — including why a non-string is not a name badly written but not a name at all.
+    // They keep their names here because `BrandAdmin`, the panel and several checks
+    // say `BrandStore::cleanName()`, and because a Brand is where the rule was first
+    // needed. A Workspace Theme is the second thing to need it, which is what moved
+    // it out of this file rather than copying it into that one.
+
     public static function cleanName($name)
     {
-        if (!is_string($name)) { return ''; }
-        return trim(preg_replace('/\s+/u', ' ', $name));
+        return PickerName::clean($name);
     }
 
-    /**
-     * A name a person can tell apart from another one on a picker.
-     *
-     * Deliberately permissive about *which* characters — these are venue names, and
-     * "Tavern & Grill" and "Café 12" are the ordinary case. What is refused is the
-     * empty name, one longer than the column, and control characters, which are
-     * invisible and would make two names that look identical be different rows.
-     *
-     * Length in bytes, matching the column's own limit as MySQL applies it to
-     * utf8mb4 — the check is `strlen` and the column is 80 *characters*, so this is
-     * stricter than the column for a name with accents in it and never looser. Being
-     * refused at 80 bytes is a sentence; being truncated at 80 characters is a name
-     * nobody chose.
-     */
     public static function isValidName($name)
     {
-        if (!is_string($name) || $name === '')       { return false; }
-        if (strlen($name) > self::NAME_MAX)          { return false; }
-        return preg_match('/[\x00-\x1f\x7f]/', $name) !== 1;
+        return PickerName::isValid($name);
     }
 
     /**

@@ -62,26 +62,103 @@ require_once __DIR__ . '/color.php';
 class SiteChrome
 {
     /**
-     * What each colour is when the config does not say, or does not say a colour.
+     * What each colour is when nothing above it says otherwise: no theme worn, and a
+     * config that does not say, or does not say a colour.
      *
-     * These are the values `setup_branding.php` writes on a fresh install and the
-     * ones the four page-level fallbacks all held, so a deployment that has never
+     * The first four are the values `setup_branding.php` writes on a fresh install and
+     * the ones the four page-level fallbacks all held, so a deployment that has never
      * opened the Branding page sees no change from this module existing.
+     *
+     * The other nine are **today's hardcoded values, moved here rather than chosen** —
+     * each one was a literal in `builder.php`, `help.php` or `admin_panel.php`, and
+     * they are written down here so that the install with no theme at all is painted
+     * by construction exactly as it was before step 5. Every one of them is also a
+     * column default on `workspace_themes`, and `selftest_layout` asserts the two
+     * lists agree; a value changed in one place and not the other would be a theme
+     * that starts somewhere the store default is not.
      */
     const DEFAULTS = [
-        'nav_bg'     => '#1a252f',
-        'nav_border' => '#0d1b24',
-        'accent'     => '#3498db',
-        'text'       => '#ffffff',
+        // Chrome: the surfaces and the things drawn on them.
+        'nav_bg'       => '#1a252f',
+        'nav_border'   => '#0d1b24',
+        'nav_text'     => '#ffffff',
+        'accent'       => '#3498db',
+        'work_area'    => '#2c3e50',
+        'panel'        => '#1a252f',
+        'panel_border' => '#34495e',
+        // Status: the five meanings behind every banner this app draws.
+        'status_good'  => '#27ae60',
+        'status_warn'  => '#7d6608',
+        'status_bad'   => '#7b3f3f',
+        'status_busy'  => '#4b3869',
+        'status_note'  => '#7a4a12',
+        // The one thing on this list that is drawn over the canvas rather than beside
+        // it. See ROLES for why that is allowed and what is not.
+        'selection'    => '#e74c3c',
     ];
 
-    /** The constant each colour is stored in, and the label the Branding form uses. */
+    /**
+     * Every role, the words a person picks it by, and which group of the theme form it
+     * belongs to.
+     *
+     * Thirteen — the plan said twelve, with six chrome roles, and six is one short:
+     * the **navigation border** is one of the four colours a shop can already set from
+     * Site Branding, and a theme that could not hold it would repaint the live nav the
+     * moment anybody chose one. Decision 9's "no sign moves" has an application-side
+     * twin, and this is it.
+     *
+     * The last role is the reason decision 11 needs a *check* rather than a
+     * convention. `#builder-canvas` and everything drawn on it belong to the Brand,
+     * because what the canvas shows is what the sign shows — but the selection
+     * outline and the resize handles are drawn *over* the canvas and never reach a
+     * Screen, so they are chrome that happens to sit there. That distinction cannot
+     * be seen by looking at a colour, only at where it is used, which is what
+     * `tools/check_invariants.php` looks at.
+     */
+    const ROLES = [
+        'nav_bg'       => ['Navigation background', 'chrome'],
+        'nav_border'   => ['Navigation border',     'chrome'],
+        'nav_text'     => ['Navigation text',       'chrome'],
+        'accent'       => ['Accent',                'chrome'],
+        'work_area'    => ['Work area',             'chrome'],
+        'panel'        => ['Panel',                 'chrome'],
+        'panel_border' => ['Panel border',          'chrome'],
+        'status_good'  => ['Saved / done',          'status'],
+        'status_warn'  => ['Warning',               'status'],
+        'status_bad'   => ['Problem',               'status'],
+        'status_busy'  => ['Somebody else is here', 'status'],
+        'status_note'  => ['Advisory note',         'status'],
+        'selection'    => ['Selection outline and handles', 'overlay'],
+    ];
+
+    /**
+     * The constant each colour is stored in, and the label the Branding form uses.
+     *
+     * Four of the thirteen, and deliberately still four: these are the ones
+     * `branding_config.php` has always held, which makes them the ones the **store
+     * default** can differ from the documented defaults in. The other nine are a
+     * theme's to change and nobody else's — adding them to the Branding form would
+     * give the install two ways to set the same colour, which is the second opinion
+     * invariant 16 exists about.
+     */
     const FIELDS = [
         'nav_bg'     => ['BRAND_NAV_BG',     'Navigation background'],
         'nav_border' => ['BRAND_NAV_BORDER', 'Navigation border'],
         'accent'     => ['BRAND_ACCENT',     'Accent'],
-        'text'       => ['BRAND_TEXT',       'Navigation text'],
+        'nav_text'   => ['BRAND_TEXT',       'Navigation text'],
     ];
+
+    /**
+     * The theme this request is painted in, or null for the store default.
+     *
+     * Static, because the whole point of step 5 is that every page keeps calling
+     * `SiteChrome::navBg()` and the twelve beside it — a resolution threaded through
+     * every call site would have been a change to every stylesheet in the app instead
+     * of one line per page. What it is *not* is a static that reaches for state: it is
+     * set by `wear()`, from a value the page looked up and passed in, and this file
+     * names neither `$_SESSION` nor a PDO.
+     */
+    private static $worn = null;
 
     /**
      * Make sure the generated branding file has been read, for a caller with no app
@@ -129,10 +206,127 @@ class SiteChrome
         return $read !== '' ? $read : self::DEFAULTS[$key];
     }
 
-    public static function navBg()     { return self::pick('nav_bg',     self::stored('nav_bg')); }
-    public static function navBorder() { return self::pick('nav_border', self::stored('nav_border')); }
-    public static function accent()    { return self::pick('accent',     self::stored('accent')); }
-    public static function text()      { return self::pick('text',       self::stored('text')); }
+    /**
+     * Paint this request in a Workspace Theme, or in the store default when passed
+     * null.
+     *
+     * Called once, near the top of a signed-in page, with the theme the account chose
+     * — `WorkspaceThemeStore::forAccount()` is what looks it up. **The account is
+     * passed in and never read here**: a static that reached for `$_SESSION` would be
+     * the hidden coupling this codebase has spent its history removing, and would make
+     * every check below answerable only in a process that had a session.
+     *
+     * `login.php` and `reset_password.php` never call this, which is what makes
+     * decision 12's "the sign-in page is unaffected" true by construction rather than
+     * by a rule somebody has to remember. `viewer.php` is further out still: it loads
+     * neither `config.php` nor `auth.php`, so this file is not even present on the one
+     * page a customer sees.
+     *
+     * The parameter is typed without this file requiring `workspace_themes.php`, the
+     * same way `DisplayStore::applyBrand()` names a `BrandChoice`: a type hint is
+     * checked when the call happens, by which point the caller has loaded the class it
+     * is passing, and requiring it here would be a cycle — that module reads `ROLES`
+     * out of this one.
+     *
+     * @param WorkspaceTheme|null $theme
+     */
+    public static function wear(WorkspaceTheme $theme = null)
+    {
+        self::$worn = $theme;
+    }
+
+    /** The theme being worn, or null for the store default. */
+    public static function worn()
+    {
+        return self::$worn;
+    }
+
+    public static function navBg()      { return self::role('nav_bg'); }
+    public static function navBorder()  { return self::role('nav_border'); }
+    public static function accent()     { return self::role('accent'); }
+    public static function text()       { return self::role('nav_text'); }
+    public static function workArea()   { return self::role('work_area'); }
+    public static function panel()      { return self::role('panel'); }
+    public static function panelBorder(){ return self::role('panel_border'); }
+    public static function statusGood() { return self::role('status_good'); }
+    public static function statusWarn() { return self::role('status_warn'); }
+    public static function statusBad()  { return self::role('status_bad'); }
+    public static function statusBusy() { return self::role('status_busy'); }
+    public static function statusNote() { return self::role('status_note'); }
+    public static function selection()  { return self::role('selection'); }
+
+    /**
+     * The colour for one role, resolved.
+     *
+     * Named accessors above are the interface — `text()` keeps its name although its
+     * role is now `nav_text`, because every page and every check says `SiteChrome::text()`
+     * and the point of this step is that no call site changes. This is how the thirteen
+     * agree, and it is public because the theme form and the check both need to walk
+     * `ROLES` and ask about each one without a thirteen-way switch.
+     */
+    public static function role($key)
+    {
+        return self::pick($key, self::stored($key));
+    }
+
+    /**
+     * Every role resolved: key => `#rrggbb`.
+     *
+     * What the Builder hands its own script so a person changing their theme sees it
+     * happen without the page reloading — which is not a nicety. The picker lives in
+     * the Builder's gear, and a Builder holding unpublished work that reloads has
+     * thrown that work away; a setting about the colour of a menu bar must not be able
+     * to do that.
+     */
+    public static function roleColors()
+    {
+        $out = [];
+        foreach (array_keys(self::ROLES) as $key) { $out[$key] = self::role($key); }
+        return $out;
+    }
+
+    /**
+     * The CSS custom-property name a role is drawn through: `--nav-bg` for `nav_bg`.
+     *
+     * One function, because three things have to agree about this string — the
+     * `:root` block below, the script that repaints without reloading, and the check
+     * that refuses a role inside a canvas rule. Two of the three could have guessed
+     * it; the third would then be enforcing a rule about a name nothing used.
+     */
+    public static function varName($key)
+    {
+        if (!isset(self::ROLES[$key])) {
+            throw new InvalidArgumentException('No chrome role called ' . $key . '.');
+        }
+        return '--' . str_replace('_', '-', $key);
+    }
+
+    /**
+     * The declarations for a `:root` block: every role as a custom property.
+     *
+     * **Why the pages draw colours through variables at all.** Before step 5 each page
+     * interpolated `SiteChrome::navBg()` into every rule that needed it, and the nine
+     * roles that were literals were interpolated nowhere — so a theme would have meant
+     * a hundred-odd new echoes across three files, each one a place to forget that a
+     * colour in a `<style>` block is validated and never escaped. Thirteen validated
+     * echoes in one block, and `var(--nav-bg)` everywhere else, is the same rule
+     * enforced in thirteen places instead of a hundred. It is also what makes the
+     * canvas check possible: decision 11 is a statement about *where a role may be
+     * used*, and a `var(--…)` in a stylesheet is something a check can find.
+     *
+     * Every value has been through `Color::read()` inside `pick()`, so this string
+     * cannot carry a `}` that ends the block — which is the property escaping could
+     * never have given it. Emitted as one echo, which is why
+     * `tools/check_invariants.php` lists this method beside the thirteen accessors.
+     */
+    public static function styleVariables()
+    {
+        $out = [];
+        foreach (self::roleColors() as $key => $hex) {
+            $out[] = '    ' . self::varName($key) . ': ' . $hex . ';';
+        }
+        return implode("\n", $out);
+    }
 
     /**
      * The logo's path, or '' when there is none.
@@ -180,13 +374,74 @@ class SiteChrome
     public static function all()
     {
         $out = [];
-        foreach (array_keys(self::FIELDS) as $key) { $out[$key] = self::stored($key); }
+        foreach (array_keys(self::FIELDS) as $key) { $out[$key] = self::storedInConfig($key); }
         return $out;
     }
 
-    /** What the config file defined for one field, or null if it defined nothing. */
+    /**
+     * One of the four config-backed colours as the *store* has it, ignoring whatever
+     * theme this request is wearing.
+     *
+     * What the Branding form offers as "what is there now", because that form edits the
+     * store's own colours and not the reader's preference. See `storedInConfig()` for
+     * what asking the layered accessor there would have saved.
+     */
+    public static function configColor($key)
+    {
+        return self::pick($key, self::storedInConfig($key));
+    }
+
+    /**
+     * What has been stored for one role, or null if nothing has: the worn theme's
+     * value if there is one, otherwise the config file's, otherwise nothing.
+     *
+     * Three layers and one direction, and the layering is the whole of step 5's
+     * resolution. Note what it does *not* do: it never validates and never falls back
+     * to a colour. `pick()` does both, exactly as it did before a theme existed — a
+     * theme row holding a value nobody can read is the same problem as a config
+     * holding one, and answering it twice in two places is how the four copies of the
+     * colour rule came to disagree in the first place (#21).
+     *
+     * So a worn theme's unreadable value falls back to the **documented default** and
+     * not to the layer underneath it. That is deliberate: borrowing the shop's
+     * configured nav colour for one broken role would paint a screen that looks almost
+     * right, which is harder to notice than an obviously default one — and the person
+     * looking at it did not choose the store's colour, they chose this theme.
+     * `WorkspaceTheme::unreadable()` is how the row gets named on a screen rather than
+     * quietly substituted, which is the other half of #21.
+     *
+     * The nine roles with no `FIELDS` entry have no config layer at all: they were
+     * literals in three stylesheets until step 5 and are a theme's to change or
+     * nobody's. `array_key_exists` rather than `isset` on the theme's answer would be
+     * the same thing here, since a role a theme has no column for answers null and
+     * null is what "nothing stored" means at every layer.
+     */
     private static function stored($key)
     {
+        if (self::$worn !== null) {
+            $fromTheme = self::$worn->colorFor($key);
+            if ($fromTheme !== null) { return $fromTheme; }
+        }
+        return self::storedInConfig($key);
+    }
+
+    /**
+     * What the config file defined for one field, or null if it defined nothing — with
+     * no theme layer over it.
+     *
+     * The distinction is not decoration, it is a defect that was one edit away. Three
+     * things ask about the four config-backed colours *as configured* rather than *as
+     * painted*: `all()`, `unreadable()`, and the Branding form, which fills its four
+     * `type=color` inputs with them. Had those gone through the layered read, an admin
+     * wearing a theme would have opened the Branding tab, been shown the theme's
+     * colours as "what is there now", and saved them into `branding_config.php` — a
+     * form quietly rewriting the store's own colours to one person's preference,
+     * reported as success. Which is #21's shape exactly: the wrong value, saved, with
+     * a green message.
+     */
+    private static function storedInConfig($key)
+    {
+        if (!isset(self::FIELDS[$key])) { return null; }
         $name = self::FIELDS[$key][0];
         return defined($name) ? constant($name) : null;
     }
