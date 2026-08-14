@@ -6318,7 +6318,13 @@ target, arriving by the door that had not needed it. Left alone it is invariant 
 fossil with a new entrance, and the observable difference is exactly one field: a `price`
 block publishing onto a Brand with no `price` standard keeps its own size, and onto one
 that has it stores the documented default. The suite checks both directions, because a
-check in one direction alone passes on a Brand nobody was painting with.
+check in one direction alone passes on a Brand nobody was painting with. Both were then
+*seen* to fail: the fix is one identifier, so it was hand-mutated back —
+`replaceWholeLayout($display, …)` in place of `$wearing` — and the two checks failed with
+`expected 48, got 16` and `expected 16, got 48` before it was restored. That is invariant
+30's grade `assertion` obtained by hand, on a line `tools/mutate.php` has no mutation for:
+swapping one variable for another in scope is not on its list, and a check nothing can
+break is #50's whole complaint.
 
 The plan did not anticipate **the state where there is no Brand at all**. A database
 whose convergence has not run has `displays.brand_id` at 0, and there the page draws no
@@ -6380,8 +6386,12 @@ fired — a menu that opens and cannot be closed is a real defect and an invisib
 stub that drops the handler. The read-only and basic-account cases went to the suite that
 owns that premise rather than growing a fourth premise here.
 
-**What the mutation runs found.** `lib/brands.php` 78/122 killed, `lib/layout_store.php`
-196/300. `BrandChoice`'s own survivors are the `===` → `==` family on comparisons where
+**What the mutation runs found.** `lib/brands.php` 86 of 127 killed, 62 of those by an
+assertion; `lib/layout_store.php` 232 of 334, 148 by an assertion. Both figures are from a
+run over the code as it was finally committed, which is not the same as the run that did
+the work — the two that found something were over the version *before* the `isAdmin()` fix
+above, and the fix is in these numbers rather than being what they found.
+`BrandChoice`'s own survivors are the `===` → `==` family on comparisons where
 both operands are already strings, plus one worth naming: the `intval($id) <= 0` half of
 `brand()` survives on its own, because `isIdLike` has already refused everything that is
 not a whole number and the only values left for it to catch are `0` and negatives — both
