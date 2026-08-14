@@ -6556,6 +6556,15 @@ distinction between the two nouns in one assertion.
 `lib/site_chrome.php`, `lib/picker_name.php` and `lib/color.php` had reported — figures
 that were measured, for the reason §4bc's paragraph now says out loud.
 
+**No ADR, and that is a decision rather than an omission.** An ADR here would record
+"typography and colour belong to a Brand" 's mirror image — the application's own colours
+belong to a person — and ADR-0011 already draws the line this sits on the other side of.
+What an ADR is *for* is the rejected alternatives, and the two that mattered are above:
+the seeded "Store default" row, and the picker that posts and reloads. Both are recorded
+with what they would have cost, which is the same service, in the file the roadmap's step
+already points at. Invariant 34 is where the rule itself lives, because it is a rule that
+spans files rather than a decision somebody might re-open.
+
 **Still owed, and this step does not close it.** The browser pass now has *five* things on
 its debt table: nothing in this repo can see whether a light theme leaves the Builder's
 white-on-dark text unreadable, whether the picker card sits where the gear menu can show
