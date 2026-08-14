@@ -6530,6 +6530,18 @@ checkSame(false, $kPdo->inTransaction(),
 checkSame(2, count(elementsOf($kPdo, $kSign->id())), 'and the layout it came with is not saved either');
 checkSame($kOther, $kStore->forId($kSign->id())->brandId(), 'and the sign wears what it wore');
 
+// Which of the two gates answered, and it matters: one of them needs no database and the
+// other holds the row lock. A publish that is wrong in *both* ways — not an id, and a
+// stamp from before somebody else published — must come back `invalid` rather than
+// `stale`, because the id was settled before the transaction was ever opened. Without
+// this, the outer gate could be deleted and every other check in this section would
+// still pass, since the inner one answers `invalid` too.
+$res = $kLayouts->publish($kSign, new PublishRequest(
+    goodLayout(), Background::unchanged(), BrandChoice::brand('7abc'), 1, true, 'not-the-stamp'));
+checkSame('invalid', $res->kind(),
+          'a publish wrong in two ways is refused for the one that needed no database');
+checkSame(false, $kPdo->inTransaction(), 'and still opens no transaction');
+
 $res = $kLayouts->publish($kSign, new PublishRequest(
     goodLayout(), Background::unchanged(), BrandChoice::brand(999999), 1, true, $kSign->layoutStamp()));
 checkSame('invalid', $res->kind(), 'so is one naming a Brand that has been deleted');
@@ -6550,6 +6562,17 @@ check($kLayouts->publish($kSign, new PublishRequest(
       "a basic account's publish is not held up by a Brand it cannot set");
 checkSame($kOther, $kStore->forId($kSign->id())->brandId(),
           'and the Brand it named is not the Brand the sign wears');
+
+// Both halves of that, for the same people. A deleted Brand and a mistyped one are the
+// same thing to a clerk — neither is theirs to set and neither is going to be stored —
+// so a rule that refused one and allowed the other would be arbitrary from where they
+// are standing. This is the check that holds the pre-transaction gate to the same
+// `isAdmin()` as the one under the lock.
+$kSign = $kStore->forId($kSign->id());
+check($kLayouts->publish($kSign, new PublishRequest(
+        basicLayoutFor($kPdo, $kSign, 'Sockeye 19.99'),
+        Background::unchanged(), BrandChoice::brand('7abc'), 2, false, $kSign->layoutStamp()))->isOk(),
+      "nor by one that is not an id at all");
 
 // ---- The Brand a publish sets is the Brand its rows are read under ---------------
 // The `copyLayout()` rule, arriving by the one door that had not needed it: what
@@ -7666,4 +7689,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // *counted*, and there are 25 of them. The MySQL figure is this file's SQLite number
 // plus that count, and both halves are things somebody can verify without a database.
 // The SQLite number stays what the run reported.
-reportChecks(testIsMysql() ? 2090 : 2065);
+reportChecks(testIsMysql() ? 2093 : 2068);

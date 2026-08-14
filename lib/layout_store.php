@@ -686,7 +686,16 @@ class LayoutStore
         // below, under the lock, because that answer can change while this request is
         // in flight and a check that races is worse than no check — it reports a state
         // the write then contradicts.
-        if (!$request->brand()->isUsable()) {
+        //
+        // `isAdmin()` and not a bare test, and it is the same condition the existence
+        // check below carries. A basic account's publish never writes `brand_id` at all
+        // — `applyBrand()` is inside the admin branch and `brandFromPost()` does not even
+        // read the field for them — so refusing their publish over a Brand they could not
+        // have set and this app is not going to store is punishing somebody for something
+        // they cannot see. The two halves of one question must answer for the same people
+        // or "a clerk is not held up by a Brand they cannot set" is true of a deleted
+        // Brand and false of a mistyped one.
+        if ($request->isAdmin() && !$request->brand()->isUsable()) {
             return PublishResult::invalid($request->brand()->problemWith(null));
         }
 

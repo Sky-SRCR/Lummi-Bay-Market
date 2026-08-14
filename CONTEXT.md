@@ -132,6 +132,14 @@ several Displays of a single venue share it, so the identity is edited in one
 place rather than copied.
 _Avoid_: theme, skin, style set, template, brand standard
 
+**Editing a Brand** and **assigning** one are different acts, and only one of
+them can be looked at first. Editing is immediate: a saved change to a Brand
+reaches every Screen wearing it within thirty seconds, with no publish and no
+undo. Assigning is **staged in the Builder** — picking a venue there repaints
+the canvas in the browser and is written by Publish — and immediate from the
+Admin Panel, which turns Displays off and deletes them from the same page.
+_Avoid_: applying a brand, switching branding, brand preview mode
+
 **Brand Standards**:
 The typography half of a Brand — one setting per branded block type, applied to
 every block of that type on any Display using that Brand. A block cannot
