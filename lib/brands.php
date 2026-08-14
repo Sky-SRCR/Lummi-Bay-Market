@@ -137,8 +137,10 @@ class Brand
     }
 
     /**
-     * The Brand as a client consumes it, under the `brand` key of the **editor's**
-     * layout reply (`api.php?action=get_editor_layout`).
+     * The Brand as a client consumes it: under the `brand` key of the **editor's**
+     * layout reply (`api.php?action=get_editor_layout`), and once per switchable Brand
+     * in the Builder's own `BRANDS`, which adds two keys of its own — the six standards,
+     * and the file behind the logo, neither of which is this table's to answer.
      *
      * Deliberately not part of the snapshot both clients share. A Screen's read is
      * polled every thirty seconds by every TV in the building and has no use for any
@@ -242,15 +244,20 @@ class BrandChoice
     public function problemWith($found)
     {
         switch ($this->kind) {
-            // Both spellings answered, exactly as `Background::problemWith()` answers
-            // INVALID and 'color' together: the kind is what the factory produces
-            // today, and the guard is what keeps this honest if the factory ever stops
-            // filtering. A reader that knew only one of them would answer "no problem"
-            // for the other, which is a publish nothing refuses.
+            // Both spellings share one body, exactly as `Background::problemWith()`
+            // answers INVALID and 'color' together, and for the same two reasons. The
+            // kind is what the factory produces *today*, and the test below is what
+            // keeps this honest if the factory ever stops filtering — a reader that knew
+            // only one of them would answer "no problem" for the other, which is a
+            // publish nothing refuses.
+            //
+            // Sharing the body rather than answering INVALID early is deliberate and it
+            // is what makes the test live rather than decorative: every INVALID reaches
+            // it and fails it, so removing it changes an answer somebody is asserting.
+            // A separate early `return` for INVALID would leave this line unreachable
+            // through the factory, which is a guard no check can hold (§4bb's
+            // `logoAssetId()`, and one more copy of the same sentence to keep in step).
             case self::INVALID:
-                return 'That publish named a brand this app cannot read ("' . self::snippet($this->value)
-                     . '"), so nothing was saved. Reload the display and choose a brand again.';
-
             case 'brand':
                 if (!DisplayStore::isIdLike($this->value) || intval($this->value) <= 0) {
                     return 'That publish named a brand this app cannot read ("' . self::snippet($this->value)

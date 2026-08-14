@@ -163,6 +163,15 @@ jobs:
       - name: Builder self-test — undo
         run: node tools/selftest_builder_undo.js
 
+      # v2 step 4: picking a Brand repaints the canvas and writes nothing, which is
+      # the whole design and is invisible to a parse — a version that saved as you
+      # picked would look identical on screen and would change every board in the
+      # venue the moment somebody browsed the menu. The suite counts requests. It
+      # also drives the palette swatches, where setting `.value` from script fires
+      # no event, so a swatch can fill a control and change nothing.
+      - name: Builder self-test — the Brand a sign wears
+        run: node tools/selftest_builder_brands.js
+
       # #26: the defect was not a throw. A `.catch` doing the right thing for a
       # dropped packet did the wrong thing for a failure that was never going to
       # stop, and a sign kept last week's prices. Only visible by running the poll

@@ -1,6 +1,6 @@
 # Roadmap v2 — Brands, Workspace Themes, and the Builder workbench
 
-Status: **steps 1, 2 and 3 built; steps 4–5 planned.** Settled in a grilling session on
+Status: **steps 1–4 built; step 5 planned.** Settled in a grilling session on
 2026-08-13; the decisions are recorded here and the one that reverses a previous
 decision is in [ADR-0011](adr/0011-typography-and-colour-belong-to-a-brand.md).
 
@@ -337,6 +337,10 @@ narrowed refusal, plus `php tools/mutate.php lib/brands.php` and over
 
 ### Step 4 — Brands in the Builder · size M · risk Medium
 
+**Done — 2026-08-14. Written up as §4bc; it adds no invariant, and the write-up says
+why.** Not deployed; like every step here it goes on its own. What follows is the plan
+as written, with what it got wrong marked.
+
 The Brand slot at the top of step 2's left column gets its control: the venue's
 logo and `Salmon House ▾` for admins, the same without the chevron for basic
 accounts and for read-only Builders — they should know which venue they are
@@ -354,11 +358,48 @@ into an element row.
 
 **Done when** switching Brands in the Builder changes only what is drawn,
 publishing writes the Brand that was selected at that moment, and a read-only
-Builder renders its Display's Brand while offering no control to change it.
+Builder renders its Display's Brand while offering no control to change it. —
+**All three met, and each is asserted rather than observed.** The switch sends no
+request at all (counted, not inspected), repaints the branded block and leaves the block
+that owns its typography alone, and records no undo step. A publish carries the Brand
+that was staged; one naming something that is not an id, or a Brand somebody deleted
+while the tab sat open, is refused whole rather than half-applied. The read-only checks
+went to `selftest_builder_readonly.js`, which owns that premise and the walker over this
+file's conditionals: it now knows `$canPickBrand` is derived from the role *and* the
+lock, so the Brand menu can never be emitted there, while the control itself can.
 
-Gates: the standing set, all six node suites, and a new
+Gates: the standing set, all seven node suites, and a new
 `selftest_builder_brands.js` covering the preview, the read-only case and the
-publish payload.
+publish payload. — **Met, with the read-only third of it in the other suite** for the
+reason above. `selftest_builder_brands.js` is 121 checks; `selftest_builder_readonly.js`
+went from 45 to 65; `selftest_layout.php` from 1,975 to 2,051.
+
+> **Five corrections while building.**
+>
+> **There is no section colour control.** The plan named the palette's four homes as
+> "marquee text and background, section, free text, canvas background". A section carries
+> a background *image* with a `|fit` suffix and has never had a colour of its own, so
+> there are four.
+>
+> The plan said "repaints the canvas in the browser" and left the mechanism open. It has
+> to be `restoreCanvas(snapshotCanvas())` — the pair the undo history already uses —
+> because invariant 32 is why a branded block's own typography is *not* on the node, so
+> `applyTextStyles()` needs an element to fall back to and only the serializer produces
+> one.
+>
+> The plan did not mention that **the publish has to re-read the Display**: the rows
+> about to be written will be read under the Brand this publish is setting, and that is
+> the Brand that decides whether a typography column is the Brand's to paint. The
+> `copyLayout()` rule, arriving by the one door that had not needed it.
+>
+> The plan did not anticipate the state where there is **no Brand at all** — a database
+> whose convergence has not run. No control is drawn and no `brand_id` is sent; sending 0
+> would be refused and would turn a lagging schema into a sign nobody can publish to.
+>
+> And the plan said nothing about the Brand's **default canvas background**, which the
+> Builder deliberately does not apply — it is what a *new* Display starts from. Unsaid,
+> that is the first question somebody asks when a venue's colours appear and the canvas
+> behind them does not change, so the page says it.
 
 ### Step 5 — Workspace Themes · size M · risk Low
 

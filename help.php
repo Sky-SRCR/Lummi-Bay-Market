@@ -322,12 +322,18 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <p>The Builder is the main design tool, and it edits <strong>one display at a time</strong>. The display's title, its screen name tag, and its size are shown in the top-left of the nav bar — for example <strong>Drive-Thru</strong> · <code>drive-thru</code> · 1920 × 1080. The canvas is that display's size, so what you arrange is exactly what its screen shows. Everything is positioned absolutely, using X and Y coordinates from the top-left corner of the canvas.</p>
     <p>Under the nav bar the screen is three columns:</p>
     <ul>
-        <li><strong>Palette (left)</strong> — the blocks you can add, grouped by what they are: Layout, Text, Media. Above the rule at the top of it are the things that are about <em>which</em> sign you are on rather than what is on it.</li>
+        <li><strong>Palette (left)</strong> — the blocks you can add, grouped by what they are: Layout, Text, Media, and Brand. Above the rule at the top of it are the things that are about <em>which</em> sign you are on rather than what is on it: the brand this display wears, and <strong>⇄ Switch sign</strong>.</li>
         <li><strong>Canvas (centre)</strong> — the design area where you place and arrange content blocks, with a thin footer under it carrying the zoom controls and who last published this display.</li>
         <li><strong>Properties (right)</strong> — the controls for whichever block is selected. It stays on screen with nothing selected and says so, rather than appearing and disappearing.</li>
     </ul>
     <p>The nav bar itself holds, left to right: the store name, which display this is, <strong>View ↗</strong> to open its Viewer in a new tab, then <strong>↺ Undo</strong> and <strong>✓ Publish</strong>, then your username, <strong>Sign Out</strong>, and a <strong>⚙</strong> gear. The gear is where the Asset Library, the Admin Panel and this Help live, along with which kind of account you are signed in as.</p>
     <p>If you can edit more than one display, <strong>⇄ Switch sign</strong> at the top of the palette lists the ones available to you; going straight to <code>builder.php</code> with no display named shows the same list.</p>
+
+    <h3>Which brand this sign is wearing</h3>
+    <p>At the very top of the palette, under <em>Brand</em>, is the venue this display belongs to — its logo and its name, for example <strong>Salmon House</strong>. That is where the typography of the branded text blocks comes from, the palette offered above every colour picker, and the logo the <strong>Venue Logo</strong> item places.</p>
+    <p>Admins see a <strong>▾</strong> beside the name and can pick a different brand from the list. Everyone else, and anyone looking at a display somebody else is editing, sees the name and logo without the chevron — you can always tell which venue you are building for, and only an admin editing that display can move it to another one.</p>
+    <div class="note"><strong>Choosing a brand changes nothing until you publish.</strong> The canvas repaints straight away, so you can see the venue's typography and palette on this layout before committing to it — but nothing is saved, and the screens keep showing what they were showing. <strong>✓ Publish</strong> is what moves the display onto that brand. Reload the page without publishing and it is back on the brand it was on. The canvas background does not change either way: a brand's default background is what a <em>new</em> display starts from, and this display's background stays its own.</div>
+    <div class="tip"><strong>Tip:</strong> Switching brand is the fastest way to see whether a layout would work on another venue's boards — the prices and headings take that venue's font, size and colour immediately. Nothing is at stake while you look, because nothing has been written.</div>
     <div class="tip"><strong>Tip:</strong> A canvas is usually bigger than the window it is being edited in — a portrait screen especially. Use the <strong>Zoom</strong> buttons in the canvas footer: <strong>Fit</strong> shows the whole canvas at once, <strong>100%</strong> is actual size, and <strong>−</strong> / <strong>+</strong> step between them. The percentage next to them is the current zoom. The Builder opens at Fit. Use these rather than your browser's own zoom, so the X and Y numbers in the properties panel keep matching what you see.</div>
 </div>
 
@@ -368,7 +374,9 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Video</strong> — Auto-playing looped video (MP4, WebM, OGV — max 50 MB)</li>
         <li><strong>Carousel</strong> — Slideshow of images with optional titles/prices</li>
         <li><strong>Marquee</strong> — Scrolling ticker text across the bottom or anywhere</li>
+        <li><strong>Venue Logo</strong> (under <em>Brand</em>) — an image block already linked to this brand's logo. It appears only when the brand has a logo set; if the brand points at a picture that has since been removed from the Asset Library, the palette says so instead.</li>
     </ul>
+    <div class="note"><strong>The logo is placed, never drawn automatically.</strong> Screens do not add a logo of their own — where it belongs and how big it should be are different answers on a landscape menu board and a portrait specials board, so it is a block you position like any other.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -411,6 +419,10 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Lock toggle</strong> — prevents accidental drags/resizes; locked blocks show a 🔒 icon</li>
         <li><strong>Delete Block</strong> — removes the block from the canvas. <strong>↺ Undo</strong> or Ctrl+Z brings it back if you have not reloaded the page; once you Publish, it is gone from the display</li>
     </ul>
+
+    <h3>Picking a colour: the brand's palette</h3>
+    <p>Wherever the properties panel lets you choose a colour — the canvas background, a free text block's colour, and a marquee's text and background — a small row of swatches labelled <strong>Brand</strong> sits above the colour picker. Those are the venue's palette. Clicking one fills the picker under it, exactly as if you had chosen that colour by hand.</p>
+    <div class="note"><strong>The palette is an offer, not a rule.</strong> Nothing is recoloured because a brand has a palette, and a block with a colour of its own keeps it until somebody changes it. A brand with no palette set shows no swatch row at all — that is normal, not a fault. Picking a brand's swatch on a marquee background also unticks <strong>Transparent</strong>, since a transparent marquee ignores its background colour.</div>
 
     <h3>Branded text blocks (Section Header / Item Title / Price / Description)</h3>
     <ul>

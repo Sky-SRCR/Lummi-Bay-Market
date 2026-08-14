@@ -1,6 +1,6 @@
 # The browser pass — lane 0, in order
 
-Everything in this repo is verified by something except what a browser does. Six node
+Everything in this repo is verified by something except what a browser does. Seven node
 suites run `builder.php`'s JavaScript against a stubbed DOM, and a stub cannot see a CSS
 rule that does not apply, a button that overlaps another at 1080p, or `interact.js` —
 which is un-run by anything at all (§4al). Four commits of `builder.php` have never been
@@ -32,7 +32,7 @@ of it applies again to the live sign — which is the one thing this pass does n
 2026-08-13 — so re-running it there is owed *now*, not after something. It has not been
 done.
 
-**And v2 has since rewritten most of what it describes.** Three debts have accumulated,
+**And v2 has since rewritten most of what it describes.** Four debts have accumulated,
 and they are separate:
 
 | Owed | Why | Where |
@@ -40,8 +40,9 @@ and they are separate:
 | A re-walk against the **live** install | v1 is live and this pass has only ever been run against `lbm-test/` | this whole list |
 | A re-walk of every step against `lbm-test/` for the **workbench** | step 2 rebuilt the Builder's chrome — three columns, a docked rail, a canvas footer, a new nav — so every screen this pass describes has moved. Nothing in this repo can see a three-column layout fail to be three columns | §4ba |
 | A walk of **Admin Panel → Display Branding**, which this pass has no step for | step 3 replaced a single typography table with a list of Brands, a palette editor, a logo picker and a delete confirm — and the Displays tab gained a Brand dropdown on two forms. The suite reads that file's *source*; nothing renders it | §4bb |
+| A walk of the Builder's **Brand control and palette swatches**, which this pass also has no step for | step 4 put a venue's logo and name at the top of a 178-pixel column, a menu under it, and a row of 17-pixel swatches above four colour pickers. What a suite proves is that switching repaints and writes nothing; what it cannot see is a long venue name truncating, a swatch row pushing a picker off the rail, or a menu opening under the canvas. **Switch a Brand and do not publish, then reload** — the sign must be on the Brand it started on | §4bc |
 
-The third one is the gap worth naming precisely, because it is the shape five of this
+The third and fourth are the gap worth naming precisely, because it is the shape five of this
 pass's seven defects had: the panel's checks are `checkMentions()` over
 `admin_panel.php`'s text. A variable that is never assigned, a form field that posts
 under the wrong name, a swatch drawn in a colour the CSSOM discards — all of them pass a

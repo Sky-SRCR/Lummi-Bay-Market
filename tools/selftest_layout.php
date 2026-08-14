@@ -6456,8 +6456,18 @@ foreach ([
     checkSame(BrandChoice::INVALID, $bad->kind(), $case[1] . ' is not a Brand');
     checkSame(0, $bad->id(), 'and ' . $case[1] . ' names no Brand id');
     check(!$bad->isUsable(), 'and ' . $case[1] . ' cannot be carried');
-    check($bad->problemWith(null) !== null, 'and ' . $case[1] . ' is refused with a sentence');
+    // Which refusal, not merely that there is one. There are two sentences here — "that
+    // is not a brand" and "that brand has been deleted" — and they tell somebody to do
+    // different things; a check that accepted either would pass on the wrong one.
+    checkMentions($bad->problemWith(null), 'cannot read',
+                  'and ' . $case[1] . ' is refused as unreadable rather than as deleted');
 }
+
+// The boundary, both sides. `1` is a real Brand id — the seeded one every install has —
+// so a threshold that crept up by one would refuse the Brand nobody can be without, and
+// every other check in this section would still pass.
+checkSame('brand', BrandChoice::brand(1)->kind(), 'Brand 1 is a Brand, not a rounding error');
+checkSame(1, BrandChoice::brand(1)->id(), 'and it names itself');
 
 checkMentions(BrandChoice::brand('7abc')->problemWith(null), '7abc',
               'and the refusal quotes what actually arrived');
@@ -6474,6 +6484,8 @@ $kOther  = makeTestBrand($kPdo, 'Salmon House');
 
 checkSame(null, BrandChoice::brand($kOther)->problemWith($kBrands->forId($kOther)),
           'a Brand that is there is a Brand this publish may wear');
+checkSame(null, BrandChoice::brand(1)->problemWith($kBrands->forId(1)),
+          'including Brand 1, which is the one every install is seeded with');
 check(BrandChoice::brand(999999)->problemWith($kBrands->forId(999999)) !== null,
       'and one that is not is refused rather than merged away');
 checkMentions(BrandChoice::brand(999999)->problemWith(null), 'no longer exists',
@@ -6581,6 +6593,48 @@ foreach (elementsOf($kPdo, $kSign->id()) as $row) {
 }
 checkSame(intval(BrandStyles::DEFAULTS['font_size']), intval($kPrice['font_size']),
           'where the same block stores the documented default, because that Brand paints it');
+
+// ---- The two contracts meet, and the stamp is what settles it -------------------
+// The Admin Panel changes a Display's Brand *immediately* — every Screen showing it
+// picks up the new venue's typography on its next poll, with no publish, which is that
+// page's normal contract. The Builder *stages* it. So a Builder tab that loaded before
+// such a save is holding the old Brand and its publish would put it straight back:
+// silently, on every screen wearing the sign, with a payload that is otherwise perfectly
+// valid. `updateDetails()` advances the layout stamp for exactly that, which is ADR-0006
+// answering the question it was written for.
+$kAdmin = newTestDisplayAdmin($kPdo);
+$kSign  = $kStore->forId($kSign->id());
+$kStamp = $kSign->layoutStamp();
+
+$kRes = $kAdmin->updateDetails($kSign, ['title' => 'Venue board', 'tag' => 'venue',
+                                        'location' => '', 'brand_id' => $kBare]);
+check($kRes->isOk(), 'an admin may move a sign onto another Brand from the panel');
+checkSame($kBare, $kStore->forId($kSign->id())->brandId(), 'and the sign wears it at once');
+check($kStore->forId($kSign->id())->layoutStamp() !== $kStamp,
+      'and the layout stamp moved, so a Builder that loaded before it is holding a stale sign');
+checkMentions($kRes->message(), 'No standards yet', 'the sentence names the Brand it moved to');
+checkMentions($kRes->message(), '30 seconds', 'and says the screens pick it up on their own');
+
+$kRes = $kLayouts->publish($kSign, new PublishRequest(
+    goodLayout(), Background::unchanged(), BrandChoice::brand($kOther), 1, true, $kStamp));
+checkSame('stale', $kRes->kind(),
+          'so that tab\'s publish is refused rather than putting the old Brand back');
+checkSame($kBare, $kStore->forId($kSign->id())->brandId(), 'and the sign still wears the panel\'s choice');
+checkMentions($kRes->message(), 'changed since you opened it',
+              'with the sentence ADR-0006 already had, which is true of this too');
+
+// The other half, and the reason this is a *comparison* rather than a bump on every
+// save: an ordinary rename must not refuse a colleague's publish. A rename has its own
+// answer already — the Builder is told the address moved and keeps its lock.
+$kSign  = $kStore->forId($kSign->id());
+$kStamp = $kSign->layoutStamp();
+$kRes   = $kAdmin->updateDetails($kSign, ['title' => 'Venue board B', 'tag' => 'venue-b',
+                                          'location' => 'Deck', 'brand_id' => $kBare]);
+check($kRes->isOk(), 'a save that leaves the Brand alone still saves');
+checkSame($kStamp, $kStore->forId($kSign->id())->layoutStamp(),
+          'and does not move the stamp, so it refuses nobody');
+check(strpos($kRes->message(), 'wears the brand') === false,
+      'and says nothing about a brand it did not change');
 
 // ─────────────────────────────────────────────────────────────
 section('Refusing a value rather than guessing what it meant (#21)');
@@ -7612,4 +7666,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // *counted*, and there are 25 of them. The MySQL figure is this file's SQLite number
 // plus that count, and both halves are things somebody can verify without a database.
 // The SQLite number stays what the run reported.
-reportChecks(testIsMysql() ? 2076 : 2051);
+reportChecks(testIsMysql() ? 2090 : 2065);

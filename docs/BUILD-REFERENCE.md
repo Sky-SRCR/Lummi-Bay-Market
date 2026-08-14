@@ -556,6 +556,17 @@ through the app again:
     Both of `LayoutStore`'s writers ask it. `copyLayout()` is the one that looks like an
     exception and is not: a copy is a new row, and copying a fossil faithfully puts it
     on a sign that never had one.
+    Two more doors joined it with v2 step 4, and both are the same question asked
+    somewhere new. On the server, a publish that *changes* the Brand writes its rows from
+    a **re-read** Display: `paints()` has to be asked with the standards of the Brand the
+    rows will be read under, and the Display the method was handed is still wearing the
+    one before. In the browser, a Brand switch repaints by way of `snapshotCanvas()` and
+    `restoreCanvas()` rather than by re-applying styles over the existing nodes — which
+    is not a convenience but the only thing that can work: this invariant is why a
+    branded block's own six fields are *not* on the node, so `applyTextStyles()` needs an
+    element to fall back to and only the serializer can produce one. Both ends therefore
+    keep asking exactly once, in the same two functions, which is the property this rule
+    has always been about.
 33. **Nothing outside `lib/brands.php` writes `brands`** (ADR-0011), and no page decides
     what a Brand *is*. A Brand is the identity several signs read their typography,
     palette, logo and default canvas background from, so a second writer is a venue
@@ -6261,6 +6272,129 @@ returns the column, so the `isset()` half can never be the deciding one. Both ar
 worth keeping and neither is testable without making the code worse, which is what
 invariant 30 means by a reason to write down.
 
+### 4bc. A venue you can look at before you commit to it
+
+v2 step 4. Step 3 gave a Display a Brand and gave an admin a page to edit Brands on;
+this is the Builder learning to say which venue it is building for, and letting an admin
+put the sign on another one. Four surfaces and one write: the control at the top of the
+left column, the palette offered above every colour picker, the Venue Logo item, and
+Publish.
+
+**Picking a Brand writes nothing, and that is the feature.** The canvas repaints in the
+browser and the choice rides out with the next Publish, on the path the canvas
+background already takes (decision 6). A Brand assignment reaches every block on the
+sign and there is no undo behind a publish, so the person gets to *look* at it before it
+is true. The suite's first section proves this by counting requests: zero. A version
+that saved as you picked would be indistinguishable on screen and would change every
+board in the venue the moment somebody browsed the menu.
+
+**Five things the plan got wrong or did not anticipate.**
+
+The plan listed the colour controls the palette appears above as "marquee text and
+background, section, free text, canvas background". **There is no section colour
+control.** A section carries a background *image* — a path with a `|fit` suffix — and
+nothing else; it has never had a colour of its own. So there are four, not five, and the
+suite drives its list from the four ids rather than from the plan's sentence.
+
+The plan said "repaints the canvas in the browser" and left the mechanism open. It has
+to be **`restoreCanvas(snapshotCanvas())`**, the pair the undo history already uses, and
+the reason is invariant 32: a branded block's own six typography fields are not on the
+node, because publish deliberately stopped carrying them. So a repaint cannot be a walk
+over the blocks re-applying styles — `applyTextStyles()` needs the *element* to fall back
+to, and the only thing that can produce one is the serializer. Going through the pair
+also keeps `renderBlock()` the one place that knows how an element becomes a node, which
+is what that invariant's comment asks for in so many words. What it costs is the
+selection: a switch puts the rail back to its resting state. That is arguably right —
+the swatches under it have just changed — and it is the price of not having a second
+renderer.
+
+The plan did not mention that **the publish has to re-read the Display**.
+`insertContent()` decides whether a column is the Brand's to paint by asking
+`BrandStyles::paints()` with the standards of `$display->brandId()`, and on the one
+publish that *changes* the Brand, the Display it was handed is wearing the old one. The
+rows are about to be read under the new Brand, so that is the Brand that has to decide —
+which is the rule `copyLayout()` already states one method over about a duplicate's
+target, arriving by the door that had not needed it. Left alone it is invariant 32's
+fossil with a new entrance, and the observable difference is exactly one field: a `price`
+block publishing onto a Brand with no `price` standard keeps its own size, and onto one
+that has it stores the documented default. The suite checks both directions, because a
+check in one direction alone passes on a Brand nobody was painting with.
+
+The plan did not anticipate **the state where there is no Brand at all**. A database
+whose convergence has not run has `displays.brand_id` at 0, and there the page draws no
+control (an empty box captioned *Brand* reads as something that failed to load) and sends
+**no `brand_id` at all**. Sending 0 would be an id naming nothing, `BrandChoice` would
+rightly refuse it, and a lagging schema would become a sign nobody can publish to —
+invariant 10 as a live consequence rather than a caution. An absent field means "leave
+the Brand alone", which is exactly what that page has to say.
+
+And the plan said nothing about **the Brand's default canvas background**, which the
+Builder deliberately does not apply. It is what a *new* Display starts from; this
+Display's background is its own. Left unsaid that is the first question somebody asks
+when a venue's colours appear and the canvas behind them does not change, so the toast
+says it, and so does `help.php`. Five of the browser pass's seven defects were things a
+page did not *say*; this is the same category, caught before rather than after.
+
+**The read-only guarantee needed the walker taught one more derived variable.**
+`$canPickBrand = $isAdmin && !$readOnly && $wearing !== null`, and
+`selftest_builder_readonly.js` decides what a read-only page can emit by substituting
+`$readOnly` and `$isAdmin` and enumerating everything else — so a *derived* condition
+would have been tried both ways, one of those ways would have said yes, and the walker
+would have believed a read-only page can emit the Brand menu. Substituted to `false`,
+with a check pinning the derivation in the source, exactly as `$undoSteps` was handled in
+§4ba. The control itself is the one entry that *joins* `PRESENT` as a feature rather than
+leaving it as a leftover: somebody who cannot edit still needs to know which venue they
+are looking at. Its read-only branch carries no ids, so `#brand-name` cannot resolve on a
+page that draws a different one — two copies would make every lookup of it depend on
+which branch the page took.
+
+**A swatch has to run the handler the picker would have run.** Setting `.value` from
+script fires no `input` event, so a swatch that only filled the control would move the
+control and nothing on the canvas. The four targets are a table naming the row, the
+picker, what to run, and whether it counts as an undo step — the canvas background does
+not, matching ADR-0010's decision that the history leaves the background alone. The
+marquee background's entry also unticks **Transparent**, because a transparent marquee
+ignores its background colour: without that line, picking the venue's red would do
+nothing and say nothing, which is the same defect wearing a checkbox. And the colours are
+read through `readHex()` again on this side before they become CSS: the server already
+answered `Color::read()` for them, but a value the CSSOM discards is not a swatch, it is
+a grey box that does nothing — #41's shape, one control along.
+
+**A number this container cannot check, and it was wrong.** Found while raising it:
+§4bb added two checks to the layout suite's MySQL-only section and moved that arm's
+expected count by three, so from step 3 until this step the MySQL run expected one check
+more than the suite contains. Nothing here could see it — there is no MySQL server in
+this container and that arm never runs — and the comment directly above the line warns
+about this exact mistake ("a sum is a prediction that can be checked in one command;
+check it"). It is no longer a delta: the MySQL figure is the SQLite figure plus a *count*
+of that section, which is straight-line code with no loop and no conditional, so both
+halves can be verified by reading rather than by running.
+
+**The seventh harness.** `tools/selftest_builder_brands.js`, 121 checks, under the
+premise of an admin who may switch: the switch sends no request, repaints the branded
+block and leaves the block that owns its typography alone, records no undo step, and
+leaves nothing for the next commit to mistake for an edit. Two additions to the DOM stub
+were needed and both are load-bearing: `classList.toggle`, which both of this page's
+menus use, and kept `document` listeners, so a click somewhere else on the page can be
+fired — a menu that opens and cannot be closed is a real defect and an invisible one to a
+stub that drops the handler. The read-only and basic-account cases went to the suite that
+owns that premise rather than growing a fourth premise here.
+
+**What the mutation runs found.** `lib/brands.php` 78/122 killed, `lib/layout_store.php`
+196/300. `BrandChoice`'s own survivors are the `===` → `==` family on comparisons where
+both operands are already strings, plus one worth naming: the `intval($id) <= 0` half of
+`brand()` survives on its own, because `isIdLike` has already refused everything that is
+not a whole number and the only values left for it to catch are `0` and negatives — both
+of which `problemWith()` then refuses again by the same test. Two agreements about the
+same thing, which is deliberate here (the factory's filter and the reader's guard) and
+therefore not a gap. No new invariant: step 4's guarantees are the behaviour of one page
+and are held by a suite, not by a rule that spans files.
+
+**Still owed, and this step does not close it.** The browser pass has no step for the
+Builder's Brand control, which is now the fourth thing on its debt table — and it is the
+category that table exists for. Nothing in this repo can see a swatch row land on top of
+a picker at 1080p, or a venue's name truncate in a 178-pixel column.
+
 ---
 
 ## 5. Verification
@@ -6303,6 +6437,10 @@ node tools/selftest_builder_undo.js      # and under the fourth: the last thing 
                                          # not what they meant. Round-trips the canvas through
                                          # snapshot and restore, and drives every mutating
                                          # control to prove each one leaves a step
+node tools/selftest_builder_brands.js    # and under the fifth: an admin deciding which
+                                         # venue this sign belongs to. The switch repaints
+                                         # and sends nothing, the palette is offered and
+                                         # enforced nowhere, and Publish is what writes it
 node tools/selftest_viewer.js            # viewer.php's poll loop, against a fetch this
                                          # test controls: the sign must not blank for one
                                          # dropped packet, and must not stay up for an
@@ -6656,6 +6794,18 @@ grep -rn "applyHiddenLook\|hidden-badge" --include=*.php .  # builder.php only, 
                                               # defect back: a section faded with nothing saying why.
                                               # The three preview builders name .hidden-badge only to
                                               # avoid clearing it when they redraw
+grep -rn "BRAND_ID\|CAN_PICK_BRAND\|switchBrand\|PALETTE_TARGETS\|var BRANDS" --include=*.php .
+                                              # builder.php only, 18 hits. The Brand a sign wears is
+                                              # *staged* in that page and written by the publish that
+                                              # carries it (§4bc), so these are page state and nothing
+                                              # else may hold an opinion about them. A `BRAND_ID` on
+                                              # another page would be a second answer to "which venue
+                                              # is this", and the two would differ the moment somebody
+                                              # picked one without publishing. `var BRANDS` and not
+                                              # `BRANDS`, because lib/brands.php and lib/brand_admin.php
+                                              # both open with the word as a banner — and `BRAND_*` with
+                                              # the underscore is a different rule two entries above,
+                                              # about the nav bar's colours (see CONTEXT.md)
 grep -rn "fmtCmd\|savedRange\|trackSelection\|FONT_FAMILIES\|wysiwyg\|fmt-btn" --include=*.php .
                                               # must be empty. The remains of a format bar ADR-0002
                                               # settled against — including a `selectionchange`

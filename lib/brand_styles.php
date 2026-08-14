@@ -144,12 +144,18 @@ class BrandStyles
     /**
      * Every Brand's styles at once, keyed by brand id and then by block type.
      *
-     * For the two callers that are about the *installation* rather than about one
-     * sign: `ColorAudit`, which reports every stored colour this app cannot read
-     * wherever it lives, and the tool that prints it. Reading these one Brand at a
+     * For the callers whose question is about more than one Brand. Two are about the
+     * *installation*: `ColorAudit`, which reports every stored colour this app cannot
+     * read wherever it lives, and the tool that prints it. Reading these one Brand at a
      * time would be a query per Brand to answer a question about all of them, and an
      * audit that skipped a Brand because nothing pointed at it would miss exactly the
      * rows nobody is looking at.
+     *
+     * The third is `builder.php`, and it is about one page rather than the install: an
+     * admin who picks a Brand there repaints the canvas in the browser and writes
+     * nothing (v2 decision 6), so the standards of every Brand they *could* pick have to
+     * be on the page before they pick one. A read per switch would put a request that
+     * can fail in the middle of an edit, for data that changes about once a season.
      */
     public function allByBrand()
     {

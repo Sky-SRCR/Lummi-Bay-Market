@@ -262,6 +262,19 @@ class DisplayAdmin
      * the lock away would punish somebody for an admin's retyping. Their page says the
      * address changed and offers a reload; reloading finds the new tag and picks the
      * same lock back up, because it is still theirs.
+     *
+     * **Moving the sign to another Brand advances the layout stamp**, and that is the
+     * one write here that needs a second statement. Since v2 step 4 the Builder stages a
+     * Brand and *publishes* it, so a tab that loaded before this save is holding the old
+     * venue and would put it straight back — silently, on every screen wearing the sign,
+     * because the publish it sends is otherwise perfectly valid. Advancing the stamp is
+     * ADR-0006 answering exactly the question it was written for: the display changed
+     * since you opened it, nothing was saved, reload and re-apply. It is the same
+     * mechanism `advanceLayoutRevision()` already serves for an element hidden from this
+     * panel, and it costs the person in the Builder a reload rather than their work.
+     *
+     * The two statements are one transaction for the obvious reason: a Brand that moved
+     * with a stamp that did not is the defect back, with nothing to say so.
      */
     public function updateDetails(Display $display, array $fields)
     {
@@ -271,15 +284,36 @@ class DisplayAdmin
 
         $renamed  = $clean['tag'] !== $display->tag();
         $wasBeing = $renamed && $display->lockState()->isHeld();
+        // Asked of the Display as it stands, before anything is written, so the answer
+        // cannot depend on the order of the two statements below.
+        $moved    = intval($clean['brand_id']) !== $display->brandId();
+        $watched  = $moved && $display->lockState()->isHeld();
 
         try {
+            $this->pdo->beginTransaction();
             $updated = $this->displays->updateDetails($display, $clean);
+            if ($updated && $moved) {
+                $this->displays->advanceLayoutRevision($updated);
+                $updated = $this->displays->forId($display->id());
+            }
+            $this->pdo->commit();
         } catch (Throwable $e) {
+            $this->abandon();
             return DisplayResult::failed('That display could not be updated. Nothing was changed.');
         }
         if (!$updated) {
             return DisplayResult::failed('That display no longer exists.');
         }
+
+        $moveNote = $moved
+            ? ' It now wears the brand "' . $clean['brand_name'] . '", so screens showing it'
+              . ' pick up that venue\'s typography within 30 seconds.'
+              . ($watched
+                  ? ' Somebody has it open in the builder on the brand it had: their publish is'
+                    . ' refused until they reload, so it cannot be put back by accident. Their work'
+                    . ' is still on their screen.'
+                  : '')
+            : '';
 
         $note = $renamed
             ? ' Its address changed — any screen showing it must now be pointed at '
@@ -290,7 +324,8 @@ class DisplayAdmin
                     . ' still on their screen.'
                   : '')
             : '';
-        return DisplayResult::ok($updated, 'Display "' . $updated->title() . '" updated.' . $note);
+        return DisplayResult::ok($updated,
+            'Display "' . $updated->title() . '" updated.' . $note . $moveNote);
     }
 
     /**
@@ -684,6 +719,11 @@ class DisplayAdmin
         // off and deletes them from the same page. The *Builder's* Brand control is
         // staged instead, written by Publish, because the Builder promises that
         // nothing on it reaches a sign until then (ADR-0011, decision 6).
+        //
+        // Those two contracts meet at one place, and `updateDetails()` above is where
+        // it is handled: a Builder tab that loaded before this save is staging the old
+        // Brand and would publish it back, so this save advances the layout stamp and
+        // that publish is refused until they reload (ADR-0006).
         $brand = $this->brands->forId(isset($in['brand_id']) ? $in['brand_id'] : 0);
         if (!$brand) {
             return DisplayResult::invalid('brand_id',
@@ -691,8 +731,13 @@ class DisplayAdmin
                 . 'typography, palette and logo come from.');
         }
 
+        // `brand_name` is for the sentence `updateDetails()` writes and is not a column.
+        // Harmless to carry: both statements in `DisplayStore` name the fields they
+        // write, so a key neither of them names is never looked at. It is here rather
+        // than re-read there because the row has just been fetched, and asking twice
+        // for one name is how two answers about the same row start being possible.
         $clean = ['title' => $title, 'tag' => $tag, 'location' => $location,
-                  'brand_id' => $brand->id()];
+                  'brand_id' => $brand->id(), 'brand_name' => $brand->name()];
         return null;
     }
 
