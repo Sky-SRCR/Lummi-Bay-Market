@@ -7788,6 +7788,26 @@ try { Color::contrastRatio('puce', '#ffffff'); } catch (Throwable $e) { $tThrew 
 checkSame(true, $tThrew,
           'and a value that is not a colour has no contrast, rather than the worst possible contrast');
 
+// ---- The two pages a theme must never reach, by construction -----------------------
+// Decision 12 says the sign-in page and the Viewer are unaffected "by construction", and
+// a construction is worth a check: what makes it true is that neither page ever calls
+// `wear()`, so `SiteChrome` answers the store default there and no query is made. The
+// sign-in page is the one that would be tempting — it draws a stylesheet from the same
+// four colours — and it has no account to look a theme up for, which is the whole reason
+// the lookup is passed in rather than reached for.
+$tLogin  = file_get_contents(__DIR__ . '/../login.php');
+$tViewer = file_get_contents(__DIR__ . '/../viewer.php');
+checkSame(0, substr_count($tLogin, 'SiteChrome::wear'),
+          'the sign-in page never wears a theme');
+checkSame(0, substr_count($tLogin, 'WorkspaceThemeStore'),
+          'and never reads the table, so it makes no query for one');
+check(strpos($tLogin, 'SiteChrome::accent()') !== false,
+      'while still drawing the store\'s own colours, which is what it is for');
+checkSame(0, substr_count($tViewer, 'SiteChrome'),
+          'and the Viewer does not know this module exists at all');
+checkSame(0, substr_count($tViewer, 'workspace_theme'),
+          'nor the table behind it — the page a customer sees loads neither config.php nor auth.php');
+
 // ---- The panel's theme surface and its handler agree about field names -------------
 // Grep-shaped, for the reason the Display Branding block above says: nothing here renders
 // the page, so a broken layout is the browser pass's job. What this can see is the
@@ -8031,7 +8051,7 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // plus that count, and both halves are things somebody can verify without a database.
 // The SQLite number stays what the run reported.
 //
-// Step 5 moved it from 2068 to 2236 and did not touch the engine-only section, so the
+// Step 5 moved it from 2068 to 2241 and did not touch the engine-only section, so the
 // count below it is still 25 — read, not assumed, which is the whole of the paragraph
 // above.
-reportChecks(testIsMysql() ? 2261 : 2236);
+reportChecks(testIsMysql() ? 2266 : 2241);
