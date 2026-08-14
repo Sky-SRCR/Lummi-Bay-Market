@@ -90,7 +90,11 @@ class ServerReport
      */
     private $server;
 
-    public function __construct(PDO $pdo, array $server = null)
+    // `?array` rather than `array … = null`: from PHP 8.4 the implicit form is
+    // deprecated and every request that builds this report emits a notice into the
+    // error log. The explicit form is understood back to 7.1, so this costs nothing
+    // below the floor and is one fewer thing between here and the next version.
+    public function __construct(PDO $pdo, ?array $server = null)
     {
         $this->pdo    = $pdo;
         $this->server = ($server === null) ? $_SERVER : $server;
