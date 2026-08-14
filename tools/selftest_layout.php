@@ -7612,10 +7612,12 @@ $tPdo->prepare("UPDATE workspace_themes SET nav_bg = 'darkblue', panel = '' WHER
      ->execute([$tOne->id()]);
 $tBad = $tStore->forId($tOne->id());
 SiteChrome::wear($tBad);
-checkSame(SiteChrome::DEFAULTS['nav_bg'], SiteChrome::navBg(),
-          'an unreadable colour in a worn theme falls back to the documented default');
+checkSame(SiteChrome::configColor('nav_bg'), SiteChrome::navBg(),
+          'an unreadable colour in a worn theme falls through to the layer under it');
 checkSame('#ffcc00', SiteChrome::accent(),
           'and the roles either side of it are unaffected — the fallback is per role');
+checkSame(SiteChrome::DEFAULTS['panel'], SiteChrome::panel(),
+          'and a role with no config layer falls all the way to its documented default');
 $tBadList = $tBad->unreadable();
 checkSame(2, count($tBadList), 'and the theme can say which of its values it could not use');
 checkSame('nav_bg', $tBadList[0]['key'], 'named by the role it is');
@@ -7624,6 +7626,30 @@ checkSame('darkblue', $tBadList[0]['value'], 'quoting what is actually stored');
 SiteChrome::wear(null);
 $tPdo->prepare("UPDATE workspace_themes SET nav_bg = '#101820', panel = '#1a252f' WHERE id = ?")
      ->execute([$tOne->id()]);
+
+// ---- Which layer that fallback actually landed on ---------------------------------
+// The three checks above cannot tell. This container has no `branding_config.php` — it
+// is server-side and deliberately not in the repo (`docs/DEPLOY-SKIP.md`) — so the
+// colour the shop set and the colour the app ships with are the same string here, and a
+// fallback to either passes. On the live install they are a dark red and a dark slate.
+// So the layering is asserted in a process built to have both, which is the same
+// machinery `StoreClock`'s absent-setting branch uses and the only way anything here
+// reaches this line at all: mutation moved it and every check lived (§4bd).
+checkSame('#8b0000|#123456|' . SiteChrome::DEFAULTS['work_area'], inFreshProcess('
+        define("BRAND_NAV_BG", "#8b0000");
+        require LBM_ROOT . "/lib/workspace_themes.php";
+        SiteChrome::wear(new WorkspaceTheme(["id" => 1, "name" => "T",
+                                            "nav_bg" => "darkblue", "panel" => "#123456"]));
+        echo SiteChrome::navBg() . "|" . SiteChrome::panel() . "|" . SiteChrome::workArea();
+    '), 'an unusable theme colour paints what the shop set, a usable one paints itself, '
+      . 'and a role the config has no line for paints the documented default');
+// The same theme with nothing configured, which is what makes the line above about the
+// config file rather than about a constant that happened to be there.
+checkSame(SiteChrome::DEFAULTS['nav_bg'], inFreshProcess('
+        require LBM_ROOT . "/lib/workspace_themes.php";
+        SiteChrome::wear(new WorkspaceTheme(["id" => 1, "name" => "T", "nav_bg" => "darkblue"]));
+        echo SiteChrome::navBg();
+    '), 'and with no config file at all it lands on the documented default, one layer further down');
 
 // ---- What the browser is handed ----------------------------------------------------
 // Resolved, not raw: `style.setProperty()` discards a value it cannot read in silence,
@@ -7856,7 +7882,12 @@ checkSame(1, count($tThemeFindings), 'a theme colour nobody can read joins the a
 checkSame(ColorAudit::WRONG_IN_APP, $tThemeFindings[0]['kind'], 'under the kind that touches no sign');
 checkSame('chartreuse', $tThemeFindings[0]['value'], 'quoting what is actually stored');
 checkMentions($tThemeFindings[0]['what'], 'Night shift', 'naming the theme a person would open');
-checkMentions($tThemeFindings[0]['consequence'], SiteChrome::DEFAULTS['status_warn'],
+// The store default for that role, which is what the fallback paints — asked for by the
+// same method the finding uses rather than by naming a constant, because for a role Site
+// Branding *can* set they are two different colours on a live install and the same one
+// here. `status_warn` is not one of the four, so this check cannot tell them apart; the
+// pair of subprocess checks above is where that distinction is actually held.
+checkMentions($tThemeFindings[0]['consequence'], SiteChrome::configColor('status_warn'),
               'saying which colour is drawn instead');
 checkMentions($tThemeFindings[0]['consequence'], 'nothing on the shop floor',
               'and saying plainly that no sign is affected');
@@ -8170,8 +8201,9 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // plus that count, and both halves are things somebody can verify without a database.
 // The SQLite number stays what the run reported.
 //
-// Step 5 moved it from 2068 to 2257, and its mutation runs added the eleven checks its
-// survivors asked for, which is 2268. Neither touched the engine-only section, so the
-// count below it is still 25 — read, not assumed, which is the whole of the paragraph
-// above.
-reportChecks(testIsMysql() ? 2293 : 2268);
+// Step 5 moved it from 2068 to 2257, its mutation runs added the eleven checks its
+// survivors asked for (2268), and changing which layer an unusable theme colour falls
+// through to added three more, two of them in a subprocess. None of that touched the
+// engine-only section, so the count below it is still 25 — read, not assumed, which is
+// the whole of the paragraph above.
+reportChecks(testIsMysql() ? 2296 : 2271);

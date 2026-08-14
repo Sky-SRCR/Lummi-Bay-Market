@@ -116,15 +116,17 @@ class WorkspaceTheme
      *
      * Resolved here rather than raw, because the browser has no `Color::read()` and the
      * value lands in `style.setProperty()` — where an unreadable one is discarded in
-     * silence, which is §4ax's defect in a new place. `SiteChrome::pick()` is what
+     * silence, which is §4ax's defect in a new place. `SiteChrome::themeColor()` is what
      * decides, so the swatch a person sees in the picker is the colour the page will
-     * take.
+     * take — and it is that method rather than `pick()` because a theme picked from this
+     * payload has to paint what wearing it would paint, down to which layer an unusable
+     * value falls through to.
      */
     public function toClientArray()
     {
         $colors = [];
         foreach (array_keys(SiteChrome::ROLES) as $role) {
-            $colors[$role] = SiteChrome::pick($role, $this->colorFor($role));
+            $colors[$role] = SiteChrome::themeColor($role, $this->colorFor($role));
         }
         return ['id' => $this->id(), 'name' => $this->name(), 'colors' => $colors];
     }

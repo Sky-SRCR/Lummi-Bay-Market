@@ -444,7 +444,7 @@ a page that may be holding unpublished work and no other premise here covers tha
 `selftest_builder_readonly.js` went from 65 to 68 and `selftest_layout.php` from 2,068 to
 2,221.
 
-> **Six corrections while building.**
+> **Six corrections while building, and one decision taken after.**
 >
 > **Thirteen roles, not twelve.** The six chrome roles the plan names omit the navigation
 > border, which is one of the four colours a shop can already set from Site Branding. A
@@ -479,6 +479,13 @@ a page that may be holding unpublished work and no other premise here covers tha
 > per frame. Only the arithmetic is duplicated; the threshold and the words are printed
 > from `Color::READABLE_RATIO`, and neither copy is checked against the other — both are
 > checked against WCAG's own fixed points.
+>
+> **And one thing the plan left unsaid was decided after it was built.** Where a theme's
+> unusable colour falls *to*. It first fell to the documented default, skipping the
+> config file; the owner's answer is that it falls to the config file, because "use the
+> store default" means that file in every other sentence of this step.
+> `SiteChrome::themeColor()` is the seam, and it took a subprocess to check, since this
+> container has no `branding_config.php` and cannot tell the two apart (§4bd).
 
 ## Risks and watch-items
 

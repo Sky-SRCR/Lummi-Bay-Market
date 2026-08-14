@@ -2141,18 +2141,19 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                         <td style="font-weight:600;"><?= Markup::text($t->name()) ?></td>
                         <td>
                             <?php foreach (array_keys(SiteChrome::ROLES) as $tRole): ?>
-                                <!-- Drawn through SiteChrome::pick(), so a swatch shows the colour
-                                     the page will actually take rather than the one in the row. A
-                                     stored value nobody can read is named below instead of being
-                                     shown as black (#21). -->
+                                <!-- Drawn through SiteChrome::themeColor(), so a swatch shows the
+                                     colour the page will actually take rather than the one in the
+                                     row — including which layer an unusable value falls through
+                                     to. A stored value nobody can read is named below instead of
+                                     being shown as black (#21). -->
                                 <span title="<?= Markup::text(SiteChrome::ROLES[$tRole][0]) ?>"
                                       style="display:inline-block; width:13px; height:16px; border-radius:2px;
                                              border:1px solid #ccc; margin-right:2px;
-                                             background:<?= SiteChrome::pick($tRole, $t->colorFor($tRole)) ?>"></span>
+                                             background:<?= SiteChrome::themeColor($tRole, $t->colorFor($tRole)) ?>"></span>
                             <?php endforeach; ?>
                             <?php if ($tBad): ?>
                                 <div style="font-size:11px; color:#c0392b; margin-top:4px;">
-                                    Stored but unreadable, so the default is drawn instead:
+                                    Stored but unreadable, so the store default is drawn instead:
                                     <?php foreach ($tBad as $i => $bad): ?><?= $i ? ', ' : '' ?><?= Markup::text($bad['label']) ?>
                                         (<?= Markup::text(Color::describe($bad['value'])) ?>)<?php endforeach; ?>.
                                 </div>
@@ -2227,9 +2228,15 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                         <label style="font-size:11px; color:#555; font-weight:600;
                                       display:flex; flex-direction:column; gap:3px;">
                             <?= Markup::text($tMeta[0]) ?>
+                            <!-- A new theme starts from what the app paints for the store, not
+                                 from the colours it ships with, so the first thing an admin
+                                 changes is one square of their own shop rather than thirteen
+                                 back to it. `type=color` cannot show a value it cannot read, so
+                                 an open theme's unusable role shows the same substitute the page
+                                 would paint — named in the table above, never only substituted. -->
                             <input type="color" name="t_<?= Markup::text($tRole) ?>"
                                    data-role="<?= Markup::text($tRole) ?>"
-                                   value="<?= SiteChrome::pick($tRole, $openTheme ? $openTheme->colorFor($tRole) : null) ?>"
+                                   value="<?= SiteChrome::themeColor($tRole, $openTheme ? $openTheme->colorFor($tRole) : null) ?>"
                                    oninput="themeFormPreview()">
                         </label>
                     <?php endforeach; ?>

@@ -6463,8 +6463,8 @@ cannot repaint anybody — which is what makes this the low-risk step the plan c
 rather than a migration that touches every account row.
 
 **The layered read had to split in two, and that one was a defect a day from shipping.**
-`SiteChrome::stored()` now answers the worn theme first, then the config, then nothing —
-and three callers want the config *as configured* rather than as painted: `all()`,
+`SiteChrome::role()` answers the worn theme first, then the config, then the documented
+default — and three callers want the config *as configured* rather than as painted: `all()`,
 `unreadable()`, and the Branding form, which fills its four `type=color` inputs from it.
 Through the layered read, an admin wearing a theme would have opened the Branding tab,
 been shown their own theme's colours as "what is there now", and saved them over the
@@ -6553,7 +6553,7 @@ gained the other half: the picker reaches a read-only Builder in full, which is 
 distinction between the two nouns in one assertion.
 
 **What the mutation runs found.** Over the code as finally committed: `lib/workspace_themes.php`
-56 of 65 killed, 25 of those by an assertion; `lib/site_chrome.php` 27 of 38, 14 by an
+56 of 65 killed, 27 of those by an assertion; `lib/site_chrome.php` 26 of 36, 13 by an
 assertion; `lib/color.php` 32 of 39, 22; `lib/picker_name.php` 22 of 27, 18; and
 `lib/accounts.php` 156 of 241, 130 — that last file because this step put a method in it
 and one line inside `close()`'s transaction, and that line is killed by an assertion
@@ -6591,22 +6591,50 @@ where PHP 8 already guarantees both operands' type. `$out = [];` deleted in fron
 append, which PHP auto-vivifies, so the line declares a type rather than doing anything.
 `intval($id) <= 0` behind an `isIdLike()` that has already refused everything except zero
 and negatives — §4bc's two agreements about the same thing. And three in `site_chrome.php`
-— `load()`'s body, `logo()`'s `&&`, and `FIELDS[$key][0]` read as `[1]` — which all survive
+— `load()`'s body, `logo()`'s `&&`, and `FIELDS[$key][0]` read as `[1]` — which all survived
 because the process running the suite already has the branding constants defined: the
 failure CLAUDE.md names as an absent-setting check running where the setting was present.
-Killing those needs a subprocess, which this suite has machinery for and this step did not
-spend on them.
+Killing those needs a subprocess, which this suite has machinery for and that paragraph
+declined to spend on them. The paragraph below then spent it for a different reason and
+took the third one with it: a process where `BRAND_NAV_BG` is a dark red is a process where
+reading the *label* out of `FIELDS` instead of the constant's name paints the wrong colour.
+One check answering two questions is the usual shape of this — the other two are still
+alive, and still worth a subprocess apiece the day anything near them moves.
 
-**And one survivor is a question rather than a family.** `stored()` hands a worn theme's
-value back exactly as stored, so an unreadable one is refused a layer later by `pick()` —
-which answers the **documented** default, not the colour the shop put in
-`branding_config.php`. For the four config-backed roles those are two different colours on
-any install that has branded its nav, so a theme with one bad value loses the shop's colour
-rather than falling through to it. In this container they are equal, which is both why the
-mutant on that line lives and why no check here can see the difference. Written down rather
-than changed: "use the store default" means the config file everywhere else in this step,
-and making the fallback mean it here too changes what a page paints, which is a thing to
-do deliberately — with the browser pass owed on this step anyway.
+**And one survivor was a question rather than a family, which the owner then answered.**
+As first built, `stored()` handed a worn theme's value back exactly as stored, so an
+unreadable one was refused a layer later by `pick()` — which answers the **documented**
+default, not the colour the shop put in `branding_config.php`. For the four config-backed
+roles those are two different colours on any install that has branded its nav, so a theme
+with one bad value took the shop's colour off the page rather than falling through to it.
+The file argued for that at the time: an almost-right screen is harder to notice than an
+obviously default one. The owner decided the other way, and the deciding argument is the
+better one — "use the store default" means `branding_config.php` in every other sentence of
+this step, and a phrase cannot mean two things one method apart.
+
+So `SiteChrome::themeColor($role, $stored)` is now the seam: the theme's value when this app
+can read it, otherwise whatever the store default paints for that role, which for the nine
+roles with no config line *is* the documented default. `role()` calls it when a theme is
+worn and `configColor()` when one is not, and the two other places that resolve a theme
+that is **not** the one being worn go through the same method rather than a second copy of
+the layering — `toClientArray()`, so a theme the picker switches to paints what wearing it
+paints, and the panel's swatch row, so the square in the list is the colour the page will
+take. The theme form's inputs come from it too, which means a new theme now starts from the
+shop's colours instead of the shipped ones: the first thing an admin changes is one square
+of their own shop rather than thirteen back to it. Nothing became a silent substitute —
+`WorkspaceTheme::unreadable()` still names every value that could not be used, the table
+still prints that list, and its sentence now says *store* default because that is what is
+drawn.
+
+**And it took three checks, two of them in a subprocess, because the suite could not see
+the difference at all.** This container has no `branding_config.php` — it is server-side and
+deliberately outside the repo — so the shop's colour and the shipped one are the same string
+here and a fallback to either passed. That is exactly why the mutation run that moved this
+line lived. The fix is `inFreshProcess()`, the machinery `StoreClock`'s absent-setting branch
+already used: one process with `BRAND_NAV_BG` defined to a dark red and a theme storing
+`darkblue`, which must paint the red; one with nothing defined at all, which must paint the
+slate the app ships with. A layering no process here could distinguish is a layering the
+next person can change without anything noticing — twice, now.
 
 **No ADR, and that is a decision rather than an omission.** An ADR here would record
 "typography and colour belong to a Brand" 's mirror image — the application's own colours

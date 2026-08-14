@@ -266,7 +266,50 @@ class SiteChrome
      */
     public static function role($key)
     {
-        return self::pick($key, self::stored($key));
+        if (self::$worn !== null) {
+            return self::themeColor($key, self::$worn->colorFor($key));
+        }
+        return self::configColor($key);
+    }
+
+    /**
+     * What one role of one theme actually paints: the theme's stored value when this
+     * app can read it, and otherwise **what the store default paints for that role**.
+     *
+     * The fallback is the layer underneath, not the documented default, and the two
+     * differ for the four config-backed roles on any install that has branded its nav.
+     * This file argued the other way until the store owner decided it: a theme with one
+     * unusable value should leave the shop's own colour in that place rather than
+     * revert it to the colour the app ships with, because "use the store default" means
+     * `branding_config.php` in every other sentence of this step and a phrase cannot
+     * mean two things one method apart. What made it worth deciding rather than leaving
+     * is that no check in this repo can tell: the container has no branding file, so
+     * the shop's colour and the documented one are the same string here, and the
+     * mutation run that changed this line lived (§4bd).
+     *
+     * The nine roles with no `FIELDS` entry have no config layer at all — they were
+     * literals in three stylesheets until step 5 and are a theme's to change or
+     * nobody's — so for those `configColor()` *is* the documented default and this
+     * answers exactly what it always did.
+     *
+     * Never a silent substitute: `WorkspaceTheme::unreadable()` names every value a
+     * theme stores that could not be used, the panel's theme table prints that list
+     * beside the swatches, and `ColorAudit` reports it. Substituting *and* saying so
+     * is the whole of #21.
+     *
+     * Public because two places have to answer this question about a theme that is not
+     * the one being worn — the payload the Builder's picker switches between, and the
+     * swatch row on the panel — and a second copy of the layering is how the four
+     * copies of the colour rule came to disagree in the first place.
+     *
+     * @param string $key    one of DEFAULTS' keys
+     * @param mixed  $stored whatever the theme row holds for it, or null
+     * @return string `#rrggbb`
+     */
+    public static function themeColor($key, $stored)
+    {
+        $read = Color::read($stored);
+        return $read !== '' ? $read : self::configColor($key);
     }
 
     /**
@@ -411,39 +454,6 @@ class SiteChrome
         return self::pick($key, self::storedInConfig($key));
     }
 
-    /**
-     * What has been stored for one role, or null if nothing has: the worn theme's
-     * value if there is one, otherwise the config file's, otherwise nothing.
-     *
-     * Three layers and one direction, and the layering is the whole of step 5's
-     * resolution. Note what it does *not* do: it never validates and never falls back
-     * to a colour. `pick()` does both, exactly as it did before a theme existed — a
-     * theme row holding a value nobody can read is the same problem as a config
-     * holding one, and answering it twice in two places is how the four copies of the
-     * colour rule came to disagree in the first place (#21).
-     *
-     * So a worn theme's unreadable value falls back to the **documented default** and
-     * not to the layer underneath it. That is deliberate: borrowing the shop's
-     * configured nav colour for one broken role would paint a screen that looks almost
-     * right, which is harder to notice than an obviously default one — and the person
-     * looking at it did not choose the store's colour, they chose this theme.
-     * `WorkspaceTheme::unreadable()` is how the row gets named on a screen rather than
-     * quietly substituted, which is the other half of #21.
-     *
-     * The nine roles with no `FIELDS` entry have no config layer at all: they were
-     * literals in three stylesheets until step 5 and are a theme's to change or
-     * nobody's. `array_key_exists` rather than `isset` on the theme's answer would be
-     * the same thing here, since a role a theme has no column for answers null and
-     * null is what "nothing stored" means at every layer.
-     */
-    private static function stored($key)
-    {
-        if (self::$worn !== null) {
-            $fromTheme = self::$worn->colorFor($key);
-            if ($fromTheme !== null) { return $fromTheme; }
-        }
-        return self::storedInConfig($key);
-    }
 
     /**
      * What the config file defined for one field, or null if it defined nothing — with

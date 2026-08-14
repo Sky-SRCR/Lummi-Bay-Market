@@ -170,7 +170,10 @@ It is not a theme and deliberately not a row in the themes table: a copy of the
 Site Branding file would disagree with it the first time somebody edited one.
 Say "the store default", never "the default theme", and note that it is always
 on the picker — including for somebody already on it, because a preference you
-cannot reverse is not a preference.
+cannot reverse is not a preference. It is also what a theme falls back to one
+role at a time: a value nobody can read leaves the store default in that place,
+not the colour the app ships with, so the phrase means the same thing wherever
+it is used.
 _Avoid_: default theme, base theme, no theme, factory colours
 
 **Chrome role**:

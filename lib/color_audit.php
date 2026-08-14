@@ -224,8 +224,12 @@ class ColorAudit
                         'what'  => 'the ' . $bad['label'] . ' colour of the ' . $theme->name()
                                  . ' workspace theme',
                         'value' => $bad['value'],
-                        'consequence' => 'Anybody wearing that theme sees the default '
-                                       . SiteChrome::DEFAULTS[$bad['key']] . ' instead. No sign '
+                        // What is actually painted, which is the store default and not the
+                        // documented one — they differ for the four roles Site Branding
+                        // sets. A consequence naming the wrong colour sends somebody
+                        // looking for a shade that is not on their screen.
+                        'consequence' => 'Anybody wearing that theme sees the store default '
+                                       . SiteChrome::configColor($bad['key']) . ' instead. No sign '
                                        . 'uses this colour, so nothing on the shop floor is wrong.',
                         'fix'   => 'Settings → Site Branding → Workspace Themes → ' . $theme->name()
                                  . ' → ' . $bad['label'] . '.',
