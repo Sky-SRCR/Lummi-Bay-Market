@@ -58,6 +58,9 @@ require_once __DIR__ . '/../lib/displays.php';
 require_once __DIR__ . '/../lib/layout_store.php';
 require_once __DIR__ . '/../lib/grants.php';
 require_once __DIR__ . '/../lib/brand_styles.php';
+// Named explicitly although layout_store.php already reaches it: this file reads as a
+// checklist of what it touches, and `brands` is one of the tables it now writes through.
+require_once __DIR__ . '/../lib/brands.php';
 
 // ---- Arguments --------------------------------------------------------------
 
@@ -532,6 +535,42 @@ report(!$legacy || $countFor($legacy->id()) === $legacyCountBefore,
 $stale = rehearsalPublish($layouts, $a, 'A three', '0');
 report($stale->kind() === 'stale', 'a stale publish to A is refused');
 report($countFor($a->id()) === $expect, 'and wrote nothing');
+
+// ---- The Brand a publish carries (v2 step 4) -------------------------------------
+// `brand_id` is `NOT NULL` with a foreign key, and a publish is now one of the two
+// things that writes it. Both of those are MySQL facts that SQLite's fixture states
+// differently, and the suite's MySQL arm is the one that does not run where this repo
+// is developed — so this tool is where `applyBrand()`'s UPDATE meets a real engine.
+// A refusal is checked too, because an id naming nothing is exactly what
+// `displays_ibfk_3` would turn into an exception if the check above it ever went away.
+$brandsHere = new BrandStore($pdo);
+$brandList  = $brandsHere->all();
+$a          = $store->forTag($tagA);
+if (count($brandList) > 1) {
+    $away = null;
+    foreach ($brandList as $candidate) {
+        if ($candidate->id() !== $a->brandId()) { $away = $candidate; break; }
+    }
+    $moved = $layouts->publish($a, new PublishRequest(
+        rehearsalLayout('A brand'), Background::unchanged(), BrandChoice::brand($away->id()),
+        0, true, $a->layoutStamp()));
+    report($moved->isOk(), 'a publish carrying a Brand succeeds');
+    report($store->forTag($tagA)->brandId() === $away->id(),
+        'and the throwaway sign wears "' . $away->name() . '" afterwards');
+} else {
+    // Printed rather than reported. A `report(true, …)` here would be a green line that
+    // cannot go red, which is what #50 is about — and it would read as coverage of the
+    // statement above it, which on this database nothing exercised.
+    echo "  ----   only one Brand on this database, so nothing was published onto a second\n";
+}
+
+$a       = $store->forTag($tagA);
+$noBrand = $layouts->publish($a, new PublishRequest(
+    rehearsalLayout('A ghost'), Background::unchanged(), BrandChoice::brand(999999),
+    0, true, $a->layoutStamp()));
+report($noBrand->kind() === 'invalid', 'a publish naming a Brand that does not exist is refused');
+report($countFor($a->id()) === $expect, 'and wrote no layout either');
+report(!$pdo->inTransaction(), 'and left no transaction open');
 
 // A grant on a throwaway Display, so the cleanup below can show whether a deleted
 // Display really takes its grants with it on this engine. Uses any existing
