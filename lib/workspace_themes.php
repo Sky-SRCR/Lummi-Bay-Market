@@ -79,16 +79,12 @@ class WorkspaceTheme
         return $value === null ? null : (string)$value;
     }
 
-    /** Every role this row has an opinion about: role => raw stored value. */
-    public function colors()
-    {
-        $out = [];
-        foreach (array_keys(SiteChrome::ROLES) as $role) {
-            $stored = $this->colorFor($role);
-            if ($stored !== null) { $out[$role] = $stored; }
-        }
-        return $out;
-    }
+    // There was a `colors()` here, answering every raw stored value as a map, and the
+    // mutation run found it: five of its mutants survived because **nothing called it**.
+    // Written on the assumption the theme form would want it, and the form asks
+    // `colorFor()` per role instead, because it draws the roles in groups. Deleted rather
+    // than covered — an unreachable method is not a check waiting to be written, and
+    // §4am's rule about a survivor being load-bearing is about lines that *run*.
 
     /**
      * Every stored colour this app cannot read, for whoever reports it.

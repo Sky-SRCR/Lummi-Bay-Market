@@ -7650,6 +7650,38 @@ foreach ($tVarLines as $tLine) {
 checkSame(13, $tShapely, 'and every one of them is a role name and a six-digit colour');
 
 // ---- Which theme an account is wearing ---------------------------------------------
+// ---- A row older than the code ----------------------------------------------------
+// Invariant 10's ordinary state: a database that has not converged has no column for a
+// role, and every layer above has to read that as "this theme does not decide this one"
+// rather than falling over. Built as a row rather than by dropping a column, because
+// SQLite cannot drop one and the value object is what is being asked.
+$tPartial = new WorkspaceTheme(['id' => 99, 'name' => 'Older than the code',
+                                'nav_bg' => '#123456']);
+checkSame('#123456', $tPartial->colorFor('nav_bg'), 'a role the row has is the row\'s answer');
+checkSame(null, $tPartial->colorFor('status_note'),
+          'and one it has no column for is null, not a warning and a blank');
+checkSame([], $tPartial->unreadable(),
+          'absent is not unreadable — there is nothing there for anybody to go and fix');
+SiteChrome::wear($tPartial);
+checkSame('#123456', SiteChrome::navBg(), 'wearing it, the role it knows is its own');
+checkSame(SiteChrome::DEFAULTS['status_note'], SiteChrome::statusNote(),
+          'and the one it does not know falls through to the layer underneath');
+checkSame(13, count($tPartial->toClientArray()['colors']),
+          'and the browser is still handed thirteen roles, not the two the row had');
+SiteChrome::wear(null);
+
+// ---- Ids that would name a different row ------------------------------------------
+// Each of these is checked against a database where the mangled id **would** resolve, and
+// that is the whole point: `forAccount('7abc')` on a database with no account 7 answers
+// null whether the guard is there or not, which is a check that cannot fail. The mutation
+// run said so — the guards survived every mutant until these named rows that exist.
+checkSame(null, $tStore->forId('1abc'),
+          'an id that intval() would read as an existing theme is refused, not read');
+checkSame(null, $tStore->forId(0),  'nor is 0 a theme');
+checkSame(null, $tStore->forId(-1), 'nor a negative one');
+checkSame($tOne->id(), $tStore->forId((string)$tOne->id())->id(),
+          'while the id as a string, which is how a form sends it, still works');
+
 checkSame(null, $tStore->forAccount(1), 'an account that has chosen nothing wears the store default');
 $tAccounts = new AccountStore($tPdo);
 checkSame(true, $tAccounts->chooseWorkspaceTheme(1, $tOne->id()), 'an account can choose a theme');
@@ -7659,8 +7691,14 @@ checkSame(true, $tAccounts->chooseWorkspaceTheme(1, 0), 'and "use the store defa
 checkSame(null, $tStore->forAccount(1), 'which puts them back with everybody else');
 checkSame(false, $tAccounts->chooseWorkspaceTheme(99999, $tOne->id()),
           'an id that names no account is refused rather than reported as saved');
-checkSame(null, $tStore->forAccount(0),      'and no account has no theme');
-checkSame(null, $tStore->forAccount('7abc'), 'nor does a mangled id, which intval() would have read as 7');
+checkSame(null, $tStore->forAccount(0), 'and no account has no theme');
+// Against an account that really is wearing one, so the refusal is the guard's doing
+// rather than the row simply not being there.
+$tAccounts->chooseWorkspaceTheme(2, $tOne->id());
+checkSame($tOne->id(), $tStore->forAccount(2)->id(), 'a colleague is wearing a theme');
+checkSame(null, $tStore->forAccount('2abc'),
+          'and an id intval() would read as *their* account is refused, not answered with theirs');
+$tAccounts->chooseWorkspaceTheme(2, 0);
 
 // A theme somebody is wearing cannot be deleted out from under them, and the refusal
 // can say whose screens it would have changed.
@@ -7974,7 +8012,7 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // plus that count, and both halves are things somebody can verify without a database.
 // The SQLite number stays what the run reported.
 //
-// Step 5 moved it from 2068 to 2221 and did not touch the engine-only section, so the
+// Step 5 moved it from 2068 to 2232 and did not touch the engine-only section, so the
 // count below it is still 25 — read, not assumed, which is the whole of the paragraph
 // above.
-reportChecks(testIsMysql() ? 2246 : 2221);
+reportChecks(testIsMysql() ? 2257 : 2232);
