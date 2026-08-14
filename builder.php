@@ -11,6 +11,8 @@ require_once __DIR__ . '/lib/upload_limits.php';
 require_once __DIR__ . '/lib/brands.php';
 require_once __DIR__ . '/lib/brand_styles.php';
 require_once __DIR__ . '/lib/assets.php';
+// The other noun: what *this employee's screen* is painted in, which reaches no sign.
+require_once __DIR__ . '/lib/workspace_themes.php';
 requireCurrentAccount($pdo);
 $me      = currentUser();
 $isAdmin = isAdmin();
@@ -18,6 +20,17 @@ $isAdmin = isAdmin();
 // Which Display is being edited, and at what canvas size. Authenticated, so schema
 // convergence is safe here (BUILD-REFERENCE §2 invariant 7).
 ensureSignageSchema($pdo);
+
+// ---- What this page is painted in (v2 step 5) --------------------------------------
+// Before anything renders, including the Display picker below, which is a signed-in
+// page like any other and would otherwise be the one screen a theme did not reach.
+// After convergence, so the column this reads exists on the request that adds it.
+//
+// The account is looked up and passed in; `SiteChrome` never reaches for a session.
+// Null — no theme chosen, or a database that has not converged — means the store
+// default, which is what every screen showed before this step existed.
+$themeStore = new WorkspaceThemeStore($pdo);
+SiteChrome::wear($themeStore->forAccount($me['id']));
 
 $displayStore = new DisplayStore($pdo);
 // Who is asking, and which Displays they hold (ADR-0005). The same object decides
@@ -67,13 +80,24 @@ if (!$resolution->isFound()) {
 <html lang="en">
 <head><meta charset="UTF-8"><title>Choose a display — Builder</title>
 <style>
+/* This page's share of the Workspace Theme (v2 step 5). Thirteen validated colours,
+   one echo, and `var(--…)` everywhere below — see SiteChrome::styleVariables() for why
+   the roles are drawn through custom properties rather than interpolated one rule at a
+   time. There is no canvas on this page, so every role here is chrome. */
+:root {
+<?= SiteChrome::styleVariables() ?>
+}
 * { box-sizing:border-box; margin:0; padding:0;
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
-body { background:#2c3e50; color:#fff; min-height:100vh; padding:40px 20px; }
+body { background:var(--work-area); color:#fff; min-height:100vh; padding:40px 20px; }
 .wrap { max-width:640px; margin:0 auto; }
 h1 { font-size:19px; margin-bottom:6px; }
 .sub { font-size:13px; color:#bdc3c7; margin-bottom:22px; line-height:1.6; }
-.notice { background:#5d3a3a; border:1px solid #8c5252; border-radius:5px; padding:10px 14px;
+/* The seventh of the seven banners, and the one that used to be its own slightly
+   different red (#5d3a3a against the off-banner's #7b3f3f). Two banners meaning the
+   same thing were two colours for no reason anybody wrote down; they are one role now,
+   which is the only thing on any screen that step 5 deliberately changes the look of. */
+.notice { background:var(--status-bad); border:1px solid #8c5252; border-radius:5px; padding:10px 14px;
           font-size:13px; margin-bottom:18px; }
 a.pick { display:block; background:#34495e; border:1px solid #415b76; border-radius:6px;
          padding:13px 16px; margin-bottom:9px; text-decoration:none; color:#fff; }
@@ -82,7 +106,7 @@ a.pick:hover { background:#3d566e; }
 .pick .title { font-size:15px; font-weight:600; }
 .pick .tag { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:12px; background:#2c3e50;
              border:1px solid #4a6480; border-radius:3px; padding:1px 7px; color:#aed6f1; }
-.pick .off { font-size:11px; font-weight:700; background:#7b3f3f; border-radius:9px; padding:1px 8px; }
+.pick .off { font-size:11px; font-weight:700; background:var(--status-bad); border-radius:9px; padding:1px 8px; }
 .pick .facts { font-size:12px; color:#bdc3c7; margin-top:5px; }
 .foot { margin-top:24px; font-size:13px; }
 .foot a { color:#aed6f1; }
@@ -197,9 +221,11 @@ $switchable = count($actor->openable($displayStore->all()));
 
 // The nine generated constants this page reads are defined by config.php, which
 // auth.php requires above — one list of names and defaults, in lib/branding.php.
-// The four that are colours are then read back through SiteChrome::, not escaped: they
-// land in the <style> block below, where there is no delimiter for an entity to
-// neutralise and a value that is not a colour is CSS.
+// The four that are colours are two layers down now: they are the store default for
+// four of the thirteen chrome roles, and this page reaches every role the same way, as
+// `var(--…)` against the one `:root` block below. That block is the only place a colour
+// is printed, and printed values are validated rather than escaped — a `<style>` has no
+// delimiter for an entity to neutralise, and a value that is not a colour is CSS.
 
 // How far back Undo may go on this page (ADR-0010), from the admin Settings page by
 // way of config.php. Zero on a read-only Builder as well as when the setting says
@@ -286,22 +312,45 @@ $brandLogoBroken = $wearing !== null && $wearing->logoAssetId() > 0 && $brandLog
 <title>Builder — <?= Markup::text(SITE_NAME) ?></title>
 <script src="https://cdn.jsdelivr.net/npm/interactjs@1.10.27/dist/interact.min.js"></script>
 <style>
+/* ── The Workspace Theme, thirteen roles, one echo (v2 step 5) ──
+   Every colour a person's own theme may change is declared here as a custom property
+   and used as `var(--…)` below. Three reasons it is one block rather than a hundred
+   interpolations, and the third is the one that made it necessary:
+
+   - A colour in a `<style>` block is *validated*, never escaped — there is no
+     delimiter for an entity to neutralise — and thirteen validated echoes in one place
+     is that rule enforced thirteen times instead of everywhere it is drawn.
+   - Nine of the thirteen roles were literals in this file until step 5, so the
+     alternative was adding a hundred-odd new echoes to it.
+   - **The picker must not need a reload.** It lives in the gear menu on a page that
+     may be holding unpublished work, and a page that reloads has thrown that work
+     away. Custom properties are what let `applyThemeColors()` repaint the chrome in
+     place, without touching the canvas or the undo history.
+
+   Decision 11: **no role is used on the canvas.** `#builder-canvas` and everything
+   drawn on it belong to the Brand, because what the canvas shows is what the sign
+   shows. The one exception is `--selection`, which paints the selection outline and
+   the resize handles — chrome that happens to be drawn over the canvas and reaches no
+   Screen. `tools/check_invariants.php` enforces both halves of that. */
+:root {
+<?= SiteChrome::styleVariables() ?>
+}
 * { box-sizing: border-box; margin: 0; padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 
-body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh; overflow: hidden; color: #fff; }
+body { background: var(--work-area); display: flex; flex-direction: column; height: 100vh; overflow: hidden; color: #fff; }
 
 /* ── Nav ── */
 #top-nav {
-    background: <?= SiteChrome::navBg() ?>; padding: 0 16px; display: flex; align-items: center;
-    gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid <?= SiteChrome::navBorder() ?>;
+    background: var(--nav-bg); padding: 0 16px; display: flex; align-items: center;
+    gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid var(--nav-border);
 }
-#top-nav .brand { font-weight: bold; font-size: 14px; color: <?= SiteChrome::text() ?>; }
+#top-nav .brand { font-weight: bold; font-size: 14px; color: var(--nav-text); }
 #top-nav .user-badge { margin-left: 20px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #bdc3c7; white-space: nowrap; flex-shrink: 0; }
 #top-nav .nav-spacer { flex: 1; }
 #top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px; padding: 5px 9px; border-radius: 3px; }
-#top-nav a:hover { background: #2c3e50; color: #fff; }
-#top-nav .nav-sep { border-left: 1px solid <?= SiteChrome::navBorder() ?>; height: 20px; margin: 0 2px; }
+#top-nav a:hover { background: var(--work-area); color: #fff; }
+#top-nav .nav-sep { border-left: 1px solid var(--nav-border); height: 20px; margin: 0 2px; }
 /* The account-and-settings menu. Everything that is a *destination* rather than a
    thing you do to this sign lives behind it — Asset Library, Admin Panel, Help —
    plus the role, which was a chip in the nav and is a fact about you rather than
@@ -310,19 +359,19 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #gear-wrap { position: relative; display: flex; align-items: center; }
 .nav-icon { background: none; border: none; color: #bdc3c7; font-size: 16px; line-height: 1;
             padding: 4px 7px; border-radius: 3px; cursor: pointer; }
-.nav-icon:hover { background: #2c3e50; color: #fff; }
+.nav-icon:hover { background: var(--work-area); color: #fff; }
 #gear-menu {
-    position: absolute; right: 0; top: 30px; min-width: 196px; background: #1a252f;
-    border: 1px solid #34495e; border-radius: 6px; padding: 6px; display: none;
+    position: absolute; right: 0; top: 30px; min-width: 196px; background: var(--panel);
+    border: 1px solid var(--panel-border); border-radius: 6px; padding: 6px; display: none;
     flex-direction: column; z-index: 400; box-shadow: 0 6px 22px rgba(0,0,0,.45);
 }
 #gear-menu.open { display: flex; }
 #gear-menu .gf { font-size: 11px; color: #8fa6bb; padding: 5px 8px; line-height: 1.4; }
-#gear-menu .gd { border-top: 1px solid #2c3e50; margin: 4px 0; }
+#gear-menu .gd { border-top: 1px solid var(--work-area); margin: 4px 0; }
 #gear-menu a { display: block; color: #dfe6ec; font-size: 12px; padding: 6px 8px;
                border-radius: 3px; text-decoration: none; }
-#gear-menu a:hover { background: #2c3e50; color: #fff; }
-.btn.publish-btn { background: <?= SiteChrome::accent() ?>; }
+#gear-menu a:hover { background: var(--work-area); color: #fff; }
+.btn.publish-btn { background: var(--accent); }
 /* While a publish is in flight. The button being visibly out of action is what
    stops the second click happening at all; the guard in publishCanvas() is what
    catches the one that happens anyway. */
@@ -338,7 +387,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                           font-size: 12px; white-space: nowrap; }
 #top-nav .display-badge .d-title { font-weight: 600; color: #fff; }
 #top-nav .display-badge .d-tag { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 11px;
-                                 background: #2c3e50; border: 1px solid #4a6480; border-radius: 3px;
+                                 background: var(--work-area); border: 1px solid #4a6480; border-radius: 3px;
                                  padding: 1px 6px; color: #aed6f1; }
 #top-nav .display-badge .d-dims { color: #8fa6bb; font-size: 11px; }
 #top-nav .display-badge .d-off { background: #c0392b; color: #fff; font-size: 10px; font-weight: bold;
@@ -353,7 +402,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 
 /* Editing a retired Display is allowed on purpose — but never by accident. */
 #display-off-banner {
-    display: none; background: #7b3f3f; color: #fff; font-size: 13px; padding: 8px 14px;
+    display: none; background: var(--status-bad); color: #fff; font-size: 13px; padding: 8px 14px;
     flex-shrink: 0; border-bottom: 1px solid #9b5252;
 }
 
@@ -361,7 +410,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
    page is read-only — and the bar has to be the first thing read, because every
    control that would have changed something is simply not on the page. */
 #lock-banner {
-    background: #4b3869; color: #fff; font-size: 13px; padding: 9px 14px; flex-shrink: 0;
+    background: var(--status-busy); color: #fff; font-size: 13px; padding: 9px 14px; flex-shrink: 0;
     border-bottom: 1px solid #6b5291; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
 #lock-banner .who { font-weight: 700; }
@@ -374,14 +423,14 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     display: none; font-size: 13px; padding: 8px 14px; flex-shrink: 0;
     align-items: center; gap: 10px; flex-wrap: wrap;
 }
-#lock-idle-bar   { background: #7d6608; border-bottom: 1px solid #9e8109; }
-#lock-lapsed-bar { background: #4b3869; border-bottom: 1px solid #6b5291; }
-#lock-lost-bar   { background: #7b3f3f; border-bottom: 1px solid #9b5252; }
+#lock-idle-bar   { background: var(--status-warn); border-bottom: 1px solid #9e8109; }
+#lock-lapsed-bar { background: var(--status-busy); border-bottom: 1px solid #6b5291; }
+#lock-lost-bar   { background: var(--status-bad); border-bottom: 1px solid #9b5252; }
 /* Not the lock: the reach. Whatever this bar says, nothing on this page works again
    until somebody does something about it — so it is the one bar that never turns off
    by itself. Its sentence depends on which way the display stopped being this page's
    to edit; see LOCK_TERMINAL. */
-#lock-access-bar { background: #7b3f3f; border-bottom: 1px solid #9b5252; }
+#lock-access-bar { background: var(--status-bad); border-bottom: 1px solid #9b5252; }
 #lock-idle-bar .btn { padding: 4px 10px; }
 
 /* ── The workbench: palette | canvas | rail ──
@@ -406,11 +455,11 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
    sign they cannot edit still has to be able to leave it, and still needs to know
    which venue they are looking at. */
 #palette {
-    width: 178px; flex-shrink: 0; background: #1a252f; border-right: 1px solid #34495e;
+    width: 178px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--panel-border);
     display: flex; flex-direction: column; overflow-y: auto; padding: 9px 9px 12px;
 }
 #palette .pal-top { display: flex; flex-direction: column; gap: 6px;
-                    border-bottom: 1px solid #34495e; padding-bottom: 10px; margin-bottom: 2px; }
+                    border-bottom: 1px solid var(--panel-border); padding-bottom: 10px; margin-bottom: 2px; }
 #palette .pal-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: #7f8c8d; }
 #palette .pal-h   { font-size: 10px; text-transform: uppercase; letter-spacing: .8px;
                     color: #7f8c8d; margin: 11px 0 4px; }
@@ -457,7 +506,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #palette .brand-chev { color: #8fa6bb; flex-shrink: 0; font-size: 10px; }
 #brand-menu {
     position: absolute; left: 0; right: 0; top: 100%; margin-top: 3px; z-index: 420;
-    background: #1a252f; border: 1px solid #34495e; border-radius: 5px; padding: 4px;
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 5px; padding: 4px;
     display: none; flex-direction: column; max-height: 260px; overflow-y: auto;
     box-shadow: 0 6px 22px rgba(0,0,0,.5);
 }
@@ -467,13 +516,13 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     background: none; border: none; color: #dfe6ec; font-size: 12px; padding: 5px 7px;
     border-radius: 3px; cursor: pointer;
 }
-#brand-menu .brand-item:hover { background: #2c3e50; color: #fff; }
-#brand-menu .brand-item.on { background: #2c3e50; color: #fff; }
+#brand-menu .brand-item:hover { background: var(--work-area); color: #fff; }
+#brand-menu .brand-item.on { background: var(--work-area); color: #fff; }
 #brand-menu .brand-item .tick { width: 10px; flex-shrink: 0; color: #2ecc71; font-size: 10px; }
 /* Said in the palette rather than in a toast, because it is a standing state of this
    sign and not something that just happened. */
 #palette .brand-warn {
-    font-size: 11px; line-height: 1.45; color: #ffe9cf; background: #7a4a12;
+    font-size: 11px; line-height: 1.45; color: #ffe9cf; background: var(--status-note);
     border: 1px solid #a2670f; border-radius: 4px; padding: 6px 7px; margin-top: 2px;
 }
 #palette .pal-note { font-size: 11px; line-height: 1.5; color: #8fa6bb; margin-top: 10px; }
@@ -482,7 +531,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
    canvas. It used to be a full-width orange bar above the canvas; here it sits at
    the foot of the column whose buttons it is about. */
 #palette .pal-hint {
-    display: none; background: #7a4a12; border: 1px solid #a2670f; border-radius: 4px;
+    display: none; background: var(--status-note); border: 1px solid #a2670f; border-radius: 4px;
     padding: 7px 8px; font-size: 11px; line-height: 1.45; color: #ffe9cf;
 }
 
@@ -494,28 +543,28 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
    Builder too — somebody who cannot edit still needs to know whether the sign
    moved under them. */
 #canvas-footer {
-    flex-shrink: 0; background: #1a252f; border-top: 1px solid #34495e;
+    flex-shrink: 0; background: var(--panel); border-top: 1px solid var(--panel-border);
     display: flex; align-items: center; gap: 6px; padding: 5px 12px;
     font-size: 11px; color: #8fa6bb; flex-wrap: wrap;
 }
 #canvas-footer .foot-spacer { flex: 1; }
 #canvas-footer .btn { padding: 3px 9px; font-size: 11px; }
 
-.btn { background: #3498db; border: none; color: #fff; padding: 6px 12px;
+.btn { background: var(--accent); border: none; color: #fff; padding: 6px 12px;
        border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 12px; white-space: nowrap; }
 .btn:hover { filter: brightness(1.15); }
-.btn.green  { background: #27ae60; }
+.btn.green  { background: var(--status-good); }
 .btn.purple { background: #8e44ad; }
 .btn.orange { background: #e67e22; }
 .btn.danger { background: #e74c3c; }
 .btn.gray   { background: #7f8c8d; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
-.sep { border-left: 1px solid #34495e; height: 24px; margin: 0 4px; }
+.sep { border-left: 1px solid var(--panel-border); height: 24px; margin: 0 4px; }
 
 /* The align buttons. `#align-bar` retired with the horizontal stack — the same
    buttons are an *Arrange* group inside the rail now, beside the block they act
    on, which is where somebody looks for them. */
-.align-btn { background: #2c3e50; border: 1px solid #4a6278; color: #fff;
+.align-btn { background: var(--work-area); border: 1px solid #4a6278; color: #fff;
              width: 32px; height: 28px; border-radius: 3px; cursor: pointer;
              font-size: 13px; display: inline-flex; align-items: center; justify-content: center; }
 .align-btn:hover { background: #3d5166; }
@@ -543,7 +592,15 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 .editable-block:hover:not(.selected):not(.multi-sel) { outline: 1px dashed rgba(255,255,255,0.6); }
 .editable-block.draggable-block { cursor: move; }
 .editable-block.just-added { outline: 2px dashed #e0a400; outline-offset: -1px; background: rgba(255,212,0,.5); }
-.editable-block.selected  { outline: 2px solid #e74c3c; box-shadow: 0 0 8px rgba(231,76,60,.5); }
+/* The one role a theme is allowed to paint over the canvas, and the only `var(--…)`
+   permitted in this whole region of the stylesheet (decision 10 and 11 together, and
+   `tools/check_invariants.php` holds both halves). An outline drawn *over* a block to
+   say which one is selected is chrome: it exists for the person building the sign and
+   is not part of the sign, so it never reaches a Screen. The glow beside it stays a
+   literal `rgba()` — a shadow cannot be derived from a custom property without
+   `color-mix()`, and a theme that paints surfaces and leaves the hairlines and glows
+   alone is the honest limit of thirteen roles. */
+.editable-block.selected  { outline: 2px solid var(--selection); box-shadow: 0 0 8px rgba(231,76,60,.5); }
 .editable-block.multi-sel { outline: 2px solid #f39c12; box-shadow: 0 0 6px rgba(243,156,18,.4); }
 .editable-block.locked-block { cursor: default; }
 .editable-block.hidden-block { opacity: 0.45; }
@@ -571,7 +628,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 /* ── Resize handles ── */
 .rh {
     position: absolute; width: 10px; height: 10px;
-    background: #fff; border: 2px solid #e74c3c; border-radius: 2px;
+    background: #fff; border: 2px solid var(--selection); border-radius: 2px;
     z-index: 20; pointer-events: auto; touch-action: none;
     display: none; box-sizing: border-box;
 }
@@ -629,7 +686,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
    waiting for you, and a rail that disappears is a panel you have to rediscover. */
 #inspector {
     width: 296px; flex-shrink: 0;
-    background: #1a252f; border-left: 1px solid #34495e;
+    background: var(--panel); border-left: 1px solid var(--panel-border);
     padding: 14px; display: flex; flex-direction: column; gap: 10px;
     overflow-y: auto;
 }
@@ -647,12 +704,12 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 .arrange-row { display: flex; gap: 4px; margin-top: 4px; }
 .arrange-row .align-btn { flex: 1; width: auto; }
 #inspector h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
-                color: #f39c12; border-bottom: 1px solid #34495e; padding-bottom: 6px; }
+                color: #f39c12; border-bottom: 1px solid var(--panel-border); padding-bottom: 6px; }
 #inspector label { font-size: 11px; text-transform: uppercase; letter-spacing: .7px;
                    color: #bdc3c7; display: block; margin-bottom: 3px; }
 #inspector input, #inspector select {
-    width: 100%; padding: 6px 8px; border-radius: 4px; border: 1px solid #34495e;
-    background: #2c3e50; color: #fff; font-size: 13px;
+    width: 100%; padding: 6px 8px; border-radius: 4px; border: 1px solid var(--panel-border);
+    background: var(--work-area); color: #fff; font-size: 13px;
 }
 #inspector input[type="color"]  { height: 32px; padding: 2px; cursor: pointer; }
 #inspector input[type="file"]   { font-size: 12px; color: #aaa; }
@@ -671,7 +728,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     cursor: pointer; flex-shrink: 0;
 }
 .sw-row .sw:hover { border-color: #fff; }
-.insp-section { border-top: 1px solid #2c3e50; padding-top: 8px; }
+.insp-section { border-top: 1px solid var(--work-area); padding-top: 8px; }
 .insp-row { display: flex; gap: 8px; align-items: flex-end; }
 .insp-row > * { flex: 1; }
 
@@ -712,9 +769,9 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 }
 #carousel-modal-overlay.open { display:flex; }
 #carousel-modal {
-    background:#1a252f; border-radius:8px; padding:24px;
+    background:var(--panel); border-radius:8px; padding:24px;
     width:760px; max-width:95vw; max-height:90vh; overflow-y:auto;
-    border:1px solid #34495e;
+    border:1px solid var(--panel-border);
 }
 #carousel-modal h2  { font-size:16px; margin-bottom:4px; }
 #carousel-modal > p { font-size:12px; color:#bdc3c7; margin-bottom:14px; }
@@ -730,12 +787,12 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 .slide-field label { font-size:11px; color:#bdc3c7; display:block; margin-bottom:3px; }
 .slide-field input[type="text"],
 .slide-field textarea {
-    width:100%; padding:6px 8px; background:#2c3e50; border:1px solid #34495e;
+    width:100%; padding:6px 8px; background:var(--work-area); border:1px solid var(--panel-border);
     color:#fff; border-radius:3px; font-size:13px;
 }
 .slide-field textarea { resize:vertical; }
 .slide-img-preview {
-    min-height:44px; background:#2c3e50; border:1px solid #34495e;
+    min-height:44px; background:var(--work-area); border:1px solid var(--panel-border);
     border-radius:3px; display:flex; align-items:center; justify-content:center;
     padding:4px; margin-bottom:4px; font-size:11px; color:#7f8c8d;
 }
@@ -759,9 +816,9 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 }
 #table-modal-overlay.open { display:flex; }
 #table-modal {
-    background:#1a252f; border-radius:8px; padding:24px;
+    background:var(--panel); border-radius:8px; padding:24px;
     width:860px; max-width:95vw; max-height:90vh; overflow-y:auto;
-    border:1px solid #34495e;
+    border:1px solid var(--panel-border);
 }
 #table-modal h2  { font-size:16px; margin-bottom:4px; }
 #table-modal > p { font-size:12px; color:#bdc3c7; margin-bottom:14px; }
@@ -772,25 +829,25 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 }
 .table-editor thead th { background:#0d1b24; min-width:120px; }
 .table-editor tbody td input[type="text"] {
-    width:100%; padding:5px 7px; background:#2c3e50; border:1px solid #34495e;
+    width:100%; padding:5px 7px; background:var(--work-area); border:1px solid var(--panel-border);
     color:#fff; border-radius:3px; font-size:13px; box-sizing:border-box;
 }
 .col-style-sel {
-    width:100%; padding:4px 6px; background:#2c3e50; color:#fff;
-    border:1px solid #34495e; border-radius:3px; font-size:12px; margin-bottom:4px;
+    width:100%; padding:4px 6px; background:var(--work-area); color:#fff;
+    border:1px solid var(--panel-border); border-radius:3px; font-size:12px; margin-bottom:4px;
 }
 .col-align-row { display:flex; gap:3px; margin-bottom:4px; }
 .col-width-row { display:flex; align-items:center; gap:3px; margin-bottom:4px; }
 .col-width-inp { width:52px; background:#0d1b24; border:1px solid #2c3e50; color:#ecf0f1; border-radius:3px; padding:2px 4px; font-size:11px; }
 .col-width-lbl { font-size:10px; color:#95a5a6; }
-.col-align-sel { flex:1; padding:2px 4px; background:#2c3e50; color:#fff; border:1px solid #34495e; border-radius:3px; font-size:10px; }
+.col-align-sel { flex:1; padding:2px 4px; background:var(--work-area); color:#fff; border:1px solid var(--panel-border); border-radius:3px; font-size:10px; }
 .del-col-btn { width:100%; font-size:10px; padding:2px 4px; }
 .del-row-td  { width:32px; text-align:center; background:#0d1b24; }
 
 /* ── Toast ── */
 #toast {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-    background: #27ae60; color: #fff; padding: 10px 22px; border-radius: 4px;
+    background: var(--status-good); color: #fff; padding: 10px 22px; border-radius: 4px;
     font-weight: bold; font-size: 13px; display: none; z-index: 9999;
     box-shadow: 0 4px 12px rgba(0,0,0,.3);
 }
@@ -803,13 +860,13 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
    the upload ended — one way or the other. */
 #upload-status {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-    background: #2c3e50; color: #fff; padding: 10px 18px; border-radius: 4px;
+    background: var(--work-area); color: #fff; padding: 10px 18px; border-radius: 4px;
     font-size: 13px; display: none; z-index: 10000; min-width: 260px;
     box-shadow: 0 4px 12px rgba(0,0,0,.4);
 }
 #upload-status .up-label { font-weight: bold; margin-bottom: 6px; }
-#upload-status .up-track { background: #1a252f; border-radius: 3px; height: 6px; overflow: hidden; }
-#upload-status .up-fill  { background: #3498db; height: 100%; width: 0; transition: width .15s linear; }
+#upload-status .up-track { background: var(--panel); border-radius: 3px; height: 6px; overflow: hidden; }
+#upload-status .up-fill  { background: var(--accent); height: 100%; width: 0; transition: width .15s linear; }
 #upload-status .up-cancel {
     display: block; margin: 8px 0 0 auto; padding: 3px 10px; font-size: 11px;
     background: #7f8c8d; color: #fff; border: none; border-radius: 3px; cursor: pointer;

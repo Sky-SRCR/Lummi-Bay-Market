@@ -2,15 +2,25 @@
 require_once 'auth.php';
 require_once 'db_connect.php';
 require_once __DIR__ . '/lib/upload_limits.php';
+// What this employee's screen is painted in (v2 step 5) — never a sign.
+require_once __DIR__ . '/lib/schema.php';
+require_once __DIR__ . '/lib/workspace_themes.php';
 requireCurrentAccount($pdo);
 $me      = currentUser();
 $isAdmin = isAdmin();
 
+// Signed-in page, so convergence is allowed here (invariant 7), and it has to come
+// before the theme is read: the column this asks for is one the plan adds.
+ensureSignageSchema($pdo);
+SiteChrome::wear((new WorkspaceThemeStore($pdo))->forAccount($me['id']));
+
 // The BRAND_* constants this page's CSS reads are defined by config.php, which
 // auth.php requires above — one list of eight names and defaults, in lib/branding.php.
-// The four that are colours are then read back through SiteChrome::, not escaped: they
-// land in the <style> block below, where there is no delimiter for an entity to
-// neutralise and a value that is not a colour is CSS.
+// Since step 5 they are the store default for four of the thirteen chrome roles, and
+// this page reaches every role as `var(--…)` against the one `:root` block below. That
+// block is the only place a colour is printed, and printed colours are validated rather
+// than escaped: a `<style>` has no delimiter for an entity to neutralise, and a value
+// that is not a colour is simply more CSS.
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -18,24 +28,35 @@ $isAdmin = isAdmin();
 <meta charset="UTF-8">
 <title>Help &amp; User Guide — <?= Markup::text(SITE_NAME) ?></title>
 <style>
+/* The Workspace Theme's thirteen roles (v2 step 5). One echo, validated, and
+   `var(--…)` below — see SiteChrome::styleVariables(). No canvas on this page, so every
+   role here is chrome. */
+:root {
+<?= SiteChrome::styleVariables() ?>
+}
 * { box-sizing: border-box; margin: 0; padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 
-body { background: #1e2b38; color: #d0d8e0; min-height: 100vh; }
+/* This page was written in its own slightly different blues — #1e2b38 for the body
+   against the Builder's #2c3e50, and #2c3e50 for its dividers against the Builder's
+   #34495e. Nobody wrote down why, and a theme cannot paint "almost the work area", so
+   the surfaces are the roles now. That and the Display picker's notice are the only two
+   places step 5 deliberately changes how an unthemed install looks. */
+body { background: var(--work-area); color: #d0d8e0; min-height: 100vh; }
 
 /* ── Nav ── */
 #top-nav {
-    background: <?= SiteChrome::navBg() ?>;
+    background: var(--nav-bg);
     padding: 0 20px; display: flex; align-items: center; gap: 14px;
-    height: 46px; border-bottom: 1px solid <?= SiteChrome::navBorder() ?>;
+    height: 46px; border-bottom: 1px solid var(--nav-border);
     position: sticky; top: 0; z-index: 100;
 }
 #top-nav .brand { font-weight: bold; font-size: 14px;
-                  color: <?= SiteChrome::text() ?>; margin-right: auto; }
+                  color: var(--nav-text); margin-right: auto; }
 #top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px;
              padding: 5px 9px; border-radius: 3px; }
-#top-nav a:hover { background: #2c3e50; color: #fff; }
-#top-nav a.active { background: <?= SiteChrome::accent() ?>; color: #fff; }
+#top-nav a:hover { background: var(--work-area); color: #fff; }
+#top-nav a.active { background: var(--accent); color: #fff; }
 .role-tag { background: <?= $isAdmin ? '#e74c3c' : '#3498db' ?>; color: #fff;
             font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
             text-transform: uppercase; margin-left: 4px; }
@@ -45,8 +66,8 @@ body { background: #1e2b38; color: #d0d8e0; min-height: 100vh; }
 
 /* ── Sidebar ── */
 #sidebar {
-    width: 240px; flex-shrink: 0; background: #1a252f;
-    border-right: 1px solid #2c3e50; padding: 20px 0;
+    width: 240px; flex-shrink: 0; background: var(--panel);
+    border-right: 1px solid var(--panel-border); padding: 20px 0;
     position: sticky; top: 46px; height: calc(100vh - 46px); overflow-y: auto;
 }
 #sidebar h2 { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px;
@@ -55,7 +76,7 @@ body { background: #1e2b38; color: #d0d8e0; min-height: 100vh; }
 #sidebar a { display: block; padding: 6px 20px; font-size: 13px; color: #bdc3c7;
              text-decoration: none; border-left: 3px solid transparent;
              transition: all .15s; }
-#sidebar a:hover { background: #22303f; color: #fff; border-left-color: #3498db; }
+#sidebar a:hover { background: #22303f; color: #fff; border-left-color: var(--accent); }
 #sidebar a.section-link { font-weight: 600; color: #d0d8e0; }
 #sidebar a.sub-link { padding-left: 32px; font-size: 12px; }
 
@@ -68,10 +89,10 @@ h1.page-title { font-size: 26px; color: #fff; margin-bottom: 6px; }
 /* Sections */
 .help-section { margin-bottom: 52px; }
 .help-section h2 {
-    font-size: 18px; color: #fff; border-bottom: 2px solid #2c3e50;
+    font-size: 18px; color: #fff; border-bottom: 2px solid var(--panel-border);
     padding-bottom: 10px; margin-bottom: 20px;
 }
-.help-section h3 { font-size: 14px; color: <?= SiteChrome::accent() ?>;
+.help-section h3 { font-size: 14px; color: var(--accent);
                    margin: 24px 0 8px; text-transform: uppercase; letter-spacing: .8px; }
 .help-section p { font-size: 14px; line-height: 1.7; color: #c0cad4; margin-bottom: 10px; }
 .help-section ul, .help-section ol { padding-left: 20px; margin-bottom: 10px; }
@@ -99,7 +120,7 @@ kbd {
 .steps li { counter-increment: step; display: flex; gap: 12px; margin-bottom: 10px; }
 .steps li::before {
     content: counter(step); min-width: 24px; height: 24px; border-radius: 50%;
-    background: <?= SiteChrome::accent() ?>; color: #fff; font-size: 12px;
+    background: var(--accent); color: #fff; font-size: 12px;
     font-weight: bold; display: flex; align-items: center; justify-content: center;
     flex-shrink: 0; margin-top: 2px;
 }
@@ -125,7 +146,7 @@ table.fit-table tr:last-child td { border-bottom: none; }
 table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: nowrap; }
 
 /* Back to top */
-.back-top { font-size: 12px; color: #3498db; text-decoration: none; float: right; }
+.back-top { font-size: 12px; color: var(--accent); text-decoration: none; float: right; }
 .back-top:hover { text-decoration: underline; }
 </style>
 </head>

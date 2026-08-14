@@ -25,6 +25,8 @@ require_once __DIR__ . '/lib/store_clock.php';
 // ceiling and for the sentence a dropped request body gets. server_report.php pulls
 // the file in as well, and a transitive include is not a dependency.
 require_once __DIR__ . '/lib/upload_limits.php';
+// The other noun: Workspace Themes, which this page is also where you make one.
+require_once __DIR__ . '/lib/workspace_themes.php';
 requireCurrentAccount($pdo);
 requireAdmin();
 
@@ -48,6 +50,13 @@ ensureSignageSchema($pdo);
 // with no way for an admin to act on it. Converging it here too makes that
 // readout's advice — sign out and back in — true.
 (new ResetTokenStore($pdo))->ensureSchema();
+
+// What this admin's own screens are painted in (v2 step 5). After convergence, because
+// the column it reads is one the plan adds, and the account is passed in rather than
+// reached for. This page is a light document with a chrome nav, so what a theme paints
+// here is the nav and the buttons — see the `:root` block below.
+$themeStore = new WorkspaceThemeStore($pdo);
+SiteChrome::wear($themeStore->forAccount($user['id']));
 
 // Displays are administered through DisplayAdmin: this page collects the form and
 // shows the answer, and every rule about what a Display may be lives in lib/.
@@ -117,10 +126,15 @@ $brand      = $branding->current();
 // way the file is written now, and it is the only thing that names it.
 $brandBad   = SiteChrome::unreadable();
 $curLogo    = $brand['BRAND_LOGO'];
-$curNavBg   = SiteChrome::navBg();
-$curBorder  = SiteChrome::navBorder();
-$curAccent  = SiteChrome::accent();
-$curText    = SiteChrome::text();
+// `configColor()` and not the painted accessors, which is the whole of a defect step 5
+// was one edit away from shipping: this form edits the *store's* colours, and through
+// the layered read an admin wearing a theme would have been shown their own theme's
+// colours as "what is there now" and saved them over the shop's. #21's shape exactly —
+// the wrong value, stored, with a green message.
+$curNavBg   = SiteChrome::configColor('nav_bg');
+$curBorder  = SiteChrome::configColor('nav_border');
+$curAccent  = SiteChrome::configColor('accent');
+$curText    = SiteChrome::configColor('nav_text');
 $curSite    = $brand['SITE_NAME'];
 $curMail    = $brand['MAIL_FROM'];
 $curMailN   = $brand['MAIL_FROM_NAME'];
@@ -774,14 +788,30 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
     <meta charset="UTF-8">
     <title>Admin Panel — <?= Markup::text(SITE_NAME) ?></title>
     <style>
+        /* ── The Workspace Theme's thirteen roles (v2 step 5) ──
+           One validated echo; `var(--…)` below. **This page wears fewer of them than the
+           Builder does, and that is deliberate.** It is a light document — white cards on
+           #f0f2f5 — and only its nav bar and its buttons are chrome in the sense the roles
+           name. `--work-area` is the dark space behind a canvas; mapping this page's paper
+           onto it would turn the Admin Panel black, which is not what "a theme applies to
+           every signed-in page" meant. So the roles reach every page, and how much of a
+           page they paint depends on how much of that page is chrome. */
+        :root {
+<?= SiteChrome::styleVariables() ?>
+        }
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
         body { background: #f0f2f5; min-height: 100vh; }
 
-        /* --- Nav --- */
-        nav { background: #1a252f; padding: 0 20px; display: flex; align-items: center; gap: 20px; height: 52px; }
-        nav .brand { color: #fff; font-weight: bold; font-size: 15px; margin-right: auto; }
+        /* --- Nav ---
+           These were literals until step 5, so this page's nav was the one place in the
+           app that ignored Site Branding: a shop that set BRAND_NAV_BG got it on the
+           Builder, the Help page and the sign-in page, and a stock #1a252f here. Reaching
+           the roles fixes that as a side effect, which means a shop with customised nav
+           colours will see this bar change to match the rest of the app. */
+        nav { background: var(--nav-bg); padding: 0 20px; display: flex; align-items: center; gap: 20px; height: 52px; }
+        nav .brand { color: var(--nav-text); font-weight: bold; font-size: 15px; margin-right: auto; }
         nav a { color: #bdc3c7; text-decoration: none; font-size: 13px; padding: 6px 10px; border-radius: 4px; }
-        nav a:hover, nav a.active { background: #2c3e50; color: #fff; }
+        nav a:hover, nav a.active { background: var(--work-area); color: #fff; }
         nav .role-badge { background: #e74c3c; color: #fff; font-size: 11px; font-weight: bold;
                           padding: 2px 8px; border-radius: 10px; }
 
@@ -811,9 +841,9 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         }
         input[type="color"] { padding: 2px; height: 34px; cursor: pointer; border: 1px solid #ccc; border-radius: 4px; }
         .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
-        .btn-blue   { background: #3498db; color: #fff; }
+        .btn-blue   { background: var(--accent); color: #fff; }
         .btn-blue:hover   { background: #2980b9; }
-        .btn-green  { background: #27ae60; color: #fff; }
+        .btn-green  { background: var(--status-good); color: #fff; }
         .btn-green:hover  { background: #219a52; }
         .btn-red    { background: #e74c3c; color: #fff; }
         .btn-red:hover    { background: #c0392b; }

@@ -648,8 +648,17 @@ if (!$badInScript) {
 
 $SAFE_CALLS  = ['count', 'intval', 'intdiv', 'floatval', 'number_format',
                 'urlencode', 'rawurlencode', 'date'];
+// `SiteChrome::styleVariables()` prints every chrome role at once, and every value in it
+// has been through `Color::read()` inside `pick()`. Safe for the reason the four
+// accessors beside it are — a `<style>` block has no delimiter escaping could
+// neutralise, so being *a colour* is the only property that helps — and
+// `selftest_layout` asserts the shape of every line it emits, which is what makes this
+// entry a fact rather than a promise. The four accessors stay listed because the sign-in
+// page still interpolates them one at a time: it never wears a theme, so it has no
+// `:root` block to draw from.
 $SAFE_STATIC = ['Markup::text', 'Markup::jsInAttr', 'HttpReply::jsValue',
-                'SiteChrome::navBg', 'SiteChrome::navBorder', 'SiteChrome::accent', 'SiteChrome::text'];
+                'SiteChrome::navBg', 'SiteChrome::navBorder', 'SiteChrome::accent', 'SiteChrome::text',
+                'SiteChrome::styleVariables'];
 
 /**
  * Every `define('NAME', <number>);` in config.php, as 'NAME'.
@@ -925,6 +934,97 @@ if (!$axisProblems) {
     $failures[] = 'the grant matrix axes';
 }
 
+// ---- No canvas colour resolves through a Workspace Theme ------------------------
+// Decision 11 of the v2 roadmap, and the one decision written down *as* a check rather
+// than as a convention: "`#builder-canvas` and everything drawn on it belong to the
+// Brand. Enforced by a check, not by convention."
+//
+// Both halves are tempting, which is why it needs enforcing. What the canvas shows is
+// what the sign shows, so a theme colour reaching a block would make the Builder a
+// preview of something no Screen renders — and it would be invisible, because the person
+// who set the theme is the person looking at the canvas. The other half is the mirror
+// image: the selection outline and the resize handles *are* themable (decision 10),
+// being drawn over the canvas and reaching no Screen, and a rule that refused every role
+// anywhere near the canvas would have made that role undrawable.
+//
+// So two things are checked, and the second is the one a reviewer would not think of: no
+// role but `--selection` appears in a rule that paints the canvas, **and** `--selection`
+// appears nowhere else. A role that may only be used in one place is a fact only if the
+// other places are checked too.
+require_once $root . '/lib/site_chrome.php';
+
+// The selectors that draw on the canvas. A list, and its limit is stated at the bottom of
+// this file: a canvas rule written under a brand-new selector is invisible to it. The
+// count assertion below is what stops the list going stale in silence — a renamed
+// selector makes this rule check nothing, and checking nothing reads as a pass.
+$canvasSelectors = ['#builder-canvas', '.editable-block', '.rh', '.section-block',
+                    '.section-label', '.text-inner', '.hidden-badge', '.clip-badge',
+                    '.lock-icon', '.carousel-preview', '.marquee-preview'];
+
+$themeVars = [];
+foreach (array_keys(SiteChrome::ROLES) as $_role) { $themeVars[SiteChrome::varName($_role)] = $_role; }
+unset($_role);
+$overlayVar = SiteChrome::varName('selection');
+
+$canvasProblems = [];
+$canvasRules = $overlayUses = 0;
+preg_match_all('/<style>(.*?)<\/style>/s', file_get_contents($root . '/builder.php'), $blocks);
+foreach ($blocks[1] as $block) {
+    // Comments out first, and this is not tidiness: the text before a rule's `{` includes
+    // whatever comment sits above it, and the comments above these very rules explain
+    // which selectors are the selection outline and the handles. So a comment could
+    // satisfy the `.selected` test for a rule that is not one — the check agreeing with
+    // its own documentation, which is #50's complaint in a new costume. Found by
+    // hand-mutating the selector list and reading what the failure said.
+    $block = preg_replace('!/\*.*?\*/!s', ' ', $block);
+    preg_match_all('/([^{}]+)\{([^{}]*)\}/s', $block, $rules, PREG_SET_ORDER);
+    foreach ($rules as $rule) {
+        $selector = trim(preg_replace('/\s+/', ' ', $rule[1]));
+        $onCanvas = false;
+        foreach ($canvasSelectors as $frag) {
+            if (strpos($selector, $frag) !== false) { $onCanvas = true; break; }
+        }
+        if ($onCanvas) { $canvasRules++; }
+        preg_match_all('/var\((--[a-z0-9-]+)\)/i', $rule[2], $used);
+        foreach ($used[1] as $var) {
+            if (!isset($themeVars[$var])) { continue; }
+            if ($var === $overlayVar) {
+                $overlayUses++;
+                if (!$onCanvas || (strpos($selector, '.selected') === false
+                                   && strpos($selector, '.rh') === false)) {
+                    $canvasProblems[] = "`$var` is the canvas-overlay role and is used by `$selector`, "
+                                      . 'which is not the selection outline or a resize handle';
+                }
+                continue;
+            }
+            if ($onCanvas) {
+                $canvasProblems[] = "`$selector` paints the canvas and reaches the theme role "
+                                  . "`{$themeVars[$var]}` through `$var`";
+            }
+        }
+    }
+}
+if ($canvasRules < 8) {
+    $canvasProblems[] = "only $canvasRules rules in builder.php matched the canvas selector list, "
+                      . 'so this rule is checking almost nothing — the list has gone stale';
+}
+if ($overlayUses < 1) {
+    $canvasProblems[] = "`$overlayVar` is used nowhere, so the one themable thing on the canvas "
+                      . 'is not actually drawn from the theme';
+}
+$checked++;
+if (!$canvasProblems) {
+    echo "  ok   no canvas colour resolves through a theme, and the overlay role is used "
+       . "nowhere else (decision 11)\n";
+} else {
+    echo "  FAIL the canvas and the Workspace Theme have met (decision 11)\n";
+    foreach ($canvasProblems as $problem) { echo "       $problem\n"; }
+    echo "       What the canvas shows is what the sign shows, so its colours are the\n";
+    echo "       Brand's. The selection outline and the resize handles are the exception\n";
+    echo "       and the only one: they are drawn over a block and reach no Screen.\n";
+    $failures[] = 'a theme role on the canvas';
+}
+
 // ---- Convergence runs before anything that could hold a transaction --------------
 // The §5 note on this one is right that the *position* is the invariant and not the
 // call, and wrong that a pattern cannot decide it. DDL commits an open transaction in
@@ -935,7 +1035,7 @@ if (!$axisProblems) {
 // the line-number form would not have worked: its call is legitimately at line 128,
 // after the upload-limit and CSRF gates, because those send a reply and stop.
 $positions = [];
-foreach (['admin_panel.php', 'api.php', 'builder.php', 'crud.php'] as $entry) {
+foreach (['admin_panel.php', 'api.php', 'builder.php', 'crud.php', 'help.php'] as $entry) {
     $code = codeWithoutComments(file_get_contents($root . '/' . $entry));
     $call = strpos($code, 'ensureSignageSchema($pdo)');
     if ($call === false) {
@@ -1439,7 +1539,13 @@ foreach ([
         . 'something to do on a copy of live data (§5, and a deploy-day step)',
     'anything a browser draws — interact.js is un-run by any suite (§4al), and a CSS '
         . 'rule that does not apply or a button that overlaps another at 1080p is '
-        . 'invisible to all six of them',
+        . 'invisible to all seven of them',
+    'a canvas rule under a selector the theme check has never heard of (decision 11) — '
+        . 'that check classifies a rule by a LIST of canvas selectors, so a new class '
+        . 'drawn inside #builder-canvas is chrome as far as it knows. What stops the '
+        . 'list rotting silently is its own count assertion: if a rename made it match '
+        . 'almost nothing, it fails rather than passing. A genuinely new selector still '
+        . 'has to be added by whoever writes it',
     'whether a check can fail at all — `php tools/mutate.php <file>` answers that one '
         . 'file at a time, and is the thing #50 was filed about (§4aq). It is a tool to '
         . 'run, not a gate, because a full sweep is hours',
