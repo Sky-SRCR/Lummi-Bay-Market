@@ -1,6 +1,6 @@
 # Roadmap v2 — Brands, Workspace Themes, and the Builder workbench
 
-Status: **steps 1–4 built; step 5 planned.** Settled in a grilling session on
+Status: **all five steps built; none deployed.** Settled in a grilling session on
 2026-08-13; the decisions are recorded here and the one that reverses a previous
 decision is in [ADR-0011](adr/0011-typography-and-colour-belong-to-a-brand.md).
 
@@ -403,6 +403,11 @@ went from 45 to 65; `selftest_layout.php` from 1,975 to 2,051.
 
 ### Step 5 — Workspace Themes · size M · risk Low
 
+**Done — 2026-08-14. Written up as §4bd; it is invariant 34.** Not deployed; like every
+step here it goes on its own. What follows is the plan as written, with what it got wrong
+marked.
+
+
 A `workspace_themes` table and a `users.workspace_theme_id`. Today's
 `branding_config.php` values become a seeded theme named "Store default", and
 `SiteChrome::navBg()` and its three siblings stop reading the file directly and start
@@ -429,7 +434,51 @@ colour is identical still leaves its own picker legible.
 
 Gates: the standing set, plus a `check_invariants` rule that no canvas colour
 resolves through a theme, plus `selftest_layout` sections for resolution and
-fallback.
+fallback. — **Met, and the rule turned out to have two halves.** No role but
+`--selection` may appear in a rule that paints the canvas, *and* `--selection` may appear
+nowhere else: a role that is allowed in one place is a fact only if the other places are
+checked too. It fails three ways and each was seen to fail, and the third — the
+canvas-selector list going stale — found a defect in the check itself. There is an eighth
+node suite as well, `selftest_builder_theme.js` at 110 checks, because the picker sits on
+a page that may be holding unpublished work and no other premise here covers that;
+`selftest_builder_readonly.js` went from 65 to 68 and `selftest_layout.php` from 2,068 to
+2,221.
+
+> **Six corrections while building.**
+>
+> **Thirteen roles, not twelve.** The six chrome roles the plan names omit the navigation
+> border, which is one of the four colours a shop can already set from Site Branding. A
+> theme that could not hold it would repaint the live nav the moment anybody chose one —
+> decision 9's "no sign moves" has an application-side twin.
+>
+> **No seeded theme.** The plan had today's `branding_config.php` values "become a seeded
+> theme named Store default". A seeded row is a *copy* of that file, and the first Site
+> Branding edit makes the copy disagree with it while still being called the default —
+> the two-readers defect `SiteChrome::load()` already refuses one layer out. So the store
+> default is the file plus the documented defaults and not a row, which also means
+> convergence inserts nothing and cannot repaint anybody.
+>
+> The plan said the four accessors "start answering the theme this request should use"
+> and did not notice that **three callers want the opposite**. `all()`, `unreadable()`
+> and the Branding form ask about the store's colours *as configured*, and through the
+> layered read the form would have shown an admin their own theme as "what is there now"
+> and saved it over the shop's. `SiteChrome::configColor()` is that door.
+>
+> The plan did not say **how** a page reaches a role, and the answer is forced: CSS custom
+> properties, because the picker is in the Builder's gear and the obvious implementation
+> — post, reload, come back painted — throws away unpublished work. It is also what makes
+> decision 11 checkable at all.
+>
+> The plan said the picker renders un-themed and stopped there. **The way to it has to as
+> well**: a picker you cannot reach is not legible, and the way to it is a grey glyph on a
+> themed nav bar. `$gearNeedsChip` asks the contrast rule at render, so the gear gets a
+> fixed chip exactly when it needs one.
+>
+> And it did not anticipate that the contrast rule would end up **written in two
+> languages**. A warning that appears while somebody drags a picker cannot ask the server
+> per frame. Only the arithmetic is duplicated; the threshold and the words are printed
+> from `Color::READABLE_RATIO`, and neither copy is checked against the other — both are
+> checked against WCAG's own fixed points.
 
 ## Risks and watch-items
 

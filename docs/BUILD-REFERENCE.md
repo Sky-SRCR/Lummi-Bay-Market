@@ -592,6 +592,35 @@ through the app again:
     `DisplayStore::editedByAnyoneElseUsingBrand()` instead. That is the one place this
     work makes the app less restrictive, and it is a rule getting *more* correct rather
     than being relaxed.
+34. **Nothing outside `lib/workspace_themes.php` writes `workspace_themes`, and no chrome
+    role is drawn on the canvas** (v2 roadmap decisions 10 and 11). Two halves of one
+    rule, because the second is the only thing keeping the first from being a table like
+    any other. A Workspace Theme is what an *employee's screen* is painted in and reaches
+    no sign — the other of `CONTEXT.md`'s two nouns, never one word with Brand — so its
+    danger is not what it writes but where it is read: what a canvas shows is what a sign
+    shows, and a theme colour reaching a block would make the Builder a preview of
+    something no Screen renders. Invisible, too, because the person who set the theme is
+    the person looking at the canvas. So every role is drawn as a `var(--…)` custom
+    property, `tools/check_invariants.php` refuses one inside any rule that paints the
+    canvas, and it refuses `--selection` — the outline and handles, which *are* a theme's
+    (decision 10) — anywhere else, since a role that may only be used in one place is a
+    fact only if the other places are checked too.
+    The write half has the usual exceptions and one that is not usual. `lib/schema.php`
+    creates the table, as it does for `brands` and `displays`. **`AccountStore` writes the
+    *choice*** — `users.workspace_theme_id` — and that is not a second writer of this
+    table but the correct home for a fact about an account; this module reads it back,
+    joined, because the read is on the path every signed-in page load takes.
+    And there is deliberately **no use-case module**: a theme is one row with no second
+    table to be half of, which is exactly what `BrandAdmin` exists for and why the
+    absence is worth stating rather than looking like an oversight.
+    Two consequences. **Resolution happens in one place** — `SiteChrome::stored()` layers
+    a worn theme over `branding_config.php` over the documented defaults, in that order,
+    and the reads that are about the *store's* colours rather than this reader's go
+    through `configColor()`; without that split the Branding form shows an admin their own
+    theme as "what is there now" and saves it over the shop's. **And a theme somebody is
+    wearing is refused rather than reassigned**, naming them, with `users_ibfk_1` carrying
+    no `ON DELETE` clause so the database says the same thing to anything reaching it
+    another way. The same shape as a Brand in use, for the same reason.
 
 ---
 
@@ -6407,6 +6436,119 @@ a picker at 1080p, or a venue's name truncate in a 178-pixel column.
 
 ---
 
+### 4bd. The application gets colours of its own, and they never reach a sign
+
+*(v2 roadmap step 5, 2026-08-14. It is invariant 34.)*
+
+The last step of the v2 plan, and the second of `CONTEXT.md`'s two nouns: a **Brand** is
+what a customer sees on a TV, a **Workspace Theme** is what an employee's screen is
+painted in. `workspace_themes` holds thirteen colour columns and `users.workspace_theme_id`
+says which one an account chose; the Builder's gear picks, the Admin Panel's Site Branding
+tab makes them, and nothing anywhere reaches a Screen.
+
+**Thirteen roles, not the twelve the plan named.** The six chrome roles it listed omit the
+**navigation border**, which is one of the four colours a shop can already set from Site
+Branding. A theme that could not hold it would repaint the live nav the moment anybody
+chose one — decision 9's "no sign moves" has an application-side twin, and this is it.
+
+**There is no seeded row, and this is the change from the plan that mattered most.** It
+said today's `branding_config.php` values "become a seeded theme named Store default". A
+seeded row is a *copy* of that file, and the first Site Branding edit makes the copy
+disagree with it while still being called the default — the two-readers defect
+`SiteChrome::load()`'s docblock already refuses for the file itself, one layer out. So the
+store default is not a row at all: it is the file plus the documented defaults, answered
+by `SiteChrome` when no theme is worn, and `users.workspace_theme_id IS NULL` is how an
+account says it wants that. Convergence therefore inserts nothing, backfills nothing, and
+cannot repaint anybody — which is what makes this the low-risk step the plan called it,
+rather than a migration that touches every account row.
+
+**The layered read had to split in two, and that one was a defect a day from shipping.**
+`SiteChrome::stored()` now answers the worn theme first, then the config, then nothing —
+and three callers want the config *as configured* rather than as painted: `all()`,
+`unreadable()`, and the Branding form, which fills its four `type=color` inputs from it.
+Through the layered read, an admin wearing a theme would have opened the Branding tab,
+been shown their own theme's colours as "what is there now", and saved them over the
+shop's on the next click. #21's shape exactly: the wrong value, stored, with a green
+message. `configColor()` is the door those three take.
+
+**Why the roles are CSS custom properties.** Not a style preference. The picker lives in
+the Builder's gear, on a page that can be holding an hour of unpublished layout, and the
+obvious implementation — post the choice, let the page come back painted — throws that
+work away. A setting about a menu bar must not be able to do that. So the thirteen are
+declared once per page in a `:root` block and used as `var(--…)` everywhere, and switching
+theme is thirteen `setProperty()` calls with the canvas, the undo history and the edit
+lock untouched. Three other things fell out of it: one validated echo per page instead of
+the hundred-odd the alternative needed, a live preview in the admin form that costs
+nothing, and — the one that matters for invariant 34 — decision 11 became *checkable*,
+because a `var(--…)` in a stylesheet is something a check can find and a hex literal is
+not.
+
+**The canvas check fails three ways and each was seen to.** A theme role inside a rule
+that paints the canvas; `--selection` used anywhere that is not the selection outline or a
+resize handle; and the canvas-selector list going stale so the rule silently checks
+nothing. The third found a real defect in the check itself: the text before a rule's `{`
+carries the comment above it, and the comments above those very rules name `.selected` and
+`.rh` — so the check could have been satisfied by its own documentation. Comments are
+stripped first now. Its limit is stated where the others are, at the bottom of
+`check_invariants.php`: it classifies a rule by a *list* of canvas selectors, so a
+genuinely new one has to be added by whoever writes it, and what stops the list rotting in
+silence is its own count assertion.
+
+**The picker renders un-themed, and so does the way to it.** Decision 14 says the control
+for changing your theme must not be drawn in your theme, and every colour in `#theme-pick`
+is a literal. But a picker you cannot reach is not legible either, and the way to it is a
+grey glyph on a themed nav bar — so `$gearNeedsChip` asks `Color::hardToRead()` at render
+and the gear wears a fixed chip exactly when it would otherwise vanish. Today's nav is
+dark and the glyph is light, so nobody who has never made a theme sees any change. That is
+`RequestScheme::isSecure()`'s shape: a protection that cannot apply is reported rather than
+applied flat.
+
+**One rule is now written in two languages, deliberately.** The contrast warning has to
+appear while somebody drags a colour picker, which cannot ask the server per frame. Only
+the *arithmetic* is duplicated — WCAG's luminance formula — while the threshold and the
+words are printed from `Color::READABLE_RATIO`. And the two copies are not checked against
+each other: both are checked against the standard's fixed points, 21:1 for black on white
+and 1:1 for a colour on itself, in `selftest_layout.php` and `selftest_builder_theme.js`.
+A formula from a standard is a safer thing to write twice than a decision would be.
+
+**Three visible changes on an install with no theme, all deliberate.** The Display
+picker's notice was its own dark red beside the off banner's, two banners meaning the same
+thing in two colours with no reason written down. The Help page was drawn in its own
+slightly different blues, and a theme cannot paint "almost the work area". And the **Admin
+Panel's nav ignored Site Branding entirely** — a shop that set `BRAND_NAV_BG` got it on
+the Builder, the Help page and the sign-in page, and a stock `#1a252f` there; it reaches
+the roles now, so that bar will change to match the rest of the app on a shop that has
+customised it.
+
+**What a theme does not paint, and why the Admin Panel wears fewer roles.** That page is a
+light document — white cards on `#f0f2f5` — and only its nav bar and its buttons are
+chrome in the sense the roles name; `--work-area` is the dark space behind a canvas, and
+mapping the panel's paper onto it would turn the Admin Panel black. So the roles reach
+every signed-in page and how much of a page they paint depends on how much of it is
+chrome. The hairline borders and glows beside a themed surface stay literal too: a shadow
+cannot be derived from a custom property without `color-mix()`, and thirteen roles is a
+theme that paints surfaces, not a full restyle.
+
+**The eighth harness.** `tools/selftest_builder_theme.js`, 110 checks, under a premise no
+other suite holds: an unsaved layout on screen while somebody changes a setting about
+themselves. It holds the canvas nodes by identity across a switch, watches the undo
+baseline not move, and drives both failure paths — a reply that says no and a request that
+never arrives — because the paint happens before the round trip, so a swallowed failure
+leaves the screen showing a theme the account is not on. `selftest_builder_readonly.js`
+gained the other half: the picker reaches a read-only Builder in full, which is the
+distinction between the two nouns in one assertion.
+
+**What the mutation runs found.** Recorded below once the runs over `lib/workspace_themes.php`,
+`lib/site_chrome.php`, `lib/picker_name.php` and `lib/color.php` had reported — figures
+that were measured, for the reason §4bc's paragraph now says out loud.
+
+**Still owed, and this step does not close it.** The browser pass now has *five* things on
+its debt table: nothing in this repo can see whether a light theme leaves the Builder's
+white-on-dark text unreadable, whether the picker card sits where the gear menu can show
+it at 1080p, or whether the contrast warning wraps.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
@@ -6451,6 +6593,10 @@ node tools/selftest_builder_brands.js    # and under the fifth: an admin decidin
                                          # venue this sign belongs to. The switch repaints
                                          # and sends nothing, the palette is offered and
                                          # enforced nowhere, and Publish is what writes it
+node tools/selftest_builder_theme.js     # and under the sixth: somebody changing a setting
+                                         # about *themselves* with unpublished work on the
+                                         # canvas. Holds the canvas nodes by identity across
+                                         # the switch, and drives the save that fails
 node tools/selftest_viewer.js            # viewer.php's poll loop, against a fetch this
                                          # test controls: the sign must not blank for one
                                          # dropped packet, and must not stay up for an

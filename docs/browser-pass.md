@@ -32,7 +32,7 @@ of it applies again to the live sign — which is the one thing this pass does n
 2026-08-13 — so re-running it there is owed *now*, not after something. It has not been
 done.
 
-**And v2 has since rewritten most of what it describes.** Four debts have accumulated,
+**And v2 has since rewritten most of what it describes.** Five debts have accumulated,
 and they are separate:
 
 | Owed | Why | Where |
@@ -41,8 +41,9 @@ and they are separate:
 | A re-walk of every step against `lbm-test/` for the **workbench** | step 2 rebuilt the Builder's chrome — three columns, a docked rail, a canvas footer, a new nav — so every screen this pass describes has moved. Nothing in this repo can see a three-column layout fail to be three columns | §4ba |
 | A walk of **Admin Panel → Display Branding**, which this pass has no step for | step 3 replaced a single typography table with a list of Brands, a palette editor, a logo picker and a delete confirm — and the Displays tab gained a Brand dropdown on two forms. The suite reads that file's *source*; nothing renders it | §4bb |
 | A walk of the Builder's **Brand control and palette swatches**, which this pass also has no step for | step 4 put a venue's logo and name at the top of a 178-pixel column, a menu under it, and a row of 17-pixel swatches above four colour pickers. What a suite proves is that switching repaints and writes nothing; what it cannot see is a long venue name truncating, a swatch row pushing a picker off the rail, or a menu opening under the canvas. **Switch a Brand and do not publish, then reload** — the sign must be on the Brand it started on | §4bc |
+| A walk of **Workspace Themes** — the gear's picker, and Site Branding's theme form | step 5 gave the application colours of its own. A suite can prove that switching sets thirteen custom properties and loses no unpublished work; it cannot see whether a light theme leaves white-on-dark text unreadable, whether the picker card fits inside the gear menu at 1080p, or whether the contrast warning wraps. **Make a theme with a light work area, choose it, and read every banner in the Builder.** Then make one whose thirteen colours are identical and check you can still find the gear and get back to the store default | §4bd |
 
-The third and fourth are the gap worth naming precisely, because it is the shape five of this
+The last three are the gap worth naming precisely, because it is the shape five of this
 pass's seven defects had: the panel's checks are `checkMentions()` over
 `admin_panel.php`'s text. A variable that is never assigned, a form field that posts
 under the wrong name, a swatch drawn in a colour the CSSOM discards — all of them pass a

@@ -207,7 +207,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h2>Other Pages</h2>
     <a href="#assets"        class="section-link">Asset Library</a>
     <a href="#branding"      class="section-link">Brands &amp; Brand Standards</a>
-    <a href="#setup-brand"   class="section-link">Store Branding</a>
+    <a href="#setup-brand"   class="section-link">Site Branding &amp; Themes</a>
     <?php if ($isAdmin): ?>
     <a href="#admin"         class="section-link">Admin Panel</a>
     <?php endif; ?>
@@ -347,7 +347,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Canvas (centre)</strong> — the design area where you place and arrange content blocks, with a thin footer under it carrying the zoom controls and who last published this display.</li>
         <li><strong>Properties (right)</strong> — the controls for whichever block is selected. It stays on screen with nothing selected and says so, rather than appearing and disappearing.</li>
     </ul>
-    <p>The nav bar itself holds, left to right: the store name, which display this is, <strong>View ↗</strong> to open its Viewer in a new tab, then <strong>↺ Undo</strong> and <strong>✓ Publish</strong>, then your username, <strong>Sign Out</strong>, and a <strong>⚙</strong> gear. The gear is where the Asset Library, the Admin Panel and this Help live, along with which kind of account you are signed in as.</p>
+    <p>The nav bar itself holds, left to right: the store name, which display this is, <strong>View ↗</strong> to open its Viewer in a new tab, then <strong>↺ Undo</strong> and <strong>✓ Publish</strong>, then your username, <strong>Sign Out</strong>, and a <strong>⚙</strong> gear. The gear is where the Asset Library, the Admin Panel and this Help live, along with which kind of account you are signed in as — and your <strong>Workspace Theme</strong>, which is the set of colours <em>this application</em> is drawn in. Picking one changes the screen straight away and does not reload the page, so it is safe to do with unpublished work on the canvas. It changes nothing about any display.</p>
     <p>If you can edit more than one display, <strong>⇄ Switch sign</strong> at the top of the palette lists the ones available to you; going straight to <code>builder.php</code> with no display named shows the same list.</p>
 
     <h3>Which brand this sign is wearing</h3>
@@ -819,7 +819,11 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h2>Store Branding</h2>
     <a href="#" class="back-top">↑ Top</a>
     <div class="admin-only"><strong>Admin only.</strong></div>
-    <p>Store Branding (<a href="setup_branding.php" style="color:#3498db;">Branding</a> in the nav) controls the visual theme of the builder itself — the nav bar colours and the store logo shown in the top-left.</p>
+    <p>Site Branding (the <strong>Site Branding</strong> tab of the <a href="admin_panel.php?tab=branding">Admin Panel</a>)
+       controls how <em>this application</em> looks to everybody who has not chosen otherwise —
+       the nav bar colours and the store logo shown in the top-left. It is not a display's
+       colours: those belong to the display's <strong>Brand</strong>, on the Display Branding
+       tab, and nothing on this tab reaches a screen in the shop.</p>
     <ul>
         <li><strong>Logo</strong> — PNG, JPG, GIF, or WEBP (max 2 MB). Displayed in the nav bar.</li>
         <li><strong>Nav Background</strong> — colour of the top navigation bar</li>
@@ -832,7 +836,35 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
        completed — a full disk, a folder the server cannot write — it is refused
        outright and the site keeps the settings it had; the message on screen says
        which of the two it was. A save either happens completely or not at all, so
-       there is no state where the theme is half changed.</p>
+       there is no state where it is half changed.</p>
+
+    <h3>Workspace Themes</h3>
+    <p>Site Branding is the <strong>store default</strong>. A <strong>Workspace Theme</strong> is
+       an alternative set of the same colours that any one person can choose for themselves,
+       from the gear menu in the Builder. Admins make them, on the same tab, and everybody
+       can pick one.</p>
+    <ul>
+        <li><strong>Thirteen colours.</strong> The nav bar and its border and text, the accent,
+            the work area behind a canvas, the side panels and their borders, five status
+            colours for the banners the Builder shows, and the outline drawn around a block
+            you have selected.</li>
+        <li><strong>Never the canvas.</strong> What a display's canvas shows is what the sign
+            shows, so its colours are the Brand's. The only thing a theme paints over a canvas
+            is the selection outline and the resize handles, which nobody in the shop sees.</li>
+        <li><strong>Contrast is a warning, not a refusal.</strong> If the nav text would be hard
+            to read on the nav background the form says so and still lets you save it. It is
+            your screen.</li>
+        <li><strong>"Store default" is always on the picker</strong>, including when it is the
+            one already ticked — so there is no theme you can choose and not get back out of.</li>
+        <li><strong>A theme somebody is using cannot be deleted.</strong> The Admin Panel refuses
+            it and names who is on it; they can move themselves to the store default from the
+            gear menu.</li>
+    </ul>
+    <p>Choosing a theme writes nothing to any display and does not reload the Builder, so it
+       cannot lose work that has not been published. If the choice cannot be saved — the
+       server is unreachable, the theme was deleted a moment ago — the page goes back to the
+       theme you were actually on and says so, rather than showing you one you are not
+       wearing.</p>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->

@@ -14,6 +14,12 @@ whose five steps are each deployable on their own — so the thing this file is 
 two branches colliding in the three files every branch touches, is more likely rather
 than less.
 
+**As of 2026-08-14 all five of those steps are built and none is deployed** (§4az, §4ba,
+§4bb, §4bc, §4bd). That changes what a branch cut now is likely to collide *with*: not
+another feature branch, but the deployment of five that are queued behind each other in a
+fixed order, and a browser pass that owes five re-walks. A branch starting here should
+say which of those it is in front of.
+
 So this file has stopped being a plan and become the thing it was always more useful as:
 what a branch cut beside another one has to agree about before it starts. The round of
 parallel work before this one produced four branches that each solved something and each

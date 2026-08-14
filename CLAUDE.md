@@ -12,7 +12,7 @@ edited in place and every change reaches the sign by hand.
 | [`CONTEXT.md`](CONTEXT.md) | The domain language. Use these words — Display, Viewer, Screen, screen name tag, canvas, grant, edit lock — in code, comments and UI copy. |
 | [`docs/roadmap-multi-display.md`](docs/roadmap-multi-display.md) | The phased plan and its current status. |
 | [`docs/reviewed-decisions.md`](docs/reviewed-decisions.md) | **The 51-item list from the adversarial audit, with what each was decided to be.** All 50 numbered items are now Done — which closes the audit, not the app: nothing on that list was ever the browser pass. The numbering the owner uses. Two numbering traps are documented there; read them before quoting an issue number. |
-| [`docs/browser-pass.md`](docs/browser-pass.md) | **The only verification in this project that a person does, walked in full on 2026-08-13 against `lbm-test/`.** Its outcome table is at the top: seven defects, §4as–§4ax, five of them things a page did not *say* rather than wrong answers a suite could have caught. Read it before assuming a green gate means a working screen. **Four re-walks are owed and the table at the top names them**: the live install (v1 is live), `lbm-test/` for the step-2 workbench, Display Branding, and the Builder's Brand control — the last two of which this pass has no step for at all. It is a list, not a receipt. |
+| [`docs/browser-pass.md`](docs/browser-pass.md) | **The only verification in this project that a person does, walked in full on 2026-08-13 against `lbm-test/`.** Its outcome table is at the top: seven defects, §4as–§4ax, five of them things a page did not *say* rather than wrong answers a suite could have caught. Read it before assuming a green gate means a working screen. **Five re-walks are owed and the table at the top names them**: the live install (v1 is live), `lbm-test/` for the step-2 workbench, Display Branding, the Builder's Brand control, and Workspace Themes — the last three of which this pass has no step for at all. It is a list, not a receipt. |
 | [`docs/adr/`](docs/adr/) | Decisions with their rejected alternatives. Don't re-litigate one without reading it. |
 | [`HANDOFF.md`](HANDOFF.md) | Deployment facts: live URLs, credentials layout, what is and isn't in the repo. |
 | [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) | **What not to overwrite, upload or delete when files go to the server.** Read before any upload — the repo and the server hold different files, and uploading the tree reverts live branding and restores `setup.php` silently. |
@@ -24,7 +24,9 @@ edited in place and every change reaches the sign by hand.
   outside `lib/layout_store.php` may write SQL against `canvas_elements`, nothing
   outside `lib/displays.php` against `displays`, nothing outside `lib/assets.php`
   against `assets`, nothing outside `lib/brand_styles.php` against `block_styles`,
-  and nothing outside `lib/brands.php` against `brands` (invariant 33).
+  and nothing outside `lib/brands.php` against `brands` (invariant 33), and nothing outside
+  `lib/workspace_themes.php` against `workspace_themes` (invariant 34 — whose other
+  half is that no chrome role is ever drawn on the canvas).
 - **Deep modules**: small interface, substantial implementation. A new query
   means a new method on the module, not a `$pdo` handed to a caller.
 - **A new schema statement goes into `signageSchemaPlan()`, with its gate.**
@@ -132,6 +134,7 @@ node tools/selftest_builder_colors.js      # if builder.php was touched
 node tools/selftest_builder_editing.js     # if builder.php was touched
 node tools/selftest_builder_undo.js        # if builder.php was touched
 node tools/selftest_builder_brands.js      # if builder.php was touched
+node tools/selftest_builder_theme.js       # if builder.php was touched
 node tools/selftest_viewer.js              # if viewer.php was touched
 ```
 
@@ -160,24 +163,26 @@ write-up, and four of them once answered it with the same letter — ask the too
 rather than counting, and note that it will not let a document cite a section
 that does not exist yet, which is what a guess looks like from the outside.
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~4000 lines of it —
+`php -l` cannot see inline JavaScript, and `builder.php` is ~4100 lines of it —
 which is why the standing gate is not enough on its own. Extract the `<script>`
 block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
 sign rather than a stack trace anybody will read.
 
-The seven node suites go further and *run* that JavaScript, each under a premise the
+The eight node suites go further and *run* that JavaScript, each under a premise the
 others cannot hold — a page that may not edit, an admin uploading a file, an admin
 opening a Display whose stored data is already wrong, an admin working the controls the
 inspector puts on a block, an admin taking back the last thing they did, an admin
-deciding which venue a sign belongs to, and a Screen whose server has stopped answering
+deciding which venue a sign belongs to, somebody changing a setting about *themselves*
+with unpublished work on the canvas, and a Screen whose server has stopped answering
 or whose blocks have nothing in them — because the
 defects they exist for are invisible to a parse: a lookup for a control the edit lock
 took away, a `fetch` chain with no `.catch()`, a colour the CSSOM discarded in silence
 and the publish payload then sent as black, a field a rebuild forgot to carry, a
 `.catch()` that correctly ignores a dropped packet and therefore also ignored a failure
 that was never going to stop, a swatch that fills a control and changes nothing on the
-canvas because setting `.value` from script fires no event, and a sentence written for
+canvas because setting `.value` from script fires no event, a preference that repaints
+the screen and was never stored, and a sentence written for
 whoever was building the layout, drawn on the board a customer reads prices off.
 
 - **`json_encode` is never called outside `lib/http_reply.php`.** It returns `false`,

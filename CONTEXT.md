@@ -162,3 +162,21 @@ an admin, chosen by anyone, and never visible on a Screen or on the sign-in
 page. It never paints the canvas, which is a picture of the sign rather than
 part of the application.
 _Avoid_: builder theme, brand, skin, dark mode, colour preference
+
+**The store default**:
+What the application looks like to everybody who has not chosen a theme — Site
+Branding's four colours plus the documented defaults for the other nine roles.
+It is not a theme and deliberately not a row in the themes table: a copy of the
+Site Branding file would disagree with it the first time somebody edited one.
+Say "the store default", never "the default theme", and note that it is always
+on the picker — including for somebody already on it, because a preference you
+cannot reverse is not a preference.
+_Avoid_: default theme, base theme, no theme, factory colours
+
+**Chrome role**:
+One of the thirteen things a Workspace Theme names a colour for. A role is a
+place in the application — the navigation background, the work area, the panel
+border, the outline around a selected block — never a mood or a shade. Two of
+them are worth keeping apart in speech: the **work area** is the dark space a
+canvas sits on, and the **canvas** is the sign itself and belongs to the Brand.
+_Avoid_: theme slot, variable, token, colour name

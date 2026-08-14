@@ -61,6 +61,9 @@ require_once __DIR__ . '/../lib/brand_styles.php';
 // Named explicitly although layout_store.php already reaches it: this file reads as a
 // checklist of what it touches, and `brands` is one of the tables it now writes through.
 require_once __DIR__ . '/../lib/brands.php';
+// For `SiteChrome::ROLES` — the thirteen chrome roles the `workspace_themes` columns are
+// checked against below, rather than against a list written out again here.
+require_once __DIR__ . '/../lib/workspace_themes.php';
 
 // ---- Arguments --------------------------------------------------------------
 
@@ -323,6 +326,75 @@ $brandRule = deleteRule($pdo, $opts['db'], 'displays', 'brand_id');
 report($brandRule === 'RESTRICT' || $brandRule === 'NO ACTION',
     "a Brand in use cannot be deleted out from under its signs (ON DELETE $brandRule)");
 report(isset($dcols['lock_activity_at']), 'displays.lock_activity_at exists');
+
+// ---- workspace_themes: what the application is painted in (v2 step 5) -------
+// The safest table in this plan and still worth rehearsing, because two of its three
+// statements are the ones only MySQL performs: a `KEY` on `users` and a foreign key with
+// no `ON DELETE` clause. The SQLite suite cannot ask about either — it declares no
+// foreign keys at all, on purpose — so this is the only place the RESTRICT that stops a
+// theme being deleted out from under somebody is ever observed.
+$hasThemes = true;
+try {
+    $pdo->query("SELECT 1 FROM workspace_themes LIMIT 1");
+} catch (Throwable $e) {
+    $hasThemes = false;
+}
+report($hasThemes, 'the workspace_themes table exists');
+
+if ($hasThemes) {
+    // Thirteen colour columns, each NOT NULL with a default, so a theme is never half a
+    // set of colours. Asked against `SiteChrome::ROLES` rather than a list here, which is
+    // the same rule the plan's CREATE TABLE is held to by the self-test.
+    $tcols = [];
+    foreach ($pdo->query("SHOW COLUMNS FROM workspace_themes")->fetchAll() as $c) {
+        $tcols[$c['Field']] = $c;
+    }
+    $missingRoles = $nullableRoles = [];
+    foreach (array_keys(SiteChrome::ROLES) as $role) {
+        if (!isset($tcols[$role]))                 { $missingRoles[]  = $role; continue; }
+        if ($tcols[$role]['Null'] !== 'NO')        { $nullableRoles[] = $role; }
+    }
+    report(count($missingRoles) === 0,
+        'every chrome role has a column' . ($missingRoles ? ': missing ' . implode(', ', $missingRoles) : ''));
+    report(count($nullableRoles) === 0,
+        'and none of them is nullable' . ($nullableRoles ? ': ' . implode(', ', $nullableRoles) : ''));
+
+    // No seed, deliberately: the store default is `branding_config.php` plus the
+    // documented defaults, not a copy of them in a row. So an empty table on a database
+    // that has just converged is the *expected* state, and this reports the count rather
+    // than judging it — a shop that has made themes is equally correct.
+    $themeCount = intval($pdo->query("SELECT COUNT(*) FROM workspace_themes")->fetchColumn());
+    echo "  ----   $themeCount workspace theme" . ($themeCount === 1 ? '' : 's')
+       . " on this database; convergence seeds none, so zero is the expected state\n";
+}
+
+$ucols = [];
+foreach ($pdo->query("SHOW COLUMNS FROM users")->fetchAll() as $c) { $ucols[$c['Field']] = $c; }
+report(isset($ucols['workspace_theme_id']), 'users.workspace_theme_id exists');
+report(isset($ucols['workspace_theme_id']) && $ucols['workspace_theme_id']['Null'] === 'YES',
+    'and is nullable, because null is the answer "use the store default" rather than a gap');
+
+$themeIndexed = false;
+foreach ($pdo->query("SHOW KEYS FROM users")->fetchAll() as $k) {
+    if ($k['Column_name'] === 'workspace_theme_id') { $themeIndexed = true; }
+}
+report($themeIndexed, 'and indexed, because every signed-in page load reads through it');
+
+if ($hasThemes) {
+    // RESTRICT rather than SET NULL, for the reason `displays.brand_id` is: moving three
+    // people back to the store default on one click, without telling them, is the merge
+    // invariant 5 exists to prevent. The app refuses it first and names them; this is the
+    // half that covers a database this app is not the only thing writing to.
+    $themeRule = deleteRule($pdo, $opts['db'], 'users', 'workspace_theme_id');
+    report($themeRule === 'RESTRICT' || $themeRule === 'NO ACTION',
+        "a theme somebody is wearing cannot be deleted out from under them (ON DELETE $themeRule)");
+
+    $orphanChoice = intval($pdo->query(
+        "SELECT COUNT(*) FROM users u LEFT JOIN workspace_themes t ON u.workspace_theme_id = t.id
+          WHERE u.workspace_theme_id IS NOT NULL AND t.id IS NULL")->fetchColumn());
+    report($orphanChoice === 0,
+        "nobody is pointed at a theme that is gone (found $orphanChoice)");
+}
 
 $store  = new DisplayStore($pdo);
 $legacy = $store->forTag(LEGACY_DISPLAY_TAG);
