@@ -357,10 +357,24 @@ class AssetLibrary
      */
     public static function isAllowedImageRef($ref)
     {
-        $path = explode('|', (string)$ref)[0];   // drop any |fit suffix (e.g. |contain)
-        $path = strtok($path, '?#');             // drop query string / fragment
+        $path = strtok(self::imagePath($ref), '?#');   // drop query string / fragment
         $ext  = strtolower(pathinfo((string)$path, PATHINFO_EXTENSION));
         return in_array($ext, self::IMAGE_EXTENSIONS, true);
+    }
+
+    /**
+     * The file part of an image entry's stored reference, without the Builder's
+     * `|fit` suffix.
+     *
+     * One place knows about that suffix, because two now need the answer: the check
+     * above, and the Builder's Brand control, which draws the venue's logo out of the
+     * library row a Brand points at. The Builder's own `renderBlock()` splits the same
+     * string in JavaScript — that copy is unavoidable and is about a value already on
+     * the page, while this is about one on its way there.
+     */
+    public static function imagePath($ref)
+    {
+        return explode('|', (string)$ref)[0];
     }
 
     /** Remove one row, whatever made it. The caller decides whether that is safe. */

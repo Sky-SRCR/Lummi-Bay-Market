@@ -6,6 +6,11 @@ require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/display_request.php';
 require_once __DIR__ . '/lib/upload_limits.php';
+// The Brand this sign wears, its standards, and the library row its logo points at —
+// three modules because they are three tables, and each is the only writer of its own.
+require_once __DIR__ . '/lib/brands.php';
+require_once __DIR__ . '/lib/brand_styles.php';
+require_once __DIR__ . '/lib/assets.php';
 requireCurrentAccount($pdo);
 $me      = currentUser();
 $isAdmin = isAdmin();
@@ -202,6 +207,77 @@ $switchable = count($actor->openable($displayStore->all()));
 // the one number the button, the shortcut and the snapshots all read — so switching
 // it off switches off all three rather than two of them.
 $undoSteps = $readOnly ? 0 : undoStepsSetting();
+
+// ---- The Brand this sign wears (ADR-0011, v2 step 4) ------------------------------
+// Which venue's identity is on the canvas: the six branded block-type standards, the
+// palette offered as swatches, the logo the Venue Logo item places, and the name the
+// control prints.
+//
+// `null` when `displays.brand_id` names no row — a database whose convergence has not
+// run yet (invariant 10). The page then draws no Brand control at all, which is the
+// honest answer rather than an empty box: there is no Brand to name. Everything below
+// is written to survive it, and the publish deliberately sends no `brand_id` in that
+// state, because an id naming nothing would be refused and a lagging schema would
+// become a sign nobody can publish to.
+$brandStore = new BrandStore($pdo);
+$wearing    = $brandStore->forId($display->brandId());
+
+// Only an admin holding the lock may change it. A basic account and a read-only page
+// get the venue's name and logo and no control — they should know which venue they are
+// building for and be unable to change it (decision 5). Not sending the menu is the
+// courtesy; `api.php`'s `brandFromPost()` is the check.
+$canPickBrand = $isAdmin && !$readOnly && $wearing !== null;
+
+// What the picker may offer, and what the page needs about each: enough that switching
+// is entirely local. Picking a Brand repaints this canvas and writes nothing (decision
+// 6), so the standards, palette and logo of every Brand a person may switch to have to
+// be on the page already — a fetch per switch would be a network failure in the middle
+// of an edit, for data that changes about once a season.
+//
+// One Brand for everybody else: the swatches and the control still want the Brand this
+// sign wears, and a list of one cannot be switched between.
+$brandChoices = $canPickBrand ? $brandStore->all() : ($wearing ? [$wearing] : []);
+
+$brandStyleRows = (new BrandStyles($pdo))->allByBrand();
+$assetLibrary   = new AssetLibrary($pdo);
+
+$brandPayload = [];
+foreach ($brandChoices as $b) {
+    $entry = $b->toClientArray();
+    // The six branded standards, keyed by block type exactly as the layout reply's
+    // `block_styles` is — so switching Brands hands the canvas the same shape it was
+    // painted from in the first place.
+    $entry['styles'] = isset($brandStyleRows[$b->id()]) ? $brandStyleRows[$b->id()] : [];
+    // The logo as a path the page can draw, or '' when there is nothing to draw: no
+    // logo chosen, a library row that has been deleted, or one holding nothing. Read
+    // through AssetLibrary because `assets` is its table, and taken exactly as an image
+    // block would take it — the control has to show what the block it places will show,
+    // and a second opinion here about which stored references are acceptable would be
+    // one more place for the two to disagree. The Library page is where a doubtful row
+    // is already reported (`AssetLibrary::contentIssue()`).
+    $entry['logo_src'] = '';
+    if ($b->logoAssetId() > 0) {
+        $row = $assetLibrary->forId($b->logoAssetId());
+        if ($row && ($row['type'] ?? '') === 'image') {
+            $entry['logo_src'] = AssetLibrary::imagePath($row['content'] ?? '');
+        }
+    }
+    $brandPayload[] = $entry;
+}
+
+// Whether *this* sign's Brand has a logo to place, which decides whether the Venue Logo
+// item is on the palette when the page opens. Decided here rather than left to script
+// so the item does not appear and vanish on load; script re-decides it on a switch.
+$brandLogoNow = '';
+foreach ($brandPayload as $entry) {
+    if ($wearing && $entry['id'] === $wearing->id()) { $brandLogoNow = $entry['logo_src']; }
+}
+
+// A Brand pointing at a logo the library no longer has. Worth its own sentence rather
+// than an absent button: the item simply not being there is indistinguishable from this
+// app not having the feature, and the person who can fix it is the one looking at it
+// (#21's rule — a substitute nobody is told about, in the form of a silence).
+$brandLogoBroken = $wearing !== null && $wearing->logoAssetId() > 0 && $brandLogoNow === '';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -350,9 +426,56 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     border: 1px solid #33475a; border-radius: 4px; padding: 6px 8px; background: #22303c;
 }
 #palette .pal-switch:hover { background: #2d3e4f; color: #fff; }
-/* The Brand control (step 4) lands above the rule. Until it does there is nothing
-   to caption, and a heading over an empty space reads as something that failed to
-   load — so the slot is a comment in the markup rather than an empty box. */
+
+/* ── The Brand control ──
+   Which venue's identity is on this canvas. Above the rule, because it is a fact
+   about the sign rather than something you can put on it, and beside Switch sign
+   because the two read as a sequence: which sign, which venue, and the way off.
+
+   Two shapes for one control. An admin holding the lock gets a button that opens a
+   menu; a basic account and a read-only page get the same logo and name with no
+   chevron and no menu — they should know which venue they are building for and be
+   unable to change it. That distinction is in the markup, not in a disabled
+   attribute: a control that is on the page and refuses is a control somebody keeps
+   pressing. */
+#brand-control { position: relative; }
+#palette .brand-btn, #palette .brand-flat {
+    display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
+    background: #22303c; border: 1px solid #33475a; color: #fff; border-radius: 4px;
+    padding: 6px 8px; font-size: 12px;
+}
+#palette .brand-btn { cursor: pointer; }
+#palette .brand-btn:hover { background: #2d3e4f; }
+/* Not a button, and deliberately not styled like one. */
+#palette .brand-flat { background: #1f2a35; color: #dfe6ec; }
+#palette .brand-logo {
+    width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; border-radius: 2px;
+    background: #101820;
+}
+#palette .brand-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                       white-space: nowrap; }
+#palette .brand-chev { color: #8fa6bb; flex-shrink: 0; font-size: 10px; }
+#brand-menu {
+    position: absolute; left: 0; right: 0; top: 100%; margin-top: 3px; z-index: 420;
+    background: #1a252f; border: 1px solid #34495e; border-radius: 5px; padding: 4px;
+    display: none; flex-direction: column; max-height: 260px; overflow-y: auto;
+    box-shadow: 0 6px 22px rgba(0,0,0,.5);
+}
+#brand-menu.open { display: flex; }
+#brand-menu .brand-item {
+    display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+    background: none; border: none; color: #dfe6ec; font-size: 12px; padding: 5px 7px;
+    border-radius: 3px; cursor: pointer;
+}
+#brand-menu .brand-item:hover { background: #2c3e50; color: #fff; }
+#brand-menu .brand-item.on { background: #2c3e50; color: #fff; }
+#brand-menu .brand-item .tick { width: 10px; flex-shrink: 0; color: #2ecc71; font-size: 10px; }
+/* Said in the palette rather than in a toast, because it is a standing state of this
+   sign and not something that just happened. */
+#palette .brand-warn {
+    font-size: 11px; line-height: 1.45; color: #ffe9cf; background: #7a4a12;
+    border: 1px solid #a2670f; border-radius: 4px; padding: 6px 7px; margin-top: 2px;
+}
 #palette .pal-note { font-size: 11px; line-height: 1.5; color: #8fa6bb; margin-top: 10px; }
 #palette .pal-spacer { flex: 1; min-height: 10px; }
 /* Aimed at basic accounts, who add blocks into a section rather than onto the
@@ -534,6 +657,20 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #inspector input[type="color"]  { height: 32px; padding: 2px; cursor: pointer; }
 #inspector input[type="file"]   { font-size: 12px; color: #aaa; }
 #inspector input[type="number"] { width: 80px; }
+/* ── The Brand palette, above a colour control ──
+   Offered, never enforced (decision 4): a block with its own colour keeps it, and
+   nothing here writes anything by itself. A swatch is a shortcut to the picker
+   underneath it and reads as one. Hidden when the Brand has no palette, which is a
+   real state rather than an error — a Brand whose typography has been set and whose
+   colours have not. */
+.sw-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin: 4px 0 2px; }
+.sw-row .sw-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .6px;
+                  color: #7f8c8d; margin-right: 2px; }
+.sw-row .sw {
+    width: 17px; height: 17px; padding: 0; border: 1px solid #4a6278; border-radius: 3px;
+    cursor: pointer; flex-shrink: 0;
+}
+.sw-row .sw:hover { border-color: #fff; }
 .insp-section { border-top: 1px solid #2c3e50; padding-top: 8px; }
 .insp-row { display: flex; gap: 8px; align-items: flex-end; }
 .insp-row > * { flex: 1; }
@@ -810,17 +947,65 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
      it, only for a Builder that may edit: what you can put on the sign. -->
 <div id="palette">
     <?php
-    // The Brand control (roadmap v2 step 4) goes at the top of this block, with its
-    // own `pal-cap` heading. It is not stubbed out here: a caption over an empty box
-    // reads as something that failed to load, and an empty box is worse than a
-    // shorter column. Until then this part holds only Switch sign, and is emitted
-    // only when there is more than one sign to switch to — a rule above nothing is
-    // a line the eye has to account for.
+    // Above the rule: which venue this sign belongs to, and the way off the sign.
+    // Emitted when either of the two exists — the rule below is drawn by `pal-top`
+    // itself, and a rule above nothing is a line the eye has to account for. The
+    // Brand control is absent rather than empty when `displays.brand_id` names no
+    // row: a caption over a blank box reads as something that failed to load.
     ?>
-    <?php if ($switchable > 1): ?>
+    <?php if ($wearing || $switchable > 1): ?>
     <div class="pal-top">
+        <?php if ($wearing): ?>
+        <div class="pal-cap">Brand</div>
+        <div id="brand-control">
+            <?php if ($canPickBrand): ?>
+            <button id="brand-btn" class="brand-btn" onclick="toggleBrandMenu(event)"
+                    aria-haspopup="true" aria-expanded="false"
+                    title="The brand this sign wears — its typography, palette and logo. Changing it takes effect at the next Publish.">
+                <img id="brand-logo" class="brand-logo" alt=""<?php
+                    if ($brandLogoNow === ''): ?> style="display:none;"<?php endif; ?>>
+                <span id="brand-name" class="brand-name"><?= Markup::text($wearing->name()) ?></span>
+                <span class="brand-chev">&#9662;</span>
+            </button>
+            <?php
+            // The menu is markup rather than something script builds, so no venue's
+            // name is ever assembled into HTML: each item carries its Brand's id in
+            // an attribute a number cannot escape from, and the name goes through
+            // the one door (`Markup::text`). Which item is ticked changes as
+            // somebody switches, and that is a class script toggles — see
+            // renderBrandControl().
+            ?>
+            <div id="brand-menu">
+                <?php foreach ($brandChoices as $b): ?>
+                <button class="brand-item<?= $b->id() === $wearing->id() ? ' on' : '' ?>"
+                        data-brand-id="<?= intval($b->id()) ?>" onclick="switchBrand(<?= intval($b->id()) ?>)">
+                    <span class="tick"><?= $b->id() === $wearing->id() ? '&#10003;' : '' ?></span>
+                    <span class="brand-name"><?= Markup::text($b->name()) ?></span>
+                </button>
+                <?php endforeach; ?>
+            </div>
+            <?php else: ?>
+            <?php
+            // No ids in here on purpose. Nothing on this page can change the Brand,
+            // so nothing has to find these nodes again — and a second copy of
+            // `#brand-name` would make every lookup of it depend on which branch the
+            // page took. The read-only suite audits exactly that: an id it can
+            // resolve on a page that does not emit it is worse than no stub at all.
+            ?>
+            <span class="brand-flat" title="The brand this sign wears. Only an admin editing this display can change it.">
+                <?php if ($brandLogoNow !== ''): ?>
+                <img class="brand-logo" alt="" src="<?= Markup::text($brandLogoNow) ?>">
+                <?php endif; ?>
+                <span class="brand-name"><?= Markup::text($wearing->name()) ?></span>
+            </span>
+            <?php endif; ?>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($switchable > 1): ?>
         <a class="pal-switch" href="builder.php?switch=1"
            title="Edit a different display">&#8646; Switch sign</a>
+        <?php endif; ?>
     </div>
     <?php endif; ?>
 
@@ -843,6 +1028,25 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <button class="pal-b" onclick="createBlock('table',null)"><span class="ic">&#9636;</span> Table</button>
         <button class="pal-b" onclick="createBlock('marquee',null)"><span class="ic">&#9654;</span> Marquee</button>
         <button class="pal-b" onclick="createBlock('video',null)"><span class="ic">&#9658;</span> Video</button>
+
+        <?php
+        // The fourth group step 2's plan named, and the only one whose contents depend
+        // on data: a Brand with no logo has nothing to offer here, so the group is
+        // absent rather than holding a button that would drop an empty image block.
+        // Its initial state is decided by PHP so it does not appear and vanish on load,
+        // and renderBrandAssets() re-decides it when somebody switches Brand.
+        ?>
+        <div id="brand-assets"<?= $brandLogoNow === '' ? ' style="display:none;"' : '' ?>>
+            <div class="pal-h">Brand</div>
+            <button class="pal-b" onclick="createVenueLogo()"
+                    title="Drop an image block already linked to this brand's logo">
+                <span class="ic">&#9873;</span> Venue Logo</button>
+        </div>
+        <div id="brand-logo-warn" class="brand-warn"<?= $brandLogoBroken ? '' : ' style="display:none;"' ?>>
+            This brand points at a logo the asset library no longer has, so
+            <strong>Venue Logo</strong> is not offered. Point the brand at an image in the
+            Admin Panel, under Display Branding.
+        </div>
         <?php endif; ?>
 
         <div class="pal-spacer"></div>
@@ -932,6 +1136,10 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                 <option value="color">Color</option>
                 <option value="image">Image</option>
             </select>
+            <!-- The Brand's palette, offered and never enforced (decision 4). Filled by
+                 renderPaletteSwatches() and hidden when the Brand has none, which is a
+                 real state: a Brand that has only had its typography set. -->
+            <div class="sw-row" id="sw-bg" style="display:none;"></div>
             <input type="color" id="bg-color" value="#1a1a2e" oninput="applyBg()" style="margin-top:6px;">
             <input type="file"  id="bg-file"  accept="image/jpeg,image/png,image/gif,image/webp"
                    onchange="applyBgFile()" style="display:none; margin-top:6px;">
@@ -1030,6 +1238,10 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                        oninput="updateStyle('lineHeight',this.value)" onchange="commitUndoStep()">
             </div>
         </div>
+        <!-- Above the colour control it is about, and outside the row rather than in
+             it: `.insp-row` is a flex row, so a swatch strip inside it would sit
+             beside the picker instead of over it. -->
+        <div class="sw-row" id="sw-font" style="display:none;"></div>
         <div class="insp-row" style="margin-top:6px;">
             <div>
                 <label>Color</label>
@@ -1119,6 +1331,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                onchange="commitUndoStep()">
         <div id="marquee-speed-label" style="font-size:11px;color:#bdc3c7;margin-top:2px;">80 px/sec</div>
         <label style="margin-top:6px;">Text Style</label>
+        <div class="sw-row" id="sw-marquee" style="display:none;"></div>
         <div style="display:flex;gap:6px;align-items:center;margin-top:4px;">
             <input type="color" id="marquee-color" value="#ffffff"
                    style="width:36px;height:30px;flex-shrink:0;" oninput="updateMarqueeStyle()"
@@ -1131,6 +1344,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
             </select>
         </div>
         <label style="margin-top:6px;">Background Color</label>
+        <div class="sw-row" id="sw-marquee-bg" style="display:none;"></div>
         <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
             <input type="color" id="marquee-bg" value="#c0392b"
                    style="width:60px;height:30px;" oninput="updateMarqueeStyle()"
@@ -1324,6 +1538,29 @@ var LOCK_WARN_SECONDS  = <?= LockState::WARN_AFTER_SECONDS ?>;
 var UPLOAD_MAX_BYTES = <?= intval(UploadLimit::bytes()) ?>;
 var UPLOAD_MAX_LABEL = <?= HttpReply::jsValue(UploadLimit::describe()) ?>;
 
+// ---- The Brand this sign wears, and the ones it could (ADR-0011, v2 step 4) ----
+// Every Brand this page may switch to, each with the six standards it paints, the
+// palette it offers and the logo it can place. The whole list is here because picking
+// one writes nothing: it repaints this canvas in the browser and rides out with the
+// next Publish (decision 6), so a switch must not depend on a request that can fail
+// in the middle of an edit.
+//
+// One entry for a page that cannot switch — a basic account, or a read-only Builder.
+// The control still prints the venue and the swatches still offer its palette; there
+// is simply nothing else in the list to choose.
+var BRANDS = <?= HttpReply::jsValue($brandPayload) ?>;
+
+// Which of them is on the canvas *now*. Staged, and the only page state a publish
+// carries that is not an element or the background — see publishCanvas(). Zero on a
+// database whose convergence has not run, and the publish then sends no brand_id at
+// all rather than an id naming nothing (invariant 10).
+var BRAND_ID = <?= intval($display->brandId()) ?>;
+
+// Whether this page may change it. The menu is not in the markup when this is false,
+// so this is the belt to that braces — for the keyboard, and for anything reachable
+// without a button.
+var CAN_PICK_BRAND = <?= $canPickBrand ? 'true' : 'false' ?>;
+
 // How many steps back Undo may go, from the admin Settings page (ADR-0010). Zero
 // means the whole feature is off — no button in the page, no Ctrl+Z, and no
 // snapshots taken at all, which is what makes zero a real off switch rather than
@@ -1396,6 +1633,12 @@ document.addEventListener('DOMContentLoaded', function() {
     loadAssets();
     loadLayout();
     setupCanvas();
+    // From the page's own copy of the Brand, before any reply arrives. The control's
+    // name and logo are already in the markup; this is what puts the palette swatches
+    // and the Venue Logo item on screen, and it must not wait for the layout read —
+    // the swatches are still worth offering to somebody whose layout read failed, and
+    // an offer that appears a beat late is an offer people learn not to look for.
+    refreshBrandSurfaces();
     // No role test here on purpose: this ran on every page load with the emit
     // condition spelled out a second time, and a lookup that survives only while
     // two copies of a rule agree is the one this page has already been bitten by.
@@ -1529,6 +1772,14 @@ function loadLayout() {
             blockStyles  = data.block_styles || {};
             LAYOUT_STAMP = data.layout_stamp || '';
             var canvas   = document.getElementById('builder-canvas');
+
+            // Before a single block is rendered: applyTextStyles() reads `blockStyles`
+            // as it paints, and adoptBrand() is what makes the Brand the control names
+            // the Brand those styles came from. `data.brand` is null on a database whose
+            // convergence has not run, and the page then keeps saying what it said —
+            // nothing.
+            if (data.brand) { adoptBrand(data.brand); }
+            refreshBrandSurfaces();
 
             if (data.display) {
                 var s = data.display;
@@ -1711,6 +1962,286 @@ function showBgPending(text) {
 }
 
 // ============================================================
+// THE BRAND (ADR-0011, v2 step 4)
+// ============================================================
+// Which venue's identity this canvas is wearing. Three surfaces read it — the control
+// at the top of the left column, the palette swatches above every colour picker, and
+// the Venue Logo item — and one write carries it: Publish.
+//
+// **Picking a Brand writes nothing.** It repaints what is on screen and stages the
+// choice for the next Publish (decision 6), on the path the canvas background already
+// takes. That is deliberate rather than convenient: a Brand assignment reaches every
+// block on the sign, and there is no undo behind a publish, so the person gets to look
+// at it before it is true. Nothing here calls the server at all.
+//
+// It is also not part of the undo history, for the same reason the background is not
+// (ADR-0010): the history is about the canvas, and the Brand is a property of the sign
+// that the canvas is drawn *from*. What must hold — and does, since step 1 stopped
+// publish carrying brand-owned typography — is that a switch moves no snapshot, so
+// cycling Brands cannot leave a step recording a change nobody made.
+
+/** The entry in BRANDS with this id, or null. */
+function brandById(id) {
+    var want = parseInt(id, 10);
+    for (var i = 0; i < BRANDS.length; i++) {
+        if (parseInt(BRANDS[i].id, 10) === want) { return BRANDS[i]; }
+    }
+    return null;
+}
+
+/** The Brand on the canvas now, or null when this database has none yet. */
+function currentBrandEntry() { return brandById(BRAND_ID); }
+
+/**
+ * Take the server's word for which Brand this sign wears.
+ *
+ * The page was rendered one request before the layout arrived, so if a colleague moved
+ * this sign onto another Brand — or renamed one — in between, the reply is the newer of
+ * the two, and the standards the canvas has just been painted from came with it. Left
+ * to the page's own copy, the control would name a venue the canvas is not wearing,
+ * which is the one thing this control exists to prevent.
+ */
+function adoptBrand(server) {
+    if (!server || !server.id) { return; }
+    BRAND_ID = parseInt(server.id, 10);
+    var entry = brandById(BRAND_ID);
+    if (entry) {
+        entry.name          = server.name;
+        entry.palette       = server.palette || [];
+        entry.logo_asset_id = server.logo_asset_id;
+        entry.styles        = blockStyles;
+        return;
+    }
+    // Moved onto a Brand this page was never offered — a basic account is sent one
+    // Brand, and this is that sign changing venue while the tab sat open. Named and
+    // offered as swatches; no logo, because the file behind it is a library read this
+    // reply does not carry and inventing a path would draw a broken picture.
+    BRANDS.push({
+        id: BRAND_ID, name: server.name, palette: server.palette || [],
+        logo_asset_id: server.logo_asset_id, logo_src: '', styles: blockStyles
+    });
+}
+
+/** Redraw everything that is about the Brand. One list, so the three cannot drift. */
+function refreshBrandSurfaces() {
+    renderBrandControl();
+    renderPaletteSwatches();
+    renderBrandAssets();
+}
+
+function toggleBrandMenu(e) {
+    if (e) { e.stopPropagation(); }     // or the document listener closes it again
+    var menu = document.getElementById('brand-menu');
+    var btn  = document.getElementById('brand-btn');
+    if (!menu) { return; }              // no menu on a page that may not switch
+    var open = !menu.classList.contains('open');
+    menu.classList.toggle('open', open);
+    if (btn) { btn.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+}
+
+function closeBrandMenu() {
+    var menu = document.getElementById('brand-menu');
+    var btn  = document.getElementById('brand-btn');
+    if (menu) { menu.classList.remove('open'); }
+    if (btn)  { btn.setAttribute('aria-expanded', 'false'); }
+}
+
+/**
+ * Show this Brand on the canvas, and stage it for the next Publish.
+ *
+ * `CAN_PICK_BRAND` repeats what the markup already decided — the menu is not on a
+ * read-only page or a basic account's page at all — and it is the belt to that braces,
+ * for the keyboard and for anything reachable without a button. The refusal below it is
+ * about an id that names no Brand *this page was offered*, which a menu built from the
+ * same list cannot produce and a console can.
+ */
+function switchBrand(id) {
+    closeBrandMenu();
+    if (!CAN_PICK_BRAND || READ_ONLY) { return; }
+    var next = brandById(id);
+    if (!next) {
+        showToast('That brand is not one this page was offered. Reload the display and pick again.', true);
+        return;
+    }
+    if (parseInt(next.id, 10) === BRAND_ID) { return; }
+
+    BRAND_ID    = parseInt(next.id, 10);
+    blockStyles = next.styles || {};
+    repaintForBrand();
+    refreshBrandSurfaces();
+
+    // Said out loud, because two things about this are not visible: nothing has been
+    // saved, and the sign's background is its own rather than the Brand's default —
+    // which is the question somebody asks the moment a venue's colours appear and the
+    // canvas behind them does not change (a Brand's default background is what a *new*
+    // sign starts from, in the Admin Panel).
+    showToast('Showing ' + next.name + '’s typography and palette. Nothing is saved yet — '
+            + 'Publish is what puts this brand on the screen. The canvas background stays this sign’s own.');
+}
+
+/**
+ * Redraw the canvas under the Brand now selected.
+ *
+ * Through the snapshot pair the undo history already uses, and not by walking the
+ * blocks and re-applying styles: `renderBlock()` is the one place that knows how an
+ * element becomes a node, and `applyTextStyles()` decides whose typography a block
+ * wears at the moment it paints — a second copy of that decision here is exactly what
+ * invariant 32's comment forbids, and it would be a copy that only runs on this path.
+ *
+ * `restoreCanvas()` raises `undoRestoring` for the duration, so nothing here records a
+ * step. It cannot fail on its own output, and its return value is deliberately ignored:
+ * there is no second way to draw this canvas to fall back to.
+ */
+function repaintForBrand() {
+    restoreCanvas(snapshotCanvas());
+}
+
+/** The venue's name, its logo, and which item in the menu is ticked. */
+function renderBrandControl() {
+    var brand = currentBrandEntry();
+    var label = document.getElementById('brand-name');
+    if (label && brand) { label.textContent = brand.name; }
+
+    var logo = document.getElementById('brand-logo');
+    if (logo) {
+        var src = (brand && brand.logo_src) || '';
+        if (src) { logo.src = src; }
+        logo.style.display = src ? 'inline-block' : 'none';
+    }
+
+    var menu = document.getElementById('brand-menu');
+    if (!menu) { return; }
+    Array.prototype.forEach.call(menu.querySelectorAll('.brand-item'), function (item) {
+        var on = parseInt(item.dataset.brandId, 10) === BRAND_ID;
+        item.classList.toggle('on', on);
+        var tick = item.querySelector('.tick');
+        // A tick and not only a highlight: the highlight is also what hover does, so on
+        // a menu of two Brands it says nothing.
+        if (tick) { tick.textContent = on ? '✓' : ''; }
+    });
+}
+
+/** Whether this Brand has a logo to place, and whether it is pointing at a gap. */
+function renderBrandAssets() {
+    var brand = currentBrandEntry();
+    var src   = (brand && brand.logo_src) || '';
+
+    var group = document.getElementById('brand-assets');
+    if (group) { group.style.display = src ? 'block' : 'none'; }
+
+    var warn = document.getElementById('brand-logo-warn');
+    if (warn) {
+        // A Brand with no logo at all is ordinary and says nothing. A Brand pointing at
+        // a library row that is gone is a thing somebody has to fix, and the absent
+        // button is indistinguishable from the feature not existing (#21's silence).
+        warn.style.display = (brand && brand.logo_asset_id && !src) ? 'block' : 'none';
+    }
+}
+
+// ---- The palette, offered above every colour control ----------------------------
+// Four pickers in this rail change a colour, and every one of them now has the venue's
+// palette over it. Offered and never enforced (decision 4): a swatch fills the picker
+// underneath it and nothing else, so a block with its own colour keeps it until
+// somebody chooses otherwise.
+//
+// Each entry names the row it draws into, the picker it fills, what to run afterwards,
+// and whether that counts as an undo step. The last two are why this is a table rather
+// than a loop over inputs: setting `.value` from script fires no `input` event, so the
+// work the picker's own handler would have done has to be named here — a swatch that
+// changed the control and nothing on the canvas would be a control that lies.
+var PALETTE_TARGETS = [
+    // The canvas background, which the undo history deliberately does not cover
+    // (ADR-0010) — so this one records no step, exactly like dragging the picker.
+    { row: 'sw-bg', input: 'bg-color', undo: false,
+      apply: function () { applyBg(); } },
+    { row: 'sw-font', input: 'font-color', undo: true,
+      apply: function (hex) { updateStyle('color', hex); } },
+    { row: 'sw-marquee', input: 'marquee-color', undo: true,
+      apply: function () { updateMarqueeStyle(); } },
+    { row: 'sw-marquee-bg', input: 'marquee-bg', undo: true,
+      apply: function () {
+          // Or the swatch does nothing at all: a transparent marquee ignores its
+          // background colour, and "I picked the venue's red and nothing happened" is
+          // the same defect as a control that lies, wearing a checkbox.
+          var t = document.getElementById('marquee-bg-transparent');
+          if (t) { t.checked = false; }
+          updateMarqueeStyle();
+      } }
+];
+
+function renderPaletteSwatches() {
+    var brand  = currentBrandEntry();
+    var colors = (brand && brand.palette) || [];
+
+    PALETTE_TARGETS.forEach(function (target) {
+        var row = document.getElementById(target.row);
+        if (!row) { return; }            // no rail at all on a read-only page (§4j)
+        row.innerHTML = '';
+
+        var cap = document.createElement('span');
+        cap.className   = 'sw-cap';
+        cap.textContent = 'Brand';
+        row.appendChild(cap);
+
+        var drawn = 0;
+        colors.forEach(function (raw) {
+            var hex = readHex(raw);
+            // A colour the CSSOM would discard is not a swatch, it is a grey box that
+            // silently does nothing — #41's shape one control along. The server already
+            // asked `Color::read()` of these, so this is the second of two agreements
+            // rather than the only one, and it is the half that runs where the value is
+            // about to become CSS.
+            if (hex === '') { return; }
+            var sw = document.createElement('button');
+            sw.type      = 'button';
+            sw.className = 'sw';
+            sw.style.background = hex;
+            sw.title = 'Brand palette — ' + hex;
+            sw.addEventListener('click', function () { applyPaletteColor(target, hex); });
+            row.appendChild(sw);
+            drawn++;
+        });
+
+        // An empty palette is a Brand whose colours nobody has set, which is a real
+        // state and not an error: no row rather than a caption over nothing.
+        row.style.display = drawn ? 'flex' : 'none';
+    });
+}
+
+function applyPaletteColor(target, hex) {
+    if (READ_ONLY) { return; }
+    var input = document.getElementById(target.input);
+    if (!input) { return; }
+    input.value = hex;
+    target.apply(hex);
+    // A swatch is a finished choice, which is what `onchange` means on the picker
+    // beside it — so it commits, while dragging the picker still commits once at the
+    // end rather than once per shade (ADR-0010).
+    if (target.undo) { commitUndoStep(); }
+}
+
+/**
+ * Drop an image block already linked to this venue's logo.
+ *
+ * Through `createBlock()` rather than beside it: the drop centre, the locked-section
+ * refusal and the fits-in-the-section rule are all decided there, and a second creation
+ * path would be a second place for them to be forgotten. The link is handed over as the
+ * element's own fields, so the block is created linked — one undo step, and one publish
+ * that carries `asset_id` exactly as the asset dropdown's would.
+ */
+function createVenueLogo() {
+    if (!IS_ADMIN || READ_ONLY) { return; }
+    var brand = currentBrandEntry();
+    var src   = (brand && brand.logo_src) || '';
+    if (!src) {
+        showToast('This brand has no logo to place. An admin sets one in the Admin Panel, '
+                + 'under Display Branding.', true);
+        return;
+    }
+    createBlock('image', null, { asset_id: brand.logo_asset_id, db_content: src });
+}
+
+// ============================================================
 // CREATE SECTION (admin)
 // ============================================================
 function createSection() {
@@ -1785,7 +2316,16 @@ function renderSection(el) {
 // ============================================================
 // CREATE BLOCK
 // ============================================================
-function createBlock(type, subtype) {
+/**
+ * Put a new block on the canvas.
+ *
+ * `extra` is how a block can be created with something already in it — today only
+ * Venue Logo, which hands over the library row and the file behind it so the block
+ * arrives linked. Merged over the defaults rather than applied afterwards, so the
+ * creation is one change and therefore one undo step: linking a block after creating it
+ * would record two, and Undo would then take back half of one action.
+ */
+function createBlock(type, subtype, extra) {
     if (READ_ONLY) return;
     // Basic users must have a section targeted
     if (!IS_ADMIN && !targetSection) {
@@ -1836,6 +2376,9 @@ function createBlock(type, subtype) {
         font_family: 'Arial', font_size: 16, font_color: '#000000',
         font_weight: 'normal', font_style: 'normal', line_height: 1.4
     };
+    if (extra) {
+        Object.keys(extra).forEach(function (k) { el[k] = extra[k]; });
+    }
     renderBlock(el, parent, true);
     commitUndoStep();
 }
@@ -3683,6 +4226,16 @@ function publishCanvas() {
     fd.append('layout_stamp', LAYOUT_STAMP);
 
     if (IS_ADMIN) {
+        // The Brand that was picked, written by this publish and by nothing else
+        // (decision 6) — the same journey the background beside it makes.
+        //
+        // Sent only when there is one. A database whose convergence has not run leaves
+        // this at 0 and draws no Brand control, and an id naming nothing is refused by
+        // the endpoint — so sending it unconditionally would turn a lagging schema into
+        // a sign nobody can publish to (invariant 10). An absent field means "leave the
+        // Brand alone", which is exactly what that page has to say.
+        if (BRAND_ID > 0) { fd.append('brand_id', BRAND_ID); }
+
         fd.append('bg_type', document.getElementById('bg-type').value);
         fd.append('bg_val',  document.getElementById('bg-color').value);
         var bgFile = document.getElementById('bg-file').files[0];
@@ -4431,6 +4984,14 @@ document.addEventListener('click', function (e) {
     // A click inside the menu is somebody using it — following a link, and later
     // choosing a Workspace Theme. Closing on that would fight the control.
     if (menu && menu.classList.contains('open') && !menu.contains(e.target)) { closeGearMenu(); }
+
+    // The Brand menu, on the same rule and in the same listener: two listeners doing
+    // this would be two places to remember that a click inside a menu is not a click
+    // away from it. A click on one of its items closes it through switchBrand() before
+    // this ever runs, which is why `contains` is checked here rather than the target's
+    // class — the case this covers is a click somewhere else entirely.
+    var brands = document.getElementById('brand-menu');
+    if (brands && brands.classList.contains('open') && !brands.contains(e.target)) { closeBrandMenu(); }
 });
 
 function showToast(msg, isErr) {

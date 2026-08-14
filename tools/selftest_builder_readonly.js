@@ -118,9 +118,16 @@ check(emittedOnlyWhenEditable('<button id="publish-btn"'),          'and so is t
 // Switch sign and the read-only sentence and no editing control, and the canvas
 // column with its footer — the zoom controls and the publish line, which is a fact
 // somebody who cannot edit still needs.
+// `brand-control` joins them with v2 step 4, and it is the one entry here that is a
+// *feature* on a read-only page rather than a leftover: somebody who cannot edit still
+// needs to know which venue they are looking at. What is not here is everything inside
+// it — the button, the logo, the name and the menu — because that branch of the markup
+// is emitted only for an admin who holds the lock, and the plain version carries no ids
+// at all. Two copies of `#brand-name` would make every lookup of it depend on which
+// branch the page took.
 const PRESENT = new Set([
     'lock-banner', 'lock-access-bar', 'lock-access-text',
-    'workbench', 'palette', 'canvas-column', 'canvas-footer', 'pub-state',
+    'workbench', 'palette', 'brand-control', 'canvas-column', 'canvas-footer', 'pub-state',
     'zoom-readout', 'editor-frame', 'canvas-sizer', 'builder-canvas',
     'toast', 'resize-label', 'display-off-banner', 'top-nav', 'gear-btn', 'gear-menu'
 ]);
@@ -180,7 +187,15 @@ function canEmitForReadOnlyBasic(conds) {
          // that believes a read-only page can emit #undo-btn would report the
          // absent stub entry as its own bug. The check below holds the page to that
          // derivation, so this line is a reading of the source and not a guess.
-         .replace(/\$undoSteps/g, '0');
+         .replace(/\$undoSteps/g, '0')
+         // The same shape, and the same reason (v2 step 4). builder.php computes
+         // `$canPickBrand = $isAdmin && !$readOnly && $wearing !== null`, so on this
+         // page it is false however the Brands are set up. Left to the enumeration
+         // below it would be tried both ways, one of those ways would say yes, and the
+         // walker would believe a read-only page can emit the Brand menu. The check
+         // below holds the page to that derivation, so this is a reading of the source
+         // rather than a guess.
+         .replace(/\$canPickBrand/g, 'false');
 
     let n = 0;
     e = e.replace(/\$[A-Za-z_][A-Za-z0-9_]*(?:->[A-Za-z_][A-Za-z0-9_]*\([^)]*\))?|__unknown/g,
@@ -233,6 +248,26 @@ check(!canEmitForReadOnlyBasic(EMITS['undo-btn'] || []),
 // Undo button on a Builder somebody else is editing.
 check(/\$undoSteps\s*=\s*\$readOnly\s*\?\s*0\s*:\s*undoStepsSetting\(\)/.test(php),
       'and the depth is derived from $readOnly, not merely read beside it');
+
+// The Brand control (v2 step 4) is the one thing this page gained rather than lost: a
+// person who cannot edit still needs to know which venue they are looking at, and still
+// must not be able to change it. So the control is emitted and the *picker* is not, and
+// both halves are read off the markup rather than trusted.
+check(/\$canPickBrand\s*=\s*\$isAdmin\s*&&\s*!\$readOnly\s*&&/.test(php),
+      'whether the Brand may be changed is derived from the role and the lock together');
+check(canEmitForReadOnlyBasic(EMITS['brand-control'] || []),
+      'so the Brand control itself reaches a page that cannot edit');
+check(!canEmitForReadOnlyBasic(EMITS['brand-menu'] || []),
+      'while the menu that would change it never does');
+check(!canEmitForReadOnlyBasic(EMITS['brand-btn'] || []),
+      'nor the button that opens it');
+// The palette swatches live in the rail, which this page does not get at all — asserted
+// so that a row moved out of the rail some day is a failure here rather than a colour
+// control appearing on a page that may not use one.
+['sw-bg', 'sw-font', 'sw-marquee', 'sw-marquee-bg'].forEach(function (row) {
+    check(!canEmitForReadOnlyBasic(EMITS[row] || []),
+          'and the ' + row + ' palette row stays inside the rail, which is not sent here');
+});
 
 function stubEl(id) {
     return {
@@ -294,9 +329,20 @@ let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
             .map(function (b) { return b.replace(/^<script\b[^>]*>/i, '').replace(/<\/script>$/i, ''); })
             .join('\n');
 
-// What a basic account looking at somebody else's edit session gets.
+// What a basic account looking at somebody else's edit session gets. The three Brand
+// constants are written out rather than left as the stripped `0`, because that is what
+// the page really carries here: one Brand — the one this sign wears, which the control
+// names — and no permission to change it.
 js = js.replace(/^var READ_ONLY\s*=.*$/m, 'var READ_ONLY = true;')
-       .replace(/^var IS_ADMIN\s*=.*$/m,  'var IS_ADMIN = false;');
+       .replace(/^var IS_ADMIN\s*=.*$/m,  'var IS_ADMIN = false;')
+       .replace(/^var BRANDS\s*=.*$/m,
+                "var BRANDS = [{id:3,name:'Salmon House',logo_asset_id:12,"
+                + "logo_src:'uploads/salmon.png',palette:['#0b3d2e','#e67e22'],styles:{}}];")
+       .replace(/^var BRAND_ID\s*=.*$/m,       'var BRAND_ID = 3;')
+       .replace(/^var CAN_PICK_BRAND\s*=.*$/m, 'var CAN_PICK_BRAND = false;');
+
+check(/var CAN_PICK_BRAND = false;/.test(js),
+      'and the page constant saying so is one this suite really replaced');
 
 eval(js);   // eslint-disable-line no-eval — the point is to run the page's own code
 
@@ -339,10 +385,10 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     // none of the code it names. And the promise is returned rather than dropped: a
     // throw inside a `.then` is an unhandled rejection, not something survives() can
     // see, so dropping it would swallow exactly the failure being tested for.
-    function layoutReplying(display, elements) {
+    function layoutReplying(display, elements, brand) {
         global.fetch = () => Promise.resolve({
             json: () => Promise.resolve({ status: 'success', display: display,
-                                          elements: elements || [],
+                                          elements: elements || [], brand: brand || null,
                                           block_styles: {}, layout_stamp: 'stamp' })
         });
         return loadLayout().then(settle);
@@ -353,6 +399,14 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
                    () => layoutReplying({ bg_type: 'image', bg_val: 'bg.png' }));
     await survives('and choosing a background file finds no file input to read',
                    () => applyBgFile());
+
+    // The layout reply carries the Brand this sign wears (v2 step 4), and this page has
+    // to take it without a control to draw it into. The reply is also the only thing
+    // that can tell a watcher their sign changed venue while they were looking at it.
+    await survives('a reply naming a Brand this page was never offered is taken anyway',
+                   () => layoutReplying({ bg_type: 'color', bg_val: '#123456' }, [],
+                                        { id: 8, name: 'Cedar Room', logo_asset_id: 0, palette: ['#3d2b1f'] }));
+    check(BRAND_ID === 8, 'and the page moves onto it rather than naming the old one');
 
     // Both loads above carry no elements, which exercises the background and not one
     // line of the drawing — and drawing is what a read-only page is *for*. Somebody
@@ -407,6 +461,33 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     await survives('showing an inspector that is not there does nothing', () => showInspector(block));
     await survives('multi-select does not reach for it either',           () => toggleMultiSel(stubEl('b2')));
     multiSel.length = 0;   // undo the block the line above pushed in
+
+    // The Brand (v2 step 4). This page draws the venue's name and logo out of the
+    // markup and has nothing to change it with — no menu, no swatch row, no palette
+    // item — so every one of these lookups comes back null and every one of these
+    // functions has to do nothing rather than throw. The one that matters most is the
+    // first: refreshBrandSurfaces() runs on every page load, read-only or not.
+    await survives('redrawing the Brand surfaces finds none of them',   () => refreshBrandSurfaces());
+    await survives('and the menu that is not there does not open',       () => toggleBrandMenu(null));
+    await survives('or close',                                          () => closeBrandMenu());
+    await survives('placing the venue logo is refused rather than half-done', () => createVenueLogo());
+
+    // The refusal that is the belt to the markup's braces. A read-only page has no menu
+    // to click, so this is the keyboard, the console, and anything else that finds the
+    // function — and it must not repaint a canvas this account may not publish.
+    // Whatever the reply above left the page showing — read rather than written down, so
+    // this cannot pass by being wrong about both halves at once.
+    const showing = BRAND_ID;
+    await survives('switching Brand from a page that may not is a no-op', () => switchBrand(3));
+    check(BRAND_ID === showing, 'and the Brand the page is showing has not moved');
+    await survives('nor does an unknown one reach the canvas',            () => switchBrand(9999));
+    check(BRAND_ID === showing, 'still the one the reply named');
+
+    // A palette swatch, applied by hand. There is no row on this page to click, so this
+    // is the same class of check: the guard inside applyPaletteColor, not the absence of
+    // a button.
+    await survives('applying a palette colour finds no picker to fill',
+                   () => applyPaletteColor(PALETTE_TARGETS[1], '#0b3d2e'));
 
     await survives('a slide upload from a read-only page uploads nothing', () => uploadSlideImage(stubEl('i')));
     await survives('align actions find no targets',   () => { alignBlocks('left'); alignToParent('left'); });
@@ -484,7 +565,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 45;
+    const expected = 65;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }
