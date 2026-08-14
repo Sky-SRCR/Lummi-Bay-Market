@@ -125,11 +125,18 @@ check(emittedOnlyWhenEditable('<button id="publish-btn"'),          'and so is t
 // is emitted only for an admin who holds the lock, and the plain version carries no ids
 // at all. Two copies of `#brand-name` would make every lookup of it depend on which
 // branch the page took.
+// `theme-pick` and `theme-warn` join them with v2 step 5, and they are the second
+// entry of that kind: a Workspace Theme is a fact about the *person*, not about the
+// sign, so somebody who may not touch this layout may still want their own screen
+// legible. Unlike the Brand control, the whole thing reaches this page — the picker,
+// its items and the sentence it says when a choice could not be saved — because there
+// is no half of it a read-only page should be refused.
 const PRESENT = new Set([
     'lock-banner', 'lock-access-bar', 'lock-access-text',
     'workbench', 'palette', 'brand-control', 'canvas-column', 'canvas-footer', 'pub-state',
     'zoom-readout', 'editor-frame', 'canvas-sizer', 'builder-canvas',
-    'toast', 'resize-label', 'display-off-banner', 'top-nav', 'gear-btn', 'gear-menu'
+    'toast', 'resize-label', 'display-off-banner', 'top-nav', 'gear-btn', 'gear-menu',
+    'theme-pick', 'theme-warn'
 ]);
 
 // ---- ...and the list above is checked against the page, not trusted ----------
@@ -268,6 +275,17 @@ check(!canEmitForReadOnlyBasic(EMITS['brand-btn'] || []),
     check(!canEmitForReadOnlyBasic(EMITS[row] || []),
           'and the ' + row + ' palette row stays inside the rail, which is not sent here');
 });
+
+// The Workspace Theme picker (v2 step 5), which this page keeps in full. The Brand
+// control above is emitted with its picker withheld; this one is not, and the difference
+// is the whole distinction between the two nouns — one says what a sign wears and the
+// other says what a screen is painted in, and only the first is somebody else's to lose.
+check(canEmitForReadOnlyBasic(EMITS['theme-pick'] || []),
+      'the theme picker reaches a page that cannot edit');
+check(canEmitForReadOnlyBasic(EMITS['theme-warn'] || []),
+      'and so does the sentence it says when a choice could not be saved');
+check(/name="theme_id"/.test(php) === false,
+      'and it is not a form that would take the page away from unpublished work');
 
 function stubEl(id) {
     return {
@@ -565,7 +583,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 65;
+    const expected = 68;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

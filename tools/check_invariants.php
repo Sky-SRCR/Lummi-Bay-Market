@@ -617,10 +617,13 @@ if (!$badInScript) {
 //                 urlencode(), rawurlencode(), and date() with a literal format. Each
 //                 returns only digits, or only characters no parser is looking for —
 //                 no quote, no angle bracket, no backslash — whatever it is handed.
-//   a colour      SiteChrome::navBg() and its three siblings, which return `#rrggbb` or a
-//                 default because Color::read() decided (§4ai). The one case in this
-//                 app where escaping would have been the wrong tool: they land in a
-//                 <style> block, which has no delimiter to escape.
+//   a colour      SiteChrome::navBg() and its three siblings, SiteChrome::styleVariables()
+//                 which prints all thirteen roles at once, and Color::read() itself —
+//                 each answers `#rrggbb` (or nothing) because Color::read() decided
+//                 (§4ai). The one case in this app where escaping would have been the
+//                 wrong tool: they land in a <style> block or a style attribute, neither
+//                 of which has a delimiter an entity could close. Escaping stops a value
+//                 ending the attribute and does not stop it ending the *declaration*.
 //   a number      a constant whose declaration is a numeric literal — a class constant
 //                 declared in lib/, or a define() in config.php, which is where this
 //                 app declares a non-database setting. Resolved here, not assumed:
@@ -658,7 +661,14 @@ $SAFE_CALLS  = ['count', 'intval', 'intdiv', 'floatval', 'number_format',
 // `:root` block to draw from.
 $SAFE_STATIC = ['Markup::text', 'Markup::jsInAttr', 'HttpReply::jsValue',
                 'SiteChrome::navBg', 'SiteChrome::navBorder', 'SiteChrome::accent', 'SiteChrome::text',
-                'SiteChrome::styleVariables'];
+                'SiteChrome::styleVariables',
+                // The validator itself, which the paragraph above already names as the
+                // reason the four accessors are safe. Its answer set is `#rrggbb` and the
+                // empty string, and an empty declaration in a `style` attribute is one a
+                // browser drops. Listed because a swatch drawn from a colour somebody
+                // stored is exactly the case: escaping it would stop the value ending the
+                // attribute and not stop it ending the declaration.
+                'Color::read'];
 
 /**
  * Every `define('NAME', <number>);` in config.php, as 'NAME'.

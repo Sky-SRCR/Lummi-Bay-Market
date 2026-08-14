@@ -286,6 +286,26 @@ class SiteChrome
     }
 
     /**
+     * Every role as the **store default** has it: the config file's four, and the
+     * documented default for the other nine. What "use the store default" means, in
+     * colours.
+     *
+     * Needed as a value rather than as a state because the page that offers that choice
+     * is already wearing a theme when it renders it — so the alternative was taking the
+     * theme off, reading thirteen colours and putting it back, in a static, half way
+     * down a page. A method that answers without moving anything is the same answer with
+     * nothing left behind if it throws.
+     */
+    public static function storeColors()
+    {
+        $out = [];
+        foreach (array_keys(self::ROLES) as $key) {
+            $out[$key] = isset(self::FIELDS[$key]) ? self::configColor($key) : self::DEFAULTS[$key];
+        }
+        return $out;
+    }
+
+    /**
      * The CSS custom-property name a role is drawn through: `--nav-bg` for `nav_bg`.
      *
      * One function, because three things have to agree about this string — the

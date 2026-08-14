@@ -43,6 +43,9 @@ require_once __DIR__ . '/lib/brand_styles.php';
 require_once __DIR__ . '/lib/brands.php';
 require_once __DIR__ . '/lib/display_request.php';
 require_once __DIR__ . '/lib/assets.php';
+// The Workspace Theme an account chose, for `choose_theme`. `accounts.php` arrives with
+// auth.php, and is named there rather than here for that reason.
+require_once __DIR__ . '/lib/workspace_themes.php';
 require_once __DIR__ . '/lib/upload_limits.php';
 // Every reply below leaves through HttpReply::json(), which owns the three things
 // that travel with it: the status code (derived from the payload's own `reason`, so
@@ -649,6 +652,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_brand_styles') {
         // there is nothing the admin at the keyboard did wrong or can do about it.
         : ['status' => 'error', 'reason' => 'failed',
            'message' => 'Nothing was saved — those block types are missing from the database.']);
+    exit;
+}
+
+// ============================================================
+// POST: choose_theme — which Workspace Theme paints this account's screens
+// ============================================================
+// The one endpoint here that is about the person rather than about a sign, which is why
+// it takes no Display and resolves none. **Every role, basic and admin, and a read-only
+// Builder too**: somebody who may not touch a layout may still want their own screen
+// legible, and nothing this writes reaches a Screen or another account.
+//
+// `theme_id` of 0 is not a missing value, it is the answer "use the store default"
+// (decision 14: a preference you cannot reverse is not a preference). An id naming a
+// theme that is not there is refused by name rather than falling back to the default —
+// silently doing something adjacent to what was asked is what #21 was about, and the
+// Builder puts the page back to the theme it was actually wearing when it hears this.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'choose_theme') {
+    $wantedTheme = $_POST['theme_id'] ?? '';
+    // Only the exact string '0' is the store default. `intval()` would read '0abc', 'no'
+    // and an array as 0 and quietly hand back a reset nobody asked for.
+    if ($wantedTheme === '0' || $wantedTheme === 0) {
+        $themeId = 0;
+    } else {
+        $theme = (new WorkspaceThemeStore($pdo))->forId($wantedTheme);
+        if (!$theme) {
+            HttpReply::json(['status' => 'error', 'reason' => 'invalid',
+                             'message' => 'That theme does not exist any more — somebody may have '
+                                        . 'deleted it. Nothing was changed.']);
+            exit;
+        }
+        $themeId = $theme->id();
+    }
+
+    // Through AccountStore because the column is on `users`: which themes exist is a
+    // fact about a theme, which one somebody chose is a fact about their account.
+    if (!(new AccountStore($pdo))->chooseWorkspaceTheme($actor->id(), $themeId)) {
+        HttpReply::json(['status' => 'error', 'reason' => 'invalid',
+                         'message' => 'That account is no longer there, so nothing was saved.']);
+        exit;
+    }
+    HttpReply::json(['status' => 'success', 'theme_id' => $themeId]);
     exit;
 }
 

@@ -172,6 +172,16 @@ jobs:
       - name: Builder self-test — the Brand a sign wears
         run: node tools/selftest_builder_brands.js
 
+      # v2 step 5: the one control on this page that is about the person rather than
+      # the sign, on a page that may be holding an hour of unpublished layout. The
+      # first design of it posted a form and let the page come back painted, which
+      # works perfectly and throws that work away — so the suite holds the canvas
+      # nodes by identity across a switch and watches the undo stack not move. It
+      # also drives the failure path: the paint happens before the round trip, so a
+      # save that fails leaves the screen showing a theme the account is not on.
+      - name: Builder self-test — a Workspace Theme, changed mid-edit
+        run: node tools/selftest_builder_theme.js
+
       # #26: the defect was not a throw. A `.catch` doing the right thing for a
       # dropped packet did the wrong thing for a failure that was never going to
       # stop, and a sign kept last week's prices. Only visible by running the poll

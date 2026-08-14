@@ -304,6 +304,52 @@ foreach ($brandPayload as $entry) {
 // app not having the feature, and the person who can fix it is the one looking at it
 // (#21's rule — a substitute nobody is told about, in the form of a silence).
 $brandLogoBroken = $wearing !== null && $wearing->logoAssetId() > 0 && $brandLogoNow === '';
+
+// ---- The Workspace Theme picker in the gear (v2 step 5) ----------------------------
+// A setting about this account rather than about this sign, which is what puts it in the
+// gear and not beside the Brand — and why it is drawn for a **read-only** Builder too.
+// Somebody who may not touch this layout may still want their own screen legible.
+//
+// Every theme's colours travel with the page, for the reason the Brand payload does:
+// switching has to be entirely local. There is no reload — this page may be holding
+// unpublished work, and a preference about a menu bar must not be able to throw that
+// away.
+$themeChoices = $themeStore->all();
+$themeNow     = SiteChrome::worn() ? SiteChrome::worn()->id() : 0;
+
+// Keyed by custom-property name rather than by role, so the script never spells the
+// mapping a second time: `SiteChrome::varName()` is the one place that turns `nav_bg`
+// into `--nav-bg`, and a script that did its own `replace(/_/g, '-')` would be the
+// second opinion that disagrees the day a role gains a digit.
+$themeVarsFor = function (array $colors) {
+    $out = [];
+    foreach ($colors as $role => $hex) { $out[SiteChrome::varName($role)] = $hex; }
+    return $out;
+};
+$themePayload = [];
+foreach ($themeChoices as $t) {
+    $entry = $t->toClientArray();
+    $themePayload[] = ['id' => $entry['id'], 'name' => $entry['name'],
+                       'vars' => $themeVarsFor($entry['colors'])];
+}
+// The thirteen the store itself is painted in, which is what "use the store default"
+// puts back. Decision 14: a preference you cannot reverse is not a preference, so this
+// entry is on the menu whatever state the account is in, including when it is already
+// the one selected.
+$themeStoreVars = $themeVarsFor(SiteChrome::storeColors());
+
+// Whether the gear needs a chip of its own to stay findable.
+//
+// Decision 14 says the picker always renders un-themed, and the picker's own card below
+// does — but a picker you cannot reach is not legible either, and the way to it is a
+// glyph drawn in a fixed grey on a themed nav bar. So the *route* is checked, at render,
+// with the same rule the theme form warns by: when the gear would be hard to read
+// against this person's nav colour, it gets a fixed background that does not depend on
+// the theme at all. Today's nav is dark and the glyph is light, so nothing changes for
+// anybody who has not made one — this appears exactly when it is needed, which is
+// `RequestScheme::isSecure()`'s shape: a protection that cannot apply is reported rather
+// than applied flat.
+$gearNeedsChip = Color::hardToRead('#bdc3c7', SiteChrome::navBg());
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -371,6 +417,42 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 #gear-menu a { display: block; color: #dfe6ec; font-size: 12px; padding: 6px 8px;
                border-radius: 3px; text-decoration: none; }
 #gear-menu a:hover { background: var(--work-area); color: #fff; }
+
+/* ── The Workspace Theme picker (decision 14) ──
+   **Every colour in this block is a literal, and that is the rule rather than an
+   oversight.** This is the control for changing your theme, so drawing it in your theme
+   is how a person paints themselves into a corner: one theme whose panel colour matches
+   its text and the menu that would have fixed it is a blank rectangle. It reads as a
+   pale card inside a dark menu on purpose — it is the one thing here that is about the
+   application rather than about this sign.
+
+   The route to it is handled at render instead: see `$gearNeedsChip`. */
+#theme-pick {
+    background: #f4f6f8; border: 1px solid #c7d0d8; border-radius: 5px;
+    padding: 6px; margin: 2px 0 4px;
+}
+#theme-pick .tp-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .7px;
+                      color: #5b6b7a; padding: 1px 4px 4px; }
+#theme-pick .tp-item {
+    display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+    background: #fff; border: 1px solid #dde3ea; border-radius: 4px; color: #1a252f;
+    font-size: 12px; padding: 5px 7px; margin-top: 3px; cursor: pointer;
+}
+#theme-pick .tp-item:hover { background: #e9eef3; }
+#theme-pick .tp-item.on { background: #dfe9f2; border-color: #9db8cd; font-weight: 600; }
+#theme-pick .tp-tick { width: 10px; flex-shrink: 0; color: #1e8449; font-size: 10px; }
+#theme-pick .tp-swatches { display: flex; gap: 2px; margin-left: auto; flex-shrink: 0; }
+#theme-pick .tp-sw { width: 9px; height: 12px; border-radius: 2px; border: 1px solid #b9c4cd; }
+/* Said when the preference could not be saved. Its own colours for the same reason as
+   the card: a sentence about a failed save must not be drawn in the thing that failed. */
+#theme-pick .tp-warn { display: none; font-size: 11px; line-height: 1.4; color: #7a2f18;
+                       background: #fdecea; border: 1px solid #f0b8ae; border-radius: 4px;
+                       padding: 4px 6px; margin-top: 4px; }
+
+/* The gear's own chip, drawn only when the nav colour would have hidden the glyph. */
+.nav-icon.gear-safe { background: #2b3a48; color: #e8eef3; }
+.nav-icon.gear-safe:hover { background: #3a4c5c; color: #fff; }
+
 .btn.publish-btn { background: var(--accent); }
 /* While a publish is in flight. The button being visibly out of action is what
    stops the second click happening at all; the guard in publishCanvas() is what
@@ -911,14 +993,39 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
     <span class="user-badge"><?= Markup::text($me['username']) ?></span>
     <a href="logout.php">Sign Out</a>
     <span id="gear-wrap">
-        <button id="gear-btn" class="nav-icon" onclick="toggleGearMenu(event)"
+        <button id="gear-btn" class="nav-icon<?= $gearNeedsChip ? ' gear-safe' : '' ?>" onclick="toggleGearMenu(event)"
                 title="Account and settings" aria-haspopup="true" aria-expanded="false">&#9881;</button>
         <div id="gear-menu">
             <div class="gf"><?= Markup::text($me['username']) ?> &mdash; <?= $isAdmin ? 'Administrator' : 'Standard user' ?></div>
             <div class="gd"></div>
-            <!-- The Workspace Theme picker lands here (roadmap v2 step 5). It is a
-                 setting about this account rather than about this sign, which is
-                 what puts it in here and not beside the Brand. -->
+            <!-- The Workspace Theme picker. A setting about this account rather than
+                 about this sign, which is what puts it in here and not beside the
+                 Brand — and why it is drawn for a read-only Builder too. Changing it
+                 writes nothing to any sign and reloads nothing: `chooseTheme()`
+                 repaints the chrome in place, because this page may be holding
+                 unpublished work. Drawn in fixed colours (decision 14). -->
+            <div id="theme-pick">
+                <div class="tp-cap">Workspace theme</div>
+                <button type="button" class="tp-item<?= $themeNow === 0 ? ' on' : '' ?>"
+                        data-theme-id="0" onclick="chooseTheme(0)">
+                    <span class="tp-tick"><?= $themeNow === 0 ? '&#10003;' : '' ?></span>
+                    <span>Store default</span>
+                </button>
+                <?php foreach ($themePayload as $tEntry): ?>
+                <button type="button" class="tp-item<?= $themeNow === $tEntry['id'] ? ' on' : '' ?>"
+                        data-theme-id="<?= intval($tEntry['id']) ?>" onclick="chooseTheme(<?= intval($tEntry['id']) ?>)">
+                    <span class="tp-tick"><?= $themeNow === $tEntry['id'] ? '&#10003;' : '' ?></span>
+                    <span><?= Markup::text($tEntry['name']) ?></span>
+                    <span class="tp-swatches">
+                        <?php foreach (['--nav-bg', '--accent', '--work-area'] as $tVar): ?>
+                        <span class="tp-sw" style="background:<?= Color::read($tEntry['vars'][$tVar]) ?>"></span>
+                        <?php endforeach; ?>
+                    </span>
+                </button>
+                <?php endforeach; ?>
+                <div class="tp-warn" id="theme-warn"></div>
+            </div>
+            <div class="gd"></div>
             <a href="crud.php">Asset Library</a>
             <?php if ($isAdmin): ?>
             <a href="admin_panel.php">Admin Panel</a>
@@ -5050,6 +5157,113 @@ document.addEventListener('click', function (e) {
     var brands = document.getElementById('brand-menu');
     if (brands && brands.classList.contains('open') && !brands.contains(e.target)) { closeBrandMenu(); }
 });
+
+// ============================================================
+// THE WORKSPACE THEME PICKER (v2 step 5)
+// ============================================================
+// What one person's screen is painted in, changed without a reload. The no-reload part
+// is the requirement rather than the polish: this page can be holding an hour of
+// unpublished layout, and a control in the gear menu that reloaded to repaint would
+// throw that away — a setting about a menu bar destroying work on a sign.
+//
+// So the thirteen roles are CSS custom properties (see the `:root` block), and changing
+// theme is thirteen `setProperty()` calls. Nothing about the canvas, the layout, the
+// undo history or the edit lock is involved: decision 11 keeps every role off the
+// canvas, and `tools/check_invariants.php` keeps it that way, so a repaint here cannot
+// move a pixel of what the sign will show.
+
+var THEMES       = <?= HttpReply::jsValue($themePayload) ?>;
+var THEME_ID     = <?= intval($themeNow) ?>;
+// What "use the store default" puts back: the four colours out of branding_config.php
+// and the documented defaults for the other nine. Sent as a set rather than computed by
+// removing properties, because `removeProperty()` would fall back to whatever the
+// stylesheet declares — which is this person's theme, since the `:root` block was
+// rendered wearing it.
+var THEME_STORE  = <?= HttpReply::jsValue($themeStoreVars) ?>;
+
+/** The thirteen custom properties for one theme id, or the store default's. */
+function themeVarsFor(id) {
+    for (var i = 0; i < THEMES.length; i++) {
+        if (THEMES[i].id === id) { return THEMES[i].vars; }
+    }
+    return THEME_STORE;
+}
+
+/**
+ * Paint the page in a set of custom properties.
+ *
+ * Set on the document element, which is what `var(--x)` in a `:root` rule resolves
+ * against — an inline property there outranks the stylesheet's own declaration without
+ * either being removed, so the rendered `:root` block stays as the fallback.
+ */
+function applyThemeVars(vars) {
+    var root = document.documentElement;
+    if (!root || !vars) { return; }
+    for (var name in vars) {
+        if (Object.prototype.hasOwnProperty.call(vars, name)) {
+            root.style.setProperty(name, vars[name]);
+        }
+    }
+}
+
+/** Move the tick and the highlight onto the chosen row. */
+function markThemeChoice(id) {
+    var items = document.querySelectorAll('#theme-pick .tp-item');
+    for (var i = 0; i < items.length; i++) {
+        // `dataset`, as the Brand menu reads its own items: one idiom for "the id on this
+        // row" across the page, rather than two that behave the same in a browser and
+        // differently under anything reading the markup.
+        var on = parseInt(items[i].dataset.themeId, 10) === id;
+        items[i].classList.toggle('on', on);
+        var tick = items[i].querySelector('.tp-tick');
+        if (tick) { tick.innerHTML = on ? '&#10003;' : ''; }
+    }
+}
+
+function themeWarn(msg) {
+    var box = document.getElementById('theme-warn');
+    if (!box) { return; }
+    box.textContent   = msg || '';
+    box.style.display = msg ? 'block' : 'none';
+}
+
+/**
+ * Choose a Workspace Theme: 0 is the store default.
+ *
+ * Painted first and saved second, and the failure is handled rather than ignored. A
+ * preference that looks applied and was not stored is #21's shape — the wrong state,
+ * reported as success — so a failed save puts the page back to the theme it was
+ * actually wearing and says so, in the card's own colours. The `.catch()` is not
+ * optional and not a formality: it is the thing §4au was filed about.
+ */
+function chooseTheme(id) {
+    id = parseInt(id, 10) || 0;
+    var was = THEME_ID;
+    if (id === was) { themeWarn(''); return; }
+
+    applyThemeVars(themeVarsFor(id));
+    markThemeChoice(id);
+    THEME_ID = id;
+    themeWarn('');
+
+    var fd = new FormData();
+    fd.append('action', 'choose_theme');
+    fd.append('theme_id', String(id));
+    fd.append('csrf_token', CSRF_TOKEN);
+    fetch('api.php', { method: 'POST', body: fd })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d && d.status === 'success') { return; }
+            throw new Error((d && d.message) ? d.message : 'The server did not accept that.');
+        })
+        .catch(function (err) {
+            applyThemeVars(themeVarsFor(was));
+            markThemeChoice(was);
+            THEME_ID = was;
+            themeWarn('That was not saved, so you are still on the theme you had. ' +
+                      (err && err.message ? err.message : ''));
+        });
+}
 
 function showToast(msg, isErr) {
     var t = document.getElementById('toast');
