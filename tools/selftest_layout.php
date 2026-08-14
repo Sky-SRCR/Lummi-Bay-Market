@@ -1631,6 +1631,45 @@ checkSame('Verdana', $brand->all($brandB)['price']['font_family'], 'which really
 checkSame('Georgia',  $brand->all(1)['price']['font_family'],
           'and left the first Brand exactly as it was — the re-key, proved');
 
+// ---- schema.sql's seed and STARTING_POINTS are the same six rows -------------
+// `BrandStyles::STARTING_POINTS` is where a new Brand starts, and it has two readers
+// in PHP — `BrandStyles::seedFor()` for a Brand an admin creates, and
+// `signageSchemaPlan()`'s step for the one convergence makes. schema.sql is the third
+// writer and the one that cannot call PHP, so it holds a *copy*. The docblock claims
+// three writers of one list; this is what makes that true rather than aspirational.
+//
+// A drift here is silent and lasting: a fresh install built from schema.sql would
+// start its first Brand somewhere every later Brand does not, and nothing would ever
+// say so — the values are only wrong relative to each other, and both render.
+$ssSql = file_get_contents(__DIR__ . '/../schema.sql');
+$ssPos = strpos($ssSql, 'INSERT IGNORE INTO block_styles');
+check($ssPos !== false, 'schema.sql seeds the branded block types');
+$ssRows = [];
+if ($ssPos !== false) {
+    $ssChunk = substr($ssSql, $ssPos, strpos($ssSql, ';', $ssPos) - $ssPos);
+    if (preg_match_all(
+            "/\(\s*1\s*,\s*'([a-z_0-9]+)'\s*,\s*'([^']*)'\s*,\s*(\d+)\s*,\s*'([^']*)'\s*,"
+            . "\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*([0-9.]+)\s*\)/",
+            $ssChunk, $ssM, PREG_SET_ORDER)) {
+        foreach ($ssM as $ssOne) {
+            $ssRows[$ssOne[1]] = [$ssOne[2], intval($ssOne[3]), $ssOne[4], $ssOne[5], $ssOne[6],
+                                  floatval($ssOne[7])];
+        }
+    }
+}
+checkSame(array_keys(BrandStyles::STARTING_POINTS), array_keys($ssRows),
+          'schema.sql seeds exactly the branded types BrandStyles starts a Brand with');
+foreach (BrandStyles::STARTING_POINTS as $ssType => $ssWant) {
+    $ssHave = $ssRows[$ssType] ?? null;
+    // Compared as values rather than as text: the line height is 1.30 in the file and
+    // 1.3 in PHP, and a difference of spelling is not a drift to report.
+    $ssSame = is_array($ssHave)
+           && $ssHave[0] === $ssWant[0] && $ssHave[1] === $ssWant[1]
+           && $ssHave[2] === $ssWant[2] && $ssHave[3] === $ssWant[3]
+           && $ssHave[4] === $ssWant[4] && floatval($ssHave[5]) === floatval($ssWant[5]);
+    checkSame(true, $ssSame, 'and starts ' . $ssType . ' at the same values PHP does');
+}
+
 checkSame(0, $brand->seedFor($brandB), 'seeding a Brand that already has its six writes nothing');
 checkSame(6, $brand->seedFor(makeTestBrandRow($pdo, 'Casino Floor')),
           'and a Brand with none gets all six');
@@ -7392,4 +7431,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1993 : 1967);
+reportChecks(testIsMysql() ? 2001 : 1975);

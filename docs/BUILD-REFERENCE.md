@@ -6229,6 +6229,38 @@ was with `salmon house`, a string that appears nowhere in the list they were abo
 go and look at. `otherBrandNamed()` answers the Brand rather than a boolean for exactly
 that reason: a predicate can only echo its input back.
 
+Six more survivors turned into checks: `destroy()` carried a dead clause refusing an
+empty typed name, which `strcasecmp` already refused (removed, not decorated —
+§4az's dead clause was the one that could still be wrong); `wornBySentence()`
+truncates at six signs and says "and N more", and no test had ever had more than one
+wearer; `forId()`'s `isIdLike` guard, reached straight from `$_POST['b_id']` on the
+save and delete forms; `NAME_MAX` and `PALETTE_SLOTS` asserted as literals, because a
+check written as `str_repeat('a', NAME_MAX)` moves with the constant and passes just
+as happily at a width the column does not have; and `otherBrandNamed()`'s default
+`exceptId` and its `cleanName()` call, neither of which anything had exercised — the
+second meaning untrimmed input was a way past the clash check.
+
+The last one is the most useful and was the least obvious. Every literal in
+`BrandStyles::STARTING_POINTS` survived, because nothing asserted what a new Brand
+*starts as*. That list has three writers — `seedFor()`, convergence's step, and
+`schema.sql`, which cannot call PHP and therefore holds a copy — and the docblock
+claims they are one list. They now are: the suite parses `schema.sql`'s seed and
+compares it field by field, and the check was hand-mutated (a `30` to a `31`) and seen
+to fail before it was kept. A drift there is silent and permanent — a fresh install
+would start its first Brand somewhere every later Brand does not, both sets render
+fine, and only their disagreement is wrong.
+
+**The final counts, and what they are not.** `brands` 64/100 killed, `brand_admin`
+54/87, `brand_styles` 64/95. The remaining survivors are dominated by `===` → `==` on
+comparisons where both sides are already strings, and by threshold literals inside
+clamps whose *return* values are separately asserted — equivalent mutants, not gaps.
+Two are worth naming rather than chasing: `forId()`'s `if ($id <= 0)` survives because
+the query below it finds nothing for 0 anyway, so the guard saves a round trip rather
+than changing an answer; and `logoAssetId()`'s `&&` survives because `SELECT *` always
+returns the column, so the `isset()` half can never be the deciding one. Both are
+worth keeping and neither is testable without making the code worse, which is what
+invariant 30 means by a reason to write down.
+
 ---
 
 ## 5. Verification
