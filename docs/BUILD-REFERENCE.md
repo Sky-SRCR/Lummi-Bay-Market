@@ -6650,6 +6650,64 @@ its debt table: nothing in this repo can see whether a light theme leaves the Bu
 white-on-dark text unreadable, whether the picker card sits where the gear menu can show
 it at 1080p, or whether the contrast warning wraps.
 
+### 4be. The suite had only ever run on an install nobody has
+
+§4bd ends on a fallback that no check in this repo could see, because this container has
+no `branding_config.php` and so the shop's colour and the shipped one are the same string
+here. Two `inFreshProcess()` checks closed that one line. The question worth asking next
+was how big the hole around it was, and it is answerable in ten seconds: define the ten
+names the generated file defines, then load the suite.
+
+**Of 2271 checks, seven noticed — and all seven noticed by failing.** Two said the shop's
+navigation is `#1a252f`, which is the colour the app ships with and not the colour any
+branded install holds. Five said the clock is in `America/Los_Angeles`, which is the
+setting's default and not the zone the live host was observed on (§4ap). Nothing else in
+the file changed its answer at all. So the state of it was: one configuration exercised,
+the app's other configuration — the one every shop is actually running — never, and
+seven checks that would have failed on the live install, on the very run somebody makes
+to convince themselves a deployment went well. `tools/` **is** uploaded (`DEPLOY-SKIP` §B
+puts it behind an `.htaccess`, not off the server), so that run is a real one.
+
+**None of the seven was wrong about the app.** Each was written as a literal where it
+meant "the store's own", which is the same slip §4bd's fallback was: a phrase that means
+`branding_config.php` everywhere else, spelled as `DEFAULTS` because on this machine
+those agree. The fix is to say the thing — `SiteChrome::configColor()` rather than
+`SiteChrome::DEFAULTS`, `StoreClock::zone()` rather than the zone this checkout defaults
+to — and where that would have made a check compare a function with itself, to move the
+literal into a process that has been *told* what the setting is. The clock arithmetic
+keeps its fixed point (2:15pm, five lines up, where the zone is an argument); what the
+caller checks now assert is that the caller went through the door at all, which a bare
+`strtotime()` still fails by the hours the check above it measures. Two new checks carry
+what the rewrites gave up: `apply()` in a process pinned to Auckland, and the Branding
+form reading the shop's own colour while the page around it wears a theme — the save that
+would otherwise overwrite the shop's file with somebody's night shift.
+
+One more check changed for a different reason. `checkSame([], SiteChrome::unreadable())`
+asserted an empty list, which is a property of *this checkout's* config being clean rather
+than of the seam: it passed on a machine with nothing wrong, while the theme it was worn
+with had nothing wrong either. It now wears a theme holding a colour this app cannot read
+and asserts that value is not in what the audit reports. That is the sentence it was
+always meant to be, and it holds on a damaged install too — which matters, because a
+suite that goes red on the customer's data rather than on the code is a red line people
+learn to skip.
+
+**`tools/selftest_installed.php` is what keeps this from happening a third time.** It runs
+the same suite three more times, one subprocess per configuration because a `define()`
+cannot be undone: *branded* (all ten settings changed, a zone eleven hours away), *live-like*
+(only the zone, because most installs have edited one setting and not ten), and *damaged*
+(a colour in the config that this app cannot read). It asserts its own arms against
+`BrandingConfig::DEFAULTS` before it runs anything, since an arm that accidentally *is* the
+default configuration would prove nothing and report it in green. Put the two literals back
+and it fails all three arms, naming the check and both colours — which is invariant 30's
+discipline applied to a harness rather than to a line: it was watched failing before it was
+believed.
+
+What it does not cover is the shape of the same problem one level out. This suite has now
+been run in four configurations and two engines, and every one of them is still a process
+on a machine with no shop attached: `php -l` here is 8.4 against an 8.2 floor, the MySQL arm
+needs a server this container has never had, and the five browser walks are still owed. A
+configuration you can define is the cheap half.
+
 ---
 
 ## 5. Verification
@@ -6676,6 +6734,10 @@ php tools/check_invariants.php           # the greps below, run rather than read
                                          # syntax check, which is what covers the hole
                                          # `php -l` leaves on the line above
 php tools/selftest_layout.php            # the real modules, in-memory SQLite
+php tools/selftest_installed.php         # the same suite as an install that has been set
+                                         # up — branded, live-like, and damaged. The plain
+                                         # run has only ever seen a checkout with no
+                                         # `branding_config.php`, which is no shop (§4be)
 node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
                                          # that has only what a read-only page emits
 node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an

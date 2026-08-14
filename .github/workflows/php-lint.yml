@@ -86,6 +86,12 @@ jobs:
       - name: Layout self-test — SQLite
         run: php tools/selftest_layout.php
 
+      # And the same suite as an install that has been set up. A checkout has no
+      # `branding_config.php` — it is generated and deliberately outside the repo —
+      # so every run above this line is the one configuration no shop is in (§4be).
+      - name: Layout self-test — as a set-up install
+        run: php tools/selftest_installed.php
+
       # The same suite against the engine the app runs on, where the publish
       # transaction's `SELECT … FOR UPDATE` is the real statement rather than the
       # stub SQLite needs (#48).

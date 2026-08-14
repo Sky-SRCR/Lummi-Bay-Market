@@ -2610,8 +2610,14 @@ checkSame('', StoreClock::label('not a date', 'g:ia'),
           'an unreadable stamp is no words at all, so a refusal reads short rather than wrong');
 
 // ---- Through the callers ---------------------------------------------------------
-// The suite's own zone is the setting's default, so these assert the store's answer
-// rather than the server's — and would have read two hours out before this landed.
+// These assert the store's answer rather than the server's — they would have read two
+// hours out before this landed — and they say so *through* `StoreClock` rather than by
+// naming a time. The clock arithmetic is a fixed point five lines up, where the zone is
+// an argument and 2:15pm is written down; here the question is only whether the caller
+// went through that door or read the column itself, which a bare `strtotime()` still
+// fails by the hours the check above measures. Written as a literal these three passed
+// only on a checkout with no `branding_config.php` in it, which is this one and CI and
+// not the install they protect.
 $pdo   = newTestDb();
 $store = newTestDisplayStore($pdo);
 $zoned = makeTestDisplay($pdo, 'zoned', 'Zoned');
@@ -2628,8 +2634,8 @@ checkMentions($store->forId($zoned->id())->editingSentence(),
 // conversion and not about the two calls landing in the same minute.
 $pdo->prepare("UPDATE displays SET lock_taken_at = ? WHERE id = ?")
     ->execute([$instant, $zoned->id()]);
-checkSame('2:15pm', $store->forId($zoned->id())->lockState()->takenAtLabel(),
-          'a lock taken at 21:15 UTC is a lock taken at 2:15pm on the shop floor');
+checkSame(StoreClock::label($instant, 'g:ia'), $store->forId($zoned->id())->lockState()->takenAtLabel(),
+          'a lock taken at 21:15 UTC is a lock taken at the store\'s own hour on the shop floor');
 
 // ---- The publish stamp was the third clock ---------------------------------------
 // last_published_at was written with CURRENT_TIMESTAMP, which is MySQL's *session*
@@ -2652,7 +2658,8 @@ $pdo->prepare("UPDATE displays SET last_published_at = ?, last_published_by = 1 
 // point of the change rather than the brevity: without it a sign published last
 // August and left alone reads as published this August, and "is what I'm looking at
 // live?" is the one question this sentence exists to answer.
-checkSame('sky, 8/11/26 2:15pm', $store->forId($zoned->id())->lastPublishDescription(),
+checkSame('sky, ' . StoreClock::label($instant, 'n/j/y g:ia'),
+          $store->forId($zoned->id())->lastPublishDescription(),
           'and the refusal names the moment in the store\'s zone, year and all');
 $pdo->prepare("UPDATE displays SET last_published_at = 'nonsense' WHERE id = ?")
     ->execute([$zoned->id()]);
@@ -2670,10 +2677,20 @@ checkMentions($configSrc, 'StoreClock::apply()',
               'config.php points the process clock at the store, once, for every page');
 checkMentions(file_get_contents(__DIR__ . '/../db_connect.php'), "SET time_zone = '+00:00'",
               'and db_connect.php asks the database for UTC, which was the clock no screen showed');
-checkSame('America/Los_Angeles', StoreClock::apply(),
+checkSame(StoreClock::zone(), StoreClock::apply(),
           'apply() answers with the zone it set, so a caller can say which one it was');
-checkSame('America/Los_Angeles', date_default_timezone_get(),
+checkSame(StoreClock::zone(), date_default_timezone_get(),
           'and the process is actually on it afterwards — config.php ran this on the way in');
+// Which of those two is doing the work is invisible in a process whose zone is the
+// default, and that is every process this suite can otherwise build: `apply()` could
+// ignore the setting entirely and both lines above would still agree. One process that
+// has been told a zone answers it.
+checkSame('Pacific/Auckland|Pacific/Auckland', inFreshProcess('
+        define("STORE_TIMEZONE", "Pacific/Auckland");
+        require LBM_ROOT . "/lib/store_clock.php";
+        $answered = StoreClock::apply();
+        echo $answered . "|" . date_default_timezone_get();
+    '), 'and the zone it sets is the one the store configured, not the one this app ships with');
 
 // ---- The Settings form ------------------------------------------------------------
 $panelTz = file_get_contents(__DIR__ . '/../admin_panel.php');
@@ -2694,7 +2711,7 @@ checkSame(0, preg_match('/date\(\s*.M j, Y.\s*,\s*strtotime/', $panelTz),
 // to name all three clocks now, because there were three.
 $tzReport = (new ServerReport($pdo, ['HTTPS' => 'on']))->runtime();
 check(isset($tzReport[StoreClock::LABEL]), 'This Server reports the zone the app shows times in');
-checkMentions($tzReport[StoreClock::LABEL][0], 'America/Los_Angeles', 'and says which one that is');
+checkMentions($tzReport[StoreClock::LABEL][0], StoreClock::zone(), 'and says which one that is');
 check(isset($tzReport['PHP time zone']), 'and the server\'s own, which no longer decides anything');
 check(isset($tzReport['Database time zone']),
       'and the database\'s, which is where an account\'s creation date comes from');
@@ -7596,14 +7613,26 @@ checkSame($tOne->id(), SiteChrome::worn()->id(), 'and the page can say which the
 // The Branding form's own reads must not go through the theme. This is the defect that
 // was one edit away: an admin wearing a theme opens Site Branding, is shown the
 // theme's colours as "what is there now", and saves them into the store's own file.
-checkSame(SiteChrome::DEFAULTS['nav_bg'], SiteChrome::configColor('nav_bg'),
-          'while the Branding form is still shown what the config holds, not what is worn');
-checkSame([], SiteChrome::unreadable(),
-          'and the audit still reports on the config rather than on a theme');
+// Written against the *worn* colour and the config's own answer rather than against
+// `DEFAULTS`, which is the shape they were first written in and which was true here only
+// because this container has no branding file. Both of them failed the moment the suite
+// was run in a process that had one — on the live install they were asserting that the
+// shop's nav is the colour the app ships with. What they mean has no `DEFAULTS` in it.
+check(SiteChrome::configColor('nav_bg') !== $tOne->colorFor('nav_bg'),
+      'while the Branding form is still shown what the config holds, not what is worn');
+// Wearing a theme this app cannot read, because the empty list this check used to assert
+// was a property of the machine rather than of the seam: it said "no findings" on a
+// checkout whose config is clean, and said it while the worn theme had nothing wrong with
+// it either. What it means is that a theme's bad value is not reported as the shop's.
+SiteChrome::wear(new WorkspaceTheme(['id' => 0, 'name' => 'Unreadable', 'nav_bg' => 'chartreuse-ish']));
+check(!in_array('chartreuse-ish', array_column(SiteChrome::unreadable(), 'value'), true),
+      'and the audit still reports on the config rather than on a theme, even wearing one '
+    . 'whose colour it cannot read');
+SiteChrome::wear($tOne);
 
 SiteChrome::wear(null);
-checkSame(SiteChrome::DEFAULTS['nav_bg'], SiteChrome::navBg(),
-          'taking the theme off puts every role back');
+checkSame(SiteChrome::configColor('nav_bg'), SiteChrome::navBg(),
+          'taking the theme off puts every role back to the store default');
 
 // ---- A theme that stores something nobody can read --------------------------------
 // The column defaults make this state unreachable through the form, so it is built the
@@ -7650,6 +7679,21 @@ checkSame(SiteChrome::DEFAULTS['nav_bg'], inFreshProcess('
         SiteChrome::wear(new WorkspaceTheme(["id" => 1, "name" => "T", "nav_bg" => "darkblue"]));
         echo SiteChrome::navBg();
     '), 'and with no config file at all it lands on the documented default, one layer further down');
+// And the pair further up this section, held where they can actually say something. In
+// this container they compare the store default with the store default; on a branded
+// install they are the difference between the Branding form showing the shop what it set
+// and showing it somebody's night-shift theme, which is the save that would overwrite the
+// shop's own file. Running the whole suite with the four constants defined is how both
+// were found: of 2271 checks exactly two noticed, and both by failing.
+checkSame('#8b0000|#101820|#8b0000', inFreshProcess('
+        define("BRAND_NAV_BG", "#8b0000");
+        require LBM_ROOT . "/lib/workspace_themes.php";
+        SiteChrome::wear(new WorkspaceTheme(["id" => 1, "name" => "T", "nav_bg" => "#101820"]));
+        echo SiteChrome::configColor("nav_bg") . "|" . SiteChrome::navBg() . "|";
+        SiteChrome::wear(null);
+        echo SiteChrome::navBg();
+    '), 'the Branding form reads the shop\'s own colour while the page around it wears a '
+      . 'theme, and taking the theme off puts that colour back rather than the shipped one');
 
 // ---- What the browser is handed ----------------------------------------------------
 // Resolved, not raw: `style.setProperty()` discards a value it cannot read in silence,
@@ -8203,7 +8247,9 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 //
 // Step 5 moved it from 2068 to 2257, its mutation runs added the eleven checks its
 // survivors asked for (2268), and changing which layer an unusable theme colour falls
-// through to added three more, two of them in a subprocess. None of that touched the
-// engine-only section, so the count below it is still 25 — read, not assumed, which is
-// the whole of the paragraph above.
-reportChecks(testIsMysql() ? 2296 : 2271);
+// through to added three more, two of them in a subprocess. Running the suite as an
+// install that has actually been set up (§4be) then rewrote seven checks that were
+// asserting this checkout's own configuration and added two that say what the rewrites
+// gave up. None of that touched the engine-only section, so the count below it is still
+// 25 — read, not assumed, which is the whole of the paragraph above.
+reportChecks(testIsMysql() ? 2298 : 2273);

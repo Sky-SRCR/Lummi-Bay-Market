@@ -252,8 +252,14 @@ $rules = [
         // whatever the file holds into its own stylesheet. The self-test is listed
         // because it pins a value to prove a save leaves the other seven alone; the
         // rule is about pages, and there is nowhere else for a test of it to live.
+        // `selftest_installed.php` is the other direction entirely: it *defines* the
+        // names, so that the suite runs as a shop that has set the app up rather than
+        // as a fresh checkout, and it paints nothing. A file that only writes them is
+        // not a second reader, and the two names it uses are checked against
+        // `BrandingConfig::DEFAULTS` on every run rather than typed and trusted.
         'expect' => ['admin_panel.php', 'branding_config.php', 'lib/site_chrome.php',
-                     'lib/branding.php', 'tools/selftest_layout.php'],
+                     'lib/branding.php', 'tools/selftest_layout.php',
+                     'tools/selftest_installed.php'],
         'why'    => 'these land in a <style> block, where there is no delimiter to escape '
                   . 'and a value that is not a colour is CSS — Color::read() is what makes '
                   . 'them safe, and it is called once (§4ai)',
