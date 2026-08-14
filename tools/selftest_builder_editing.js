@@ -42,6 +42,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { buildPageJs } = require('./page_constants');
 
 const BUILDER = path.join(__dirname, '..', 'builder.php');
 
@@ -227,17 +228,14 @@ global.clearTimeout = () => {};
 
 const php = fs.readFileSync(BUILDER, 'utf8');
 
-let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
-            .match(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)
-            .map(function (b) { return b.replace(/^<script\b[^>]*>/i, '').replace(/<\/script>$/i, ''); })
-            .join('\n');
-
 // An admin on a Display nobody else holds — the only page on which any of these
 // six controls exists at all.
-js = js.replace(/^var READ_ONLY\s*=.*$/m, 'var READ_ONLY = false;')
-       .replace(/^var IS_ADMIN\s*=.*$/m,  'var IS_ADMIN = true;')
-       .replace(/^var CANVAS_W\s*=.*$/m,  'var CANVAS_W = 1920;')
-       .replace(/^var CANVAS_H\s*=.*$/m,  'var CANVAS_H = 1080;');
+let js = buildPageJs(BUILDER, {
+    READ_ONLY: false,
+    IS_ADMIN:  true,
+    CANVAS_W:  1920,
+    CANVAS_H:  1080,
+});
 
 check(/var CANVAS_W = 1920;/.test(js), 'the page carries a canvas size set by the Display');
 

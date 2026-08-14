@@ -26,6 +26,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { buildPageJs } = require('./page_constants');
 
 const BUILDER = path.join(__dirname, '..', 'builder.php');
 
@@ -140,22 +141,19 @@ function inputWith(bytes, name) {
 
 const php = fs.readFileSync(BUILDER, 'utf8');
 
-let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
-            .match(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)
-            .map(function (b) { return b.replace(/^<script\b[^>]*>/i, '').replace(/<\/script>$/i, ''); })
-            .join('\n');
-
 // An admin on a Display nobody else holds — the page where uploading is possible
 // at all. The limit is forced to a number a host really uses, so a check can
 // state a size either side of it.
-js = js.replace(/^var READ_ONLY\s*=.*$/m,        'var READ_ONLY = false;')
-       .replace(/^var IS_ADMIN\s*=.*$/m,         'var IS_ADMIN = true;')
-       .replace(/^var UPLOAD_MAX_BYTES\s*=.*$/m, 'var UPLOAD_MAX_BYTES = 8388608;')
-       .replace(/^var UPLOAD_MAX_LABEL\s*=.*$/m, 'var UPLOAD_MAX_LABEL = "8 MB";')
-       // Named, so a check can read the sentence a person would and see the sign
-       // named in it — "published!" not saying which one is half of §4h.
-       .replace(/^var DISPLAY_TITLE\s*=.*$/m,    'var DISPLAY_TITLE = "Deli Board";')
-       .replace(/^var DISPLAY_TAG\s*=.*$/m,      'var DISPLAY_TAG = "deli";');
+let js = buildPageJs(BUILDER, {
+    READ_ONLY:        false,
+    IS_ADMIN:         true,
+    UPLOAD_MAX_BYTES: 8388608,
+    UPLOAD_MAX_LABEL: '8 MB',
+    // Named, so a check can read the sentence a person would and see the sign
+    // named in it — "published!" not saying which one is half of §4h.
+    DISPLAY_TITLE:    'Deli Board',
+    DISPLAY_TAG:      'deli',
+});
 
 check(/var UPLOAD_MAX_BYTES = 8388608;/.test(js), 'the page carries a server-set upload ceiling');
 check(/var UPLOAD_MAX_LABEL = "8 MB";/.test(js),  'and a wording for it');
@@ -337,6 +335,50 @@ section('An admin who loses the display mid-edit');
 // edit — and the same class of defect: a reply the page received and did nothing
 // with. Losing the display makes every later heartbeat fail, so a page that swallows
 // the refusal carries on letting somebody work on a sign they have already lost.
+
+// ---- The warning before it, which nothing could reach ------------------------
+
+// `renderLockBars()` has three bands and this suite could only ever see one of them.
+// LOCK_WARN_SECONDS and LOCK_LAPSE_SECONDS are interpolated by PHP, every node suite
+// stripped that to the literal `0`, and the warning is drawn when
+// `idle >= WARN && idle < LAPSE` — which with both at zero is false for every idle
+// there has ever been. So the bar that says an edit lock is about to lapse, and the
+// countdown inside it, were not untested but unreachable (§4bf). The numbers come from
+// `page_constants.js` now, which is what makes the band exist at all.
+function idleFor(seconds) {
+    lastInteraction = Date.now() - seconds * 1000;
+    renderLockBars();
+    return {
+        idle:   document.getElementById('lock-idle-bar').style.display,
+        lapsed: document.getElementById('lock-lapsed-bar').style.display,
+        // Through String() because the page assigns a number and a browser's
+        // textContent coerces; this stub stores what it was handed.
+        mins:   String(document.getElementById('lock-idle-mins').textContent),
+    };
+}
+
+check(LOCK_WARN_SECONDS > 0 && LOCK_WARN_SECONDS < LOCK_LAPSE_SECONDS,
+      'the page carries a warning window that opens before the lock lapses');
+
+let bars = idleFor(LOCK_WARN_SECONDS - 60);
+checkSame('none', bars.idle,   'a minute before the warning window nothing is on screen');
+checkSame('none', bars.lapsed, 'and certainly not the lapsed notice');
+
+bars = idleFor(LOCK_WARN_SECONDS + 20);
+checkSame('flex', bars.idle,   'inside the window the idle warning appears');
+checkSame('none', bars.lapsed, 'and the lapsed notice does not, because the lock is still held');
+checkSame('2', bars.mins, 'saying how many minutes are left, rounded to what a person would say');
+
+// The floor, which is the only arithmetic in that line and the one a person reads at
+// the worst moment: five seconds left rounds to zero minutes, and "0 minutes left"
+// reads as "already gone" beside a lock that is still theirs.
+bars = idleFor(LOCK_LAPSE_SECONDS - 5);
+checkSame('flex', bars.idle, 'five seconds before the lapse the warning is still the bar on screen');
+checkSame('1', bars.mins,    'and it says one minute rather than none, which would read as too late');
+
+bars = idleFor(LOCK_LAPSE_SECONDS + 1);
+checkSame('none', bars.idle,   'a second past the lapse the warning goes');
+checkSame('flex', bars.lapsed, 'and the lapsed notice replaces it — the two are never both up');
 
 // Two bars would otherwise be true at once. Age this tab's last interaction past
 // the lapse window first, so the check can see the access notice win rather than
@@ -681,7 +723,7 @@ loadAssets = realLoadAssets;
 function finish() {
     // Counted rather than trusted, for the same reason the other suites carry a total:
     // without it, deleting half this file still reports a clean run.
-    const expected = 100;
+    const expected = 110;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

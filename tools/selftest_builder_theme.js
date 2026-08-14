@@ -52,6 +52,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { buildPageJs } = require('./page_constants');
 
 const BUILDER = path.join(__dirname, '..', 'builder.php');
 
@@ -311,27 +312,18 @@ const STORE = varsFrom('#cc00');
 
 const php = fs.readFileSync(BUILDER, 'utf8');
 
-let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
-            .match(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)
-            .map(function (b) { return b.replace(/^<script\b[^>]*>/i, '').replace(/<\/script>$/i, ''); })
-            .join('\n');
-
-js = js.replace(/^var READ_ONLY\s*=.*$/m,      'var READ_ONLY = false;')
-       .replace(/^var IS_ADMIN\s*=.*$/m,       'var IS_ADMIN = true;')
-       .replace(/^var CANVAS_W\s*=.*$/m,       'var CANVAS_W = 1920;')
-       .replace(/^var CANVAS_H\s*=.*$/m,       'var CANVAS_H = 1080;')
-       .replace(/^var UNDO_LIMIT\s*=.*$/m,     'var UNDO_LIMIT = 5;')
-       .replace(/^var DISPLAY_TAG\s*=.*$/m,    "var DISPLAY_TAG = 'salmon-a';")
-       .replace(/^var DISPLAY_ID\s*=.*$/m,     'var DISPLAY_ID = 4;')
-       .replace(/^var DISPLAY_TITLE\s*=.*$/m,  "var DISPLAY_TITLE = 'Salmon House A';")
-       .replace(/^var CSRF_TOKEN\s*=.*$/m,     "var CSRF_TOKEN = 'tok';")
-       .replace(/^var LAYOUT_STAMP\s*=.*$/m,   "var LAYOUT_STAMP = '4';")
-       .replace(/^var BRANDS\s*=.*$/m,         'var BRANDS = [];')
-       .replace(/^var BRAND_ID\s*=.*$/m,       'var BRAND_ID = 0;')
-       .replace(/^var CAN_PICK_BRAND\s*=.*$/m, 'var CAN_PICK_BRAND = false;')
-       .replace(/^var THEMES\s*=.*$/m,         'var THEMES = ' + JSON.stringify([NIGHT, DAY]) + ';')
-       .replace(/^var THEME_ID\s*=.*$/m,       'var THEME_ID = 3;')
-       .replace(/^var THEME_STORE\s*=.*$/m,    'var THEME_STORE = ' + JSON.stringify(STORE) + ';');
+let js = buildPageJs(BUILDER, {
+    READ_ONLY:      false,
+    IS_ADMIN:       true,
+    UNDO_LIMIT:     5,
+    DISPLAY_TAG:    'salmon-a',
+    DISPLAY_TITLE:  'Salmon House A',
+    CSRF_TOKEN:     'tok',
+    LAYOUT_STAMP:   '4',
+    THEMES:         [NIGHT, DAY],
+    THEME_ID:       3,
+    THEME_STORE:    STORE,
+});
 
 // Each of the three theme constants has to have *replaced* something. A page constant
 // renamed and a suite still substituting the old name is a suite testing the default —
@@ -602,6 +594,15 @@ checkSame(DAY.id, THEME_ID, 'and leaves the page where it was');
           'and nothing in the theme path reloads the page');
 
     // ---- Report -------------------------------------------------------------
+
+    // Anchored, for the reason `selftest_layout.php` anchors its own: without a
+    // number here, deleting half this file still reports a clean run. Four of the
+    // eight node suites carried one and four did not (§4bf).
+    const expected = 110;
+    if (checks !== expected) {
+        fails.push('the suite ran every check it is supposed to — expected '
+                   + expected + ', ran ' + checks);
+    }
 
     console.log('');
     if (fails.length) {

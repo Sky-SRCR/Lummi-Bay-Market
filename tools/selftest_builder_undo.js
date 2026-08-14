@@ -41,6 +41,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { buildPageJs } = require('./page_constants');
 
 const BUILDER = path.join(__dirname, '..', 'builder.php');
 
@@ -252,20 +253,15 @@ global.clearTimeout = () => {};
 
 const php = fs.readFileSync(BUILDER, 'utf8');
 
-let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
-            .match(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)
-            .map(function (b) { return b.replace(/^<script\b[^>]*>/i, '').replace(/<\/script>$/i, ''); })
-            .join('\n');
-
 // An admin editing a display nobody else holds, with the setting at its default
 // five. UNDO_LIMIT is the number the admin Settings page writes; the PHP that
 // computes it is stripped with every other `<?= ?>` above, so it is put back here
 // the way a real page would carry it.
-js = js.replace(/^var READ_ONLY\s*=.*$/m,  'var READ_ONLY = false;')
-       .replace(/^var IS_ADMIN\s*=.*$/m,   'var IS_ADMIN = true;')
-       .replace(/^var CANVAS_W\s*=.*$/m,   'var CANVAS_W = 1920;')
-       .replace(/^var CANVAS_H\s*=.*$/m,   'var CANVAS_H = 1080;')
-       .replace(/^var UNDO_LIMIT\s*=.*$/m, 'var UNDO_LIMIT = 5;');
+let js = buildPageJs(BUILDER, {
+    READ_ONLY:  false,
+    IS_ADMIN:   true,
+    UNDO_LIMIT: 5,
+});
 
 check(/var UNDO_LIMIT = 5;/.test(js), 'the page carries an undo depth set by an admin');
 

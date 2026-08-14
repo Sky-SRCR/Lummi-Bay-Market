@@ -35,6 +35,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { buildPageJs } = require('./page_constants');
 
 const BUILDER = path.join(__dirname, '..', 'builder.php');
 
@@ -194,17 +195,14 @@ global.fetch = function (url, opts) {
 // ---- The page's own JavaScript ----------------------------------------------
 
 const php = fs.readFileSync(BUILDER, 'utf8');
-let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
-            .match(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)
-            .map(function (b) { return b.replace(/^<script\b[^>]*>/i, '').replace(/<\/script>$/i, ''); })
-            .join('\n');
-
 // An admin, holding the lock, on a real Display.
-js = js.replace(/^var READ_ONLY\s*=.*$/m, 'var READ_ONLY = false;')
-       .replace(/^var IS_ADMIN\s*=.*$/m,  'var IS_ADMIN = true;')
-       .replace(/^var DISPLAY_TAG\s*=.*$/m, "var DISPLAY_TAG = 'deli';")
-       .replace(/^var DISPLAY_ID\s*=.*$/m,  'var DISPLAY_ID = 4;')
-       .replace(/^var UPLOAD_MAX_BYTES\s*=.*$/m, 'var UPLOAD_MAX_BYTES = 8388608;');
+let js = buildPageJs(BUILDER, {
+    READ_ONLY:        false,
+    IS_ADMIN:         true,
+    DISPLAY_TAG:      'deli',
+    DISPLAY_ID:       4,
+    UPLOAD_MAX_BYTES: 8388608,
+});
 
 eval(js);   // eslint-disable-line no-eval — the point is to run the page's own code
 
@@ -411,6 +409,15 @@ try { showUnreadableColor(bad); } catch (e) { threw = true; }
 checkSame(false, threw, 'and with no inspector on the page at all, it does nothing rather than throw');
 
 // ─────────────────────────────────────────────────────────────
+// Anchored, for the reason `selftest_layout.php` anchors its own: without a number
+// here, deleting half this file still reports a clean run. Four of the eight node
+// suites carried one and four did not (§4bf).
+const expected = 47;
+if (checks !== expected) {
+    fails.push('the suite ran every check it is supposed to — expected '
+               + expected + ', ran ' + checks);
+}
+
 console.log('\n' + checks + ' checks, ' + fails.length + ' failed');
 if (fails.length) {
     fails.forEach(function (f) { console.log('  FAILED: ' + f); });

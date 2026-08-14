@@ -30,6 +30,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { buildPageJs } = require('./page_constants');
 
 const VIEWER = path.join(__dirname, '..', 'viewer.php');
 const POLICY = path.join(__dirname, '..', 'lib', 'error_policy.php');
@@ -142,13 +143,10 @@ global.fetch = replying(A_LAYOUT);
 
 const php = fs.readFileSync(VIEWER, 'utf8');
 
-let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
-            .match(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)
-            .map(b => b.replace(/^<script\b[^>]*>/i, '').replace(/<\/script>$/i, ''))
-            .join('\n');
-
 // The one interpolation that is not a number.
-js = js.replace(/^\s*var DISPLAY_TAG\s*=.*$/m, 'var DISPLAY_TAG = "drive-thru";');
+let js = buildPageJs(VIEWER, {
+    DISPLAY_TAG: 'drive-thru',
+});
 
 eval(js);   // eslint-disable-line no-eval — the point is to run the page's own code
 
@@ -521,6 +519,48 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
     checkSame(0, canvas.children.map(c => c.children.length).reduce((a, b) => a + b, 0),
               'and not one of the six empty blocks put anything inside itself');
 
+    section('The canvas fills the Screen without distorting a price');
+
+    // The one piece of geometry on the page a customer looks at, and until §4bf nothing
+    // here could assert it: CANVAS_W and CANVAS_H are interpolated by PHP, this suite
+    // stripped that to the literal `0`, and every scale it computed was
+    // `1920 / 0` — Infinity, with NaN margins. Nothing threw, so nothing noticed.
+    function fitInto(w, h) {
+        window.innerWidth  = w;
+        window.innerHeight = h;
+        scaleToFit();
+        return canvas.style;
+    }
+
+    let fit = fitInto(1920, 1080);
+    checkSame('scale(1)', fit.transform, 'a Screen the size of the canvas draws it at its own size');
+    checkSame('0px', fit.marginLeft, 'with nothing to centre horizontally');
+    checkSame('0px', fit.marginTop,  'and nothing vertically');
+
+    fit = fitInto(1280, 720);
+    checkSame('scale(0.6666666666666666)', fit.transform,
+              'a smaller Screen of the same shape scales the whole canvas down');
+    checkSame('0px', fit.marginLeft, 'and still fills it edge to edge');
+
+    // The letterbox, which is what `Math.min` is for: a 4:3 Screen showing a 16:9 sign
+    // takes the width it can use and leaves a band above and below, rather than
+    // stretching every price 33% taller than it was designed.
+    fit = fitInto(1600, 1200);
+    checkSame('scale(0.8333333333333334)', fit.transform,
+              'a Screen of a different shape takes the smaller of the two ratios');
+    checkSame('0px',   fit.marginLeft, 'so the width is what fills');
+    checkSame('150px', fit.marginTop,  'and the letterbox is split evenly above and below');
+
+    // The other way round, because a min() written as max() letterboxes one axis
+    // correctly and overflows the other — and only one of the two shapes shows it.
+    fit = fitInto(1920, 600);
+    checkSame('scale(0.5555555555555556)', fit.transform,
+              'and on a short wide Screen it is the height that decides');
+    // Rounded, because the exact float is what the browser would set and asserting
+    // its last digit is asserting IEEE 754 rather than the centring.
+    checkSame(427, Math.round(parseFloat(fit.marginLeft)),
+              'with the pillarbox split evenly either side');
+
     section('One poll at a time');
 
     // _loading is what stops the 30-second interval stacking requests on a slow
@@ -534,6 +574,15 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
           'a second poll while one is in flight does not start');
     checkSame(before, canvas.children.length, 'and changes nothing');
     fireWatchdogs();
+
+    // Anchored, for the reason `selftest_layout.php` anchors its own: without a
+    // number here, deleting half this file still reports a clean run. Four of the
+    // eight node suites carried one and four did not (§4bf).
+    const expected = 179;
+    if (checks !== expected) {
+        fails.push('the suite ran every check it is supposed to — expected '
+                   + expected + ', ran ' + checks);
+    }
 
     console.log('\n' + checks + ' checks, ' + fails.length + ' failed');
     if (fails.length) {

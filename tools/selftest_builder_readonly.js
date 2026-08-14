@@ -18,15 +18,16 @@
 // exactly the defect this found in `clearTargetSection()` — a lookup guarded on
 // the account's role while the node it wanted depended on the lock as well.
 //
-// So: strip the PHP, force the two page constants to what a read-only basic
-// account gets, stub a DOM that has only the ids that page actually emits, and
-// run the paths that survive. Anything reaching for a control that is not there
-// throws, and a throw is a failure.
+// So: build the page's JavaScript through `page_constants.js` with the constants a
+// read-only basic account gets, stub a DOM that has only the ids that page actually
+// emits, and run the paths that survive. Anything reaching for a control that is not
+// there throws, and a throw is a failure.
 //
 // CLI only. Nothing here touches a database or a network.
 
 const fs   = require('fs');
 const path = require('path');
+const { buildPageJs } = require('./page_constants');
 
 const BUILDER = path.join(__dirname, '..', 'builder.php');
 
@@ -66,6 +67,27 @@ async function settle() { for (let i = 0; i < 10; i++) { await Promise.resolve()
 // ---- The source, and what it promises ---------------------------------------
 
 const php = fs.readFileSync(BUILDER, 'utf8');
+
+section('Every suite gets its page the one way');
+
+// The rule §4bf closed lives across eight files, and this is the only mechanical place
+// to hold it: `check_invariants.php` reads PHP and these are JavaScript. A suite that
+// strips `<?= … ?>` for itself is a suite back to leaving every value it did not think
+// of as the literal 0 — which is how the edit lock's warning window came to be
+// unreachable in all eight at once, and how the Viewer scaled its canvas by Infinity.
+const SUITES = fs.readdirSync(path.join(__dirname))
+                 .filter(f => f.startsWith('selftest_') && f.endsWith('.js'));
+const handRolled = SUITES.filter(f =>
+    /php\.replace\(\/<\\\?/.test(fs.readFileSync(path.join(__dirname, f), 'utf8')));
+const notAsking = SUITES.filter(f =>
+    !/require\('\.\/page_constants'\)/.test(fs.readFileSync(path.join(__dirname, f), 'utf8')));
+check(SUITES.length === 8, 'there are eight node suites, which is the number this audit covers');
+check(handRolled.length === 0,
+      'and none of them strips the page\'s PHP for itself' +
+      (handRolled.length ? ' — ' + handRolled.join(', ') + ' does' : ''));
+check(notAsking.length === 0,
+      'they all ask page_constants.js what the server put on the page' +
+      (notAsking.length ? ' — ' + notAsking.join(', ') + ' does not' : ''));
 
 section('The editing controls are not in a read-only page');
 
@@ -338,26 +360,21 @@ global.clearTimeout = () => {};
 
 // ---- The page's own JavaScript ----------------------------------------------
 
-// Strip PHP the way `node --check` already does for the standing gate, then take
-// the inline <script> bodies. `0` is a valid expression everywhere the page
-// interpolates a value, which is why every interpolation there is a number, a
-// json_encode, or a bare true/false.
-let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
-            .match(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)
-            .map(function (b) { return b.replace(/^<script\b[^>]*>/i, '').replace(/<\/script>$/i, ''); })
-            .join('\n');
-
 // What a basic account looking at somebody else's edit session gets. The three Brand
-// constants are written out rather than left as the stripped `0`, because that is what
+// constants are written out rather than left at the page default, because that is what
 // the page really carries here: one Brand — the one this sign wears, which the control
-// names — and no permission to change it.
-js = js.replace(/^var READ_ONLY\s*=.*$/m, 'var READ_ONLY = true;')
-       .replace(/^var IS_ADMIN\s*=.*$/m,  'var IS_ADMIN = false;')
-       .replace(/^var BRANDS\s*=.*$/m,
-                "var BRANDS = [{id:3,name:'Salmon House',logo_asset_id:12,"
-                + "logo_src:'uploads/salmon.png',palette:['#0b3d2e','#e67e22'],styles:{}}];")
-       .replace(/^var BRAND_ID\s*=.*$/m,       'var BRAND_ID = 3;')
-       .replace(/^var CAN_PICK_BRAND\s*=.*$/m, 'var CAN_PICK_BRAND = false;');
+// names — and no permission to change it. Everything this suite has no opinion about
+// comes from `page_constants.js`, which is what makes it a value somebody chose rather
+// than the literal 0 that used to be left behind (§4bf).
+let js = buildPageJs(BUILDER, {
+    READ_ONLY:      true,
+    IS_ADMIN:       false,
+    BRANDS:         [{ id: 3, name: 'Salmon House', logo_asset_id: 12,
+                       logo_src: 'uploads/salmon.png',
+                       palette: ['#0b3d2e', '#e67e22'], styles: {} }],
+    BRAND_ID:       3,
+    CAN_PICK_BRAND: false,
+});
 
 check(/var CAN_PICK_BRAND = false;/.test(js),
       'and the page constant saying so is one this suite really replaced');
@@ -583,7 +600,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 68;
+    const expected = 71;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

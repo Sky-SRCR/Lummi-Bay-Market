@@ -6708,6 +6708,60 @@ on a machine with no shop attached: `php -l` here is 8.4 against an 8.2 floor, t
 needs a server this container has never had, and the five browser walks are still owed. A
 configuration you can define is the cheap half.
 
+### 4bf. And the node suites were running a page where every server value was zero
+
+The same question, asked of the other eight harnesses. They cannot run PHP, so each one
+stripped `<?= … ?>` to the literal `0` and then wrote a handful of the page constants
+back by hand. `0` parses everywhere the page interpolates a value, which is what made
+that work — and is exactly what made it silent. Twenty-one values reach `builder.php`'s
+JavaScript and three reach `viewer.php`'s; what a suite did not think to write back was
+zero, and nothing said so.
+
+**Measured the same way: set all twenty-one to what a real page carries, re-run all
+eight, and not one check changes.** So unlike §4be's seven, none of these was *wrong* —
+but none was seen either, and two of the zeroes were doing damage that a passing run
+could not show.
+
+`LOCK_LAPSE_SECONDS` and `LOCK_WARN_SECONDS` were 0 in all eight. The idle warning is
+drawn when `idle >= WARN && idle < LAPSE`, which with both at zero is false for every
+idle there has ever been. The bar that tells somebody their edit lock is about to lapse,
+and the countdown inside it, were not untested — untested is a thing a person can notice
+— but **unreachable**, which nobody can. `selftest_builder_uploads.js` now drives all
+three bands and the `Math.max(1, …)` floor, which is the only arithmetic on that line and
+the one read at the worst moment: five seconds left rounds to zero minutes, and "0
+minutes left" beside a lock that is still yours reads as too late to save anything.
+
+`CANVAS_W` and `CANVAS_H` were 0 in `selftest_viewer.js`. `scaleToFit()` divides the
+window by them, so the one piece of geometry a customer looks at computed `1920 / 0`,
+set `scale(Infinity)` and NaN margins on every run of that suite, threw nothing, and was
+asserted by nobody. It now has the two shapes that matter: a 4:3 Screen showing a 16:9
+sign, where `Math.min` letterboxes and the band is split evenly, and a short wide one,
+where it pillarboxes — both, because a `min` written as `max` gets one of them right.
+
+**`tools/page_constants.js` is where the silence became a declaration.** One value per
+constant, chosen as what the page really carries, with the empty ones empty *in type*
+(`BRANDS` is `[]`, not `0`, because the page iterates it). The thirteen chrome-role names
+are read out of `lib/site_chrome.php` rather than copied, so a fourteenth role appears
+there the day it appears here. And it refuses two things that used to pass unnoticed: a
+constant the page interpolates that nothing names — add one to `builder.php` and every
+suite fails until this file says what it is — and an override for a constant the page
+does not have. `selftest_builder_readonly.js` had already worried about the second, for
+one name, with one line: `check(/var CAN_PICK_BRAND = false;/…)`. It is the same failure
+as the `lock-holder` entry that sat in that suite's PRESENT list for months pointing at
+nothing, and it is now checked for all eight, in that suite, because
+`check_invariants.php` reads PHP and these are JavaScript.
+
+**Four of the eight also had no count anchor**, which is the third of the three ways
+`selftest_layout.php`'s own header says a suite reports "0 failed" while broken: delete
+half of `selftest_viewer.js` and it printed a clean run and exited 0. All eight carry one
+now.
+
+What this did *not* find is a wrong answer, and that is worth saying plainly rather than
+letting the section imply otherwise. The eight suites were right about everything they
+asserted. The finding is narrower and duller: they were asserting it about a page nobody
+would ever load, and two things a person does — running out of time on a lock, watching a
+sign on a differently shaped television — were on the other side of that difference.
+
 ---
 
 ## 5. Verification

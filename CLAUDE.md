@@ -184,7 +184,10 @@ and the publish payload then sent as black, a field a rebuild forgot to carry, a
 that was never going to stop, a swatch that fills a control and changes nothing on the
 canvas because setting `.value` from script fires no event, a preference that repaints
 the screen and was never stored, and a sentence written for
-whoever was building the layout, drawn on the board a customer reads prices off.
+whoever was building the layout, drawn on the board a customer reads prices off. What the server puts on those
+pages comes from `tools/page_constants.js` and nowhere else — a suite that strips the PHP
+for itself leaves every value it did not think of as the literal `0`, which is how the
+edit lock's idle warning came to be unreachable in all eight at once (§4bf).
 
 - **`json_encode` is never called outside `lib/http_reply.php`.** It returns `false`,
   not a throw, and `echo false` prints the empty string — so a reply holding one byte
