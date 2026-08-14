@@ -177,6 +177,35 @@ $rules = [
         'why'    => 'a second file setting any of these is a second opinion (invariant 16)',
     ],
     [
+        // The §4bg rule, and the PHP half of what `tools/page_constants.js` does for
+        // the node suites. Everything in this list is a value the *machine* supplies,
+        // which means it has exactly one value on any machine that runs the tests and
+        // whatever value the shop's server happens to hold everywhere else. That is not
+        // a reason to ban it — this app reports on its own host, so somebody has to read
+        // it — it is a reason for the list to be short, named, and to grow only on
+        // purpose. A new one appearing in a module nobody was watching is a sentence,
+        // a limit or a branch that the suite will assert about this container for as
+        // long as it exists, in green.
+        //
+        // The four here each pair the read with a seam beside it that takes the value
+        // instead: phpVersionNote(), phpZoneNoteFor(), uploadCeilingNoteFor(),
+        // smallestOf(), requestNameFor(). Adding a file to this list without one is
+        // adding a branch no arm of selftest_installed.php can reach.
+        //
+        // alerts.php is here for one `phpversion()` in an X-Mailer header — a string in
+        // an email, with no branch behind it. Listed rather than excused: the point of
+        // the rule is that the list is the whole set.
+        'name'   => 'every read of the machine is one somebody named',
+        'regex'  => '/ini_get\s*\(|\$_SERVER|\$_ENV|getenv\s*\(|PHP_VERSION|PHP_SAPI'
+                  . '|php_uname\s*\(|phpversion\s*\(|session_get_cookie_params\s*\(/',
+        'in'     => 'lib',
+        'expect' => ['lib/alerts.php', 'lib/error_policy.php', 'lib/server_report.php',
+                     'lib/upload_limits.php'],
+        'why'    => 'a value taken from the host is one the suite can only ever see this '
+                  . 'container\'s copy of, so the branch behind it is asserted in the one '
+                  . 'configuration no shop is running (§4bg)',
+    ],
+    [
         'name'   => 'one module knows what the upload ceiling is',
         'regex'  => '/post_max_size|upload_max_filesize|MAX_BYTES/',
         'in'     => 'lib',
@@ -1581,6 +1610,21 @@ foreach ([
         . 'the suite on ' . 'the version the shop runs, which CI does and this container cannot',
 ] as $note) {
     echo "  · $note\n";
+}
+
+// The count is anchored for the reason `selftest_layout.php`'s is, and §4bg found this
+// file without one: delete the rule that keeps `json_encode` in a single module — one of
+// the most load-bearing lines in the repo — and this printed "60 consistency checks, 0
+// failed" and exited 0. A checker whose own coverage can shrink silently is the failure
+// it exists to prevent, wearing its own uniform. §4bf found the same hole in four of the
+// eight node suites; this is the third place it was hiding.
+//
+// Not a count of rules: a count of what actually *ran*, so a rule that stops being
+// reached is the same failure as one that was deleted.
+$expectedChecks = 61;
+if ($checked !== $expectedChecks) {
+    $failures[] = 'this checker ran every check it is supposed to — expected '
+                . $expectedChecks . ', ran ' . $checked;
 }
 
 echo "\n$checked consistency checks, " . count($failures) . " failed\n";

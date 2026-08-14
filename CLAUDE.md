@@ -29,6 +29,17 @@ edited in place and every change reaches the sign by hand.
   half is that no chrome role is ever drawn on the canvas).
 - **Deep modules**: small interface, substantial implementation. A new query
   means a new method on the module, not a `$pdo` handed to a caller.
+- **A value read from the machine gets a seam beside it that takes the value.** Four files
+  may read one at all — `server_report.php`, `error_policy.php`, `upload_limits.php`,
+  `alerts.php` — and `check_invariants.php` fails on a fifth (invariant 35). The reason is
+  not tidiness: `ini_get`, `PHP_VERSION`, `PHP_SAPI` and `$_SERVER` have exactly one value
+  on every machine that runs the tests, so a branch chosen by one is asserted in the single
+  configuration no shop is running. `ServerReport` gets this right three times over and
+  says why each time — `phpVersionNote($id)`, `storeZoneNoteFor($stored)`,
+  `UploadLimit::smallestOf($values)` — and §4bg found that the four places it had not were
+  exactly the four with no checks. The seam reaches what no flag can (an unset
+  `date.timezone` cannot be made with `php -d`); the arms in `selftest_installed.php` prove
+  the real read still works, and refuse an arm set to what this machine already holds.
 - **A new schema statement goes into `signageSchemaPlan()`, with its gate.**
   Convergence asks `information_schema` first and sends only what is missing, so an
   ungated `schemaTry()` re-runs on every signed-in page load — and an `ALTER` locks
@@ -126,7 +137,9 @@ edited in place and every change reaches the sign by hand.
 ```
 php -l <every touched .php>
 php tools/selftest_layout.php
-php tools/selftest_installed.php           # the same suite as a shop that has been set up
+php tools/selftest_installed.php           # the same suite as a real install on a real
+                                           # server: what the shop chose, and what the
+                                           # machine was set to (§4be, §4bg)
 php tools/check_invariants.php             # the mechanical half of BUILD-REFERENCE §5
 php tools/check_doc_numbering.php          # if a doc gained a section or invariant
 node tools/selftest_builder_readonly.js    # if builder.php was touched

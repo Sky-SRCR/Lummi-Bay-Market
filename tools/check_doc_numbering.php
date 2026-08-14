@@ -174,6 +174,15 @@ check(empty($dangling),
 
 // ── ─────────────────────────────────────────────────────────
 
+// Anchored, same as `check_invariants.php` and for the same reason (§4bg): every check
+// in this file is a whole *class* of numbering fault, so one going missing is a class
+// nobody is watching any more — and the run would still print a clean line and exit 0.
+$expectedChecks = 6;
+if ($checks !== $expectedChecks) {
+    $fails[] = 'this checker ran every check it is supposed to — expected '
+             . $expectedChecks . ', ran ' . $checks;
+}
+
 echo "\n" . $checks . " checks, " . count($fails) . " failed\n";
 foreach ($fails as $f) { echo "  FAILED: " . $f . "\n"; }
 

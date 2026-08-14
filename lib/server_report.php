@@ -138,13 +138,8 @@ class ServerReport
         // and not a defect any more. Which is exactly why it stays on the card and why
         // the note changed: it used to say times may be hours out, and saying that now
         // would send somebody after a problem the setting above has already answered.
-        $php = ini_get('date.timezone');
         $out['PHP time zone'] = [date_default_timezone_get(),
-            $php === ''
-                ? 'Not set in the server configuration. Harmless — the app sets its own '
-                  . 'from the setting above on every page, which is what stopped this '
-                  . 'from being the reason a time was wrong.'
-                : ''];
+            self::phpZoneNoteFor(ini_get('date.timezone'))];
 
         // MySQL's, and the reason it is worth a row of its own: it is where
         // `created_at` comes from, PHP cannot convert what it did not write, and until
@@ -180,16 +175,58 @@ class ServerReport
         // Builder enforces in the file picker and what every refusal message
         // quotes. Printing the raw settings here as well invited reading the
         // largest of them as the answer, when the smallest is.
-        $effective = UploadLimit::bytes();
         $out['Largest file that can be uploaded'] = [
             UploadLimit::describe(),
-            $effective < UploadLimit::APP_MAX_BYTES
-                ? 'This server, not the app, is the limit (upload_max_filesize '
-                  . ini_get('upload_max_filesize') . ', post_max_size '
-                  . ini_get('post_max_size') . '). A video for a sign may not fit.'
-                : ''];
+            self::uploadCeilingNoteFor(UploadLimit::bytes(),
+                                       ini_get('upload_max_filesize'),
+                                       ini_get('post_max_size'))];
 
         return $out;
+    }
+
+    /**
+     * What an unset `date.timezone` means, given that the app no longer depends on it.
+     *
+     * Takes the ini value for the reason `phpVersionNote()` takes the version id: the
+     * case this exists for is the one no test process can be in. `date.timezone` is
+     * PHP_INI_ALL in name only — a host that has no such line in its php.ini answers
+     * `''`, and `php -d date.timezone=` does not reproduce that, it is rejected at
+     * startup and replaced with UTC. So the branch that speaks was unreachable while
+     * it was spelled inline, and the branch that stays silent was the only one any
+     * machine here could produce.
+     *
+     * Silent when the host has a zone, and that is not a check that cannot fail: the
+     * point of the sentence is that an unset zone is *harmless now*, and saying so
+     * every time would train an admin past the rows above that are not.
+     */
+    public static function phpZoneNoteFor($iniValue)
+    {
+        if ((string)$iniValue !== '') { return ''; }
+        return 'Not set in the server configuration. Harmless — the app sets its own '
+             . 'from the setting above on every page, which is what stopped this '
+             . 'from being the reason a time was wrong.';
+    }
+
+    /**
+     * Whether the host or the app is the thing refusing a large file, and which
+     * settings to go and change.
+     *
+     * Same seam and the same reason as `UploadLimit::smallestOf()`, whose docblock
+     * says it out loud: `upload_max_filesize` and `post_max_size` are PHP_INI_PERDIR,
+     * so a running process cannot be moved between the two cases. Reading them inline
+     * meant this sentence had exactly one form on any given machine — here, the one
+     * that names 2M, forever.
+     *
+     * The two ini values are quoted verbatim rather than in bytes on purpose: they are
+     * what somebody has to find and edit, and `8388608` is not what is written in the
+     * file they will open.
+     */
+    public static function uploadCeilingNoteFor($effective, $uploadMax, $postMax)
+    {
+        if ($effective >= UploadLimit::APP_MAX_BYTES) { return ''; }
+        return 'This server, not the app, is the limit (upload_max_filesize '
+             . $uploadMax . ', post_max_size ' . $postMax . '). A video for a sign '
+             . 'may not fit.';
     }
 
     /**

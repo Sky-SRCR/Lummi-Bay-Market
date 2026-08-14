@@ -86,10 +86,12 @@ jobs:
       - name: Layout self-test — SQLite
         run: php tools/selftest_layout.php
 
-      # And the same suite as an install that has been set up. A checkout has no
-      # `branding_config.php` — it is generated and deliberately outside the repo —
-      # so every run above this line is the one configuration no shop is in (§4be).
-      - name: Layout self-test — as a set-up install
+      # And the same suite as a real install on a real server, on two axes. A checkout
+      # has no `branding_config.php` — it is generated and deliberately outside the repo
+      # — so every run above this line is the one configuration no shop is in (§4be).
+      # The second axis is the machine: the four readouts that describe a host each had
+      # one form on whatever ran the suite and the other form on nothing (§4bg).
+      - name: Layout self-test — as a real install on a real server
         run: php tools/selftest_installed.php
 
       # The same suite against the engine the app runs on, where the publish

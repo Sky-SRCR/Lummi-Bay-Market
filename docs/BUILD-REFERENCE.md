@@ -621,6 +621,25 @@ through the app again:
     wearing is refused rather than reassigned**, naming them, with `users_ibfk_1` carrying
     no `ON DELETE` clause so the database says the same thing to anything reaching it
     another way. The same shape as a Brand in use, for the same reason.
+35. **Every read of the machine is one somebody named, and every branch behind one has a
+    seam that takes the value** (§4bg). Four files in `lib/` may touch `ini_get`,
+    `$_SERVER`, `PHP_VERSION`, `PHP_SAPI`, `phpversion()` or `session_get_cookie_params()`
+    — `server_report.php`, `error_policy.php`, `upload_limits.php`, `alerts.php` — and
+    `tools/check_invariants.php` fails when a fifth appears. Not a ban: this app reports on
+    its own host, so somebody has to read it. The rule is that a value taken from the
+    machine has exactly *one* value on every machine that runs the tests, and whatever the
+    shop's server holds everywhere else — so a branch chosen by one is a branch the suite
+    asserts in the single configuration no shop is running, in green, for as long as it
+    exists. `ServerReport` had already applied the fix three times and said why each time
+    (`phpVersionNote($id)`, `storeZoneNoteFor($stored)`, `UploadLimit::smallestOf($values)`
+    — "unreachable on whatever machine happens to run the test"); the four places it had
+    not were exactly the four with no checks, one of which — `ErrorPolicy::status()`, the
+    whole Settings-tab readout of what happens when something breaks — had none at all.
+    The seam is the half that reaches what no flag can produce (an unset `date.timezone`
+    cannot be made with `php -d`; PHP rejects the empty value at startup). The arms in
+    `tools/selftest_installed.php` are the half that proves the real reads still work, and
+    they refuse an arm set to what this machine already holds, because that one would agree
+    with the plain run and say so in green.
 
 ---
 
@@ -6762,6 +6781,102 @@ asserted. The finding is narrower and duller: they were asserting it about a pag
 would ever load, and two things a person does — running out of time on a lock, watching a
 sign on a differently shaped television — were on the other side of that difference.
 
+### 4bg. And the whole suite was running on one server, describing servers
+
+The third time the same question was asked, and the one where the answer was already
+written down in the file it was asked about.
+
+§4be found the suite running in a `branding_config.php` no shop has. §4bf found the node
+suites running a page where every server value was `0`. Both are the same shape: the
+configuration the tests run in is not the configuration the app ships into. The dimension
+neither pass touched is the **machine** — this container's PHP, its `php.ini`, and a
+request that is never a request.
+
+Which matters here more than it would in most apps, because this one has a Settings tab
+whose entire job is to describe the machine it is running on.
+
+**`ServerReport` already knew the rule and had applied it three times.** Each of these is
+public, pure, and takes the value rather than reading it, and each says in its own
+docblock why:
+
+| seam | takes | because |
+|---|---|---|
+| `phpVersionNote($id)` | a version id | "two of the three cases are unreachable on whatever machine happens to run the test" |
+| `storeZoneNoteFor($stored)` | the stored setting | "a `define()` cannot be undone and a running installation is not in that state" |
+| `UploadLimit::smallestOf($values)` | ini values | "PHP_INI_PERDIR — they cannot be set at runtime, so the interesting cases are unreachable through `bytes()`" |
+
+The reasoning is correct and it is stated three times. It was never carried to the
+neighbours — and **the four places it was not applied are exactly the four with no
+checks.** Not approximately: exactly.
+
+- **The PHP time zone note.** Spelled inline as `ini_get('date.timezone') === ''`. The
+  speaking branch fires on a host whose php.ini has no such line — and `php -d
+  date.timezone=` does not reproduce that, PHP rejects the empty value at startup and
+  substitutes UTC. So that sentence was unreachable by any means, on any machine, and the
+  silent branch was the only one this suite could ever produce.
+- **The upload ceiling note.** Inline against the two PHP_INI_PERDIR settings. It had one
+  form here — the one naming `2M`, forever — and nothing asserted it. It is the sentence
+  that tells an admin whose rule refused their video and which two settings to go and
+  edit, so getting the names wrong in it would have been invisible.
+- **`ErrorPolicy::status()` — the entire Settings-tab readout of what happens when
+  something breaks — had no check of any kind.** `admin_panel.php` prints it through the
+  same `[value, note]` loop as `ServerReport::runtime()`; `runtime()` has a check that
+  every fact in it is a printable pair, so the panel cannot be handed an object.
+  `status()` did not, and nothing had ever called it. That is the worst of the four, and
+  the reason is in its own docblock: every part of what it reports fails *silently by
+  design*. An unwritable directory means no log. No recipients means no alert. Both look
+  exactly like nothing having gone wrong. The readout is the only way to see the
+  difference, and it was the one thing here nobody had looked at.
+- **The log's request tag**, which is the one that turned out to be an actual defect
+  rather than an untested branch. `whichRequest()` read `$_SERVER['SCRIPT_NAME']` with a
+  `?? 'cli'` fallback written for the command line — and never once reached it. PHP sets
+  `SCRIPT_NAME` on the CLI too, to the script path, and under `php -r` to the literal
+  string **"Standard input code"**. So every tool in this repo tagged its JSON-failure log
+  lines with a filename, and the six arms of `selftest_installed.php` tagged theirs
+  `json-reply|…|Standard input code` — PHP's own internal English, arriving in a log a
+  person reads to find out which page broke. `PHP_SAPI` is what actually answers the
+  question the fallback was asking.
+
+**The fix is the two halves the last two passes each used one of.** The seams —
+`phpZoneNoteFor()`, `uploadCeilingNoteFor()`, `requestNameFor()` — are what reaches cases
+no flag can produce. The arms are what proves the *real* reads still work: three more in
+`selftest_installed.php`, on a second axis, because an install is two things and only one
+of them is in `branding_config.php`. A generous host (64M/128M, where the app's own 50 MB
+ceiling binds and the note falls silent), a tight one (1M/1M, so the sentence is produced
+twice with different numbers rather than once with the only pair this container can make),
+and one showing errors. Both axes validate themselves before running: an arm set to what
+this machine already holds is refused with a sentence, because it would agree with the
+plain run and say so in green.
+
+That the axis works was **watched, not assumed**. Three checks asserting this container —
+that the largest file is 2 MB, that errors are off, that the process zone is UTC — pass
+the plain run and are each caught by exactly the arm built for them.
+
+**And the gate**, which is the PHP half of what `page_constants.js` does for the node
+suites: `check_invariants.php` now holds the whole set of places `lib/` reads the machine
+— four files, listed — and fails when a fifth appears. Not a ban; this app reports on its
+own host and somebody has to read it. It is a rule that the list is short, named, and
+grows on purpose, because a new read landing quietly is a branch the suite will assert
+about this container for as long as it exists, in green.
+
+**And the same count-anchor hole §4bf found in the node suites was here too**, which is
+worth its own paragraph because it is now three passes in a row. `check_invariants.php`,
+`check_doc_numbering.php` and `selftest_installed.php` all reported a number and anchored
+none of it. Delete the rule that keeps `json_encode` in a single module — one of the most
+load-bearing lines in the repo, the one standing between a bad byte and a sign keeping its
+old layout for good — and the checker printed `60 consistency checks, 0 failed` and exited
+0. A checker whose own coverage can shrink in silence is the failure it exists to prevent,
+wearing its uniform. All three are anchored now, and each was watched failing.
+
+`selftest_installed.php` got a second one of a different kind: each arm must print exactly
+one summary line. Its filter reads two shapes out of somebody else's output, and "found
+neither" and "found nothing wrong" print identically — a distinction that has already been
+wrong once here, when the first version matched `" checks, "` as a substring and printed a
+check's own sentence as a summary.
+
+31 checks, 2273 → 2304. What it cost to find: running the suite under `php -d` and reading
+which checks cared. None did — which was the answer, not the absence of one.
+
 ---
 
 ## 5. Verification
@@ -6788,10 +6903,15 @@ php tools/check_invariants.php           # the greps below, run rather than read
                                          # syntax check, which is what covers the hole
                                          # `php -l` leaves on the line above
 php tools/selftest_layout.php            # the real modules, in-memory SQLite
-php tools/selftest_installed.php         # the same suite as an install that has been set
-                                         # up — branded, live-like, and damaged. The plain
+php tools/selftest_installed.php         # the same suite as a real install on a real
+                                         # server, on two axes. What the shop chose —
+                                         # branded, live-like, damaged — because the plain
                                          # run has only ever seen a checkout with no
-                                         # `branding_config.php`, which is no shop (§4be)
+                                         # `branding_config.php`, which is no shop (§4be).
+                                         # And what the machine was set to — a generous
+                                         # host, a tight one, one showing errors — because
+                                         # the four readouts that describe a server had
+                                         # one form here and the other on none (§4bg)
 node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
                                          # that has only what a read-only page emits
 node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an

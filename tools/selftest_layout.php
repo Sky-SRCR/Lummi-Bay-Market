@@ -2713,6 +2713,21 @@ $tzReport = (new ServerReport($pdo, ['HTTPS' => 'on']))->runtime();
 check(isset($tzReport[StoreClock::LABEL]), 'This Server reports the zone the app shows times in');
 checkMentions($tzReport[StoreClock::LABEL][0], StoreClock::zone(), 'and says which one that is');
 check(isset($tzReport['PHP time zone']), 'and the server\'s own, which no longer decides anything');
+// The note on that row had been spelled inline against `ini_get('date.timezone')`,
+// which meant it had one form on any machine that ran this suite and the other form
+// on none of them: a host with no `date.timezone` line answers '', and `php -d
+// date.timezone=` does not reproduce that — PHP rejects the empty value at startup
+// and substitutes UTC. Seamed, both forms are reachable here.
+checkSame('', ServerReport::phpZoneNoteFor('America/Chicago'),
+          'a host that has set its own zone is told nothing about it');
+checkSame('', ServerReport::phpZoneNoteFor(StoreClock::DEFAULT_ZONE),
+          'and neither is one that happens to have set the app\'s own');
+$noZone = ServerReport::phpZoneNoteFor('');
+check($noZone !== '', 'a host that has set none does get a sentence');
+checkMentions($noZone, 'Harmless',
+              'and it opens by saying so, because this row used to mean times were hours out');
+check(strpos($noZone, 'setting above') !== false,
+      'and points at the store\'s own zone, which is the row that decides what a screen shows');
 check(isset($tzReport['Database time zone']),
       'and the database\'s, which is where an account\'s creation date comes from');
 checkSame('not applicable', $tzReport['Database time zone'][0],
@@ -3528,6 +3543,23 @@ foreach ($runtime as $fact) {
     if (!is_string($fact[0]) || !is_string($fact[1])) { $allStrings = false; }
 }
 check($allStrings, 'every fact is a printable pair, so the panel cannot be handed an object');
+
+// The row an admin reads when a file was refused and they want to know whose rule it
+// was. It too had been spelled inline against two PHP_INI_PERDIR settings, so on this
+// machine it has always been the server-limited form naming 2M and could never be
+// anything else — the same unreachability `UploadLimit::smallestOf()` was seamed for.
+checkSame('', ServerReport::uploadCeilingNoteFor(UploadLimit::APP_MAX_BYTES, '64M', '128M'),
+          'a host more generous than the app is not blamed for the app\'s own ceiling');
+$hostBound = ServerReport::uploadCeilingNoteFor(2097152, '2M', '8M');
+check($hostBound !== '', 'a host that is the binding limit says so');
+checkMentions($hostBound, 'upload_max_filesize 2M',
+              'and quotes the setting as it is written in the file somebody has to edit');
+checkMentions($hostBound, 'post_max_size 8M',
+              'and the other one, because the smaller of the two is the one that binds');
+// The number in the row beside it is the effective limit; this sentence must not
+// repeat it in bytes, which is not what is in any php.ini anybody will open.
+check(strpos($hostBound, '2097152') === false,
+      'and never in bytes — nobody edits a php.ini by typing 2097152');
 
 // ASSUMED_PHP is the floor the repo is written to — 8.2, stated by the owner (§4k) and
 // since observed twice: 8.2.33 on the runtime card, and `ea-php82` pinned explicitly to
@@ -4732,6 +4764,90 @@ ErrorPolicy::log('the third, by which time the file is far too big');
 clearstatcache(true, $rollPath);
 check(file_exists($rollPath . '.1'),
       'a later entry in the same request measures the file again rather than remembering it');
+
+// ─────────────────────────────────────────────────────────────
+section('What the Settings tab says the error policy is doing');
+
+// This readout had no check of any kind. `admin_panel.php` prints it through the same
+// `[value, note]` loop as `ServerReport::runtime()` — the loop that runtime() has a
+// check about, three lines of "every fact is a printable pair" — and nothing ever
+// called status() at all. Which matters more here than there, because its own docblock
+// says why it exists: every part of what it reports fails *silently by design*. An
+// unwritable directory means no log; no recipients means no alert; and both look
+// exactly like nothing having gone wrong. A readout that is the only way to see that
+// is a readout worth knowing renders.
+$statusDir  = newTestStateDir();
+$statusPath = $statusDir . '/lbm-error.log';
+ErrorPolicy::useLogFile($statusPath);
+ErrorPolicy::log('an entry, so there is something to report the age of');
+$status = ErrorPolicy::status();
+
+$statusStrings = true;
+foreach ($status as $fact) {
+    if (!is_array($fact) || count($fact) !== 2
+        || !is_string($fact[0]) || !is_string($fact[1])) { $statusStrings = false; }
+}
+check($statusStrings, 'every fact is a printable pair, the same shape the panel loops for both cards');
+check(isset($status['Errors shown to visitors']), 'it says whether a PHP error would reach a visitor');
+check(isset($status['Error log']), 'and where what goes wrong is being written');
+check(isset($status['Last logged']), 'and when something last did');
+check(isset($status['Alerts go to']), 'and who finds out without looking');
+checkSame($statusPath, $status['Error log'][0], 'the log row names the file actually in use');
+checkSame('', $status['Error log'][1], 'and says nothing more when it can be written to');
+check(strpos($status['Last logged'][0], 'UTC') !== false,
+      'the moment carries its frame, since this row is read beside two other clocks');
+// The alert half. `ErrorPolicy::$alerts` is unset in this process, which is the same
+// state as a shop where no admin has an email address on file.
+checkSame('Nobody', $status['Alerts go to'][0], 'with nobody attached, the alert row says Nobody');
+checkMentions($status['Alerts go to'][1], 'nobody will be told',
+              'and spells out the consequence rather than leaving "Nobody" to be read as fine');
+
+// The branch that fires when the app's own decision has been overridden. `-d
+// display_errors=1` reaches it because this suite deliberately never calls
+// ErrorPolicy::install(), and `selftest_installed.php` runs an arm that does exactly
+// that — so the two forms of this row are each produced by a real process.
+//
+// Stated as the invariant and not as this machine's answer. Predicting the word from
+// `ini_get('display_errors')` here would be the §4be mistake in miniature — and worse
+// than usual, because `ini_get` answers the string 'Off' for a flag that is off, which
+// is truthy, so the prediction would have been *wrong* on a host that spells it that
+// way and right on this one, which spells it ''.
+$showing = ErrorPolicy::status()['Errors shown to visitors'];
+check($showing[0] === 'On' || $showing[0] === 'Off',
+      'the row is one of two words, whichever way this host is set');
+check(($showing[0] === 'On') === ($showing[1] !== ''),
+      'and it says something exactly when errors would reach a visitor, which is never '
+    . 'the app\'s own doing — it sets the flag off on every request');
+
+// Nowhere to write. The first row of the pair changes and the second disappears —
+// there is no "last logged" when there is no log.
+ErrorPolicy::useLogFile('');
+$noLog = ErrorPolicy::status();
+checkSame('Nowhere to write', $noLog['Error log'][0], 'with no writable directory the log row says so');
+checkMentions($noLog['Error log'][1], 'no alert can be sent',
+              'and names the second thing that stops, which is the one nobody would guess');
+check(!isset($noLog['Last logged']),
+      'and there is no "last logged" row at all, rather than one reading never');
+ErrorPolicy::useLogFile($statusPath);
+
+// ---- Which request the log line is about -----------------------------------------
+// The tag on a JSON failure, and the reason this pass exists in one line: the `'cli'`
+// fallback was written for the command line and has never once been reached there.
+// PHP sets SCRIPT_NAME on the CLI too — to the script path, and under `php -r` to the
+// literal phrase "Standard input code", which is PHP's own internal English arriving
+// in a log a person reads to find out which page broke.
+checkSame('cli', ErrorPolicy::requestNameFor('cli', '/home/acct/tools/selftest_layout.php'),
+          'a command-line run is cli, whatever PHP put in SCRIPT_NAME');
+checkSame('cli', ErrorPolicy::requestNameFor('cli', 'Standard input code'),
+          'including `php -r`, which is how selftest_installed.php runs every arm');
+checkSame('api.php', ErrorPolicy::requestNameFor('apache2handler', '/lbm/api.php'),
+          'a real request is named by its page');
+checkSame('api.php', ErrorPolicy::requestNameFor('fpm-fcgi', '/lbm-test/api.php'),
+          'and by the page rather than the install, which the row above it already names');
+checkSame('cli', ErrorPolicy::requestNameFor('cgi-fcgi', ''),
+          'and a host that supplies no script name still gets a word rather than an empty tag');
+checkSame('cli', ErrorPolicy::whichRequest(),
+          'so this suite tags its own log lines cli, which is what it is');
 
 // ─────────────────────────────────────────────────────────────
 section('Alerts: one per problem per hour, to admins only');
@@ -8252,4 +8368,9 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // asserting this checkout's own configuration and added two that say what the rewrites
 // gave up. None of that touched the engine-only section, so the count below it is still
 // 25 — read, not assumed, which is the whole of the paragraph above.
-reportChecks(testIsMysql() ? 2298 : 2273);
+//
+// Then §4bg: the four readouts that describe *the machine* and had no seam between them
+// and it — the PHP time zone note, the upload ceiling note, `ErrorPolicy::status()` in
+// its entirety, and the log's request tag. 31 checks, all engine-independent, so 25 is
+// still the difference and 2304 is still what the run reported.
+reportChecks(testIsMysql() ? 2329 : 2304);
