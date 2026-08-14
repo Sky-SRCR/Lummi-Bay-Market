@@ -631,6 +631,121 @@ if (UploadLimit::bodyWasDropped($_SERVER, $_POST, $_FILES)) {
         }
     }
 
+    // ---- Workspace Themes (v2 step 5) ------------------------------------------------
+    // The other noun, and the shorter handler of the two, because a theme is one row in
+    // one table. That is the whole reason there is no `ThemeAdmin` beside `BrandAdmin`:
+    // a Brand needs its six `block_styles` rows or its typography form reports success
+    // and changes nothing, so creating one spans two tables and needs a transaction. A
+    // theme has no second table to be half of.
+    //
+    // Nothing here refuses a save because somebody holds an edit lock, and that is not
+    // an omission. A Brand edit reaches every Screen wearing it on the next poll; a
+    // theme edit reaches one person's browser on their next page load and no sign, ever.
+    // The lock exists to stop typography changing under somebody sizing blocks against
+    // it, and there is nothing here for it to protect.
+    if (isset($_POST['action_create_theme']) || isset($_POST['action_save_theme'])) {
+        $tab      = 'branding';
+        $creating = isset($_POST['action_create_theme']);
+        $editing  = $creating ? null : $themeStore->forId($_POST['t_id'] ?? 0);
+
+        if (!$creating && !$editing) {
+            $msg = 'That theme no longer exists, so nothing was saved.'; $msgType = 'error';
+        } else {
+            // Every role is named whether the form filled it in or not, which is the
+            // grant matrix's rule (§4s) in a smaller place: a whole-row save cannot tell
+            // a role somebody cleared from one that was never on the page, so the page
+            // declares all thirteen and the save writes all thirteen. An
+            // `<input type="color">` always posts something, so there is no "cleared"
+            // state to distinguish here — every role is a colour or the form is broken.
+            $tFields = ['name' => $_POST['t_name'] ?? ''];
+            foreach (array_keys(SiteChrome::ROLES) as $_tr) {
+                $tFields[$_tr] = $_POST['t_' . $_tr] ?? '';
+            }
+            unset($_tr);
+
+            $tName    = PickerName::clean($tFields['name']);
+            $tBadCols = WorkspaceThemeStore::unreadableIn($tFields);
+            $tClash   = $themeStore->otherThemeNamed($tName, $editing ? $editing->id() : 0);
+
+            if (!PickerName::isValid($tName)) {
+                $msg     = 'A theme needs a name of its own, no longer than '
+                         . intval(PickerName::MAX) . ' characters. Nothing was saved.';
+                $msgType = 'error';
+            } elseif ($tClash) {
+                // Quoting the stored name rather than the typed one, because those differ
+                // exactly when the case-insensitive comparison did the work it exists for.
+                $msg     = 'There is already a theme called ' . $tClash->name()
+                         . '. Give this one a different name — two themes with the same '
+                         . 'name on one picker cannot be told apart. Nothing was saved.';
+                $msgType = 'error';
+            } elseif ($tBadCols) {
+                // Named, never substituted (#21). Every bad one at once, so somebody who
+                // pasted three does not resubmit three times.
+                $tSaid = [];
+                foreach ($tBadCols as $_trole => $_tval) {
+                    $tSaid[] = SiteChrome::ROLES[$_trole][0] . ' (' . Color::describe($_tval) . ')';
+                }
+                unset($_trole, $_tval);
+                $msg     = 'Nothing was saved: ' . implode(', ', $tSaid)
+                         . ' — ' . (count($tSaid) === 1 ? 'that is not a colour this app can store.'
+                                                        : 'those are not colours this app can store.');
+                $msgType = 'error';
+            } else {
+                $tSaved = $creating ? $themeStore->insert($tFields)
+                                    : $themeStore->updateDetails($editing, $tFields);
+                if (!$tSaved) {
+                    $msg = 'That theme could not be saved.'; $msgType = 'error';
+                } else {
+                    $_GET['theme'] = (string)$tSaved->id();
+                    // Warned about, never refused (decision 13): an admin owns their own
+                    // legibility policy, and a rule that refused would be the enforced
+                    // palette ADR-0011 turned down wearing different clothes. Said on the
+                    // save as well as live in the form, because the live warning is
+                    // JavaScript and a saved theme is a fact.
+                    $tWarn = Color::hardToRead($tSaved->colorFor('nav_text'), $tSaved->colorFor('nav_bg'))
+                        ? ' Its navigation text is hard to read on its navigation background —'
+                        . ' that is allowed, and worth looking at on a screen before anybody'
+                        . ' chooses it.'
+                        : '';
+                    $msg     = ($creating ? 'Theme ' : 'Saved ') . $tSaved->name()
+                             . ($creating ? ' created.' : '.')
+                             . ' It is on everybody\'s picker; nobody is wearing it until they'
+                             . ' choose it.' . $tWarn;
+                    $msgType = 'success';
+                }
+            }
+        }
+    }
+
+    // Delete a theme. Refused while anybody is wearing it, naming them — the same shape
+    // as a Brand a sign still wears, and for the same reason: moving three people back to
+    // the store default on one click is the merge invariant 5 exists to prevent, and the
+    // person who would notice is not the one clicking.
+    if (isset($_POST['action_delete_theme'])) {
+        $tab    = 'branding';
+        $tGoing = $themeStore->forId($_POST['t_id'] ?? 0);
+        if (!$tGoing) {
+            $msg = 'That theme no longer exists.'; $msgType = 'error';
+        } else {
+            $tWearers = $themeStore->accountsUsing($tGoing);
+            if ($tWearers) {
+                $msg     = 'Nothing was deleted: ' . implode(', ', $tWearers)
+                         . (count($tWearers) === 1 ? ' is' : ' are')
+                         . ' using ' . $tGoing->name() . '. Removing it would change '
+                         . (count($tWearers) === 1 ? 'their' : 'their') . ' screens without'
+                         . ' telling them — they can switch to the store default themselves,'
+                         . ' from the gear menu in the Builder.';
+                $msgType = 'error';
+                $_GET['theme'] = (string)$tGoing->id();
+            } else {
+                $tName = $tGoing->name();
+                $themeStore->deleteRow($tGoing);
+                $msg     = 'Theme ' . $tName . ' deleted. Nobody was using it.';
+                $msgType = 'success';
+            }
+        }
+    }
+
     // Save brand standards
     if (isset($_POST['action_save_styles'])) {
         $types = ['section_header','item_title','item_title_2','price','price_2','description'];
@@ -741,6 +856,21 @@ $brands = $brandStore->all();
 // render something, and there is always at least one Brand on a converged database.
 $openBrand = $brandStore->forId($_GET['brand'] ?? 0);
 if (!$openBrand && $brands) { $openBrand = $brands[0]; }
+
+// The Workspace Themes the Site Branding tab lists, and which one — if any — its form is
+// editing. Deliberately **not** falling back to the first theme the way `$openBrand`
+// does: a Brand always exists and its typography form has to be about one of them, while
+// a theme is optional and the form's resting state is "make a new one". Landing on
+// somebody's theme by default would put a Delete button under a name nobody named.
+$themes    = $themeStore->all();
+$openTheme = $themeStore->forId($_GET['theme'] ?? 0);
+
+// Who is wearing what, so the list can say it and the delete refusal can name them. One
+// read per theme, on a page that already does a dozen — and the alternative is a page
+// that offers a Delete it is going to refuse.
+$themeWearers = [];
+foreach ($themes as $_t) { $themeWearers[$_t->id()] = $themeStore->accountsUsing($_t); }
+unset($_t);
 
 // Which signs wear each Brand — for the count on every row of the list, and for the
 // sentence on the delete confirm. Asked once here rather than once per row.
@@ -1978,6 +2108,171 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
 
         <button type="submit" name="action_save_branding" class="btn btn-green">Save Branding</button>
     </form>
+
+    <!-- ============================================================ -->
+    <!-- WORKSPACE THEMES (v2 step 5)                                  -->
+    <!-- ============================================================ -->
+    <!-- Site Branding is the *store default* — the colours everybody sees who has not
+         chosen otherwise. A Workspace Theme is one person's alternative to it. They are
+         on the same tab because that is the question a person has when they arrive here
+         ("what colour is this application?"), and they are separated by a heading and a
+         sentence because the answer differs: one reaches every account, the other
+         reaches whoever picks it. Neither reaches a sign — that is the Brand tab. -->
+    <div class="card" style="margin-top:26px;">
+        <h2>Workspace Themes</h2>
+        <p style="font-size:13px; color:#555; line-height:1.6; margin-bottom:14px;">
+            The colours above are the <strong>store default</strong> — what everybody's screens
+            are painted in. A theme is an alternative anybody can choose for themselves, from
+            the gear menu in the Builder. Nothing here reaches a display: a sign's colours and
+            typography belong to its Brand, on the Display Branding tab.
+        </p>
+
+        <?php if (!$themes): ?>
+            <p style="font-size:13px; color:#7f8c8d; margin-bottom:14px;">
+                There are no themes yet, so everybody is on the store default.
+            </p>
+        <?php else: ?>
+            <table style="margin-bottom:16px;">
+                <thead><tr><th>Theme</th><th>Colours</th><th>In use by</th><th></th></tr></thead>
+                <tbody>
+                <?php foreach ($themes as $t): ?>
+                    <?php $tBad = $t->unreadable(); ?>
+                    <tr>
+                        <td style="font-weight:600;"><?= Markup::text($t->name()) ?></td>
+                        <td>
+                            <?php foreach (array_keys(SiteChrome::ROLES) as $tRole): ?>
+                                <!-- Drawn through SiteChrome::pick(), so a swatch shows the colour
+                                     the page will actually take rather than the one in the row. A
+                                     stored value nobody can read is named below instead of being
+                                     shown as black (#21). -->
+                                <span title="<?= Markup::text(SiteChrome::ROLES[$tRole][0]) ?>"
+                                      style="display:inline-block; width:13px; height:16px; border-radius:2px;
+                                             border:1px solid #ccc; margin-right:2px;
+                                             background:<?= SiteChrome::pick($tRole, $t->colorFor($tRole)) ?>"></span>
+                            <?php endforeach; ?>
+                            <?php if ($tBad): ?>
+                                <div style="font-size:11px; color:#c0392b; margin-top:4px;">
+                                    Stored but unreadable, so the default is drawn instead:
+                                    <?php foreach ($tBad as $i => $bad): ?><?= $i ? ', ' : '' ?><?= Markup::text($bad['label']) ?>
+                                        (<?= Markup::text(Color::describe($bad['value'])) ?>)<?php endforeach; ?>.
+                                </div>
+                            <?php endif; ?>
+                        </td>
+                        <td style="font-size:12px; color:#555;">
+                            <?= $themeWearers[$t->id()]
+                                    ? Markup::text(implode(', ', $themeWearers[$t->id()]))
+                                    : 'nobody' ?>
+                        </td>
+                        <td style="white-space:nowrap;">
+                            <a class="btn btn-blue" style="text-decoration:none;"
+                               href="admin_panel.php?tab=branding&amp;theme=<?= intval($t->id()) ?>">Edit</a>
+                            <?php if (!$themeWearers[$t->id()]): ?>
+                                <!-- Offered only when it would be allowed, and refused again in the
+                                     handler: a POST does not have to come from a form this page drew
+                                     (invariant 8), and somebody may choose this theme between the
+                                     page being drawn and the button being pressed. -->
+                                <form method="POST" style="display:inline;"
+                                      onsubmit="return confirmDeleteTheme(<?= Markup::jsInAttr($t->name()) ?>)">
+                                    <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
+                                    <input type="hidden" name="t_id" value="<?= intval($t->id()) ?>">
+                                    <button type="submit" name="action_delete_theme" class="btn btn-red">Delete</button>
+                                </form>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
+
+        <!-- One form for both jobs, because they are the same thirteen fields and one of
+             them is a whole-row save. Which it is comes from whether `t_id` is there,
+             which is also what the two submit buttons below say. -->
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="<?= Markup::text(csrfToken()) ?>">
+            <?php if ($openTheme): ?>
+                <input type="hidden" name="t_id" value="<?= intval($openTheme->id()) ?>">
+            <?php endif; ?>
+
+            <h2 style="font-size:14px; border:none; margin:6px 0 10px;">
+                <?= $openTheme ? 'Editing ' . Markup::text($openTheme->name()) : 'Add a theme' ?>
+                <?php if ($openTheme): ?>
+                    <a href="admin_panel.php?tab=branding" style="font-size:12px; font-weight:normal;
+                       margin-left:10px;">start a new one instead</a>
+                <?php endif; ?>
+            </h2>
+
+            <div class="form-group" style="max-width:400px; margin-bottom:12px;">
+                <label>Theme name</label>
+                <input type="text" name="t_name" maxlength="<?= intval(PickerName::MAX) ?>"
+                       value="<?= Markup::text($openTheme ? $openTheme->name() : '') ?>"
+                       placeholder="Night shift" style="width:100%;" required>
+            </div>
+
+            <?php
+            // Grouped as ROLES declares them, so the form's shape comes from the same
+            // list the table, the resolution and the check all read. A hand-written
+            // grouping here would be the fourth copy of "what the roles are".
+            $tGroups = ['chrome'  => ['Application chrome', 'The nav bar, the work area and the panels.'],
+                        'status'  => ['Status colours', 'The banners: saved, warning, problem, somebody else is here, advisory note.'],
+                        'overlay' => ['On the canvas', 'The selection outline and the resize handles — the only thing a theme paints over a canvas. Everything else drawn there belongs to the display\'s Brand.']];
+            foreach ($tGroups as $tGroup => $tAbout):
+            ?>
+            <div style="margin-bottom:14px;">
+                <div style="font-size:12px; font-weight:600; color:#555;"><?= Markup::text($tAbout[0]) ?></div>
+                <div style="font-size:11px; color:#7f8c8d; margin-bottom:6px;"><?= Markup::text($tAbout[1]) ?></div>
+                <div style="display:flex; flex-wrap:wrap; gap:14px;">
+                    <?php foreach (SiteChrome::ROLES as $tRole => $tMeta): ?>
+                        <?php if ($tMeta[1] !== $tGroup) { continue; } ?>
+                        <label style="font-size:11px; color:#555; font-weight:600;
+                                      display:flex; flex-direction:column; gap:3px;">
+                            <?= Markup::text($tMeta[0]) ?>
+                            <input type="color" name="t_<?= Markup::text($tRole) ?>"
+                                   data-role="<?= Markup::text($tRole) ?>"
+                                   value="<?= SiteChrome::pick($tRole, $openTheme ? $openTheme->colorFor($tRole) : null) ?>"
+                                   oninput="themeFormPreview()">
+                        </label>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+            <?php endforeach; unset($tGroup, $tAbout, $tRole, $tMeta); ?>
+
+            <!-- The preview, and the contrast warning that does not block the save
+                 (decision 13: an admin owns their own legibility policy). It is a strip
+                 rather than a mock of the whole Builder, because a mock is a second
+                 renderer to keep in step with the real one — and the real one is one
+                 click away in the gear menu. -->
+            <div id="theme-preview" style="border-radius:6px; padding:0; overflow:hidden;
+                                          border:1px solid #ccc; max-width:520px;">
+                <div id="tpv-nav" style="padding:9px 12px; display:flex; align-items:center; gap:12px;">
+                    <span id="tpv-name" style="font-weight:bold; font-size:13px;"><?= Markup::text($curSite) ?></span>
+                    <span id="tpv-btn" style="color:#fff; padding:3px 10px; border-radius:3px; font-size:11px;">Publish</span>
+                </div>
+                <div id="tpv-body" style="padding:12px; display:flex; gap:10px; align-items:stretch;">
+                    <div id="tpv-panel" style="width:96px; border-radius:4px; padding:8px; font-size:11px;
+                                               color:#dfe6ec;">Palette</div>
+                    <div id="tpv-canvas" style="flex:1; background:#fff; border-radius:3px; min-height:54px;
+                                                position:relative;">
+                        <span id="tpv-sel" style="position:absolute; left:10px; top:10px; width:70px; height:30px;
+                                                  background:#eee;"></span>
+                    </div>
+                </div>
+                <div id="tpv-bar" style="padding:6px 12px; font-size:11px; color:#fff;">A banner looks like this</div>
+            </div>
+            <p style="font-size:11px; color:#7f8c8d; margin-top:6px; max-width:520px;">
+                The white rectangle is a display's canvas. Its colours are the Brand's, never a
+                theme's — only the selection outline around a block is drawn from here.
+            </p>
+            <div id="theme-contrast" style="display:none; font-size:12px; margin-top:8px; padding:7px 10px;
+                                            border-radius:4px; background:#fff8e1; border:1px solid #e6c86a;
+                                            color:#7a5b00; max-width:520px;"></div>
+
+            <div style="margin-top:14px;">
+                <button type="submit" name="<?= $openTheme ? 'action_save_theme' : 'action_create_theme' ?>"
+                        class="btn btn-green"><?= $openTheme ? 'Save theme' : 'Add theme' ?></button>
+            </div>
+        </form>
+    </div>
 </div>
 
 <!-- ============================================================ -->
@@ -2274,6 +2569,17 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             'every display. This cannot be undone, and the name stays reserved.');
     }
 
+    // The sentence lives here rather than in the attribute, which is the rule and not a
+    // preference: an HTML parser decodes an attribute before the JavaScript parser reads
+    // it, so a name spliced into a quoted string there is escaped for the wrong parser
+    // and the string ends at the first apostrophe. `Markup::jsInAttr()` is passed as the
+    // whole argument; the words are here.
+    function confirmDeleteTheme(name) {
+        return confirm('Delete the ' + name + ' theme?\n\n' +
+            'Nobody is using it, so nobody\'s screens change. It cannot be undone — ' +
+            'a theme with the same name later is a new one.');
+    }
+
     function confirmTurnOff(title) {
         return confirm('Turn off ' + title + '?\n\n' +
             'The layout is kept and stays editable by admins, but any screen showing it will say ' +
@@ -2544,6 +2850,85 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         }
     }
 
+    // ============================================================
+    // WORKSPACE THEME FORM — the preview, and the warning that does not refuse
+    // ============================================================
+    // The threshold and the sentence are the server's; only the arithmetic is here, and
+    // that is the one rule in this app written in two languages. It has to be: a warning
+    // that appears while somebody drags a colour picker cannot ask the server on every
+    // frame. What keeps the two from drifting is that neither is checked against the
+    // other — both are checked against WCAG's own fixed points, black on white at 21 and
+    // a colour on itself at 1, in `selftest_layout.php` and in
+    // `selftest_builder_theme.js`. A formula from a standard is a safer thing to write
+    // twice than a decision would be, and the decision — 4.5, and the words — is
+    // declared once and printed here.
+    var THEME_READABLE_RATIO = <?= HttpReply::jsValue(Color::READABLE_RATIO) ?>;
+
+    /** WCAG relative luminance for `#rrggbb`, or null when that is not what it is. */
+    function themeLuminance(hex) {
+        if (!/^#[0-9a-fA-F]{6}$/.test(String(hex))) { return null; }
+        var parts = [1, 3, 5].map(function (at) {
+            var c = parseInt(hex.substr(at, 2), 16) / 255;
+            return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        });
+        return 0.2126 * parts[0] + 0.7152 * parts[1] + 0.0722 * parts[2];
+    }
+
+    /** How far apart two colours are, 1 to 21, or null if either is not a colour. */
+    function themeContrast(one, two) {
+        var a = themeLuminance(one), b = themeLuminance(two);
+        if (a === null || b === null) { return null; }
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    }
+
+    /** Every role the form is showing: role name => the colour picked for it. */
+    function themeFormColors() {
+        var out = {};
+        var inputs = document.querySelectorAll('[data-role]');
+        for (var i = 0; i < inputs.length; i++) {
+            out[inputs[i].getAttribute('data-role')] = inputs[i].value;
+        }
+        return out;
+    }
+
+    /**
+     * Draw the strip, and say when the nav would be hard to read.
+     *
+     * The canvas rectangle in the preview is deliberately painted white and left alone:
+     * decision 11 says the canvas belongs to the display's Brand, and a preview that
+     * themed it would be teaching the admin the opposite of what the app does. Only the
+     * selection outline around the block inside it comes from the theme.
+     */
+    function themeFormPreview() {
+        var c = themeFormColors();
+        if (!c.nav_bg) { return; }          // not on this tab, or the form is not drawn
+        var set = function (id, prop, value) {
+            var node = document.getElementById(id);
+            if (node) { node.style[prop] = value; }
+        };
+        set('tpv-nav', 'background', c.nav_bg);
+        set('tpv-nav', 'borderBottom', '2px solid ' + c.nav_border);
+        set('tpv-name', 'color', c.nav_text);
+        set('tpv-btn', 'background', c.accent);
+        set('tpv-body', 'background', c.work_area);
+        set('tpv-panel', 'background', c.panel);
+        set('tpv-panel', 'border', '1px solid ' + c.panel_border);
+        set('tpv-bar', 'background', c.status_busy);
+        set('tpv-sel', 'outline', '2px solid ' + c.selection);
+
+        var box   = document.getElementById('theme-contrast');
+        var ratio = themeContrast(c.nav_text, c.nav_bg);
+        if (!box) { return; }
+        if (ratio !== null && ratio < THEME_READABLE_RATIO) {
+            box.textContent = 'Nav text on Nav background is hard to read (' +
+                              ratio.toFixed(1) + ':1, where ' + THEME_READABLE_RATIO +
+                              ':1 is the readable minimum). You can save it anyway.';
+            box.style.display = 'block';
+        } else {
+            box.style.display = 'none';
+        }
+    }
+
     /**
      * Preview the picked logo — or say why there is nothing to preview.
      *
@@ -2632,6 +3017,13 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         preview.style.fontStyle   = row.querySelector('[name$="_fstyle"]').value;
         preview.style.lineHeight  = row.querySelector('[name$="_lh"]').value;
     }
+
+// Draw the theme strip once, from the values the form was rendered with. The
+// alternative was thirteen more colour echoes in the markup to set its initial state —
+// this asks the pickers that already hold them, so the preview cannot show a colour the
+// form is not about to submit. Harmless on every other tab: `themeFormPreview()` returns
+// at once when the form is not on the page.
+themeFormPreview();
 </script>
 </body>
 </html>

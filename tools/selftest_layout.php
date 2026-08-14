@@ -7731,6 +7731,60 @@ try { Color::contrastRatio('puce', '#ffffff'); } catch (Throwable $e) { $tThrew 
 checkSame(true, $tThrew,
           'and a value that is not a colour has no contrast, rather than the worst possible contrast');
 
+// ---- The panel's theme surface and its handler agree about field names -------------
+// Grep-shaped, for the reason the Display Branding block above says: nothing here renders
+// the page, so a broken layout is the browser pass's job. What this can see is the
+// failure a rendered page would not shout about either — a form posting `t_nav_bg` at a
+// handler reading `t_navbg` looks perfectly fine and silently drops what was picked. The
+// two halves are 600 lines apart in one file.
+foreach (['t_name', 't_id'] as $tF) {
+    checkMentions($panel, 'name="' . $tF . '"', 'the theme form posts ' . $tF);
+    checkMentions($panel, "\$_POST['" . $tF . "']", 'and the handler reads it back under the same name');
+}
+// The thirteen are not literals on either side: the form emits them from
+// `SiteChrome::ROLES` and the handler reads them back from the same list. That is
+// stronger than matching names — one list means they cannot drift — so what is asserted
+// is that both halves really do come from it.
+checkMentions($panel, 'name="t_<?= Markup::text($tRole) ?>"',
+              'each role\'s input is named from the one list of roles');
+checkMentions($panel, "\$_POST['t_' . \$_tr]",
+              'and the handler reads all thirteen from that same list');
+// Not a count — the first version of this check asserted three uses and there are five,
+// all of them legitimate (the save loop, the refusal's labels, the swatch loop, each
+// swatch's title, the form's grouping). A number would have to be edited every time this
+// page grows a way of showing a role, which is a check that trains people to change it.
+// What matters is that no *hand-written* list of roles exists beside the one list.
+check(substr_count($panel, 'SiteChrome::ROLES') >= 4,
+      'every place that walks the roles walks the one list');
+checkSame(0, preg_match("/'nav_bg'\s*(=>|,)\s*'?#?[a-z0-9]*'?\s*,?\s*'nav_border'/", $panel),
+          'and the page holds no second copy of what the roles are');
+
+foreach (['action_create_theme', 'action_save_theme', 'action_delete_theme'] as $tA) {
+    checkMentions($panel, "\$_POST['" . $tA . "']", 'the panel handles ' . $tA);
+}
+checkMentions($panel, '$themeStore->insert(',        'creating a theme goes through the store that owns the table');
+checkMentions($panel, '$themeStore->updateDetails(', 'and so does saving one');
+checkMentions($panel, '$themeStore->deleteRow(',     'and deleting one');
+checkMentions($panel, '$themeStore->accountsUsing(',
+              'and a delete asks who is wearing it first, so the refusal can name them');
+// The two rules the form leans on, asked rather than restated.
+checkMentions($panel, 'WorkspaceThemeStore::unreadableIn(',
+              'the form asks which submitted colours cannot be read');
+checkMentions($panel, 'Color::hardToRead(',
+              'and whether the result is legible, which it warns about rather than refusing');
+check(strpos($panel, 'Nothing was saved') !== false,
+      'and says nothing was saved when it refuses, rather than only what was wrong');
+// The threshold reaches the browser from the one place it is declared. A form carrying
+// its own 4.5 would be the second opinion that disagrees the day this changes.
+checkMentions($panel, 'HttpReply::jsValue(Color::READABLE_RATIO)',
+              'the live warning is given the threshold rather than holding a copy of it');
+checkSame(0, preg_match('/THEME_READABLE_RATIO\s*=\s*4\.5/', $panel),
+          'and no literal 4.5 is written into the script beside it');
+// The panel is where a theme is *made*; it is not where one is worn by somebody else.
+// Nothing here may write the choice column — that is the account's own, through the API.
+checkSame(0, substr_count($panel, 'chooseWorkspaceTheme'),
+          'and the panel never chooses a theme for anybody: that write is the account\'s own');
+
 // ─────────────────────────────────────────────────────────────
 // Everything above this line runs on both engines. What follows can only be asked
 // of a real MySQL database, and is skipped entirely on the SQLite default — which
@@ -7920,7 +7974,7 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // plus that count, and both halves are things somebody can verify without a database.
 // The SQLite number stays what the run reported.
 //
-// Step 5 moved it from 2068 to 2200 and did not touch the engine-only section, so the
+// Step 5 moved it from 2068 to 2221 and did not touch the engine-only section, so the
 // count below it is still 25 — read, not assumed, which is the whole of the paragraph
 // above.
-reportChecks(testIsMysql() ? 2225 : 2200);
+reportChecks(testIsMysql() ? 2246 : 2221);

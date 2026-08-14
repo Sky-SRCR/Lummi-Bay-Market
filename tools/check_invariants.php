@@ -662,6 +662,12 @@ $SAFE_CALLS  = ['count', 'intval', 'intdiv', 'floatval', 'number_format',
 $SAFE_STATIC = ['Markup::text', 'Markup::jsInAttr', 'HttpReply::jsValue',
                 'SiteChrome::navBg', 'SiteChrome::navBorder', 'SiteChrome::accent', 'SiteChrome::text',
                 'SiteChrome::styleVariables',
+                // `pick()` is what the four accessors and styleVariables() are made of:
+                // it answers `#rrggbb` for every input, because a value `Color::read()`
+                // refuses becomes the documented default. Reached directly by the theme
+                // list and the theme form, which draw a swatch per role and cannot go
+                // through a thirteen-way switch of named accessors.
+                'SiteChrome::pick',
                 // The validator itself, which the paragraph above already names as the
                 // reason the four accessors are safe. Its answer set is `#rrggbb` and the
                 // empty string, and an empty declaration in a `style` attribute is one a
