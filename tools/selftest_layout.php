@@ -7788,6 +7788,32 @@ try { Color::contrastRatio('puce', '#ffffff'); } catch (Throwable $e) { $tThrew 
 checkSame(true, $tThrew,
           'and a value that is not a colour has no contrast, rather than the worst possible contrast');
 
+// ---- What "use the store default" is, as a value -----------------------------------
+// `storeColors()` is what the Builder hands its script so the escape hatch can put the
+// thirteen back, and the mutation run found its whole body deletable: the node suite
+// substitutes that payload, so nothing here had ever run it. The property that matters is
+// the last check — it must answer the *store's* colours while a theme is being worn,
+// because that is the only state it is ever called in.
+$tStoreColors = SiteChrome::storeColors();
+checkSame(13, count($tStoreColors), 'the store default is thirteen colours like any theme');
+checkSame(SiteChrome::configColor('nav_bg'), $tStoreColors['nav_bg'],
+          'the four Site Branding owns come from the config');
+checkSame(SiteChrome::DEFAULTS['status_busy'], $tStoreColors['status_busy'],
+          'and the other nine from the documented defaults');
+// Its own theme, because by this point in the section the earlier one has been deleted —
+// and a `forId()` answering null here would have made the next two checks pass by wearing
+// nothing at all, which is the shape of every hollow check this file has found.
+$tForStore = $tStore->insert(['name' => 'Loud', 'nav_bg' => '#ff00ff']);
+check($tForStore instanceof WorkspaceTheme, 'a theme to wear while asking about the store default');
+SiteChrome::wear($tForStore);
+checkSame($tStoreColors, SiteChrome::storeColors(),
+          'and wearing a theme does not change what the store default is — which is the '
+        . 'only state this is ever asked in');
+checkSame('#ff00ff', SiteChrome::navBg(),
+          'while the page around it is painted in the theme, so the two really are different answers');
+SiteChrome::wear(null);
+$tStore->deleteRow($tForStore);
+
 // ---- The two pages a theme must never reach, by construction -----------------------
 // Decision 12 says the sign-in page and the Viewer are unaffected "by construction", and
 // a construction is worth a check: what makes it true is that neither page ever calls
@@ -8051,7 +8077,7 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // plus that count, and both halves are things somebody can verify without a database.
 // The SQLite number stays what the run reported.
 //
-// Step 5 moved it from 2068 to 2241 and did not touch the engine-only section, so the
+// Step 5 moved it from 2068 to 2247 and did not touch the engine-only section, so the
 // count below it is still 25 — read, not assumed, which is the whole of the paragraph
 // above.
-reportChecks(testIsMysql() ? 2266 : 2241);
+reportChecks(testIsMysql() ? 2272 : 2247);
