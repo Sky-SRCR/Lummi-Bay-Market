@@ -6552,9 +6552,61 @@ leaves the screen showing a theme the account is not on. `selftest_builder_reado
 gained the other half: the picker reaches a read-only Builder in full, which is the
 distinction between the two nouns in one assertion.
 
-**What the mutation runs found.** Recorded below once the runs over `lib/workspace_themes.php`,
-`lib/site_chrome.php`, `lib/picker_name.php` and `lib/color.php` had reported — figures
-that were measured, for the reason §4bc's paragraph now says out loud.
+**What the mutation runs found.** Over the code as finally committed: `lib/workspace_themes.php`
+56 of 65 killed, 25 of those by an assertion; `lib/site_chrome.php` 27 of 38, 14 by an
+assertion; `lib/color.php` 32 of 39, 22; `lib/picker_name.php` 22 of 27, 18; and
+`lib/accounts.php` 156 of 241, 130 — that last file because this step put a method in it
+and one line inside `close()`'s transaction, and that line is killed by an assertion
+rather than by the harness noticing something moved. Measured, for the reason §4bc's
+paragraph now says out loud.
+
+The runs *during* the work found four things, and all four are fixed inside those figures
+rather than being what they report. `WorkspaceTheme::colors()` was dead — five mutants
+lived inside it because nothing called it, and it is deleted rather than covered, which is
+why that file has 65 mutants and not 70. Two id guards were being asked about rows that
+did not exist, so `forId('1abc')` and `forAccount('2abc')` answering null was not the
+guard's doing and the checks could not have failed. The `array_key_exists` guard in
+`colorFor()` had nothing asking it for a role the row has no column for, which is the
+whole case it exists for. And `storeColors()` — the value behind "use the store default" —
+had never been executed on the PHP side at all.
+
+The runs *after* them asked for eleven more checks, which is the suite moving from 2257 to
+2268. Five are contrast, and they are the sharpest thing the tool has found here: every
+fixed point this step had written was black, white, grey, or a colour on itself, and a
+grey is precisely the input a mix-up of channels cannot change — so both substring offsets
+and both weightings in `luminance()` could be moved and the whole suite still passed. Red,
+green and blue on white are 4.00, 1.37 and 8.59, three numbers that agree with only one
+reading of the bytes, and two of them straddle the threshold in opposite directions. Three
+are a blank-named row, inserted in SQL because no form can make one: `clashIn()`'s empty-name
+guard exists so an unvalidated name does not match it, and until now nothing had put such a
+row in front of it to match. One calls `clashIn()` with two arguments — both stores hand it
+three, so its own default was reached from nowhere, and a default of 1 rather than 0 would
+have excused the first row anybody ever made from every clash check in the app. Two tell
+`SiteChrome::unreadable()` about a colour defined as blank rather than not defined, which is
+`=== null` sitting one character from `== null`, and the difference is whether the person who
+emptied that line is ever told.
+
+What lived is four families, all of them named before this step. `===` → `==` and `!==` → `!=`
+where PHP 8 already guarantees both operands' type. `$out = [];` deleted in front of an
+append, which PHP auto-vivifies, so the line declares a type rather than doing anything.
+`intval($id) <= 0` behind an `isIdLike()` that has already refused everything except zero
+and negatives — §4bc's two agreements about the same thing. And three in `site_chrome.php`
+— `load()`'s body, `logo()`'s `&&`, and `FIELDS[$key][0]` read as `[1]` — which all survive
+because the process running the suite already has the branding constants defined: the
+failure CLAUDE.md names as an absent-setting check running where the setting was present.
+Killing those needs a subprocess, which this suite has machinery for and this step did not
+spend on them.
+
+**And one survivor is a question rather than a family.** `stored()` hands a worn theme's
+value back exactly as stored, so an unreadable one is refused a layer later by `pick()` —
+which answers the **documented** default, not the colour the shop put in
+`branding_config.php`. For the four config-backed roles those are two different colours on
+any install that has branded its nav, so a theme with one bad value loses the shop's colour
+rather than falling through to it. In this container they are equal, which is both why the
+mutant on that line lives and why no check here can see the difference. Written down rather
+than changed: "use the store default" means the config file everywhere else in this step,
+and making the fallback mean it here too changes what a page paints, which is a thing to
+do deliberately — with the browser pass owed on this step anyway.
 
 **No ADR, and that is a decision rather than an omission.** An ADR here would record
 "typography and colour belong to a Brand" 's mirror image — the application's own colours

@@ -7377,6 +7377,15 @@ checkSame(1, count($aBadCfg),        'one value nobody can read is one thing to 
 checkSame('accent', $aBadCfg[0]['key'],   'named by the field it is');
 checkSame('Accent', $aBadCfg[0]['label'], 'in the words the Branding form uses');
 checkSame('puce',   $aBadCfg[0]['value'], 'quoting what is actually in the file');
+// Defined-and-blank is not the same silence as never defined, and the line separating
+// them is one character wide: `=== null` rather than `== null`, which would read a
+// blank `define()` as an absent one. A colour somebody deleted the value out of is a
+// line in the file with nothing in it, and the person who did that is the one who
+// wants telling — the default is what gets painted either way, so nothing else in
+// the app can distinguish these two and say so.
+$aBlankCfg = SiteChrome::unreadable(['accent' => ''] + SiteChrome::DEFAULTS);
+checkSame(1, count($aBlankCfg), 'a colour defined as blank is reported, not treated as undefined');
+checkSame('', $aBlankCfg[0]['value'], 'quoting the nothing that is stored');
 
 // And it reaches the same report every other unreadable colour reaches, under a kind
 // of its own — because this one is the only colour in the app that no sign uses, and
@@ -7744,6 +7753,23 @@ checkSame(false, PickerName::isValid(str_repeat('x', PickerName::MAX + 1)),
 checkSame(false, PickerName::isValid("Night\tshift"), 'and one with a control character in it');
 checkSame(PickerName::MAX, BrandStore::NAME_MAX,
           'and a Brand asks the same rule rather than carrying a second copy of it');
+// Called with nothing to excuse, which is what every caller's own default passes down.
+// Asserted here because the two stores both hand `clashIn()` three arguments, so its
+// own default parameter is reached from nowhere else — and a default of 1 rather than
+// 0 would quietly excuse the first row anybody ever made from every clash check.
+checkSame($tOne->id(), PickerName::clashIn($tStore->all(), 'Night shift')->id(),
+          'clashIn() excusing nothing excuses no row, not row 1');
+// A row whose name is blank, which the form cannot make and the column allows. The
+// guard is what stops it being the answer to every unnamed clash check — an empty
+// name matching an empty name is true, and the caller asking is a save that has not
+// validated the name yet.
+$tPdo->exec("INSERT INTO workspace_themes (id, name) VALUES (77, '')");
+checkSame(null, $tStore->otherThemeNamed(''),
+          'an empty name clashes with nothing, even with a blank-named row to match');
+checkSame(null, $tStore->otherThemeNamed('   '), 'and neither does one that is only spaces');
+checkSame($tOne->id(), $tStore->otherThemeNamed('Night shift')->id(),
+          'while a real name still finds its row past it');
+$tPdo->exec("DELETE FROM workspace_themes WHERE id = 77");
 
 // ---- The colour rules the form leans on --------------------------------------------
 checkSame('#ffcc00', WorkspaceThemeStore::cleanColor('#FFCC00'), 'a colour is stored one way');
@@ -7783,6 +7809,24 @@ checkSame(true, Color::hardToRead('#7f8c8d', '#8fa6bb'),
 checkSame(true, Color::hardToRead('#101820', '#101820'),
           'and a theme whose two nav colours are identical is warned about');
 checkSame(Color::READABLE_RATIO, 4.5, 'the threshold is named once rather than typed into a form');
+// Three colours whose answer depends on *which* channel is which. Every fixed point
+// above is grey, identical or both, and a grey is the one input a channel mix-up
+// cannot change: mutation moved the two substring offsets and both weightings in
+// `luminance()` and each one lived, because #000000, #ffffff and a colour on itself
+// give the same ratio whichever way round the bytes are read. Red, green and blue on
+// white are three different numbers, and the standard's weighting is why — green
+// carries 0.7152 of the luminance and blue 0.0722, so the same byte in a different
+// channel is a tenfold difference in what a person can read.
+checkSame(4.0, round(Color::contrastRatio('#ff0000', '#ffffff'), 2),
+          'red on white is a shade under the threshold');
+checkSame(1.37, round(Color::contrastRatio('#00ff00', '#ffffff'), 2),
+          'green on white is nearly invisible, being the channel most of the luminance is in');
+checkSame(8.59, round(Color::contrastRatio('#0000ff', '#ffffff'), 2),
+          'and blue on white is comfortable, being the channel least of it is in');
+checkSame(true, Color::hardToRead('#ff0000', '#ffffff'),
+          'so a red-on-white theme is warned about');
+checkSame(false, Color::hardToRead('#0000ff', '#ffffff'),
+          'and a blue-on-white one is not — the pair a mixed-up channel would answer backwards');
 $tThrew = false;
 try { Color::contrastRatio('puce', '#ffffff'); } catch (Throwable $e) { $tThrew = true; }
 checkSame(true, $tThrew,
@@ -8126,7 +8170,8 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // plus that count, and both halves are things somebody can verify without a database.
 // The SQLite number stays what the run reported.
 //
-// Step 5 moved it from 2068 to 2257 and did not touch the engine-only section, so the
+// Step 5 moved it from 2068 to 2257, and its mutation runs added the eleven checks its
+// survivors asked for, which is 2268. Neither touched the engine-only section, so the
 // count below it is still 25 — read, not assumed, which is the whole of the paragraph
 // above.
-reportChecks(testIsMysql() ? 2282 : 2257);
+reportChecks(testIsMysql() ? 2293 : 2268);
