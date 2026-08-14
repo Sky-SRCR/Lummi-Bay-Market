@@ -271,6 +271,37 @@ function backgroundFromPost(bool $isAdmin): Background {
 }
 
 /**
+ * Turn the Brand half of a publish POST into a BrandChoice.
+ *
+ * Only an admin may change which Brand a sign wears — the Builder gives a basic account
+ * and a read-only page the venue's name and logo and no control (decision 5 of the v2
+ * roadmap, and the same shape as the background above). Not sending the field is the
+ * courtesy; this is the check.
+ *
+ * An absent or blank field is `unchanged`, and that is load-bearing rather than
+ * defensive. It is what a Builder on a database whose convergence has not run sends:
+ * `displays.brand_id` is 0 there, no Brand control is drawn, and the page deliberately
+ * omits the field rather than publishing an id naming nothing — which `BrandChoice`
+ * would rightly refuse, turning a lagging schema into a sign nobody can publish to
+ * (invariant 10).
+ */
+function brandFromPost(bool $isAdmin): BrandChoice
+{
+    if (!$isAdmin) {
+        return BrandChoice::unchanged();
+    }
+    $raw = $_POST['brand_id'] ?? '';
+    // Only a *blank string* is the absent field. `brand_id[]=1` arrives as an array,
+    // which is emphatically not "the Builder sent nothing" — it goes to
+    // `BrandChoice::brand()` to be refused by name, along with `7abc` and every other
+    // thing that is not an id.
+    if (is_string($raw) && $raw === '') {
+        return BrandChoice::unchanged();
+    }
+    return BrandChoice::brand($raw);
+}
+
+/**
  * The edit lock as the Builder consumes it (ADR-0007).
  *
  * Answers only what that page needs to decide: do I hold this Display, and if not,
@@ -356,6 +387,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_editor_layout') {
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
 
     $payload = $layouts->snapshot($resolution->display());
+
+    // The Brand this sign wears, for the Builder's Brand control — the name it prints,
+    // the palette it offers as swatches, and the logo the Venue Logo item places.
+    //
+    // Added here rather than inside the snapshot both clients share, because the Screen's
+    // read is `get_layout`: polled every thirty seconds by every TV in the building, for
+    // a client that draws no logo (decision 5) and gets its typography under
+    // `block_styles` already. A Brand read there would be a query per poll per sign for
+    // a key nothing opens.
+    //
+    // `null` when the row's `brand_id` names nothing — a database whose convergence has
+    // not run (invariant 10). The Builder draws no Brand control for that, which is the
+    // honest answer: there is no Brand to name yet.
+    $wearing = (new BrandStore($pdo))->forId($resolution->display()->brandId());
+    $payload['brand']  = $wearing ? $wearing->toClientArray() : null;
     $payload['status'] = 'success';
     HttpReply::json($payload);
     exit;
@@ -434,6 +480,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
     $request = PublishRequest::fromPostedJson(
         $_POST['layout_data'] ?? '[]',
         backgroundFromPost($isAdmin),
+        brandFromPost($isAdmin),
         currentUser()['id'],
         $isAdmin,
         // The stamp the Builder captured when it loaded this Display. A publish

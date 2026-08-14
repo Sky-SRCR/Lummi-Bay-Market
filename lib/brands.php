@@ -137,7 +137,14 @@ class Brand
     }
 
     /**
-     * The Brand as a client consumes it, under the `brand` key of a layout snapshot.
+     * The Brand as a client consumes it, under the `brand` key of the **editor's**
+     * layout reply (`api.php?action=get_editor_layout`).
+     *
+     * Deliberately not part of the snapshot both clients share. A Screen's read is
+     * polled every thirty seconds by every TV in the building and has no use for any
+     * of this — the Viewer never draws a logo (decision 5) and its typography arrives
+     * under `block_styles` already — so a Brand read on that path would be a query
+     * per poll per sign for a key nothing opens.
      *
      * The palette is sent *read* rather than raw, because the Builder puts these
      * straight into swatch buttons and a value the CSSOM discards is a swatch that
@@ -153,6 +160,124 @@ class Brand
             'bg_val'        => $this->backgroundValue(),
             'palette'       => $this->palette(),
         ];
+    }
+}
+
+/**
+ * What a publish should do about the Brand this sign wears.
+ *
+ * The same shape as `Background`, one column over, and for the same reason: picking a
+ * Brand in the Builder writes nothing at the moment it is picked — it repaints the
+ * canvas in the browser and rides out with the next Publish, on the path
+ * `applyBackground()` already takes (decision 6). So the publish endpoint receives an
+ * *intent*, and an intent that cannot be carried out has to be refusable before
+ * anything is written rather than coerced into one that can.
+ *
+ * Two things can be wrong with it and they are found in different places:
+ *
+ *   not an id       `brand_id=7abc` or `brand_id=[]` arriving from a form nobody is
+ *                   in front of. Decided here, with no database at all, which is what
+ *                   lets `LayoutStore::publish()` refuse it in its pre-transaction
+ *                   pass beside the layout rules.
+ *   no such Brand   a real-looking id naming a row that is gone — a colleague deleted
+ *                   the Brand while this tab sat open. Only the database knows, so the
+ *                   *caller* looks it up under the publish's row lock and hands what
+ *                   it found to `problemWith()`. The Brand is passed in rather than
+ *                   fetched here for the reason every value object in this app is
+ *                   built that way: a class that reaches for a PDO of its own is a
+ *                   class the self-test cannot ask a question without a database.
+ *
+ * `displays.brand_id` is `NOT NULL` (decision 8), so there is no "clear it" intent to
+ * express — the absence of one is `unchanged`, and a basic account's publish is always
+ * that: the control is not on their page and the endpoint does not read the field for
+ * them either.
+ */
+class BrandChoice
+{
+    /** A choice that names no Brand. Nothing writes one; publish refuses it. */
+    const INVALID = 'invalid';
+
+    private $kind;
+    private $value;
+
+    private function __construct($kind, $value)
+    {
+        $this->kind  = $kind;
+        $this->value = $value;
+    }
+
+    /** Leave the Brand exactly as it is — a basic account, and an admin who did not pick. */
+    public static function unchanged() { return new self('unchanged', null); }
+
+    /**
+     * Wear this Brand — or, when that is not an id, nothing at all. The offending
+     * text is kept on the intent so the refusal can quote it.
+     *
+     * `isIdLike()` and not `intval()`, for the reason `BrandStore::forId()` gives:
+     * `intval('7abc')` is 7, so a mangled value would not fail, it would silently
+     * publish a *different venue's* Brand onto the sign.
+     */
+    public static function brand($id)
+    {
+        if (!DisplayStore::isIdLike($id) || intval($id) <= 0) {
+            return new self(self::INVALID, $id);
+        }
+        return new self('brand', intval($id));
+    }
+
+    /** Can this intent be carried out at all? False only for something that is not an id. */
+    public function isUsable() { return $this->kind !== self::INVALID; }
+
+    public function kind() { return $this->kind; }
+
+    /** The Brand id this names, or 0 for the two kinds that name none. */
+    public function id() { return $this->kind === 'brand' ? intval($this->value) : 0; }
+
+    /**
+     * Is this choice applicable, given the Brand the caller found for `id()`?
+     *
+     * @param Brand|null $found what `BrandStore::forId($choice->id())` answered
+     * @return string|null the problem, or null if there is none
+     */
+    public function problemWith($found)
+    {
+        switch ($this->kind) {
+            // Both spellings answered, exactly as `Background::problemWith()` answers
+            // INVALID and 'color' together: the kind is what the factory produces
+            // today, and the guard is what keeps this honest if the factory ever stops
+            // filtering. A reader that knew only one of them would answer "no problem"
+            // for the other, which is a publish nothing refuses.
+            case self::INVALID:
+                return 'That publish named a brand this app cannot read ("' . self::snippet($this->value)
+                     . '"), so nothing was saved. Reload the display and choose a brand again.';
+
+            case 'brand':
+                if (!DisplayStore::isIdLike($this->value) || intval($this->value) <= 0) {
+                    return 'That publish named a brand this app cannot read ("' . self::snippet($this->value)
+                         . '"), so nothing was saved. Reload the display and choose a brand again.';
+                }
+                // Refused rather than falling back to the Brand already on the sign:
+                // falling back is a merge, and the person would be told the publish
+                // succeeded while the one change they made was thrown away (invariant
+                // 5). `displays.brand_id` is NOT NULL and `displays_ibfk_3` would
+                // refuse the write from underneath anyway — this is the half that
+                // produces a sentence rather than an exception.
+                if (!($found instanceof Brand)) {
+                    return 'The brand this display was set to no longer exists — somebody deleted it while '
+                         . 'this page was open. Nothing was saved and your work is still on screen. Reload '
+                         . 'the display and choose a brand again.';
+                }
+                return null;
+        }
+        return null;
+    }
+
+    /** Enough of a rejected value to recognise it, without pasting a payload into a page. */
+    private static function snippet($value)
+    {
+        if (!is_string($value) && !is_int($value)) { return gettype($value); }
+        $value = (string)$value;
+        return strlen($value) > 40 ? substr($value, 0, 37) . '…' : $value;
     }
 }
 

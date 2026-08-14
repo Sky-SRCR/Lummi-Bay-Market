@@ -485,7 +485,7 @@ function rehearsalElementCount()
 function rehearsalPublish(LayoutStore $layouts, Display $d, $text, $stamp)
 {
     return $layouts->publish($d, new PublishRequest(
-        rehearsalLayout($text), Background::unchanged(), 0, true, $stamp
+        rehearsalLayout($text), Background::unchanged(), BrandChoice::unchanged(), 0, true, $stamp
     ));
 }
 

@@ -246,7 +246,7 @@ function publishAs(LayoutStore $layouts, Display $display, array $elements, $sta
 {
     global $pdo;
     $result = $layouts->publish($display, new PublishRequest(
-        $elements, $bg ?: Background::unchanged(), $actorId, $isAdmin, $stamp
+        $elements, $bg ?: Background::unchanged(), BrandChoice::unchanged(), $actorId, $isAdmin, $stamp
     ));
     (new DisplayStore($pdo))->releaseLock($display, $actorId);
     return $result;
@@ -1378,7 +1378,7 @@ $store->releaseLock($lobby, 1);
 $driveT = $store->forId($driveT->id());
 $before = count(elementsOf($pdo, $driveT->id()));
 $res = $layouts->publish($driveT, new PublishRequest(
-    layoutWith('Published over somebody'), Background::unchanged(), 1, true, $driveT->layoutStamp()
+    layoutWith('Published over somebody'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $driveT->layoutStamp()
 ));
 checkSame('locked', $res->kind(), 'a publish is refused while somebody else holds the lock');
 check(strpos($res->message(), 'clerk') !== false, 'the refusal names who is editing');
@@ -1388,7 +1388,7 @@ checkSame($before, count(elementsOf($pdo, $driveT->id())), 'and nothing was writ
 
 // The holder's own publish goes through, and keeps the lock alive.
 $res = $layouts->publish($driveT, new PublishRequest(
-    layoutWith('The holder publishes'), Background::unchanged(), 2, true, $driveT->layoutStamp()
+    layoutWith('The holder publishes'), Background::unchanged(), BrandChoice::unchanged(), 2, true, $driveT->layoutStamp()
 ));
 check($res->isOk(), 'the account holding the lock may publish');
 $d = $store->forId($driveT->id());
@@ -1397,7 +1397,7 @@ checkSame(true, $d->lockState()->heldBy(2), 'and publishing keeps the lock — i
 // The lock refusal comes first: "reload and re-apply" is bad advice while somebody
 // else is mid-edit, because re-applying would only be refused again.
 $res = $layouts->publish($driveT, new PublishRequest(
-    layoutWith('Stale and locked out'), Background::unchanged(), 1, true, 'nonsense-stamp'
+    layoutWith('Stale and locked out'), Background::unchanged(), BrandChoice::unchanged(), 1, true, 'nonsense-stamp'
 ));
 checkSame('locked', $res->kind(), 'a publish that is both stale and locked out reports the lock');
 
@@ -1405,7 +1405,7 @@ checkSame('locked', $res->kind(), 'a publish that is both stale and locked out r
 ageTestLock($pdo, $driveT->id(), LockState::IDLE_LAPSE_SECONDS + 1);
 $driveT = $store->forId($driveT->id());
 $res = $layouts->publish($driveT, new PublishRequest(
-    layoutWith('Back after a break'), Background::unchanged(), 1, true, $driveT->layoutStamp()
+    layoutWith('Back after a break'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $driveT->layoutStamp()
 ));
 check($res->isOk(), 'a publish onto a lapsed lock succeeds');
 $d = $store->forId($driveT->id());
@@ -1422,7 +1422,7 @@ $d = $store->claimLock($driveT, 1);
 checkSame(true, $d->lockState()->heldBy(2), 'the ousted tab\'s next heartbeat cannot reclaim it');
 
 $res = $layouts->publish($driveT, new PublishRequest(
-    layoutWith('Publishing after being ousted'), Background::unchanged(), 1, true, $driveT->layoutStamp()
+    layoutWith('Publishing after being ousted'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $driveT->layoutStamp()
 ));
 checkSame('locked', $res->kind(), 'and its publish is refused, which is how it finds out');
 
@@ -1458,13 +1458,13 @@ foreach ([
     ['null',                       'a literal null'],
     ['',                           'an empty body'],
 ] as $case) {
-    checkSame(null, PublishRequest::fromPostedJson($case[0], $bg, 1, true, '0'),
+    checkSame(null, PublishRequest::fromPostedJson($case[0], $bg, BrandChoice::unchanged(), 1, true, '0'),
               $case[1] . ' is not a layout');
 }
 
 // The other half: an empty array really is a layout. Somebody who deleted every
 // block and published meant it, and must not be refused.
-$emptyReq = PublishRequest::fromPostedJson('[]', $bg, 1, true, '0');
+$emptyReq = PublishRequest::fromPostedJson('[]', $bg, BrandChoice::unchanged(), 1, true, '0');
 check($emptyReq !== null,               'an empty array is still a publish');
 checkSame([], $emptyReq->elements(),    'and it carries no elements');
 
@@ -1474,12 +1474,12 @@ $store   = newTestDisplayStore($pdo);
 $layouts = newTestLayoutStore($pdo);
 $victim  = makeTestDisplay($pdo, 'victim', 'Victim');
 $layouts->publish($victim, new PublishRequest(
-    layoutWith('Sockeye 18.99'), Background::unchanged(), 1, true, $victim->layoutStamp()
+    layoutWith('Sockeye 18.99'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $victim->layoutStamp()
 ));
 $victim = $store->forId($victim->id());
 checkSame(2, count(elementsOf($pdo, $victim->id())), 'the Display starts with a published layout');
 
-checkSame(null, PublishRequest::fromPostedJson('[{"type":', $bg, 1, true, $victim->layoutStamp()),
+checkSame(null, PublishRequest::fromPostedJson('[{"type":', $bg, BrandChoice::unchanged(), 1, true, $victim->layoutStamp()),
           'and an unreadable publish for it never reaches the store');
 checkSame(2, count(elementsOf($pdo, $victim->id())), 'so its elements are still there');
 
@@ -1498,7 +1498,7 @@ section('A hostile publish payload is a refusal, never an escaping error');
 $victim = $store->forId($victim->id());
 $res = $layouts->publish($victim, new PublishRequest(
     [['type' => 'text', 'manual_content' => ['not' => 'a string'], 'temp_id' => 't1']],
-    Background::unchanged(), 1, true, $victim->layoutStamp()
+    Background::unchanged(), BrandChoice::unchanged(), 1, true, $victim->layoutStamp()
 ));
 checkSame('invalid', $res->kind(), 'manual_content as an object is a refusal, not a fatal');
 checkMentions($res->message(), 'Block 1 (text)', 'and the refusal says which block');
@@ -1508,7 +1508,7 @@ checkSame(false, $pdo->inTransaction(), 'with no transaction left open behind it
 $victim = $store->forId($victim->id());
 $res = $layouts->publish($victim, new PublishRequest(
     [['type' => 'section', 'temp_id' => ['an', 'array']]],
-    Background::unchanged(), 1, true, $victim->layoutStamp()
+    Background::unchanged(), BrandChoice::unchanged(), 1, true, $victim->layoutStamp()
 ));
 checkSame('invalid', $res->kind(), 'an array where a temp_id belongs is refused the same way');
 checkSame(2, count(elementsOf($pdo, $victim->id())), 'and again nothing was lost');
@@ -1521,7 +1521,7 @@ $store   = newTestDisplayStore($pdo);
 $layouts = newTestLayoutStore($pdo);
 $sign    = makeTestDisplay($pdo, 'deli', 'Deli Case');
 $layouts->publish($sign, new PublishRequest(
-    layoutWith('Chowder 6.50'), Background::unchanged(), 1, true, $sign->layoutStamp()
+    layoutWith('Chowder 6.50'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $sign->layoutStamp()
 ));
 $store->releaseLock($sign, 1);
 
@@ -1556,7 +1556,7 @@ checkSame(true, $res->isOk(), 'once the lock has lapsed the Work Area can delete
 // that would do it is the one lib/schema.php never converges.
 $sign = $store->forId($sign->id());
 $layouts->publish($sign, new PublishRequest(
-    layoutWith('Cascade, explicitly'), Background::unchanged(), 1, true, $sign->layoutStamp()
+    layoutWith('Cascade, explicitly'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $sign->layoutStamp()
 ));
 setTestForeignKeys($pdo, false);
 $sectionId = 0;
@@ -2639,7 +2639,7 @@ checkSame('2:15pm', $store->forId($zoned->id())->lockState()->takenAtLabel(),
 // agreed with the reader. A bound gmdate() is the same string on both.
 $layoutsZ = newTestLayoutStore($pdo);
 $store->claimLock($zoned, 1);
-$layoutsZ->publish($zoned, new PublishRequest([], Background::unchanged(), 1, true, $zoned->layoutStamp()));
+$layoutsZ->publish($zoned, new PublishRequest([], Background::unchanged(), BrandChoice::unchanged(), 1, true, $zoned->layoutStamp()));
 $publishedAt = $pdo->query("SELECT last_published_at FROM displays WHERE id = " . $zoned->id())->fetchColumn();
 check(abs(StoreClock::epochOf($publishedAt) - time()) <= 5,
       'a publish records the moment in UTC, bound by PHP rather than asked of the database');
@@ -2839,9 +2839,9 @@ $b = makeTestDisplay($pdo, 'bb', 'Sign B');
 // blanked that line on both of them, permanently. Two rows now.
 $shared = ['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'Sockeye  18.99',
            'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60];
-$layouts->publish($a, new PublishRequest([$shared], Background::unchanged(), 1, true, $a->layoutStamp()));
+$layouts->publish($a, new PublishRequest([$shared], Background::unchanged(), BrandChoice::unchanged(), 1, true, $a->layoutStamp()));
 $store->releaseLock($a, 1);
-$layouts->publish($b, new PublishRequest([$shared], Background::unchanged(), 1, true, $b->layoutStamp()));
+$layouts->publish($b, new PublishRequest([$shared], Background::unchanged(), BrandChoice::unchanged(), 1, true, $b->layoutStamp()));
 $store->releaseLock($b, 1);
 
 $assetId = intval($pdo->query("SELECT id FROM assets ORDER BY id ASC LIMIT 1")->fetchColumn());
@@ -2892,11 +2892,11 @@ $block = function ($words) {
 };
 
 $fresh = $store->forId($sign->id());
-$layouts->publish($sign, new PublishRequest([$block('Sockeye  18.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$layouts->publish($sign, new PublishRequest([$block('Sockeye  18.99')], Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 $fresh = $store->forId($sign->id());
-$layouts->publish($fresh, new PublishRequest([$block('Sockeye  19.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$layouts->publish($fresh, new PublishRequest([$block('Sockeye  19.99')], Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 $fresh = $store->forId($sign->id());
-$layouts->publish($fresh, new PublishRequest([$block('Sockeye  21.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$layouts->publish($fresh, new PublishRequest([$block('Sockeye  21.99')], Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 
 checkSame(1, intval($pdo->query("SELECT COUNT(*) FROM assets")->fetchColumn()),
           'three publishes of one block leave one library entry, not three');
@@ -2910,7 +2910,7 @@ checkSame(1, intval($pdo->query("SELECT COUNT(*) FROM canvas_elements WHERE asse
 // on its own deletes from a "<" onwards, which labelled this row "Auto: Kids " and
 // left the only clue to which block it belongs to on the cutting-room floor.
 $fresh = $store->forId($sign->id());
-$layouts->publish($fresh, new PublishRequest([$block('Kids <12 eat free')], Background::unchanged(),
+$layouts->publish($fresh, new PublishRequest([$block('Kids <12 eat free')], Background::unchanged(), BrandChoice::unchanged(),
                                              1, true, $fresh->layoutStamp()));
 checkSame('Auto: Kids <12 eat free',
           $pdo->query("SELECT label FROM assets WHERE content = 'Kids <12 eat free'")->fetchColumn(),
@@ -2921,7 +2921,7 @@ checkSame('Auto: Kids <12 eat free',
 $mine = $library->create('image', 'uploads/promo.jpg', 'Summer Promo Banner');
 check($mine > 0, 'an admin can still add an entry of their own');
 $fresh = $store->forId($sign->id());
-$layouts->publish($fresh, new PublishRequest([$block('Sockeye  22.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$layouts->publish($fresh, new PublishRequest([$block('Sockeye  22.99')], Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 check($library->forId($mine) !== null,
       'and publishing does not sweep it away, though no sign uses it');
 
@@ -2931,14 +2931,14 @@ $library->update($autoId, 'Sockeye price', 'Sockeye  22.99');
 checkSame(0, intval($pdo->query("SELECT auto_pooled FROM assets WHERE id = " . $autoId)->fetchColumn()),
           'naming an auto-saved entry makes it yours');
 $fresh = $store->forId($sign->id());
-$layouts->publish($fresh, new PublishRequest([$block('Sockeye  23.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$layouts->publish($fresh, new PublishRequest([$block('Sockeye  23.99')], Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 check($library->forId($autoId) !== null,
       'so the next publish leaves it alone even once nothing points at it');
 
 // The half a publish cannot reach: a block deleted from the admin Work Area
 // releases its entry with no publish anywhere near it. That is the tidy button.
 $fresh = $store->forId($sign->id());
-$layouts->publish($fresh, new PublishRequest([$block('Halibut  26.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$layouts->publish($fresh, new PublishRequest([$block('Halibut  26.99')], Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 $live = intval($pdo->query("SELECT id FROM canvas_elements WHERE asset_id IS NOT NULL")->fetchColumn());
 $fresh = $store->forId($sign->id());
 $layouts->deleteElement($fresh, $live, 1);
@@ -2981,9 +2981,9 @@ $two = makeTestDisplay($pdo, 'two', 'Lobby Screen');
 
 $words = ['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'OPEN 7 DAYS',
           'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60];
-$layouts->publish($one, new PublishRequest([$words], Background::unchanged(), 1, true, $one->layoutStamp()));
+$layouts->publish($one, new PublishRequest([$words], Background::unchanged(), BrandChoice::unchanged(), 1, true, $one->layoutStamp()));
 $store->releaseLock($one, 1);
-$layouts->publish($two, new PublishRequest([$words], Background::unchanged(), 1, true, $two->layoutStamp()));
+$layouts->publish($two, new PublishRequest([$words], Background::unchanged(), BrandChoice::unchanged(), 1, true, $two->layoutStamp()));
 $store->releaseLock($two, 1);
 
 // Point both signs at one row, the way the old pooling did.
@@ -2997,7 +2997,7 @@ $fresh = $store->forId($one->id());
 $layouts->publish($fresh, new PublishRequest(
     [['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'CLOSED SUNDAYS',
       'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60]],
-    Background::unchanged(), 1, true, $fresh->layoutStamp()));
+    Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 
 check($library->forId($sharedId) !== null,
       'publishing one sign does not sweep an entry the other sign still uses');
@@ -3027,7 +3027,7 @@ checkSame(0, (new AssetLibrary($noLib))->pool('text', 'Sockeye  18.99'),
 $result = $noLay->publish($noSign, new PublishRequest(
     [['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'Sockeye  18.99',
       'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60]],
-    Background::unchanged(), 1, true, $noSign->layoutStamp()));
+    Background::unchanged(), BrandChoice::unchanged(), 1, true, $noSign->layoutStamp()));
 checkSame(true, $result->isOk(), 'the publish still succeeds');
 $kept = $noLib->query("SELECT manual_content, asset_id FROM canvas_elements")->fetch();
 checkSame('Sockeye  18.99', $kept['manual_content'], 'and the words stay on the block, where they render');
@@ -6195,7 +6195,7 @@ $vLayouts = newTestLayoutStore($vPdo);
 $vSign    = makeTestDisplay($vPdo, 'valid', 'Validation');
 
 check($vLayouts->publish($vSign, new PublishRequest(
-        goodLayout(), Background::unchanged(), 1, true, $vSign->layoutStamp()))->isOk(),
+        goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true, $vSign->layoutStamp()))->isOk(),
       'a good layout publishes');
 checkSame(2, count(elementsOf($vPdo, $vSign->id())), 'and lands as two elements');
 
@@ -6205,7 +6205,7 @@ function refusedPublish(LayoutStore $layouts, DisplayStore $store, Display $sign
 {
     $fresh = $store->forId($sign->id());
     return $layouts->publish($fresh, new PublishRequest(
-        $elements, $bg ?: Background::unchanged(), 1, $isAdmin, $fresh->layoutStamp()));
+        $elements, $bg ?: Background::unchanged(), BrandChoice::unchanged(), 1, $isAdmin, $fresh->layoutStamp()));
 }
 
 $res = refusedPublish($vLayouts, $vStore, $vSign, layoutWithField(0, 'type', 'script'));
@@ -6235,7 +6235,7 @@ checkSame(2, count(elementsOf($vPdo, $vSign->id())), 'and its narrower delete di
 $vSign = $vStore->forId($vSign->id());
 checkSame('1', $vSign->layoutStamp(), 'a refused publish does not advance the stamp');
 check($vLayouts->publish($vSign, new PublishRequest(
-        goodLayout(), Background::unchanged(), 1, true, $vSign->layoutStamp()))->isOk(),
+        goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true, $vSign->layoutStamp()))->isOk(),
       'so the corrected layout publishes on the next try');
 
 // And the clamp reaches the column, which is the half a pure function cannot prove.
@@ -6249,7 +6249,7 @@ $vSign  = $vStore->forId($vSign->id());
 $absurd = layoutWithField(1, 'line_height', 2000);
 $absurd[1]['block_subtype'] = 'free';
 check($vLayouts->publish($vSign, new PublishRequest(
-        $absurd, Background::unchanged(), 1, true,
+        $absurd, Background::unchanged(), BrandChoice::unchanged(), 1, true,
         $vSign->layoutStamp()))->isOk(),
       'a layout with an absurd line height publishes, clamped');
 $stored = elementsOf($vPdo, $vSign->id());
@@ -6280,7 +6280,7 @@ check($hLayouts->publish($hSign, new PublishRequest([
          'hidden' => 1],
         ['type' => 'text', 'parent_temp_id' => 'closed', 'manual_content' => 'Closed for the season'],
         ['type' => 'text', 'manual_content' => 'Open daily'],
-      ], Background::unchanged(), 1, true, $hSign->layoutStamp()))->isOk(),
+      ], Background::unchanged(), BrandChoice::unchanged(), 1, true, $hSign->layoutStamp()))->isOk(),
       'a layout with hidden blocks publishes');
 
 $hSign  = $hStore->forId($hSign->id());
@@ -6305,7 +6305,7 @@ checkMentions(json_encode($editor), 'NEXT MONTH',
 $hBlank = makeTestDisplay($hPdo, 'allhidden', 'Everything Hidden');
 $hLayouts->publish($hBlank, new PublishRequest([
     ['type' => 'text', 'manual_content' => 'Not yet', 'hidden' => 1],
-], Background::unchanged(), 1, true, $hBlank->layoutStamp()));
+], Background::unchanged(), BrandChoice::unchanged(), 1, true, $hBlank->layoutStamp()));
 $hBlank = $hStore->forId($hBlank->id());
 $blankPublic = $hLayouts->publicSnapshot($hBlank);
 checkSame(0, count($blankPublic['elements']), 'a Display whose every block is hidden sends none');
@@ -6375,7 +6375,7 @@ $bStore   = newTestDisplayStore($bPdo);
 $bLayouts = newTestLayoutStore($bPdo);
 $bSign    = makeTestDisplay($bPdo, 'poison', 'Background');
 $bLayouts->publish($bSign, new PublishRequest(
-    goodLayout(), Background::unchanged(), 1, true, $bSign->layoutStamp()));
+    goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true, $bSign->layoutStamp()));
 
 $res = refusedPublish($bLayouts, $bStore, $bSign, goodLayout(), true,
                       Background::color('https://elsewhere.example/tracker.png'));
@@ -6392,7 +6392,7 @@ checkSame('color', $bStore->forId($bSign->id())->backgroundType(),
 
 $bSign = $bStore->forId($bSign->id());
 check($bLayouts->publish($bSign, new PublishRequest(
-        goodLayout(), Background::color('#2c3e50'), 1, true, $bSign->layoutStamp()))->isOk(),
+        goodLayout(), Background::color('#2c3e50'), BrandChoice::unchanged(), 1, true, $bSign->layoutStamp()))->isOk(),
       'while a real colour publishes');
 checkSame('#2c3e50', $bStore->forId($bSign->id())->backgroundValue(), 'and is stored');
 
@@ -6411,8 +6411,176 @@ $bSign = $bStore->forId($bSign->id());
 // background problem.
 check($bLayouts->publish($bSign, new PublishRequest(
         basicLayoutFor($bPdo, $bSign, 'Sockeye 18.99'),
-        Background::unchanged(), 2, false, $bSign->layoutStamp()))->isOk(),
+        Background::unchanged(), BrandChoice::unchanged(), 2, false, $bSign->layoutStamp()))->isOk(),
       "a basic account's publish is not held up by a background it cannot change");
+
+// ─────────────────────────────────────────────────────────────
+section('A publish carries the Brand it was picked with, or it carries nothing');
+
+// Step 4's server half. Picking a Brand in the Builder writes nothing at the moment it
+// is picked — it repaints the canvas in the browser and rides out with the next Publish
+// (decision 6), which means the publish endpoint receives an *intent* and the intent
+// has to be refusable before anything is written. Exactly the shape of the section
+// above, one column over, and the same rule underneath it: refuse rather than merge,
+// because falling back to the Brand already on the sign would report success over the
+// one change the person made (invariant 5).
+
+checkSame('unchanged', BrandChoice::unchanged()->kind(), 'leaving the Brand alone is an intent of its own');
+checkSame(0, BrandChoice::unchanged()->id(), 'and it names no Brand');
+check(BrandChoice::unchanged()->isUsable(), 'it is always carryable');
+checkSame(null, BrandChoice::unchanged()->problemWith(null),
+          'and is never refused, whatever the caller found');
+
+checkSame('brand', BrandChoice::brand('3')->kind(), 'an id from a form is a Brand intent');
+checkSame(3, BrandChoice::brand('3')->id(), 'carrying the number it named');
+checkSame(3, BrandChoice::brand(3)->id(), 'written as a string or as an int');
+check(BrandChoice::brand('3')->isUsable(), 'and it is carryable');
+
+// The half that needs no database, and the reason it is a separate question: this is
+// what `intval()` would have guessed at. `intval('7abc')` is 7 — so a mangled field
+// would not have failed, it would have published a *different venue's* Brand onto the
+// sign, which is #21's shape and `DisplayStore::isIdLike()`'s whole reason for being.
+foreach ([
+    ['7abc',  'an id with something after it'],
+    ['',      'an empty field'],
+    ['0',     'a zero'],
+    ['-2',    'a negative'],
+    ['7.9',   'a float that would have selected Brand 7'],
+    ['1e2',   'exponent notation'],
+    [' ',     'a space'],
+    [[],      'an array, which intval() calls 1'],
+    [null,    'nothing at all'],
+    [true,    'a boolean, which casts to the first Brand ever created'],
+] as $case) {
+    $bad = BrandChoice::brand($case[0]);
+    checkSame(BrandChoice::INVALID, $bad->kind(), $case[1] . ' is not a Brand');
+    checkSame(0, $bad->id(), 'and ' . $case[1] . ' names no Brand id');
+    check(!$bad->isUsable(), 'and ' . $case[1] . ' cannot be carried');
+    check($bad->problemWith(null) !== null, 'and ' . $case[1] . ' is refused with a sentence');
+}
+
+checkMentions(BrandChoice::brand('7abc')->problemWith(null), '7abc',
+              'and the refusal quotes what actually arrived');
+checkMentions(BrandChoice::brand('7abc')->problemWith(null), 'nothing was saved',
+              'and says nothing was saved');
+check(strpos(BrandChoice::brand(str_repeat('9', 400))->problemWith(null), str_repeat('9', 400)) === false,
+      'a very long value is shortened rather than printed whole into a page');
+
+// ---- The half only the database knows -------------------------------------------
+$kPdo    = newTestDb();
+$kStore  = newTestDisplayStore($kPdo);
+$kBrands = new BrandStore($kPdo);
+$kOther  = makeTestBrand($kPdo, 'Salmon House');
+
+checkSame(null, BrandChoice::brand($kOther)->problemWith($kBrands->forId($kOther)),
+          'a Brand that is there is a Brand this publish may wear');
+check(BrandChoice::brand(999999)->problemWith($kBrands->forId(999999)) !== null,
+      'and one that is not is refused rather than merged away');
+checkMentions(BrandChoice::brand(999999)->problemWith(null), 'no longer exists',
+              'saying what happened, because somebody deleted it while the tab was open');
+checkMentions(BrandChoice::brand(999999)->problemWith(null), 'still on screen',
+              'and that the work is not lost');
+
+// Both spellings answered, which is the rule `Background::problemWith()` states: the
+// kind is what the factory produces today and the guard is what keeps this honest if
+// the factory ever stops filtering. A reader knowing only one of them answers "no
+// problem" for the other, and that is a publish nothing refuses.
+check(BrandChoice::brand('7abc')->problemWith($kBrands->forId($kOther)) !== null,
+      'and something that is not an id is refused even when a real Brand is handed in');
+
+// ---- Through a real publish ------------------------------------------------------
+$kLayouts = newTestLayoutStore($kPdo);
+$kSign    = makeTestDisplay($kPdo, 'venue', 'Venue board');
+checkSame(1, $kSign->brandId(), 'a fixture sign starts on the seeded Brand');
+
+check($kLayouts->publish($kSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), BrandChoice::brand($kOther), 1, true,
+        $kSign->layoutStamp()))->isOk(),
+      'an admin publish carrying a Brand is accepted');
+checkSame($kOther, $kStore->forId($kSign->id())->brandId(),
+          'and the sign wears it afterwards — the publish is what wrote it, not the picking');
+
+$kSign = $kStore->forId($kSign->id());
+check($kLayouts->publish($kSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true,
+        $kSign->layoutStamp()))->isOk(),
+      'a publish that names no Brand still publishes');
+checkSame($kOther, $kStore->forId($kSign->id())->brandId(), 'and leaves the one it is wearing');
+
+// The refusals, and what they left behind. Two elements is `goodLayout()` stored, so
+// finding two afterwards is finding the layout that was there before the refusal.
+$kSign = $kStore->forId($kSign->id());
+$res = $kLayouts->publish($kSign, new PublishRequest(
+    goodLayout(), Background::unchanged(), BrandChoice::brand('7abc'), 1, true, $kSign->layoutStamp()));
+checkSame('invalid', $res->kind(), 'a publish naming something that is not a Brand is refused');
+checkSame(false, $kPdo->inTransaction(),
+          'with no transaction opened at all — it is settled beside the layout rules');
+checkSame(2, count(elementsOf($kPdo, $kSign->id())), 'and the layout it came with is not saved either');
+checkSame($kOther, $kStore->forId($kSign->id())->brandId(), 'and the sign wears what it wore');
+
+$res = $kLayouts->publish($kSign, new PublishRequest(
+    goodLayout(), Background::unchanged(), BrandChoice::brand(999999), 1, true, $kSign->layoutStamp()));
+checkSame('invalid', $res->kind(), 'so is one naming a Brand that has been deleted');
+checkSame(2, count(elementsOf($kPdo, $kSign->id())), 'and that layout is not saved either');
+checkSame($kOther, $kStore->forId($kSign->id())->brandId(), 'and the sign still wears what it wore');
+checkMentions($res->message(), 'Reload', 'and the refusal says what to do next');
+
+// A basic account cannot change the Brand, so it is never asked about one — the check
+// is inside the `isAdmin` branch beside the background's. Worth pinning both ways: a
+// clerk naming a Brand does not move the sign onto it, and a clerk naming a Brand that
+// does not exist is not refused for it either. Moving that check out of the branch
+// would stop every clerk publishing the moment an admin deleted a Brand.
+$kStore->releaseLock($kStore->forId($kSign->id()), 1);
+$kSign = $kStore->forId($kSign->id());
+check($kLayouts->publish($kSign, new PublishRequest(
+        basicLayoutFor($kPdo, $kSign, 'Sockeye 18.99'),
+        Background::unchanged(), BrandChoice::brand(999999), 2, false, $kSign->layoutStamp()))->isOk(),
+      "a basic account's publish is not held up by a Brand it cannot set");
+checkSame($kOther, $kStore->forId($kSign->id())->brandId(),
+          'and the Brand it named is not the Brand the sign wears');
+
+// ---- The Brand a publish sets is the Brand its rows are read under ---------------
+// The `copyLayout()` rule, arriving by the one door that had not needed it: what
+// decides whether a typography column is the Brand's to paint is the Brand the row
+// will be read under (invariant 32), and the publish that *changes* the Brand is the
+// one publish where "before" and "after" differ. Deciding it from the Display this
+// method was handed would bake the old venue's answer into the new venue's rows.
+//
+// `makeTestBrandRow()` and not `makeTestBrand()`: a Brand with no standards behind it
+// paints nothing, so a `price` block publishing onto it keeps its own typography —
+// which is the observable difference between the two answers.
+$kBare = makeTestBrandRow($kPdo, 'No standards yet');
+// The clerk's publish above took the edit lock, as a publish does (ADR-0007), so the
+// admin has to be given it back or every check below is refused for a reason that has
+// nothing to do with Brands — and would pass while proving something else.
+$kStore->releaseLock($kStore->forId($kSign->id()), 2);
+$kStore->claimLock($kStore->forId($kSign->id()), 1);
+$kSign = $kStore->forId($kSign->id());
+check($kLayouts->publish($kSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), BrandChoice::brand($kBare), 1, true,
+        $kSign->layoutStamp()))->isOk(),
+      'a publish onto a Brand with no standards is accepted');
+$kRows  = elementsOf($kPdo, $kSign->id());
+$kPrice = null;
+foreach ($kRows as $row) { if (($row['block_subtype'] ?? '') === 'price') { $kPrice = $row; } }
+check($kPrice !== null, 'and the price block it carried is stored');
+checkSame(48, intval($kPrice['font_size']),
+          "and keeps its own font size, because the Brand it now wears paints nothing");
+
+// The other direction, so the check above is not passing on a Brand nobody painted
+// with: back onto a Brand that does have standards, and the same block publishes the
+// documented default instead of its own 48.
+$kSign = $kStore->forId($kSign->id());
+check($kLayouts->publish($kSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), BrandChoice::brand($kOther), 1, true,
+        $kSign->layoutStamp()))->isOk(),
+      'and publishing back onto a Brand that has them is accepted too');
+$kPrice = null;
+foreach (elementsOf($kPdo, $kSign->id()) as $row) {
+    if (($row['block_subtype'] ?? '') === 'price') { $kPrice = $row; }
+}
+checkSame(intval(BrandStyles::DEFAULTS['font_size']), intval($kPrice['font_size']),
+          'where the same block stores the documented default, because that Brand paints it');
 
 // ─────────────────────────────────────────────────────────────
 section('Refusing a value rather than guessing what it meant (#21)');
@@ -7333,7 +7501,7 @@ $lockPdo->rollBack();
 
 $lockLayouts = newTestLayoutStore($lockPdo);
 $pubbed = $lockLayouts->publish($lockSign, new PublishRequest(
-    layoutWith('Locked publish'), Background::unchanged(), 1, true, $lockSign->layoutStamp()));
+    layoutWith('Locked publish'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $lockSign->layoutStamp()));
 checkSame(true, $pubbed->isOk(), 'and a publish taking that lock for real succeeds');
 $lockPdo->beginTransaction();
 checkSame(1, intval($lockStore->lockLayoutRevision(loadTestDisplay($lockPdo, $lockSign->id()))),
@@ -7360,7 +7528,7 @@ $colStore   = new DisplayStore($colPdo);
 $colLayouts = new LayoutStore($colPdo, $colStore);
 $colSign    = makeTestDisplay($colPdo, 'collide', 'Collision');
 check($colLayouts->publish($colSign, new PublishRequest(
-        goodLayout(), Background::unchanged(), 1, true, $colSign->layoutStamp()))->isOk(),
+        goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true, $colSign->layoutStamp()))->isOk(),
       'a Display to collide on starts with a published layout');
 
 // A second session takes the Display's row and holds it, which is exactly what the
@@ -7374,7 +7542,7 @@ $colSign     = $colStore->forId($colSign->id());
 $fastLayouts = new LayoutStore($colPdo, new FastLockWaitStore($colPdo));
 $startedAt   = microtime(true);
 $res = $fastLayouts->publish($colSign, new PublishRequest(
-    goodLayout(), Background::unchanged(), 1, true, $colSign->layoutStamp()));
+    goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true, $colSign->layoutStamp()));
 $waited = microtime(true) - $startedAt;
 
 checkSame('busy', $res->kind(), 'a publish that collides with another comes back as busy');
@@ -7390,7 +7558,7 @@ checkSame(false, $colPdo->inTransaction(), 'and no transaction is left open behi
 $holder->rollBack();
 $colSign = $colStore->forId($colSign->id());
 check($colLayouts->publish($colSign, new PublishRequest(
-        goodLayout(), Background::unchanged(), 1, true, $colSign->layoutStamp()))->isOk(),
+        goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true, $colSign->layoutStamp()))->isOk(),
       'and once the other session lets go, the same publish succeeds');
 
 // ---- Changed rows are not affected rows ------------------------------------------
@@ -7431,4 +7599,17 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 2001 : 1975);
+//
+// **And the merge after that is where it went wrong.** Step 3 of the v2 roadmap added
+// two checks to the engine-only section below and moved the MySQL figure by three, so
+// from that commit until this one the MySQL arm expected one check more than the suite
+// contains — a failure nothing here could see, because this container has no MySQL
+// server and that arm never runs. The paragraph above describes the mistake precisely
+// and was read while it was being made: a delta was carried across instead of checked.
+//
+// So the MySQL figure is no longer a delta. The section below is straight-line code —
+// no loop, no conditional, no helper that checks more than once — so its checks can be
+// *counted*, and there are 25 of them. The MySQL figure is this file's SQLite number
+// plus that count, and both halves are things somebody can verify without a database.
+// The SQLite number stays what the run reported.
+reportChecks(testIsMysql() ? 2076 : 2051);

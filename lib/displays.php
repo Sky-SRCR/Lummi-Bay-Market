@@ -783,6 +783,47 @@ class DisplayStore
     }
 
     /**
+     * Apply a Brand intent. Only ever reached for an admin publish.
+     *
+     * The Brand a sign wears is staged in the Builder and written here, beside the
+     * background, by the publish that carries it (decision 6) — which is why this is a
+     * statement of its own on the same path rather than a field of `updateDetails()`:
+     * that method is the Admin Panel's whole-form save, and a publish is not a save of
+     * the Display's reference details.
+     *
+     * `BrandChoice::INVALID` — something that is not an id — and a Brand that has been
+     * deleted both fall through to the same nothing as `unchanged`. Neither should ever
+     * arrive: `LayoutStore::publish()` refuses the whole publish before this is called,
+     * so the caller is never told a Brand was set that was not. This is the write side
+     * agreeing with the read side rather than a second policy, for the same reason
+     * `applyBackground()` above answers INVALID with a no-op.
+     *
+     * Not defended against here, on purpose: whether that Brand still exists. Only the
+     * database can answer it, `displays_ibfk_3` answers it from underneath, and a
+     * SELECT in this method would be a second opinion about the read the caller already
+     * did under the publish's row lock — where the answer cannot change between the
+     * asking and the writing, which is the only place it is worth asking at all.
+     *
+     * The parameter's type is declared without this file requiring `brands.php`, which
+     * requires *this* one: a caller holding a BrandChoice has loaded that file by
+     * definition, and a `require_once` back the other way would be a cycle whose
+     * resolution depended on which of the two a page happened to name first.
+     */
+    public function applyBrand(Display $display, BrandChoice $brand)
+    {
+        switch ($brand->kind()) {
+            case 'brand':
+                $this->pdo->prepare("UPDATE displays SET brand_id = ? WHERE id = ?")
+                          ->execute([$brand->id(), $display->id()]);
+                break;
+            case 'unchanged':
+            case BrandChoice::INVALID:
+            default:
+                break;
+        }
+    }
+
+    /**
      * Advance the stamp, record who published and when, and return the new stamp.
      *
      * The moment is bound as a PHP-formatted UTC string, for the reason the lock

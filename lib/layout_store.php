@@ -55,22 +55,38 @@
 require_once __DIR__ . '/plain_text.php';
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/brand_styles.php';
+// For `BrandChoice` and for the one read this module makes of `brands`: a publish that
+// carries a Brand has to establish that the Brand is still there before it writes the
+// id onto the sign, and asking that question is not a licence to write the table —
+// `BrandStore` is still its only writer (invariant 33).
+require_once __DIR__ . '/brands.php';
 require_once __DIR__ . '/assets.php';
 require_once __DIR__ . '/layout_rules.php';
 
-/** One publish attempt: the layout, the background intent, who is publishing, and the stamp they hold. */
+/**
+ * One publish attempt: the layout, the background and Brand intents, who is
+ * publishing, and the stamp they hold.
+ *
+ * The two intents are the two things a publish carries that are not elements, and both
+ * are staged in the browser and written by the publish rather than at the moment they
+ * were picked. They are separate objects because they fail separately and are refused
+ * with different sentences — see `LayoutStore::publish()`.
+ */
 class PublishRequest
 {
     private $elements;
     private $background;
+    private $brand;
     private $actorId;
     private $isAdmin;
     private $stamp;
 
-    public function __construct(array $elements, Background $background, $actorId, $isAdmin, $stamp)
+    public function __construct(array $elements, Background $background, BrandChoice $brand,
+                                $actorId, $isAdmin, $stamp)
     {
         $this->elements   = $elements;
         $this->background = $background;
+        $this->brand      = $brand;
         $this->actorId    = intval($actorId);
         $this->isAdmin    = (bool)$isAdmin;
         $this->stamp      = (string)$stamp;
@@ -90,15 +106,17 @@ class PublishRequest
      * An empty array is still a layout: that is somebody who deleted every block
      * and meant it. Only "this did not decode" is refused.
      */
-    public static function fromPostedJson($raw, Background $background, $actorId, $isAdmin, $stamp)
+    public static function fromPostedJson($raw, Background $background, BrandChoice $brand,
+                                          $actorId, $isAdmin, $stamp)
     {
         $elements = json_decode((string)$raw, true);
         if (!is_array($elements)) { return null; }
-        return new self($elements, $background, $actorId, $isAdmin, $stamp);
+        return new self($elements, $background, $brand, $actorId, $isAdmin, $stamp);
     }
 
     public function elements()   { return $this->elements; }
     public function background() { return $this->background; }
+    public function brand()      { return $this->brand; }
     public function actorId()    { return $this->actorId; }
     public function isAdmin()    { return $this->isAdmin; }
     public function stamp()      { return $this->stamp; }
@@ -199,6 +217,19 @@ class LayoutStore
     private function brandStyles()
     {
         return new BrandStyles($this->pdo);
+    }
+
+    /**
+     * Brands, which owns `brands`. Built on demand and used for exactly one question:
+     * is the Brand this publish named still there.
+     *
+     * On demand rather than in the constructor for the same reason as BrandStyles: no
+     * caller of this store should have to know about a table it never mentions, and one
+     * `SELECT` by primary key on the one path that asks does not repay a field.
+     */
+    private function brands()
+    {
+        return new BrandStore($this->pdo);
     }
 
     /**
@@ -649,6 +680,16 @@ class LayoutStore
                 . ' Your work is still on screen.');
         }
 
+        // And the Brand's, which is the half of it that needs no database: something
+        // that is not an id at all is refused here, before the row lock, exactly as an
+        // unreadable colour is. Whether the Brand it names still *exists* is asked
+        // below, under the lock, because that answer can change while this request is
+        // in flight and a check that races is worse than no check — it reports a state
+        // the write then contradicts.
+        if (!$request->brand()->isUsable()) {
+            return PublishResult::invalid($request->brand()->problemWith(null));
+        }
+
         try {
             // Give up on a colliding publish in seconds rather than being killed
             // mid-wait by PHP's own time limit (#35). Before beginTransaction: it
@@ -692,6 +733,19 @@ class LayoutStore
                     $this->abandon();
                     return PublishResult::invalid($problem);
                 }
+
+                // The Brand, asked the same way and for the same reason: the row lock is
+                // held, so a Brand that is there now is there when the UPDATE runs. Read
+                // through BrandStore, which owns that table — this module writes no
+                // statement against `brands` and reads none of its own (invariant 33).
+                $wanted = $request->brand();
+                $problem = $wanted->problemWith(
+                    $wanted->kind() === 'brand' ? $this->brands()->forId($wanted->id()) : null
+                );
+                if ($problem !== null) {
+                    $this->abandon();
+                    return PublishResult::invalid($problem);
+                }
             }
 
             // Read before the layout is deleted: these are the library rows this
@@ -701,7 +755,23 @@ class LayoutStore
 
             if ($request->isAdmin()) {
                 $this->displays->applyBackground($display, $request->background());
-                $this->replaceWholeLayout($display, $request->elements());
+                $this->displays->applyBrand($display, $request->brand());
+
+                // Re-read, and the layout is written from *that* Display. The rows about
+                // to be inserted will be read under the Brand this publish has just set,
+                // and what decides whether a typography column is the Brand's to paint
+                // is the Brand the row will be read under — the same rule `copyLayout()`
+                // states one method over about a duplicate's target. Writing them from
+                // the object this method was handed would decide it with the Brand the
+                // sign wore a moment ago, which is invariant 32's fossil arriving by a
+                // new door: the one publish where the answer changes is the publish that
+                // changes the Brand.
+                //
+                // `?: $display` cannot happen — the row lock above is held on a row that
+                // exists — and is here because a null Display would otherwise be a
+                // TypeError inside a transaction that has already deleted the layout.
+                $wearing = $this->displays->forId($display->id()) ?: $display;
+                $this->replaceWholeLayout($wearing, $request->elements());
             } else {
                 // The one refusal that needs the database to decide, so it cannot be
                 // made in the pre-transaction pass with the others. Nothing has been
