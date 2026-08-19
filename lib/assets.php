@@ -337,9 +337,13 @@ class AssetLibrary
      *
      * Text is plain text (ADR-0002) wherever it entered the app, which is the half
      * of this rule a hidden form field used to be able to switch off. Everything
-     * else — an image path, and the JSON a pooled carousel, table or marquee row
-     * carries — is stored as it arrived, because stripping markup out of JSON
-     * leaves neither markup nor JSON.
+     * else — an image path, and the path a pooled video row carries — is stored as it
+     * arrived, because a path is not markup and stripping one damages it.
+     *
+     * This said "the JSON a pooled carousel, table or marquee row carries", and no such
+     * row can exist: `assets.type` offers three members and the Builder marks those
+     * three block types `pool: false`, because what they hold is the block's own
+     * settings rather than a piece of content anybody would reuse.
      */
     private static function contentFor($type, $content)
     {

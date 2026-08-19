@@ -544,12 +544,16 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
                 <textarea name="edit_content" rows="5"><?= Markup::text($editAsset['content']) ?></textarea>
             </div>
             <?php elseif ($editAsset['type'] !== AssetLibrary::TYPE_IMAGE): ?>
-            <!-- Publishing pools a block's content under the *block's* type, so a
-                 carousel, table or marquee entry is ordinary here. Those hold JSON
-                 or a media path; the old form had two branches and drew this one as
-                 an image, which put the JSON in an <img src> and offered to replace
-                 it with a file. Shown as what it is instead, and stored as it
-                 arrives — stripping markup out of JSON leaves neither. -->
+            <!-- Publishing pools a block's content under the *block's* type, and the
+                 third type the column offers is `video`, which the add form above does
+                 not: a video block that carries its own path arrives here when the sign
+                 is published. The old form had two branches and drew this one as an
+                 image, which put the path in an <img src> and offered to replace it
+                 with a picture. Shown as what it is instead, and stored as it arrives.
+
+                 This comment named carousel, table and marquee. Those three are marked
+                 `pool: false` in the Builder and are not members of `assets.type`, so no
+                 such entry has ever reached this branch. -->
             <div class="form-group">
                 <label>Stored Content (<?= Markup::text(strtoupper($editAsset['type'])) ?>)</label>
                 <textarea name="edit_content" rows="5"><?= Markup::text($editAsset['content']) ?></textarea>

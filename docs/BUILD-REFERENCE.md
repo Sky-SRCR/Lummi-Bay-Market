@@ -527,6 +527,45 @@ through the app again:
     as one token and 8.2 as four — matching only the 8.4 shape would have gone quietly
     blind in CI, which is the machine pinned to the floor, and would have looked exactly
     like a pass.
+32. **No check writes a value the engine the shop runs would refuse.** SQLite takes a
+    word in a `DATETIME`, a non-member in an `ENUM`, and a string wider than the column,
+    and the check that reads each one back passes. MySQL's strict mode throws on all
+    three — and a throw mid-run **ends the job**, which takes down the step underneath:
+    the rehearsal against real MySQL, the only thing that exercises the publish
+    transaction's `SELECT … FOR UPDATE` and convergence against a real catalogue. This
+    leg stopped after 593 of the suite's checks from 2026-08-11 on one such literal
+    (`UPDATE displays SET last_published_at = 'nonsense'`), with every local gate green,
+    so the rehearsal and all six node suites had not run since. **Nothing local could
+    say so**, which is why this is a gate rather than something CI can be relied on to
+    report: `php -l` sees a string, the suite sees green, and this container has no MySQL
+    to disagree. So a check that needs an unusable value **hands it to the reader as a
+    row** — both readers taking one — or picks a value the column can hold: a colour
+    nobody can read has to *fit* its column before anybody can be shown the wrong thing
+    by it. `check_invariants.php` reads the declared types out of `schema.sql` and refuses
+    the four MySQL actually raises: a non-member of an `ENUM` (1265), a string past the
+    declared width (1406), a non-date in a date column (1292), and the zero date
+    (`NO_ZERO_DATE`). **Its scope is the class that ends the run, not every way an engine
+    can disagree** — an `ENUM` write MySQL *accepts* and silently folds to a member
+    (`role = 'Admin'` stored as `admin`) is no refusal at all, so it stays an ordinary
+    failed check that reports itself, and the detector deliberately does not flag it:
+    matching ENUM members case-sensitively would condemn writes MySQL has always taken.
+    The negative half of its twelve fixtures is where that care lives.
+    **The rule has a second half, and it is the worse one**: SQL in the wrong *dialect*.
+    A refused value fails one check; `AUTOINCREMENT`, a `DEFAULT` on a `TEXT` column, or
+    a `CREATE TRIGGER` body is a **fatal**, and on SQLite it is simply correct, so
+    nothing local disagrees. Once the literals above were fixed this leg got 594 checks
+    further and died on exactly that. Which connection a statement is on *is* readable
+    here, unlike for the literals: a handle from `newSqliteTestDb()` or
+    `new PDO('sqlite:…')` is SQLite for the life of the file, and one from `newTestDb()`
+    follows the run — so the rule fires only on the second kind, which leaves a test
+    that genuinely needs SQLite free to say so and be believed. Two states are not a
+    schema at all — `canvas_elements` between the ADD COLUMN and the tighten, and the
+    retired `canvas_settings` — so both spellings live in `test_fixture.php`
+    (`createNullableDisplayIdElements()`, `createLegacyCanvasSettings()`) and a test
+    says which state it wants rather than how to spell it. The deploy-day race is the
+    one that stays SQLite: MySQL forbids a trigger writing to its own table (1442), so
+    it cannot build the interleaving at all, while what is under test is a `catch` in
+    PHP that is identical on both.
 
 ---
 
