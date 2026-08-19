@@ -1566,7 +1566,8 @@ foreach ($floorClean as $probe) {
  * shop's PHP cannot *parse* — a blank sign. This one refuses syntax that parses
  * everywhere and is **deprecated from 8.4**, whose cost is a line in the error log on
  * every request that compiles the file. `SiteChrome::wear()` was one, and it is called
- * on every signed-in page load.
+ * on every signed-in page load; `ServerReport::__construct()` was another, and
+ * `admin_panel.php` builds one every time the panel is opened.
  *
  * Three things could not see it, which is why it is a check and not a convention:
  *
@@ -1578,6 +1579,14 @@ foreach ($floorClean as $probe) {
  *     (`E_ALL` is 30719 here). So the suite runs green on PHP 8.4 while the notice is
  *     being emitted. `ErrorPolicy::install()` does set `E_ALL` — on a real request,
  *     which is the one place nobody is watching a console.
+ *
+ * So the rule has two halves and they overlap on purpose. `tools/check_deprecations.php`
+ * is the other: it compiles every file in a child process with `E_ALL` set and fails on
+ * whatever the engine says, which is the instrument that *found* these rather than a rule
+ * written afterwards, and it answers for the version running it — so it reports what 8.5
+ * deprecates without anybody teaching it. This half knows one shape and knows it on 8.2,
+ * where the engine says nothing at all. Both, because CI answers on a push and this
+ * answers before one.
  *
  * Only parameter lists are examined, and that is the whole difficulty. A scan that
  * looks at every `$x = null` in the file reports `private static $bytes = null;` —
@@ -1653,8 +1662,12 @@ function implicitNullableUses($source)
 }
 
 $implicit = [];
+// phpFilesUnder() already skips this file, which is what lets the probes below spell
+// the deprecated form out in full without the sweep above reporting them. This loop
+// carried a second `continue` for the same file until the merge with main, where the
+// same rule had been written without one: a guard that cannot fire, in a checker whose
+// own invariant 30 is that a line ships having been seen to matter.
 foreach (phpFilesUnder($root, '', []) as $rel) {
-    if ($rel === 'tools/check_invariants.php') { continue; }   // holds the probes below
     foreach (implicitNullableUses(file_get_contents($root . '/' . $rel)) as $hit) {
         $implicit[] = $rel . ':' . $hit['line'] . '  ' . $hit['what'];
     }
@@ -1668,7 +1681,8 @@ if (!$implicit) {
     echo "       Write it `?Type \$x = null`. Understood back to 7.1, so it costs nothing\n";
     echo "       below the floor. `php -l` is clean either way and the deprecation fires\n";
     echo "       when the file is compiled — before any handler the suite installs — so\n";
-    echo "       this check is the only thing here that can see it.\n";
+    echo "       this and tools/check_deprecations.php are the only two things here\n";
+    echo "       that can see it.\n";
     $failures[] = 'an implicitly nullable parameter (invariant 33)';
 }
 
@@ -1880,6 +1894,12 @@ if (!$refusedWrites) {
 $writeProbes = [
     ['$p->exec("UPDATE brands SET bg_type = \'nonsense\' WHERE id = 1");', 1,
      'the ENUM write that ended the MySQL leg is refused'],
+    ['$p->exec("UPDATE users SET role = \'root\' WHERE id = 1");', 1,
+     'and a word an ENUM never offered, on the table main\'s arm died on'],
+    ['$p->exec("UPDATE users SET role = \'Admin\' WHERE id = 1");', 0,
+     'but a member in another lettercase is left alone — MySQL folds it, and always has'],
+    ['$p->exec("UPDATE block_styles SET font_color = \'linear-gradient(to right, #ffffff 0%, #000000 100%)\' WHERE id = 1");', 1,
+     'and a value past a VARCHAR(50), which is the same refusal a wider column still makes'],
     ['$p->exec("UPDATE displays SET last_published_at = \'nonsense\' WHERE id = 1");', 1,
      'and so is the stamp that is not a date — the one before it on main'],
     ['$p->exec("UPDATE workspace_themes SET nav_bg = \'darkblue\' WHERE id = 1");', 1,
@@ -2044,11 +2064,14 @@ foreach ($dialectProbes as $probe) {
 
 // ---- The instrument itself -------------------------------------------------------
 // Every rule above is read through codeWithoutComments(), so what that function drops
-// decides what all thirty-two of them can see. It gained HTML comments in #50, and the
-// decision it embodies — a comment holding PHP is code and stays — is worth an
-// assertion rather than a paragraph, because both halves fail silently: dropping too
-// little is the false positive #44 hit, and dropping too much blinds every rule to
-// whatever a page hid inside a comment.
+// decides what all thirty-two of them can see. Invariant 33, above, is the one that does
+// not use it — token_get_all() hands it comments as tokens and it drops them itself,
+// which is what lets it read a parameter list rather than a pattern. It gained HTML
+// comments in
+// #50, and the decision it embodies — a comment holding PHP is code and stays — is
+// worth an assertion rather than a paragraph, because both halves fail silently:
+// dropping too little is the false positive #44 hit, and dropping too much blinds
+// every rule to whatever a page hid inside a comment.
 $commentProbes = [
     ["<?php \$a = 1; ?>\n<!-- no strtotime() here -->\n",
      'strtotime', false, 'an HTML comment is prose, and a rule does not match inside it'],
@@ -2110,17 +2133,38 @@ foreach ([
     echo "  · $note\n";
 }
 
-// The count is anchored for the reason `selftest_layout.php`'s is, and §4bg found this
-// file without one: delete the rule that keeps `json_encode` in a single module — one of
-// the most load-bearing lines in the repo — and this printed "60 consistency checks, 0
+// ---- And that every one of them ran ---------------------------------------------
+// Both branches that met here added this independently, which is its own small argument
+// for it. Not a count of rules: a count of what actually *ran*, so a rule that stops
+// being reached is the same failure as one that was deleted. §4bg found this file
+// without one — delete the rule that keeps `json_encode` in a single module, one of the
+// most load-bearing lines in the repo, and this printed "60 consistency checks, 0
 // failed" and exited 0. A checker whose own coverage can shrink silently is the failure
 // it exists to prevent, wearing its own uniform. §4bf found the same hole in four of the
-// eight node suites; this is the third place it was hiding.
+// eight node suites; this was the third place it was hiding, and `selftest_layout.php`
+// has had the same anchor since #48 (`reportChecks()`).
 //
-// Not a count of rules: a count of what actually *ran*, so a rule that stops being
-// reached is the same failure as one that was deleted.
-$expectedChecks = 94;
-if ($checked !== $expectedChecks) {
+// The ways it goes wrong are not theoretical: a `continue` landing above a block, a
+// probe list losing an entry to a merge — this merge dropped 494 duplicate lines and
+// with them a whole probe list, twice — or a detector guarded by a `defined()` that is
+// false on the host. Each reads as one fewer `ok` line in three hundred, against a total
+// nobody knows. Update the number when a check is added on purpose. That is the point:
+// it makes adding one deliberate and losing one loud.
+//
+// It counts itself, which is main's half of this and the better one: an anchor that
+// prints nothing when it passes is a check whose own presence is unreadable.
+//
+// 98 reconciles, and that is the only reason the deletion above is trustworthy: 94 before
+// the merge, plus the three probes main's copy had that this one did not, plus one for the
+// anchor now counting itself. A duplicate detector removed by hand is exactly the edit that
+// takes a rule with it, and this number is what noticed it had not.
+$expectedChecks = 98;
+$checked++;
+if ($checked === $expectedChecks) {
+    echo "  ok   this checker ran every check it is supposed to ($checked)\n";
+} else {
+    echo "  FAIL this checker did not run every check it is supposed to\n";
+    echo "       expected $expectedChecks, ran $checked\n";
     $failures[] = 'this checker ran every check it is supposed to — expected '
                 . $expectedChecks . ', ran ' . $checked;
 }

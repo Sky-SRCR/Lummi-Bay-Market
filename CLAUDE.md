@@ -135,7 +135,17 @@ edited in place and every change reaches the sign by hand.
   this container's `error_reporting` excludes `E_DEPRECATED`. A CI leg on a newer PHP does
   not close it either; that leg goes green too. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
   for the reason they always did: they cover a host that moves, and what they prevent
-  is silent.
+  is silent. **Invariant 33 is the same hole in the other direction**, and the same
+  lesson about `php -l`: `array $x = null` is deprecated from 8.4, the explicit
+  `?array $x = null` is understood back to 7.1, and lint is clean on both on every
+  version — because a deprecation is emitted when a file is *compiled*, not when it is
+  parsed. Nor do the suites close it: they compile the file, so the notice **is**
+  emitted, and emitting a notice is not failing a step. Five of these were in the tree,
+  one of them on the admin panel's request path, and reintroducing it left every local
+  gate green. So two things ask now — `check_invariants.php` reads parameter lists out
+  of the tokens and knows that one shape at the floor, and `tools/check_deprecations.php`
+  compiles the tree in child processes and reports whatever the engine running it has to
+  say, which is the half that will know about 8.5 before anybody here does.
 - **Nothing that has been published can be taken back.** Publishing overwrites; a
   deleted Display, a swept asset row and a saved brand standard are gone. Prefer
   refusing a write to merging one. The **one** exception is the Builder's Undo
@@ -148,6 +158,7 @@ edited in place and every change reaches the sign by hand.
 
 ```
 php -l <every touched .php>
+php tools/check_deprecations.php           # compiles them, which is what `php -l` does not
 php tools/selftest_layout.php
 php tools/selftest_installed.php           # the same suite as a real install on a real
                                            # server: what the shop chose, and what the
@@ -185,23 +196,34 @@ check knowing what the line was for; `diagnostic`, `count` and `fatal` are the h
 noticing something moved.
 
 And one thing a local run cannot tell you at all: **the suite passes on SQLite over values
-MySQL refuses.** SQLite stores a word in a `DATETIME`, a non-member in an `ENUM` and eight
-characters in a `VARCHAR(7)`, and the check that reads each one back passes; MySQL's strict
-mode throws on all three, mid-run, which ends the job and takes the rehearsal step under it
-down as well — and that is what had CI's MySQL half dead for eight days over four writes,
-with every local gate green (§4bi). So a check that needs an unusable value hands it to the
-reader as a row, both readers taking one, or uses a value the column can actually hold: a
-colour nobody can read has to *fit* `VARCHAR(7)` before anybody can be shown the wrong thing
-by it. And SQL in the wrong *dialect* is worse than a refused value, because it is a fatal
-rather than a failed check: `AUTOINCREMENT` and `TEXT … DEFAULT` are correct here and end
-the run there, so the two spellings live in `test_fixture.php` and a test that genuinely
-needs SQLite says `newSqliteTestDb()` and is believed. Invariant 32 in
-`check_invariants.php` is the local half of both. Whether the MySQL arm *finishes* is only
-ever answered by the run — and a dead gate hides how much is still wrong behind it: fixing
-the first four took the leg from ~100 checks to 1383, where four more of the same class
-were waiting (§4bj). Both rounds landed and the arm went green on 2026-08-19, after eight
-days dead: 2361 checks and a clean rehearsal, on three PHP versions. It is a live gate
-again, which is the only state in which any of the above is worth anything.
+MySQL refuses.** SQLite stores a word in a `DATETIME`, a non-member in an `ENUM`, and a
+string wider than the column, and the check that reads each one back passes; MySQL's strict
+mode throws on all three. Mid-run, that ends the job — and takes down the *rehearsal step
+under it*, which is the only thing that exercises the publish transaction's
+`SELECT … FOR UPDATE` and convergence against a real catalogue. That is what had CI's MySQL
+leg dead from 2026-08-11: it stopped after 593 of the suite's checks on an
+`UPDATE displays SET last_published_at = 'nonsense'`, and every local gate was green (§4bi).
+
+So a check that needs an unusable value **hands it to the reader as a row** — both readers
+taking one — or uses a value the column can actually hold: a colour nobody can read has to
+*fit* its column before anybody can be shown the wrong thing by it. Invariant 32 in
+`check_invariants.php` is the local half, and it covers the class that ends the run rather
+than every way an engine can disagree: an `ENUM` write MySQL *accepts* and silently folds to
+a member (`role = 'Admin'` becoming `admin`) is not a refusal, so it stays an ordinary failed
+check, reported rather than fatal.
+
+And SQL in the wrong **dialect** is worse than a refused value, because it is a fatal rather
+than a failed check: `AUTOINCREMENT` and `TEXT … DEFAULT` are correct here and end the run
+there. So both spellings live in `test_fixture.php` — `createNullableDisplayIdElements()` and
+`createLegacyCanvasSettings()`, the two states that are not a schema at all — and a test that
+genuinely needs SQLite says `newSqliteTestDb()` and is believed. Invariant 32 covers this half
+too, and it can: a handle's engine *is* readable from how it was assigned (§4bj).
+
+Whether the MySQL arm *finishes* is only ever answered by the run — and a dead gate hides
+how much is still wrong behind it: fixing the first four took the leg from ~100 checks to
+1383, where four more of the same class were waiting. Both rounds landed and the arm went
+green on 2026-08-19, after eight days dead: a clean rehearsal on three PHP versions. It is a
+live gate again, which is the only state in which any of the above is worth anything.
 
 `check_doc_numbering.php` also prints the next free section letter. That is the
 question every branch cut from the same base has to answer before it writes a

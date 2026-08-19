@@ -233,10 +233,37 @@ round could not have discovered, because both its lanes were unmerged: **cost de
 between two branches that have not landed; publication decides once one of them has.** A
 number in a tree nobody has merged is a draft. A number on `main` is an address.
 
-And one thing the renumber cannot do, which is worth saying because a green gate will not
-say it: both sides *implement* 32 and 33, independently and under different names, because
-each wrote its own detector for a rule the other was writing at the same time. Numbering
-them alike is what makes that visible; the merge still has to pick one of each.
+### 2b. What the merge then found, which the renumber could only make visible
+
+`main` was merged in on the same day, and the thing to know about it is that **the two
+sides' detectors were byte-identical**. Five functions — `implicitNullableUses()`,
+`schemaColumnTypes()`, `valueRefusedByColumn()`, `refusedLiteralWrites()` and
+`sqliteOnlyOnPortableHandle()` — had been written twice, once per branch, and diffed to
+nothing. Git merged them without a conflict, because two copies of a function in different
+parts of a file are not the same lines, and PHP then refused the file outright: *Cannot
+redeclare function*. Two more, `createNullableDisplayIdElements()` and
+`createLegacyCanvasSettings()`, did the same in `test_fixture.php`. **A fatal is the good
+case.** The same shape in a document is two paragraphs that merge clean and disagree, and
+nothing says so.
+
+553 duplicate lines were removed. What was *not* identical is where the work of the merge
+was, and it went both ways:
+
+- `main`'s copy of the nullable rule had no dead `continue` for a file `phpFilesUnder()`
+  already skips; this side's did. `main`'s survived.
+- This side's refused-value probes covered `brands`, `workspace_themes` and a VARCHAR(7)
+  that `main` had never had a table for; `main`'s covered an ENUM member in another
+  lettercase, which MySQL folds and accepts, and a word an ENUM never offered. **The
+  surviving list is the union** — three probes richer than either branch shipped, which is
+  the only genuine improvement in the merge and the reason a dedupe is not a deletion.
+- Both had added a check-count anchor to `check_invariants.php`, independently. `main`'s
+  counts itself and prints a line; this side's did neither. `main`'s mechanism, this side's
+  evidence.
+
+And the anchor is what made the deletion safe to believe: 94 before, plus three probes,
+plus one for counting itself, is 98, and 98 is what the run reported. Deleting a duplicated
+detector by hand is exactly the edit that takes a live rule with it. The number is how you
+find out it did not.
 
 B renumbered nothing and A renumbered everything, and the tie was broken by counting:
 `invariant 28` appeared 15 times across 7 files on B's side and 7 times across 6 on A's,

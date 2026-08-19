@@ -2681,8 +2681,9 @@ checkSame('sky, ' . StoreClock::label($instant, 'n/j/y g:ia'),
           $store->forId($zoned->id())->lastPublishDescription(),
           'and the refusal names the moment in the store\'s zone, year and all');
 // Handed to the reader as a row for the Brand's reason one column along (§4bi): a
-// DATETIME will not hold 'nonsense' on MySQL, and `lastPublishDescription()` reads a
-// row rather than a database.
+// DATETIME will not hold 'nonsense' on MySQL — strict mode raises 1292 and the whole run
+// stops here — and `lastPublishDescription()` reads a row rather than a database, so the
+// state this check is about does not need the column's permission to exist.
 checkSame('sky', (new Display(['last_published_at'      => 'nonsense',
                                'last_published_by_name' => 'sky']))->lastPublishDescription(),
           'a stamp that will not read leaves the name rather than a half-written sentence');
@@ -8540,4 +8541,11 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Then one more, in the same breath as §4bk: the `trim()` in `isUtcOffset()` survived the
 // sweep, and a public seam is worth a check rather than a note about why a line is
 // allowed to be untested. 25 is still the difference.
+//
+// **Then the merge with `main`, and neither number moved.** Work-lanes item 3 says to
+// resolve this line by running the suite and never by adding two branches' deltas, and
+// this is the case that would have punished the sum: `main` had written the same class of
+// fix over the same file, so the merge's whole diff here is one comment. Adding the two
+// deltas would have claimed checks that do not exist. The run said 2337, unchanged, and
+// the engine-only section is untouched, so the MySQL figure stays its 25 above.
 reportChecks(testIsMysql() ? 2362 : 2337);

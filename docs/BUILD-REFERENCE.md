@@ -527,55 +527,96 @@ through the app again:
     as one token and 8.2 as four — matching only the 8.4 shape would have gone quietly
     blind in CI, which is the machine pinned to the floor, and would have looked exactly
     like a pass.
-32. **No check writes a value the engine the shop runs would refuse** (§4bi). A suite that
-    proves a reader degrades gracefully has to get the bad value *into* the column first,
-    and SQLite takes anything: it stored `bg_type = 'nonsense'` in an ENUM, `'nonsense'` in
-    a DATETIME and eight characters in a `VARCHAR(7)`, and the check that read each one
-    back passed. On MySQL all three are errors under the strict mode that has been the
-    default since 5.7 — a thrown `PDOException`, mid-run, which ends the job and takes the
-    rehearsal step under it down as well. **That is what had CI's MySQL half dead for eight
-    days**, over four writes, while the SQLite half stayed green and every local gate agreed
-    with it. So the rule is not "guard the write": it is that a value the column cannot hold
-    does not belong in a column. Hand it to the reader as a row — both readers take one —
-    and where the point is genuinely a stored value, make it one the column can store: a
-    colour nobody can read has to **fit** `VARCHAR(7)` before anybody can be shown the wrong
-    thing by it. `tools/check_invariants.php` reads `schema.sql` for the four types that can
-    refuse a literal and matches ENUM members **case-insensitively**, because MySQL does —
-    `role = 'Admin'` has always been accepted and is not what this is about.
-
-    The rule has a second half (§4bj), and it is the half that cost the run once the
-    literals were fixed: **no check sends SQLite-only SQL down a connection the MySQL leg
-    may be holding.** A refused value is one statement failing; the wrong *dialect* is a
-    fatal, thrown where no check is looking, so the suite ends without reporting and the
-    rehearsal step never starts. `AUTOINCREMENT`, a trigger body, `PRAGMA`,
-    `sqlite_master`, `INSERT OR REPLACE` — and `TEXT … DEFAULT`, which is valid SQLite and
-    rejected by InnoDB, the same fatal by a subtler route. Unlike the literals, this one
-    can read *which* connection a statement is on, because the suite names them: a handle
-    from `newSqliteTestDb()` is believed, one from `newTestDb()` is whichever engine the
-    run chose. Accepting a write and storing what was written are also different
-    questions, and only the second is one a check can assert — the same `role = 'Admin'`
-    MySQL accepts is stored as `admin`, so the state that check wanted has to be handed to
-    the reader as a row too.
-
-    What neither half can answer is whether the arm *finishes*. Only the run says that,
-    and a dead gate hides how much is still wrong behind it: fixing §4bi's four took the
-    leg from ~100 checks to 1383, where four more of the same class were waiting. Both
-    rounds landed, and the run went green on 2026-08-19 — so the rule now has what it
-    never had while it was being written, which is an arm that would go red if it were
+32. **No check writes a value the engine the shop runs would refuse** (§4bi, §4bj).
+    SQLite takes a
+    word in a `DATETIME`, a non-member in an `ENUM`, and a string wider than the column,
+    and the check that reads each one back passes. MySQL's strict mode throws on all
+    three — and a throw mid-run **ends the job**, which takes down the step underneath:
+    the rehearsal against real MySQL, the only thing that exercises the publish
+    transaction's `SELECT … FOR UPDATE` and convergence against a real catalogue. This
+    leg stopped after 593 of the suite's checks from 2026-08-11 on one such literal
+    (`UPDATE displays SET last_published_at = 'nonsense'`), with every local gate green,
+    so the rehearsal and all six node suites had not run since. **Nothing local could
+    say so**, which is why this is a gate rather than something CI can be relied on to
+    report: `php -l` sees a string, the suite sees green, and this container has no MySQL
+    to disagree. So a check that needs an unusable value **hands it to the reader as a
+    row** — both readers taking one — or picks a value the column can hold: a colour
+    nobody can read has to *fit* its column before anybody can be shown the wrong thing
+    by it. `check_invariants.php` reads the declared types out of `schema.sql` and refuses
+    the four MySQL actually raises: a non-member of an `ENUM` (1265), a string past the
+    declared width (1406), a non-date in a date column (1292), and the zero date
+    (`NO_ZERO_DATE`). **Its scope is the class that ends the run, not every way an engine
+    can disagree** — an `ENUM` write MySQL *accepts* and silently folds to a member
+    (`role = 'Admin'` stored as `admin`) is no refusal at all, so it stays an ordinary
+    failed check that reports itself, and the detector deliberately does not flag it:
+    matching ENUM members case-sensitively would condemn writes MySQL has always taken.
+    The negative half of its twelve fixtures is where that care lives.
+    **The rule has a second half, and it is the worse one**: SQL in the wrong *dialect*.
+    A refused value fails one check; `AUTOINCREMENT`, a `DEFAULT` on a `TEXT` column, or
+    a `CREATE TRIGGER` body is a **fatal**, and on SQLite it is simply correct, so
+    nothing local disagrees. Once the literals above were fixed this leg got 594 checks
+    further and died on exactly that. Which connection a statement is on *is* readable
+    here, unlike for the literals: a handle from `newSqliteTestDb()` or
+    `new PDO('sqlite:…')` is SQLite for the life of the file, and one from `newTestDb()`
+    follows the run — so the rule fires only on the second kind, which leaves a test
+    that genuinely needs SQLite free to say so and be believed. Two states are not a
+    schema at all — `canvas_elements` between the ADD COLUMN and the tighten, and the
+    retired `canvas_settings` — so both spellings live in `test_fixture.php`
+    (`createNullableDisplayIdElements()`, `createLegacyCanvasSettings()`) and a test
+    says which state it wants rather than how to spell it. The deploy-day race is the
+    one that stays SQLite: MySQL forbids a trigger writing to its own table (1442), so
+    it cannot build the interleaving at all, while what is under test is a `catch` in
+    PHP that is identical on both.
+    Both rounds of this landed on the audit branch as well, against a larger suite and so
+    with different numbers: the first four writes took that arm from ~100 checks to 1383,
+    where four more of the same class were waiting behind them. Worth keeping both sets of
+    figures rather than reconciling them — they are observations of two different arms, and
+    the thing they agree on is the shape. **The arm went green on 2026-08-19**, after eight
+    days dead, with a clean rehearsal on three PHP versions. That is the state the rule
+    needed and did not have while it was being written: one that would go red if it were
     broken.
-33. **No parameter is implicitly nullable** (§4bh). `?Type $x = null`, never
-    `Type $x = null` — understood back to 7.1, deprecated from 8.4. The sibling of 31 and
-    the opposite direction: that one refuses syntax the shop's PHP cannot *parse*, and its
-    cost is a blank sign; this one refuses syntax that parses everywhere and whose cost is a
-    line in the error log on **every request that compiles the file**. Separate rules
-    because what to do about each differs. `SiteChrome::wear()` was one, called on every
-    signed-in page load, and three things could not see it: `php -l` is clean on both
-    spellings; the deprecation fires when a file is *compiled*, so it precedes any handler
-    the suite installs; and this container's `error_reporting` excludes `E_DEPRECATED`, so
-    the suite runs green on 8.4 while the notice is emitted. A CI leg for a newer PHP does
-    not close this — it would go green too. `tools/check_invariants.php` reads real tokens
-    and **only inside parameter lists**, because a scan of every `$x = null` reports
-    `private static $bytes = null;`, which `UploadLimit` and `ServerReport` both have.
+33. **No parameter is implicitly nullable, and `php -l` is not what decides that
+    either** (#10, §4bh). `array $x = null` is deprecated from PHP 8.4, and the explicit form
+    `?array $x = null` is understood back to 7.1 — so the fix costs nothing at the floor
+    and there is no trade to weigh. What makes it an invariant rather than a tidy-up is
+    what could not see it. Five were in this tree; one was `ServerReport::__construct()`,
+    which `admin_panel.php` builds every time somebody opens the panel, so on 8.4 that is
+    a line in the error log on every visit. **`php -l` is clean on both spellings on
+    every version**, because a deprecation is emitted when a file is *compiled*, not when
+    it is parsed. And the steps that do compile it — both self-tests, the rehearsal —
+    stay green, because emitting a notice is not failing a step: the process exits 0, and
+    on a runner whose `error_reporting` excludes `E_DEPRECATED` the line is not printed
+    at all (this container: 22527, against an `E_ALL` of 30719). That was demonstrated
+    rather than reasoned about — putting the exact parameter back left `php -l`,
+    `check_invariants.php` and both suites green — and it matters because `php-lint.yml`
+    had claimed in a comment that those running steps were what caught this class. They
+    were the whole gap.
+    So the rule has two halves and they overlap on purpose. `check_invariants.php` reads
+    parameter lists out of the **tokens**, and only variables at depth 1 inside a
+    `function`/`fn`'s own parentheses — a scan for `$x = null` reports
+    `private static $bytes = null;`, which `UploadLimit` and `ServerReport` both have, and
+    the token before the variable is `static` either way. It knows that one shape on every
+    version, including the 8.2 the shop runs, where the engine itself says nothing. Its
+    eleven fixtures are seven negatives to four positives for that reason: the false
+    positives are the hard part, and every `no` on the list is a shape a scan of
+    `$x = null` really does hit. `tools/check_deprecations.php` is the other half — it
+    compiles every file in a child process with `E_ALL` set and fails on whatever the
+    engine says, which is the instrument that found the five rather than a rule written
+    afterwards. It answers for the version running it, so it will report what 8.5
+    deprecates without anybody teaching it, and it runs on the 8.4 leg because
+    deprecations accumulate and 8.4 says everything 8.2 would. Where opcache is missing it
+    refuses to sweep instead of printing a green line over nothing — there is no way to
+    compile a file without also running it, and `viewer.php` running is not a check.
+    It also reads the child's stderr against a **baseline**, because its own first run on
+    CI failed all 49 files with one cause and none of them in the tree: the runner starts
+    JIT, something on that image overrides `zend_execute_ex()`, and the resulting startup
+    warning arrives on the same stderr as the answer. JIT is off in the child now — a
+    sweep that compiles and never executes has no use for it — and whatever a host still
+    says while compiling a file with nothing in it is measured once, printed as the
+    engine's, and subtracted. Subtracting exact lines is safe in the direction that
+    matters: a line about a file names the file and a line number, so it can never equal
+    one produced with no file in hand, and that was checked with a real deprecation and
+    the noise present together.
 34. **Publish never writes what a Brand paints** (ADR-0011). A branded text block's
     typography lives in `block_styles`; both renderers read it from there and neither
     ever looks at the element's own six `font_*` columns. The Builder nevertheless
@@ -690,6 +731,7 @@ through the app again:
     `tools/selftest_installed.php` are the half that proves the real reads still work, and
     they refuse an arm set to what this machine already holds, because that one would agree
     with the plain run and say so in green.
+
 
 ---
 
@@ -7269,7 +7311,9 @@ a copy of live data. It runs against SQLite and a real MySQL service, over five
 combinations — PHP 8.2, 8.3 and 8.4 on MySQL 5.7, plus MySQL 8.0 and 8.4 on PHP 8.2
 (§4bk). Deliberately not the product of the two axes: PHP moves against the engine
 the shop has, the engine moves against the PHP the shop has, and a leg nobody can
-name a question for is not worth its minutes. **"Runs" is a claim with a date on it, and this paragraph was
+name a question for is not worth its minutes. The node suites are a sixth job rather
+than a step on each leg — they run no PHP, so a version matrix would ask them the same
+question five times. **"Runs" is a claim with a date on it, and this paragraph was
 wrong about it for eight days**: the MySQL arm had not reached the end of the suite
 since 2026-08-11, and neither it nor the rehearsal step underneath it had completed
 a run (§4bi). Invariant 32 is what a local gate can say about that arm; whether it
@@ -7292,6 +7336,11 @@ loop is faster than a push.
 php -l <every touched .php>              # syntax — but at 8.4 here, so it CANNOT fail on
                                          # 8.3/8.4-only syntax that the 8.2 shop rejects.
                                          # CI's run is the one at the floor (invariant 31)
+php tools/check_deprecations.php          # compiles every file instead of parsing it,
+                                         # which is the only way to see a deprecation
+                                         # (invariant 33). Answers for the version
+                                         # running it — 8.4 here, so locally this is the
+                                         # strongest leg rather than the weakest
 php tools/check_invariants.php           # the greps below, run rather than read —
                                          # comment-aware, so a module documenting a
                                          # rule does not fail it. Also the above-floor

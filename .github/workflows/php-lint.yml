@@ -84,13 +84,23 @@ jobs:
         # legs are about whether what *is* written still runs. A green 8.4 leg is not
         # permission to use 8.4 syntax, and the two would disagree loudly if it were.
         #
-        # One thing these legs catch that the lint step cannot, which is why they are
-        # matrix legs rather than an extra `php -l`: a deprecation is emitted when a
+        # One thing these legs are for that the lint step cannot do, which is why they
+        # are matrix legs rather than an extra `php -l`: a deprecation is emitted when a
         # file is compiled, not when it is parsed. `php -l lib/server_report.php` was
         # clean on 8.4 while the same file, included, emitted "Implicitly marking
         # parameter $server as nullable is deprecated" on every request that built the
-        # report. The steps that catch that are the ones that actually run the code —
-        # the self-tests and the rehearsal, on each version.
+        # report.
+        #
+        # This comment used to end "the steps that catch that are the ones that actually
+        # run the code — the self-tests and the rehearsal, on each version", and that
+        # was wrong in a way worth leaving on the record, because it is the shape of
+        # mistake that keeps a gap open. Those steps do compile the file, so the notice
+        # *is* emitted — and a notice is not a failure. The process exits 0, the leg goes
+        # green, and on a runner whose `error_reporting` excludes `E_DEPRECATED` the line
+        # is not even printed. Reintroducing the exact parameter above left `php -l`,
+        # `check_invariants.php` and both self-test steps green. So this leg answers the
+        # question only once something makes the answer visible, which is what the
+        # `Deprecations` step below and invariant 33 were added to do.
         #
         # Two axes, and deliberately not their product. A full cross would be nine jobs,
         # most of them combinations nobody will ever run — the point of a leg is that
@@ -106,6 +116,11 @@ jobs:
         # whose replacement is not a question of if. Nothing in the app would notice:
         # the version note, like the PHP one, is silent at and above the floor by
         # design, so it fires when a host goes backwards and never when it moves on.
+        # And the image is not the shop's build: `mysql:5.7` resolves to 5.7.44, the
+        # final 5.7 release, against the sign's 5.7.23-23 from 2018 — twenty-one patch
+        # releases apart (HANDOFF §7, §4bk). The gate runs on a neighbour of the thing
+        # it speaks for, the same shape as this container being PHP 8.4 while the floor
+        # is 8.2.
         #
         # 8.0 is where a host upgrading from 5.7 lands, and 8.4 is the current LTS —
         # the two ends of where the engine can go. Both are paired with 8.2, the shop's
@@ -148,7 +163,9 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: pdo, pdo_sqlite, pdo_mysql
+          # opcache for the deprecation sweep below: `opcache_compile_file()` is the
+          # only way to compile a file without also running it.
+          extensions: pdo, pdo_sqlite, pdo_mysql, opcache
 
       - name: Lint every PHP file
         run: |
@@ -157,6 +174,23 @@ jobs:
             php -l "$file" > /dev/null || { php -l "$file"; status=1; }
           done < <(find . -name '*.php' -not -path './vendor/*' -print0)
           exit $status
+
+      # The step above, asked again at compile time — where the answer is different. A
+      # deprecation is emitted when a file is compiled and `php -l` never gets that far,
+      # so both spellings of an implicitly nullable parameter lint clean on every
+      # version. The self-tests below do compile the file and stay green anyway, because
+      # emitting a notice is not failing a step: the process exits 0 either way. This is
+      # what turns one into a red line, and the tool's docblock has the rest.
+      #
+      # Only on the newest leg. It reports what the engine *running it* deprecates, and
+      # deprecations accumulate — 8.4 says everything 8.2 would and more — so asking the
+      # other four legs would print a shorter list four more times. That is also the
+      # difference between this and invariant 33: that one is a pattern and knows one
+      # shape on every version, this is the engine's own answer and will report whatever
+      # 8.5 adds without being taught it.
+      - name: Deprecations on PHP ${{ matrix.php }}
+        if: ${{ matrix.php == '8.4' }}
+        run: php tools/check_deprecations.php
 
       # BUILD-REFERENCE §5's greps, run rather than described. Comment-aware, so
       # the modules that document the rules they enforce do not fail them.
@@ -213,12 +247,22 @@ jobs:
         run: php tools/check_doc_numbering.php
 
   # builder.php is ~3400 lines of inline JavaScript that `php -l` cannot see, and
-  # viewer.php is the page that runs unattended on a television. These four suites
+  # viewer.php is the page that runs unattended on a television. These eight suites
   # run that JavaScript, each under a premise the others cannot hold: a DOM holding
   # only what a read-only page emits, a stubbed XMLHttpRequest driven through every
-  # way an upload ends, an admin opening a Display whose stored data is already
-  # wrong, and a Screen whose server has stopped answering. Their own job because
-  # they are the same JavaScript whichever PHP is installed.
+  # way an upload ends, a colour the CSSOM discards in silence, an admin working the
+  # controls the inspector puts on a block, an admin taking back the last thing they
+  # did, an admin deciding which venue a sign belongs to, somebody changing a setting
+  # about *themselves* with unpublished work on the canvas, and a Screen whose server
+  # has stopped answering. Their own job because they are the same JavaScript
+  # whichever PHP is installed.
+  #
+  # This count is on its third correction and both were merges: the branch that added
+  # brands and themes wrote two suites and left the word "four", main corrected it to
+  # "six" against the six it could see, and the step list below has run eight since.
+  # `selftest_builder_readonly.js` does assert there are eight — but it counts
+  # `selftest_*.js` **files**, not the steps below, so a ninth suite added without a
+  # step here passes every gate in the repo and never runs. Nothing checks that yet.
   builder-js:
     runs-on: ubuntu-latest
     steps:
