@@ -184,6 +184,17 @@ survivors were load-bearing. And a kill has grades — only the `assertion` grad
 check knowing what the line was for; `diagnostic`, `count` and `fatal` are the harness
 noticing something moved.
 
+And one thing a local run cannot tell you at all: **the suite passes on SQLite over values
+MySQL refuses.** SQLite stores a word in a `DATETIME`, a non-member in an `ENUM` and eight
+characters in a `VARCHAR(7)`, and the check that reads each one back passes; MySQL's strict
+mode throws on all three, mid-run, which ends the job and takes the rehearsal step under it
+down as well — and that is what had CI's MySQL half dead for eight days over four writes,
+with every local gate green (§4bi). So a check that needs an unusable value hands it to the
+reader as a row, both readers taking one, or uses a value the column can actually hold: a
+colour nobody can read has to *fit* `VARCHAR(7)` before anybody can be shown the wrong thing
+by it. Invariant 37 in `check_invariants.php` is the local half of that. Whether the MySQL
+arm *finishes* is only ever answered by the run.
+
 `check_doc_numbering.php` also prints the next free section letter. That is the
 question every branch cut from the same base has to answer before it writes a
 write-up, and four of them once answered it with the same letter — ask the tool

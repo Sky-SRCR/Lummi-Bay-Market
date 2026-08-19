@@ -1798,8 +1798,13 @@ checkSame(0, $nBrands->forId($nSalmon->id())->logoAssetId(),
 $nPdo->prepare("UPDATE brands SET bg_type = 'image', bg_val = ? WHERE id = ?")
      ->execute(['uploads/salmon-bg.png', $nSalmon->id()]);
 checkSame('image', $nBrands->forId($nSalmon->id())->backgroundType(), 'a Brand can default to an image background');
-$nPdo->prepare("UPDATE brands SET bg_type = 'nonsense' WHERE id = ?")->execute([$nSalmon->id()]);
-checkSame('color', $nBrands->forId($nSalmon->id())->backgroundType(),
+// The third kind is handed to the reader as a row rather than written to the column,
+// because on the engine the shop runs the column cannot hold it: `bg_type` is an ENUM,
+// strict mode has been MySQL's default since 5.7, and that UPDATE is error 1265 — a
+// thrown PDOException rather than a stored value, which took the whole MySQL leg down
+// and the rehearsal step under it with it (§4bi). What this check is about is the
+// reader, and the reader takes a row.
+checkSame('color', (new Brand(['bg_type' => 'nonsense']))->backgroundType(),
           'and anything that is not the word image reads as a colour, never as a third kind');
 
 // ---- The palette: offered, and never substituted ----------------------------
@@ -2574,6 +2579,9 @@ check(abs(StoreClock::epochOf($stamp) - time()) <= 5,
 check(abs(strtotime($stamp) - time()) > 3600,
       'read without the UTC suffix that same string is hours out — the line that got forgotten');
 checkSame(0, StoreClock::epochOf('not a date'), 'a stamp that will not read is 0, not a warning');
+checkSame(0, StoreClock::epochOf('0000-00-00 00:00:00'),
+          'and so is the zero date, which reads as year zero rather than failing (§4bi)');
+checkSame(0, StoreClock::epochOf('0000-00-00'), 'in either of the two shapes MySQL writes it');
 checkSame(0, StoreClock::epochOf(''),           'and neither is an empty one');
 checkSame(0, StoreClock::epochOf(null),         'nor a null column');
 
@@ -2661,10 +2669,18 @@ $pdo->prepare("UPDATE displays SET last_published_at = ?, last_published_by = 1 
 checkSame('sky, ' . StoreClock::label($instant, 'n/j/y g:ia'),
           $store->forId($zoned->id())->lastPublishDescription(),
           'and the refusal names the moment in the store\'s zone, year and all');
-$pdo->prepare("UPDATE displays SET last_published_at = 'nonsense' WHERE id = ?")
-    ->execute([$zoned->id()]);
-checkSame('sky', $store->forId($zoned->id())->lastPublishDescription(),
+// Handed to the reader as a row for the Brand's reason one column along (§4bi): a
+// DATETIME will not hold 'nonsense' on MySQL, and `lastPublishDescription()` reads a
+// row rather than a database.
+checkSame('sky', (new Display(['last_published_at'      => 'nonsense',
+                               'last_published_by_name' => 'sky']))->lastPublishDescription(),
           'a stamp that will not read leaves the name rather than a half-written sentence');
+// And the one unreadable stamp MySQL *can* hold, which is why the line above is not the
+// whole check: a host running without strict mode, or a dump from one, leaves a zero
+// date, and `strtotime()` reads that as a moment in year zero rather than failing.
+checkSame('sky', (new Display(['last_published_at'      => '0000-00-00 00:00:00',
+                               'last_published_by_name' => 'sky']))->lastPublishDescription(),
+          'and so does the zero date a non-strict host writes, which does not fail to parse');
 
 date_default_timezone_set($tzWas);
 
@@ -7802,7 +7818,12 @@ checkSame(SiteChrome::configColor('nav_bg'), SiteChrome::navBg(),
 // ---- A theme that stores something nobody can read --------------------------------
 // The column defaults make this state unreachable through the form, so it is built the
 // way it would really arise: somebody in a database client.
-$tPdo->prepare("UPDATE workspace_themes SET nav_bg = 'darkblue', panel = '' WHERE id = ?")
+// Four characters, not the eight 'darkblue' would take: the column is `VARCHAR(7)`, so
+// MySQL's strict mode refuses the longer name outright (error 1406) and the state this
+// check is about never arrives. A colour that cannot be read has to *fit* the column
+// before anybody can be shown the wrong thing by it (§4bi). 'gold' is still a colour a
+// browser would happily paint, which is the property that matters here.
+$tPdo->prepare("UPDATE workspace_themes SET nav_bg = 'gold', panel = '' WHERE id = ?")
      ->execute([$tOne->id()]);
 $tBad = $tStore->forId($tOne->id());
 SiteChrome::wear($tBad);
@@ -7816,7 +7837,7 @@ $tBadList = $tBad->unreadable();
 checkSame(2, count($tBadList), 'and the theme can say which of its values it could not use');
 checkSame('nav_bg', $tBadList[0]['key'], 'named by the role it is');
 checkSame('Navigation background', $tBadList[0]['label'], 'in the words the theme form uses');
-checkSame('darkblue', $tBadList[0]['value'], 'quoting what is actually stored');
+checkSame('gold', $tBadList[0]['value'], 'quoting what is actually stored');
 SiteChrome::wear(null);
 $tPdo->prepare("UPDATE workspace_themes SET nav_bg = '#101820', panel = '#1a252f' WHERE id = ?")
      ->execute([$tOne->id()]);
@@ -8077,7 +8098,8 @@ checkSame(true, $tThrew,
 // finds nothing.
 $tAuditTheme = $tStore->insert(['name' => 'Night shift']);
 check($tAuditTheme instanceof WorkspaceTheme, 'a theme for the audit to find something in');
-$tPdo->prepare("UPDATE workspace_themes SET status_warn = 'chartreuse' WHERE id = ?")
+// Six characters rather than ten, for the `VARCHAR(7)` reason above (§4bi).
+$tPdo->prepare("UPDATE workspace_themes SET status_warn = 'tomato' WHERE id = ?")
      ->execute([$tAuditTheme->id()]);
 $tAudit = new ColorAudit(new DisplayStore($tPdo), new LayoutStore($tPdo, new DisplayStore($tPdo)),
                          new BrandStyles($tPdo), new BrandStore($tPdo), SiteChrome::DEFAULTS,
@@ -8089,7 +8111,7 @@ foreach ($tFound as $tF) {
 }
 checkSame(1, count($tThemeFindings), 'a theme colour nobody can read joins the audit');
 checkSame(ColorAudit::WRONG_IN_APP, $tThemeFindings[0]['kind'], 'under the kind that touches no sign');
-checkSame('chartreuse', $tThemeFindings[0]['value'], 'quoting what is actually stored');
+checkSame('tomato', $tThemeFindings[0]['value'], 'quoting what is actually stored');
 checkMentions($tThemeFindings[0]['what'], 'Night shift', 'naming the theme a person would open');
 // The store default for that role, which is what the fallback paints — asked for by the
 // same method the finding uses rather than by naming a constant, because for a role Site
@@ -8427,4 +8449,10 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // beside it had three bands — the version having been read off that card and written down
 // eight days earlier without anything being done with it. 14 more checks, all through the
 // seam and so all engine-independent again: 2320, and 25 is still the difference.
-reportChecks(testIsMysql() ? 2345 : 2320);
+//
+// Then §4bi, which is the first change to this number the MySQL arm had a vote in: three
+// checks over the zero date, all engine-independent, and four writes this file had been
+// making that MySQL will not accept — two of them replaced by handing the reader a row
+// instead of a column, which is where they belonged. 2323, and 25 is still the
+// difference, because nothing here added or removed a check inside that section.
+reportChecks(testIsMysql() ? 2348 : 2323);

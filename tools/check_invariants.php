@@ -1716,6 +1716,205 @@ foreach ($nullableProbes as $probe) {
     }
 }
 
+// ---- No test writes a value the engine the shop runs would refuse ----------------
+/**
+ * The column types `schema.sql` declares, as `[table][column] => type` (invariant 37).
+ *
+ * Read from that file rather than from `lib/schema.php` on purpose: schema.sql is what
+ * builds the MySQL fixture the suite runs against, so it is the file whose answer the
+ * engine will actually give. Only the four kinds of type that can *refuse* a literal
+ * are read — an ENUM, a fixed-width string, and a date — because the rule below is
+ * about a write MySQL rejects, not about type-checking the suite.
+ *
+ * @return array
+ */
+function schemaColumnTypes($sql)
+{
+    $types = [];
+    if (!preg_match_all('/CREATE TABLE(?: IF NOT EXISTS)?\s+`?(\w+)`?\s*\((.*?)\n\)\s*ENGINE/is',
+                        $sql, $tables, PREG_SET_ORDER)) {
+        return $types;
+    }
+    foreach ($tables as $table) {
+        $types[$table[1]] = [];
+        foreach (explode("\n", $table[2]) as $line) {
+            // The lookahead is not decoration: `\b` after a closing paren is not a word
+            // boundary — a space follows a non-word character — so the ENUM and VARCHAR
+            // halves of this pattern matched nothing at all while the date half worked,
+            // which is a rule reading green over the two column kinds that broke CI.
+            if (preg_match('/^\s*`?(\w+)`?\s+(ENUM\([^)]*\)|VARCHAR\(\d+\)|CHAR\(\d+\)|DATETIME|TIMESTAMP|DATE)(?=[\s,]|$)/i',
+                           $line, $col)) {
+                $types[$table[1]][$col[1]] = strtoupper(substr($col[2], 0, 5)) === 'ENUM('
+                                           ? $col[2] : strtoupper($col[2]);
+            }
+        }
+    }
+    return $types;
+}
+
+/**
+ * Why MySQL would refuse this literal for this column, or '' if it would not.
+ *
+ * The three refusals are the three that actually happened, and the fourth is the one
+ * that would have happened next:
+ *
+ *   · a value that is not an ENUM member — error 1265, and lettercase does **not**
+ *     make one: MySQL matches a member through the column's case-insensitive
+ *     collation, which is why the suite's `role = 'Admin'` write has always been fine
+ *     on both engines and is not what this looks for;
+ *   · a string longer than the column is wide — error 1406. A colour nobody can read
+ *     has to *fit* `VARCHAR(7)` before anybody can be shown the wrong thing by it;
+ *   · anything that is not a date in a date column — error 1292;
+ *   · the zero date, which is a date and still refused, by NO_ZERO_DATE.
+ *
+ * SQLite has none of these limits: it stores every one of them and the check that
+ * reads it back passes, which is the whole reason this is a gate here rather than
+ * something CI can be relied on to say. CI *does* say it — as a fatal, in the middle
+ * of a run, which also takes down the rehearsal step underneath.
+ */
+function valueRefusedByColumn($columns, $column, $value)
+{
+    if (!isset($columns[$column])) { return ''; }
+    $type = $columns[$column];
+
+    if (strtoupper(substr($type, 0, 5)) === 'ENUM(') {
+        preg_match_all("/'([^']*)'/", $type, $members);
+        foreach ($members[1] as $member) {
+            if (strcasecmp($member, $value) === 0) { return ''; }
+        }
+        return $type . " has no member '" . $value . "'";
+    }
+    if (preg_match('/^(?:VAR)?CHAR\((\d+)\)$/', $type, $width)) {
+        return strlen($value) > intval($width[1])
+             ? $type . ' cannot hold ' . strlen($value) . " characters ('" . $value . "')"
+             : '';
+    }
+    if ($type === 'DATETIME' || $type === 'TIMESTAMP' || $type === 'DATE') {
+        if (strpos($value, '0000-00-00') === 0) {
+            return $type . " refuses the zero date, which NO_ZERO_DATE has covered since 5.7";
+        }
+        return preg_match('/^\d{4}-\d{2}-\d{2}/', $value) ? '' : $type . " will not read '" . $value . "'";
+    }
+    return '';
+}
+
+/**
+ * Every literal write in this source the engine the shop runs would refuse.
+ *
+ * Comments are dropped first, for the reason every other rule in this file drops them:
+ * the write-ups quote the statements they are about.
+ *
+ * @return array of ['line' => int, 'what' => string]
+ */
+function refusedLiteralWrites($source, $types)
+{
+    $out = [];
+    foreach (explode("\n", codeWithoutComments($source)) as $i => $line) {
+        $n = $i + 1;
+        if (preg_match_all('/UPDATE\s+(\w+)\s+SET\s+(.*?)(?:\s+WHERE|"|$)/i', $line, $sets, PREG_SET_ORDER)) {
+            foreach ($sets as $set) {
+                if (!isset($types[$set[1]])) { continue; }
+                preg_match_all("/(\w+)\s*=\s*'([^']*)'/", $set[2], $pairs, PREG_SET_ORDER);
+                foreach ($pairs as $pair) {
+                    $why = valueRefusedByColumn($types[$set[1]], $pair[1], $pair[2]);
+                    if ($why !== '') { $out[] = ['line' => $n, 'what' => $set[1] . '.' . $pair[1] . ': ' . $why]; }
+                }
+            }
+        }
+        if (preg_match_all('/INSERT\s+INTO\s+(\w+)\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)/i',
+                           $line, $ins, PREG_SET_ORDER)) {
+            foreach ($ins as $one) {
+                if (!isset($types[$one[1]])) { continue; }
+                $columns = array_map(function ($c) { return trim(trim($c), '`'); }, explode(',', $one[2]));
+                $values  = array_map('trim', explode(',', $one[3]));
+                if (count($columns) !== count($values)) { continue; }
+                foreach ($columns as $at => $column) {
+                    $value = $values[$at];
+                    if (strlen($value) < 2 || $value[0] !== "'" || substr($value, -1) !== "'") { continue; }
+                    $why = valueRefusedByColumn($types[$one[1]], $column, substr($value, 1, -1));
+                    if ($why !== '') { $out[] = ['line' => $n, 'what' => $one[1] . '.' . $column . ': ' . $why]; }
+                }
+            }
+        }
+    }
+    return $out;
+}
+
+// The rule, over every tool that can be pointed at the MySQL fixture. Which connection
+// a given statement is on is not something this can read — the suite holds several, two
+// of them deliberately SQLite-only — so it asks the narrower question that needs no such
+// answer: would the engine the shop runs accept this literal at all? For eight days the
+// answer was no in four places, and nothing local could say so, because SQLite stores
+// every one of them and the check that reads it back passes (§4bi).
+$writeTypes = schemaColumnTypes(file_get_contents($root . '/schema.sql'));
+$checked++;
+if (isset($writeTypes['brands']['bg_type']) && count($writeTypes) >= 8) {
+    echo "  ok   schema.sql's column types were read, so the rule below has something to check against\n";
+} else {
+    echo "  FAIL schema.sql's column types were not read — " . count($writeTypes) . " tables\n";
+    $failures[] = 'schemaColumnTypes read schema.sql';
+}
+
+$refusedWrites = [];
+foreach (glob($root . '/tools/*.php') as $tool) {
+    if (basename($tool) === basename(__FILE__)) { continue; }
+    foreach (refusedLiteralWrites(file_get_contents($tool), $writeTypes) as $hit) {
+        $refusedWrites[] = 'tools/' . basename($tool) . ':' . $hit['line'] . '  ' . $hit['what'];
+    }
+}
+$checked++;
+if (!$refusedWrites) {
+    echo "  ok   no tool writes a literal the engine the shop runs would refuse\n";
+} else {
+    echo "  FAIL a tool writes a literal MySQL refuses — a fatal mid-run, and the rehearsal under it never runs\n";
+    foreach ($refusedWrites as $one) { echo "       $one\n"; }
+    $failures[] = 'literal writes MySQL refuses: ' . count($refusedWrites);
+}
+
+// ---- And that detector, seen to fail --------------------------------------------
+// Invariant 30. The first four are the four writes §4bi removed, in the order CI would
+// have hit them; the negative half is where the care is, because the two easy ways to
+// write this rule both break real lines in the suite — an ENUM match that respects
+// lettercase would condemn `role = 'Admin'`, which MySQL has always accepted, and a
+// length rule that did not read the declared width would condemn every colour.
+$writeProbes = [
+    ['$p->exec("UPDATE brands SET bg_type = \'nonsense\' WHERE id = 1");', 1,
+     'the ENUM write that ended the MySQL leg is refused'],
+    ['$p->exec("UPDATE displays SET last_published_at = \'nonsense\' WHERE id = 1");', 1,
+     'and so is the stamp that is not a date — the one before it on main'],
+    ['$p->exec("UPDATE workspace_themes SET nav_bg = \'darkblue\' WHERE id = 1");', 1,
+     'and eight characters in a VARCHAR(7), which no database client could have stored either'],
+    ['$p->exec("UPDATE displays SET last_published_at = \'0000-00-00 00:00:00\' WHERE id = 1");', 1,
+     'and the zero date, which is a date and still refused'],
+    ['$p->exec("INSERT INTO brands (name, bg_type) VALUES (\'Salmon House\', \'nonsense\');");', 1,
+     'an INSERT is read the same way as an UPDATE, by column position'],
+    ['$p->exec("UPDATE brands SET bg_type = \'image\' WHERE id = 1");', 0,
+     'a member of the ENUM is left alone'],
+    ['$p->exec("UPDATE brands SET bg_type = \'Image\' WHERE id = 1");', 0,
+     'and so is one in another lettercase, because MySQL matches a member case-insensitively'],
+    ['$p->exec("UPDATE workspace_themes SET nav_bg = \'gold\' WHERE id = 1");', 0,
+     'a colour that will not read but fits the column is exactly the state a check wants'],
+    ['$p->exec("UPDATE displays SET last_published_at = \'2026-08-19 12:00:00\' WHERE id = 1");', 0,
+     'a real stamp is not a refusal'],
+    ['$p->exec("UPDATE nothing_declared SET bg_type = \'nonsense\' WHERE id = 1");', 0,
+     'and a table schema.sql does not declare is not this rule\'s business'],
+    ['// UPDATE brands SET bg_type = \'nonsense\' — what §4bi removed', 0,
+     'a write-up quoting the statement it is about is prose, not a write'],
+];
+foreach ($writeProbes as $probe) {
+    list($snippet, $expected, $label) = $probe;
+    $checked++;
+    $hits = refusedLiteralWrites("<?php\n" . $snippet . "\n", $writeTypes);
+    if (count($hits) === $expected) {
+        echo "  ok   $label\n";
+    } else {
+        echo "  FAIL the refused-write detector is wrong about: $label\n";
+        echo "       expected $expected hit(s), got " . count($hits) . "\n";
+        foreach ($hits as $hit) { echo "         line {$hit['line']}: {$hit['what']}\n"; }
+        $failures[] = "refused-write detector: $label";
+    }
+}
+
 // ---- The instrument itself -------------------------------------------------------
 // Every rule above is read through codeWithoutComments(), so what that function drops
 // decides what all thirty-two of them can see. It gained HTML comments in #50, and the
@@ -1793,7 +1992,7 @@ foreach ([
 //
 // Not a count of rules: a count of what actually *ran*, so a rule that stops being
 // reached is the same failure as one that was deleted.
-$expectedChecks = 73;
+$expectedChecks = 86;
 if ($checked !== $expectedChecks) {
     $failures[] = 'this checker ran every check it is supposed to — expected '
                 . $expectedChecks . ', ran ' . $checked;

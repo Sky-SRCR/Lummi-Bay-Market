@@ -206,10 +206,22 @@ class StoreClock
      * 0 for anything unreadable, which errs the way the callers already err: an edit
      * lock with an epoch of 0 reads as long lapsed, so the sign frees rather than
      * sticking, and one heartbeat rewrites the stamp correctly.
+     *
+     * **A zero date is one of those, and it is the only unreadable stamp MySQL can
+     * actually hold** (§4bi). Strict mode refuses a string that is not a datetime, so
+     * the garbage this function was written for cannot reach the column at all — but a
+     * host running without strict mode, or a dump taken from one, leaves
+     * `0000-00-00 00:00:00`, and `strtotime()` reads that as a real moment in year zero
+     * rather than failing. Without this line the canvas footer answers "is what I'm
+     * looking at live?" with a date in the year 0, which is the half-written sentence
+     * that whole seam exists to prevent. Matched on the zero date itself rather than on
+     * an epoch floor: a stamp genuinely older than 1970 is not something this app can
+     * write, and a floor would be a second rule to be wrong about.
      */
     public static function epochOf($stamp)
     {
         if (!is_string($stamp) || $stamp === '') { return 0; }
+        if (strpos($stamp, '0000-00-00') === 0) { return 0; }
         $epoch = strtotime($stamp . ' UTC');
         return $epoch === false ? 0 : $epoch;
     }

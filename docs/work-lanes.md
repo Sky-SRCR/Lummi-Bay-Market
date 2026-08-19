@@ -201,10 +201,11 @@ and the reservation only settles who renumbers on the merge.** As settled:
 - **Lane C took 30**, and only 30 — a check ships having been seen to fail (§4aq). It was
   expected to add several; what it actually needed was one rule about how a check earns
   its line, because the four mechanised greps are rules the *checker* enforces rather than
-  invariants a reader has to hold. **37 is now the next free number**: 31 went to the
+  invariants a reader has to hold. **38 is now the next free number**: 31 went to the
   above-floor syntax check, 32 to a branded block's own typography, 33 to `brands`, 34 to
-  `workspace_themes`, 35 to every read of the machine (§4bg), and 36 to the implicit-nullable
-  form 8.4 deprecates (§4bh). Six allocated since this paragraph last said "31", which is the
+  `workspace_themes`, 35 to every read of the machine (§4bg), 36 to the implicit-nullable
+  form 8.4 deprecates (§4bh), and 37 to a value the shop's engine would refuse (§4bi). Seven
+  allocated since this paragraph last said "31", which is the
   reason it is worth updating rather than recomputing — the sentence that names the next
   number is the one a branch reads.
 

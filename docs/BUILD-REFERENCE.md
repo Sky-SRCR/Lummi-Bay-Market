@@ -654,6 +654,21 @@ through the app again:
     not close this — it would go green too. `tools/check_invariants.php` reads real tokens
     and **only inside parameter lists**, because a scan of every `$x = null` reports
     `private static $bytes = null;`, which `UploadLimit` and `ServerReport` both have.
+37. **No check writes a value the engine the shop runs would refuse** (§4bi). A suite that
+    proves a reader degrades gracefully has to get the bad value *into* the column first,
+    and SQLite takes anything: it stored `bg_type = 'nonsense'` in an ENUM, `'nonsense'` in
+    a DATETIME and eight characters in a `VARCHAR(7)`, and the check that read each one
+    back passed. On MySQL all three are errors under the strict mode that has been the
+    default since 5.7 — a thrown `PDOException`, mid-run, which ends the job and takes the
+    rehearsal step under it down as well. **That is what had CI's MySQL half dead for eight
+    days**, over four writes, while the SQLite half stayed green and every local gate agreed
+    with it. So the rule is not "guard the write": it is that a value the column cannot hold
+    does not belong in a column. Hand it to the reader as a row — both readers take one —
+    and where the point is genuinely a stored value, make it one the column can store: a
+    colour nobody can read has to **fit** `VARCHAR(7)` before anybody can be shown the wrong
+    thing by it. `tools/check_invariants.php` reads `schema.sql` for the four types that can
+    refuse a literal and matches ENUM members **case-insensitively**, because MySQL does —
+    `role = 'Admin'` has always been accepted and is not what this is about.
 
 ---
 
@@ -6994,12 +7009,80 @@ live code in this repo.
 
 ---
 
+### 4bi. Eight days of a green suite over a gate that had already died
+
+`selftest_layout.php` ends with `2320 checks, 0 failed` and always did. The MySQL arm of
+CI had not reached the end of the file since **2026-08-11**, and nothing in this repo said
+so — not the suite, not the consistency checks, not `HANDOFF.md`, which describes that arm
+as the answer to *"does this work on MySQL"*.
+
+Four writes, all the same shape. The suite proves a reader degrades gracefully when the
+stored value is one it cannot use, and to do that it has to get the bad value into the
+column first:
+
+| Written | Column | MySQL |
+|---|---|---|
+| `bg_type = 'nonsense'` | `brands.bg_type` `ENUM('color','image')` | 1265, data truncated |
+| `last_published_at = 'nonsense'` | `displays.last_published_at` `DATETIME` | 1292, incorrect datetime |
+| `nav_bg = 'darkblue'` | `workspace_themes.nav_bg` `VARCHAR(7)` | 1406, too long |
+| `status_warn = 'chartreuse'` | same, in the colour audit | 1406, too long |
+
+SQLite stores all four. Every local gate is green over all four. On MySQL the first one
+reached is an uncaught `PDOException`, so the job stops — **and the step under it is the
+rehearsal against real MySQL**, the one thing that exercises the publish transaction's
+`SELECT … FOR UPDATE` and convergence against a real catalogue. One bad literal in a test
+took out the only coverage the app's most dangerous path has.
+
+**The fix is not a guard.** A value the column cannot hold does not belong in a column.
+Two of the four were about a *reader* — `Brand::backgroundType()` and
+`Display::lastPublishDescription()` — and both readers take a row, so they are handed one.
+The other two are genuinely about a stored value, and there the correction is smaller and
+more interesting: **the value has to fit.** `'darkblue'` is eight characters in a
+`VARCHAR(7)`; not even somebody in a database client — which is how that check's own
+comment describes the state it builds — could have put it there. `'gold'` and `'tomato'`
+are the same defect a person would actually meet.
+
+**And the reader was wrong about the case that survives.** Ask which unreadable stamp MySQL
+*can* hold, and the answer is the zero date: strict mode refuses a string that is not a
+datetime, but a host running without it, or a dump from one, leaves `0000-00-00 00:00:00`
+— and `strtotime()` reads that as a real moment in year zero rather than failing. So
+`StoreClock::epochOf()`, the one place in the repo that reads a stamp, answered
+`-62169984000`, and the canvas footer answered *"is what I'm looking at live?"* with
+**`sky, 11/29/-1 4:07pm`** — printed by the suite while the guard was mutated out, which is
+how that sentence is quoted here. That is the half-written sentence the whole seam exists
+to prevent, in the one form the engine can actually produce. One line, matched on the zero
+date rather than on an epoch floor: a stamp genuinely older than 1970 is not something this
+app can write, and a floor would be a second rule to be wrong about.
+
+So invariant 37, and a detector, because this class is invisible to everything else here:
+`php -l` sees a string, the suite sees green, and the container has no MySQL server to
+disagree — the same three-way blindness §4bh had, one layer down. It reads `schema.sql`
+rather than `lib/schema.php`, because schema.sql is the file that builds the fixture the
+engine will answer from. Eleven probes, and the negative half is again where the care is:
+an ENUM match that respected lettercase would condemn `role = 'Admin'`, which MySQL has
+accepted since it was written in August 2026 and stores as `admin` through the column's
+case-insensitive collation. Its own first draft is worth recording too — `\b` after a
+closing parenthesis is not a word boundary, so the ENUM and `VARCHAR` halves of the
+schema-reading pattern matched **nothing at all** while the date half worked. It printed
+`ok` over the two column kinds that had broken CI. Seen to fail is not a formality.
+
+73 → 86 consistency checks; 2320 → 2323 suite checks. What this still cannot say is
+whether the MySQL arm now *finishes*: it has been dead for eight days and roughly 500 of
+the suite's checks — every one steps 1 to 5 added — have never run against that engine at
+all. This container has no MySQL, so the run is the only place that answer exists.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
 #48 and #51 CI runs everything below except the two things that need a browser or
 a copy of live data. It runs on PHP 8.2, against two engines: SQLite and a real
-MySQL 5.7 service. That 8.2 is now also the repo's declared floor — the store owner
+MySQL 5.7 service. **"Runs" is a claim with a date on it, and this paragraph was
+wrong about it for eight days**: the MySQL arm had not reached the end of the suite
+since 2026-08-11, and neither it nor the rehearsal step underneath it had completed
+a run (§4bi). Invariant 37 is what a local gate can say about that arm; whether it
+finishes is only ever answered by the run. That 8.2 is now also the repo's declared floor — the store owner
 stated the host runs it (§4k) — so the pin enforces the target rather than merely
 accepting everything the target forbids. As of 2026-08-11 it is **observed** rather than
 stated: 8.2.33 on the runtime card and `ea-php82` pinned to `srcresort.com` in cPanel
