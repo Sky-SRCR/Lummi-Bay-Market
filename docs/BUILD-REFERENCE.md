@@ -5934,8 +5934,8 @@ the live sign is a second install with its own data, and every step applies ther
 
 ### 4az. A price list somebody else wrote
 
-A request from the store owner on 2026-08-19: drop a `.csv` on a table block and have it
-fill from the header row, the rows and the columns in the file. It is entirely in
+A request from the store owner on 2026-08-19: drop a `.csv` into a table block's editor
+and have it fill from the header row, the rows and the columns in the file. It is entirely in
 `builder.php` — a table's content is opaque to the server, which checks that
 `manual_content` is text under 65,535 bytes (`LayoutRules`) and nothing else — so no
 schema statement, no new SQL door, no publish path and **not one line of `viewer.php`**
@@ -5963,13 +5963,14 @@ somebody's work on screen; it then decides separately whether it wanted the file
 Refusing a navigation is not the same as offering a drop, and the difference is the whole
 of the next paragraph.
 
-**Two places take a file, and the canvas is not one of them.** A table block on the canvas
-and the drop area inside Edit Table, and nothing else: a file let go over empty canvas, an
-image or a text block imports nothing and says where it should have gone. The alternative
-— treating the canvas as one big target and picking the table it probably meant — is a
-guess that overwrites a price list nobody was looking at, on a sign that may not even be
-the one on screen a moment later. The block lights up while a file is over it, and the
-canvas deliberately does not, because a page that highlights is a page that has promised.
+**One place takes a file, and it is inside the table's own editor.** The drop area in Edit
+Table, and nothing else — not the canvas, and **not the table block on it either**, which
+the store owner asked for explicitly on 2026-08-19 after seeing the block version. A file
+let go anywhere else imports nothing and says where it should have gone. Which table an
+import fills is then decided by the table somebody opened, never by aim: table blocks
+stand beside each other on a sign, they overlap while one is being dragged, and a drop
+read one block wide overwrites a price list nobody was looking at. Only the drop area
+lights up, because a page that highlights is a page that has promised.
 
 **An import fills the editor; it does not replace it.** Everything the table block already
 had still works on the rows that arrive: typing over a cell, the column style dropdowns,
@@ -5995,8 +5996,8 @@ line. And a file Excel saved as plain "CSV" on a Windows machine is not UTF-8: t
 already U+FFFD by the time `FileReader` hands the text over, so there is nothing to repair
 and the note says so, naming the format that works.
 
-**The suite is the sixth node harness and the first whose input this app did not write.**
-116 checks: a quoted comma, a doubled quote, CRLF and a bare CR, a BOM, a blank line kept
+**The suite is the seventh node harness and the first whose input this app did not write.**
+123 checks: a quoted comma, a doubled quote, CRLF and a bare CR, a BOM, a blank line kept
 where somebody meant a spacer and the trailing one dropped, semicolons and tabs, the style
 matching, every refusal, where a file may and may not land, and then every editing control
 driven on an imported table — over a recording `document` with a stubbed `FileReader`. It
@@ -6005,8 +6006,8 @@ column header cell is `th.innerHTML = '<select …>'`, and a DOM that keeps that
 without reading it cannot answer whether `getTableEditorData()` still finds the style, the
 alignment and the width after a rebuild — which is most of what this suite is for. Mutants
 were run against it before it was believed and died by assertion (invariant 30), including
-the delimiter sniffer's tie-break and the guard that stops a locked block being imported
-into.
+the delimiter sniffer's tie-break, the column deletion that splices the rows, and the door
+check that keeps the canvas from falling through to the reader.
 
 ---
 
@@ -6051,8 +6052,8 @@ node tools/selftest_builder_undo.js      # and under the fourth: the last thing 
                                          # snapshot and restore, and drives every mutating
                                          # control to prove each one leaves a step
 node tools/selftest_builder_table.js     # and under the fifth: the data is not this
-                                         # app's. A .csv somebody else wrote, dropped on a
-                                         # table block — quoted commas, a semicolon file,
+                                         # app's. A .csv somebody else wrote, dropped into
+                                         # Edit Table — quoted commas, a semicolon file,
                                          # a header row naming columns this app has no
                                          # style for, the drop that must not navigate the
                                          # tab away from an unpublished canvas, and every

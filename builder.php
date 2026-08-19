@@ -570,10 +570,6 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #table-csv-note { font-size:11px; margin-top:6px; min-height:14px; }
 #table-csv-note.bad { color:#e67e22; }
 #table-csv-note.good { color:#7fb069; }
-/* The same dashed answer on the block itself, so a file dragged at a table lands
-   on something that has already said it will take it. Only a table block ever
-   wears it: the canvas is not a drop target and must not look like one. */
-.editable-block.csv-target { outline:2px dashed #27ae60 !important; outline-offset:-1px; }
 
 /* ── Toast ── */
 #toast {
@@ -4788,85 +4784,66 @@ function dragCarriesFiles(e) {
     return Array.prototype.indexOf.call(types, 'Files') > -1;
 }
 
-/** The table block under the pointer, or null for anywhere else on the page. */
-function csvTargetBlock(e) {
-    var node = (e && e.target && e.target.closest) ? e.target.closest('.editable-block') : null;
-    return (node && node.dataset && node.dataset.type === 'table') ? node : null;
+/** The Edit Table drop area under the pointer, or null for anywhere else on the page. */
+function csvDropZone(e) {
+    return (e && e.target && e.target.closest) ? e.target.closest('#table-csv-drop') : null;
 }
 
-var _csvHighlighted = null;
-
-function highlightCsvTarget(block) {
-    if (_csvHighlighted === block) { return; }
-    if (_csvHighlighted && _csvHighlighted.classList) { _csvHighlighted.classList.remove('csv-target'); }
-    _csvHighlighted = block;
-    if (block && block.classList) { block.classList.add('csv-target'); }
-    var zone = document.getElementById('table-csv-drop');
-    if (zone && zone.classList) { zone.classList.remove('drag-over'); }
+function highlightCsvZone(zone) {
+    var box = document.getElementById('table-csv-drop');
+    if (!box || !box.classList) { return; }
+    if (zone === box) { box.classList.add('drag-over'); } else { box.classList.remove('drag-over'); }
 }
 
 /**
  * Where a dragged file may be dropped, and what happens everywhere else.
  *
- * Two places take a file and no others: a table block on the canvas, and the drop
- * area inside Edit Table. **The canvas itself is not one of them** — a file let go
- * over empty canvas, or over an image or a text block, imports nothing, because
- * the only way to act on it would be to guess which table was meant and a guess
- * here overwrites a price list nobody was looking at.
+ * One place takes a file: the drop area inside Edit Table. A table block on the
+ * canvas is **not** a drop target, and neither is the canvas — a file let go
+ * anywhere else imports nothing and is told where it belongs. Which table an
+ * import fills is decided by the one somebody opened, not by where a pointer
+ * happened to be when they let go, because a table block sits under the tables
+ * either side of it on a busy sign and the cost of reading that aim wrong is a
+ * price list overwritten while nobody was looking at it.
  *
  * That still leaves the everywhere-else half, which matters most and has nothing
  * to do with tables: a file dropped on a page that ignores it is a *navigation*.
  * The browser leaves the Builder and opens the CSV, and every block moved since
  * the last Publish goes with it — no prompt, no undo, and the canvas is only in
  * this tab. So the default is refused for any file drag anywhere on this page —
- * refusing a navigation is not the same as offering a drop, and only the two
- * places above ever light up or read anything.
+ * refusing a navigation is not the same as offering a drop, and only the drop
+ * area ever lights up or reads anything.
  */
 function setupCsvDrop() {
     document.addEventListener('dragover', function (e) {
         if (!dragCarriesFiles(e)) { return; }   // dragging text inside a block is not this
         e.preventDefault();
         if (READ_ONLY) { return; }
-        var zone = e.target && e.target.closest ? e.target.closest('#table-csv-drop') : null;
-        if (zone) { highlightCsvTarget(null); zone.classList.add('drag-over'); return; }
-        highlightCsvTarget(csvTargetBlock(e));
+        highlightCsvZone(csvDropZone(e));
     });
 
     document.addEventListener('dragleave', function (e) {
         if (!dragCarriesFiles(e)) { return; }
-        highlightCsvTarget(null);
+        highlightCsvZone(null);
     });
 
     document.addEventListener('drop', function (e) {
         if (!dragCarriesFiles(e)) { return; }
         e.preventDefault();
-        highlightCsvTarget(null);
-        var inZone = e.target && e.target.closest ? e.target.closest('#table-csv-drop') : null;
-        var block  = csvTargetBlock(e);
+        highlightCsvZone(null);
         if (READ_ONLY) {
             // The default is already refused, which is the part that matters on a page
-            // holding somebody else's canvas. Saying anything more is only worth it when
-            // they aimed at a table and are owed a reason nothing happened.
-            if (block) {
-                showToast(LOCK_HOLDER + ' is editing this display — nothing can be imported from here.', true);
-            }
+            // holding somebody else's canvas. The sentence is worth adding because the
+            // drop area they would have aimed for is not on this page at all.
+            showToast(LOCK_HOLDER + ' is editing this display — nothing can be imported from here.', true);
+            return;
+        }
+        if (!csvDropZone(e)) {
+            showToast('Open the table you want to fill, then drop the file on the area inside Edit Table.', true);
             return;
         }
         var file = (e.dataTransfer && e.dataTransfer.files) ? e.dataTransfer.files[0] : null;
         if (!file) { return; }
-        // Dropped on the canvas rather than on a table: nothing is imported. The
-        // navigation is already refused above, so the only thing left to do is say
-        // where the file was supposed to go — guessing which table was meant is how
-        // the wrong sign gets a price list.
-        if (!inZone && !block) {
-            showToast('Drop the file on a table block, or on the drop area inside Edit Table.', true);
-            return;
-        }
-        if (block) {
-            if (refuseIfLocked(block, 'imported into')) { return; }
-            selectBlock(block);
-            openTableModal();
-        }
         readCsvFile(file);
     });
 }

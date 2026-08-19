@@ -457,59 +457,79 @@ checkSame(true, fileDrag('drop', document.body, csvFile('x.csv', 'a,b')).prevent
           'and so is one dropped anywhere, before anything decides whether it is wanted');
 
 const strayToast = document.getElementById('toast');
-check(/table block/.test(strayToast.textContent), 'a file dropped on no table says where it should have gone');
+check(/Edit Table/.test(strayToast.textContent), 'a file dropped anywhere else says where it should have gone');
 checkSame(0, readerCalls.length, 'and nothing is read, because the canvas is not a drop target');
 
-// Nor is anything else standing on it. A file let go over a text block, a picture
-// or bare canvas imports nothing: the only way to act on it would be to guess
-// which table was meant, and a guess here overwrites a price list nobody was
-// looking at.
-const notATable = el('div', 'editable-block root-block');
-notATable.dataset.type = 'text';
-document.getElementById('builder-canvas').appendChild(notATable);
-checkSame(null, csvTargetBlock({ target: notATable }), 'a block that is not a table is not a drop target');
-readerCalls.length = 0;
-fileDrag('drop', notATable, csvFile('prices.csv', 'Title\nCoho'));
-checkSame(0, readerCalls.length, 'so a file let go over one is not read either');
-check(/table block/.test(document.getElementById('toast').textContent),
-      'and the page says where it should have gone rather than picking a table itself');
+// ---- Nor is a table block on the canvas --------------------------------------
+//
+// The one place that takes a file is the area inside Edit Table. Which table an
+// import fills is decided by the table somebody opened, never by aim: table
+// blocks stand beside each other on a sign, and a drop read one block wide
+// overwrites a price list nobody was looking at.
 
-// ---- Onto a table block ------------------------------------------------------
-
-function tableBlock(locked) {
+function tableBlock() {
     const b = el('div', 'editable-block root-block');
     b.dataset.type    = 'table';
-    b.dataset.locked  = locked ? '1' : '0';
+    b.dataset.locked  = '0';
     b.dataset.tableData = JSON.stringify({ headers: ['item_title'], rows: [['old']] });
     b.dataset.zIndex  = '1';
     b.dataset.hidden  = '0';
     return b;
 }
 
-const locked = tableBlock(true);
-fileDrag('drop', locked, csvFile('prices.csv', 'Title,Price\nCoho,18.99'));
-check(/locked/.test(document.getElementById('toast').textContent),
-      'a table somebody locked is not imported into');
-checkSame('', String(readerCalls.join('')), 'and the file is not even read');
+const onCanvas = tableBlock();
+document.getElementById('builder-canvas').appendChild(onCanvas);
+checkSame(null, csvDropZone({ target: onCanvas }), 'a table block on the canvas is not the drop zone');
+readerCalls.length = 0;
+fileDrag('drop', onCanvas, csvFile('prices.csv', 'Title\nCoho'));
+checkSame(0, readerCalls.length, 'so a file let go over one is not read');
+check(/Edit Table/.test(document.getElementById('toast').textContent),
+      'and the page says to open the table first rather than picking one itself');
+checkSame(false, document.getElementById('table-modal-overlay').classList.contains('open'),
+          'and nothing opens over the canvas on its own');
+checkSame(JSON.stringify({ headers: ['item_title'], rows: [['old']] }), onCanvas.dataset.tableData,
+          'and the table it was aimed at still holds what it held');
 
-// A real import, end to end: the file is read here, the modal opens on the block
-// it was dropped on, and the rows reach the editor.
+// A block that is not a table is no different, because nothing on the canvas is.
+const notATable = el('div', 'editable-block root-block');
+notATable.dataset.type = 'text';
+document.getElementById('builder-canvas').appendChild(notATable);
+fileDrag('drop', notATable, csvFile('prices.csv', 'Title\nCoho'));
+checkSame(0, readerCalls.length, 'a file let go over a text block is not read either');
+
+// ---- Into the area inside Edit Table, which is the one that takes it ----------
+
+const zone = document.getElementById('table-csv-drop');
+checkSame(zone, csvDropZone({ target: zone }), 'the area inside Edit Table is the drop zone');
+
+const over = fileDrag('dragover', zone);
+checkSame(true, over.prevented, 'a file dragged onto it is refused the default');
+check(zone.classList.contains('drag-over'), 'and it says it will take one');
+fileDrag('dragover', onCanvas);
+checkSame(false, zone.classList.contains('drag-over'),
+          'while a file over the canvas lights nothing up — the page does not offer what it will refuse');
+fileDrag('dragover', zone);
+fileDrag('dragleave', document.body);
+checkSame(false, zone.classList.contains('drag-over'), 'and it stops saying so when the file leaves');
+
+// A real import, end to end: the table is open in the editor, the file is read
+// here, and the rows reach the editor over the top of what was in it.
 let rebuilt = null;
 const realRebuild = rebuildTableEditor;
 rebuildTableEditor = function (data) { rebuilt = data; return realRebuild(data); };
 
-const target = tableBlock(false);
+const target = tableBlock();
 document.getElementById('builder-canvas').appendChild(target);
-fileDrag('drop', target, csvFile('prices.csv', 'Title,Price\nCoho,18.99\nSockeye,24.99'));
+selectBlock(target);
+openTableModal();
+rebuilt = null;
+fileDrag('drop', zone, csvFile('prices.csv', 'Title,Price\nCoho,18.99\nSockeye,24.99'));
 
-checkSame('table', activeBlock ? activeBlock.dataset.type : null, 'the table it was dropped on is the one selected');
-check(document.getElementById('table-modal-overlay').classList.contains('open'),
-      'the editor opens over it, so the import is something to look at before it is kept');
-check(rebuilt !== null, 'and the rows out of the file reach the editor');
+check(rebuilt !== null, 'the rows out of the file reach the editor');
 checkDeep(['item_title', 'price'], rebuilt.headers, 'styled by the header row');
 checkDeep([['Coho', '18.99'], ['Sockeye', '24.99']], rebuilt.rows, 'with the content under it');
 check(/prices\.csv/.test(document.getElementById('table-csv-note').textContent),
-      'and the note beside the drop zone names the file it read');
+      'and the note beside the drop area names the file it read');
 check(/2 rows/.test(document.getElementById('table-csv-note').textContent), 'and how much of it arrived');
 
 // Nothing is stored until Save Table: the block still holds what it held.
@@ -527,21 +547,21 @@ checkDeep(['Title', 'Price'], rebuilt.rows[0], 'and the heading line becomes con
 // ---- Files that are not a price list -----------------------------------------
 
 readerCalls.length = 0;
-fileDrag('drop', target, { name: 'logo.jpg', type: 'image/jpeg', size: 4000 });
-check(/not a \.csv/.test(document.getElementById('toast').textContent), 'a picture dropped on a table is refused');
+fileDrag('drop', zone, { name: 'logo.jpg', type: 'image/jpeg', size: 4000 });
+check(/not a \.csv/.test(document.getElementById('toast').textContent), 'a picture dropped on the area is refused');
 checkSame(0, readerCalls.length, 'and not read');
 
-fileDrag('drop', target, csvFile('empty.csv', '', 0));
+fileDrag('drop', zone, csvFile('empty.csv', '', 0));
 check(/empty/.test(document.getElementById('toast').textContent), 'an empty file says so');
 
-fileDrag('drop', target, csvFile('huge.csv', 'a,b', CSV_FILE_MAX_BYTES + 1));
+fileDrag('drop', zone, csvFile('huge.csv', 'a,b', CSV_FILE_MAX_BYTES + 1));
 check(/was not read/.test(document.getElementById('toast').textContent),
       'and one far too big to fit a block is refused before it is read');
 checkSame(0, readerCalls.length, 'none of the three reached the reader');
 
 // ---- On a page that may not edit ---------------------------------------------
 //
-// A read-only Builder has no modal and no drop zone — the markup is inside
+// A read-only Builder has no modal and no drop area — the markup is inside
 // `<?php if (!$readOnly)` — but it has a canvas full of somebody's work on
 // screen, so the navigation still has to be refused.
 
@@ -549,7 +569,7 @@ READ_ONLY = true;
 readerCalls.length = 0;
 const heldDrag = fileDrag('dragover');
 checkSame(true, heldDrag.prevented, 'a file dragged over a Builder that may not edit is still refused the default');
-const heldDrop = fileDrag('drop', target, csvFile('prices.csv', 'Title\nCoho'));
+const heldDrop = fileDrag('drop', onCanvas, csvFile('prices.csv', 'Title\nCoho'));
 checkSame(true, heldDrop.prevented, 'and so is the drop, which is what stops the tab navigating away');
 checkSame(0, readerCalls.length, 'the file is not read');
 check(/Dana/.test(document.getElementById('toast').textContent),
@@ -568,7 +588,7 @@ section('The table is still a table after the file lands');
 
 READ_ONLY = false;
 document.getElementById('table-csv-has-header').checked = true;
-fileDrag('drop', target, csvFile('prices.csv', 'Title,Price,SKU\nCoho,18.99,44-2\nSockeye,24.99,44-3'));
+fileDrag('drop', zone, csvFile('prices.csv', 'Title,Price,SKU\nCoho,18.99,44-2\nSockeye,24.99,44-3'));
 
 const head = document.getElementById('table-editor-head');
 const body = document.getElementById('table-editor-body');
@@ -666,7 +686,7 @@ check(!document.getElementById('table-modal-overlay').classList.contains('open')
 // ============================================================
 // The expected total, for the same reason the other five suites carry one:
 // without it, deleting half this file still reports a clean run.
-const expected = 119;
+const expected = 123;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }
