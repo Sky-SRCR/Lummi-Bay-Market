@@ -923,24 +923,43 @@ if (!$axisProblems) {
 // (`'nonsense'` into a DATETIME, `'carousel'` into an ENUM), which is the other half of
 // what §4ba fixed and is listed below as uncovered.
 //
+// It grew a second list the day after the first one shipped, and the reason is worth
+// stating plainly: SQLite-only is not the only way to be un-runnable on the MySQL leg.
+// A statement can be accepted by *both* engines somebody rehearses on and refused by
+// the one CI and the shop run. `TEXT NOT NULL DEFAULT 'text'` is that statement —
+// SQLite takes it, MariaDB has taken it since 10.2, MySQL answers 1101 — and it went
+// to CI green on a local run and died there at check 1181 of 1823 (§4bb). So the
+// second list is not "SQLite-only", it is "the MySQL leg refuses this", and a rehearsal
+// on the wrong engine is exactly what it exists to survive. `DEFAULT NULL` is not in
+// it: MySQL permits that on a TEXT column, which was checked against 5.7.44 rather
+// than assumed, and a pattern that flagged it would be a false alarm on four fixture
+// lines that are correct.
+//
 // The guard it looks for is on purpose the two that are readable at a glance: a PDO
 // built as `sqlite::memory:`, which is a database this suite made for one check and no
 // engine leg touches, or an explicit `!testIsMysql()`. Ten lines is the window, which is
 // further than any of the four real uses needs.
 $sqliteOnly = ['AUTOINCREMENT', 'RAISE(FAIL', 'PRAGMA ', 'sqlite_master'];
 $sqliteGuards = ['sqlite::memory:', '!testIsMysql()'];
-$engineProblems = [];
 $suiteLines = explode("\n", codeWithoutComments(file_get_contents($root . '/tools/selftest_layout.php')));
+
+// One guard question, asked by both lists below: is this line inside a stretch the
+// MySQL leg never reaches? Ten lines is the window, which is further than any of the
+// real uses needs.
+$engineGuarded = function ($i) use ($suiteLines, $sqliteGuards) {
+    for ($back = max(0, $i - 10); $back <= $i; $back++) {
+        foreach ($sqliteGuards as $guard) {
+            if (strpos($suiteLines[$back], $guard) !== false) { return true; }
+        }
+    }
+    return false;
+};
+
+$engineProblems = [];
 foreach ($suiteLines as $i => $line) {
     foreach ($sqliteOnly as $token) {
         if (strpos($line, $token) === false) { continue; }
-        $guarded = false;
-        for ($back = max(0, $i - 10); $back <= $i; $back++) {
-            foreach ($sqliteGuards as $guard) {
-                if (strpos($suiteLines[$back], $guard) !== false) { $guarded = true; }
-            }
-        }
-        if (!$guarded) {
+        if (!$engineGuarded($i)) {
             $engineProblems[] = "selftest_layout.php line " . ($i + 1) . " uses $token with no "
                               . "sqlite::memory: or !testIsMysql() above it — on the MySQL leg "
                               . "that is a fatal, and every check after it stops running";
@@ -954,6 +973,31 @@ if (!$engineProblems) {
     echo "  FAIL the shared suite would die on the MySQL leg (invariant 32)\n";
     foreach ($engineProblems as $problem) { echo "       $problem\n"; }
     $failures[] = 'SQLite-only syntax in the shared suite';
+}
+
+// The second list: legal on both engines a person is likely to rehearse on, refused by
+// the one that decides. `DEFAULT NULL` is deliberately excluded — MySQL allows it.
+$mysqlRefuses = [
+    '/\b(?:(?:TINY|MEDIUM|LONG)?(?:TEXT|BLOB)|JSON)\b[^,)]*\bDEFAULT\s+(?!NULL\b)/i'
+        => "a default on a TEXT, BLOB or JSON column — MySQL answers 1101 and the run ends there, "
+         . "while SQLite and MariaDB both accept it",
+];
+$refusedProblems = [];
+foreach ($suiteLines as $i => $line) {
+    foreach ($mysqlRefuses as $pattern => $why) {
+        if (!preg_match($pattern, $line)) { continue; }
+        if (!$engineGuarded($i)) {
+            $refusedProblems[] = "selftest_layout.php line " . ($i + 1) . " has $why";
+        }
+    }
+}
+$checked++;
+if (!$refusedProblems) {
+    echo "  ok   nothing the MySQL leg refuses runs unguarded either (invariant 32)\n";
+} else {
+    echo "  FAIL the shared suite writes something MySQL will refuse (invariant 32)\n";
+    foreach ($refusedProblems as $problem) { echo "       $problem\n"; }
+    $failures[] = 'a statement MySQL refuses in the shared suite';
 }
 
 // ---- Convergence runs before anything that could hold a transaction --------------

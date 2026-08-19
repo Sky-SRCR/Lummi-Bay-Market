@@ -4689,10 +4689,13 @@ $midPdo->exec("DROP TABLE canvas_elements");
 // Written for whichever engine is under test. The inline REFERENCES is SQLite's
 // cascade; MySQL parses and ignores a column-level one, which costs nothing here —
 // what these checks count is rows the backfill moved, not rows a delete took.
+// `type` is VARCHAR and not TEXT because MySQL refuses a default on a TEXT column
+// (error 1101) while MariaDB has allowed one since 10.2 — the divergence that made
+// this line pass every local rehearsal and fail every CI run (§4bb).
 $midPdo->exec("CREATE TABLE canvas_elements (
     " . testIdColumn() . ",
     display_id INTEGER REFERENCES displays(id) ON DELETE CASCADE,
-    type TEXT NOT NULL DEFAULT 'text')");
+    type VARCHAR(20) NOT NULL DEFAULT 'text')");
 $midDrive = makeTestDisplay($midPdo, LEGACY_DISPLAY_TAG, 'Drive-Thru');
 $midLobby = makeTestDisplay($midPdo, 'lobby', 'Lobby');
 $midPdo->exec("INSERT INTO canvas_elements (display_id) VALUES (" . $midLobby->id() . ")");

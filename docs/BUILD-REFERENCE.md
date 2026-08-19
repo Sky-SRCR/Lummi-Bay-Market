@@ -542,7 +542,12 @@ through the app again:
     the third, because whether a column takes a value is not a token; what covers that is
     the leg completing, which is now the thing the anchor can see. A check whose answer
     differs by engine asks `testIsMysql()` and asserts both halves, rather than asserting
-    the fixture's and calling it the app's.
+    the fixture's and calling it the app's. A **fourth** shape arrived the next day and
+    is the reason the check carries two lists (§4bb): a statement both engines somebody
+    *rehearses* on accept and the one that decides refuses — `TEXT NOT NULL DEFAULT` is
+    taken by SQLite, taken by MariaDB since 10.2, and answered `1101` by MySQL. So the
+    rule is not "nothing SQLite-only"; it is **nothing the MySQL leg refuses**, and the
+    engine a local green came from is part of the claim.
 
 ---
 
@@ -6020,6 +6025,55 @@ its end, which is what the anchor can now see.
 
 ---
 
+### 4bb. The rehearsal engine was not the engine, and the write-up said so
+
+§4ba shipped with a §5 recipe for running the MySQL leg by hand, a caveat in bold saying
+MariaDB **is not** MySQL and a green run on it should not be reported as one — and a
+report of `1823 checks, 0 failed` produced on MariaDB 10.11. All three in the same push.
+The caveat was written, was correct, and changed nothing, because it named the risk
+without removing the ability to take it: the recipe's first line said *any MySQL-family
+server will do*.
+
+CI answered the next minute. The leg died at check **1181 of 1823**, on all three PHP
+legs, with
+
+```
+1101 BLOB, TEXT, GEOMETRY or JSON column 'type' can't have a default value
+```
+
+from one hand-built stand-in table — `type TEXT NOT NULL DEFAULT 'text'`. MySQL has
+refused a default on a `TEXT` column for its whole life. MariaDB has **allowed** one
+since 10.2. SQLite allows one too. So the statement was accepted by both engines anybody
+was likely to rehearse on and refused by the only one that decides, and no amount of
+local running would ever have found it. The column is `VARCHAR(20)` now, which both
+engines take, with the reason in a comment beside it rather than only here.
+
+**The correction is the recipe, not the caveat.** §5 now installs MySQL 5.7.44 — the
+version CI runs — from the tarball, which needs no container and no root daemon and was
+working in this container about four minutes after the failure was read. `--no-defaults`
+is load-bearing: it leaves `sql_mode` at 5.7's stock `STRICT_TRANS_TABLES,…`, matching
+the `mysql:5.7` image. A caveat asks a person to remember; a recipe that produces the
+right engine does not need them to.
+
+Invariant 32's check grew a **second list** to make the class mechanical rather than
+remembered. The first list is "SQLite-only" — things that die on MySQL because MySQL
+cannot parse them. This one is a different shape and needed saying separately: things
+**every rehearsal engine accepts and MySQL refuses**. It shares the first list's guard
+window, so a line inside a `sqlite::memory:` stretch is still exempt.
+
+`DEFAULT NULL` is deliberately **not** in it. MySQL permits that on a `TEXT` column —
+checked against 5.7.44 rather than reasoned about, because the error message names the
+column type and not the default, and a pattern built from the message alone would have
+flagged four correct fixture lines. Both mutants die (`TEXT`, `LONGBLOB`), and the
+`DEFAULT NULL` probe is run too and correctly stays silent: a denylist that fires on
+something legal is a check people learn to route around.
+
+The count anchor is unchanged at **1823**, and it now means what it says. §4ba's figure
+was measured on the wrong engine and happened to be right, which is its own small lesson:
+a number can be correct and still not be evidence.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
@@ -6036,21 +6090,34 @@ loop is faster than a push.
 
 **The second engine is worth the trouble of running by hand when you touch that suite.**
 It is CI's leg and it was red, alone, for eight days (§4ba) — the cost of a check that
-only a machine ever runs. Any MySQL-family server will do:
+only a machine ever runs. **Run MySQL 5.7 itself, not a MySQL-family server**: this
+section used to say any of them would do, and §4bb is what that sentence cost. The
+tarball needs no container and no root daemon, and it is the version CI runs:
 
 ```
-apt-get install -y mariadb-server                       # or a mysql:5.7 container
-mariadbd --user=mysql --datadir=/var/lib/mysql &
-mysql -e "CREATE DATABASE lbm_selftest CHARACTER SET utf8mb4"
-SELFTEST_MYSQL_DSN='mysql:host=127.0.0.1;port=3306;dbname=lbm_selftest;charset=utf8mb4' \
-SELFTEST_MYSQL_USER=... SELFTEST_MYSQL_PASS=... php tools/selftest_layout.php
+curl -sSLO https://cdn.mysql.com/Downloads/MySQL-5.7/mysql-5.7.44-linux-glibc2.12-x86_64.tar.gz
+tar xzf mysql-5.7.44-linux-glibc2.12-x86_64.tar.gz && mv mysql-5.7.44-* my57
+apt-get install -y libaio1t64 && ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 \
+                                        /usr/lib/x86_64-linux-gnu/libaio.so.1
+my57/bin/mysqld --no-defaults --initialize-insecure --user=root --basedir=my57 --datadir=my57data
+my57/bin/mysqld --no-defaults --user=root --basedir=my57 --datadir=my57data --port=3307 &
+mysql -h 127.0.0.1 -P 3307 -uroot -e "CREATE DATABASE lbm_selftest CHARACTER SET utf8mb4"
+SELFTEST_MYSQL_DSN='mysql:host=127.0.0.1;port=3307;dbname=lbm_selftest;charset=utf8mb4' \
+SELFTEST_MYSQL_USER=root SELFTEST_MYSQL_PASS='' php tools/selftest_layout.php
 ```
 
-**It is not the same engine and should not be reported as one.** CI runs MySQL 5.7,
-which is what the shop runs; MariaDB is a fork that agrees about the three things §4ba
-turned on — strict mode refusing a bad `DATETIME`, an `ENUM` refusing an unlisted value,
-and its own DDL spelling — and does not agree about everything. It answers "does this leg
-reach its anchor" locally in seconds. Whether the leg is *green* is still CI's answer.
+`--no-defaults` matters: it is what leaves `sql_mode` at 5.7's stock
+`STRICT_TRANS_TABLES,…`, which is what the `mysql:5.7` image CI uses runs with, and
+strict mode is half of what §4ba turned on. The bundled `bin/mysql` client wants
+`libncurses.so.5` and any system client will do instead — it is the *server* that has to
+be the real one. Port 3307 keeps it clear of a MariaDB already listening on 3306.
+
+**A MySQL-family server is not MySQL, and a green run on one is not a green leg.**
+MariaDB agrees about the three things §4ba turned on and disagrees about others: it has
+allowed a `DEFAULT` on a `TEXT` column since 10.2 and MySQL still answers 1101, which is
+§4bb — a local rehearsal that reached the anchor, and a CI leg that died at check 1181.
+If a real 5.7 is genuinely out of reach, a fork still answers "does this leg reach its
+anchor"; say which engine the number came from, and treat CI as the one that decides.
 
 ```
 php -l <every touched .php>              # syntax — but at 8.4 here, so it CANNOT fail on

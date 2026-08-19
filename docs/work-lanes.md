@@ -143,8 +143,8 @@ specific way of going wrong that has now happened at least once.
 
 `check_doc_numbering.php` prints the next free letter, and four branches cut from one
 base all asked it and all got the same answer. Asking is right; asking *at the same
-time* is the failure. So they are allocated in advance. Phase 4 now runs to §4ba, and
-**`4bb` is the next free letter** — ask the tool rather than counting, and if two branches
+time* is the failure. So they are allocated in advance. Phase 4 now runs to §4bb, and
+**`4bc` is the next free letter** — ask the tool rather than counting, and if two branches
 start at once, write the allocation down here before either of them writes prose.
 
 - ~~**Lane A (#33) wrote `4ao`.**~~ ~~**B (#44) wrote `4ap`.**~~ ~~**C (#50) wrote `4aq`.**~~
@@ -158,6 +158,12 @@ start at once, write the allocation down here before either of them writes prose
   one docblock in `lib/assets.php` — so the collisions are the usual three: this file,
   `BUILD-REFERENCE.md`, and the anchor line item 3 is about, which this branch changes on
   purpose rather than incidentally.
+- **The same branch then wrote `4bb`** — same tree, same day, one push later, because CI
+  refused what a local run had accepted (§4bb). Worth a bullet only for the shape: a lane
+  that has already taken a letter takes the *next* one for its follow-up rather than
+  extending the write-up it already pushed. §4ba's claim was measured and is still true of
+  what it measured; §4bb is what the measurement turned out not to cover. Rewriting the
+  first to hide the second would cost the only record of how the gap was found.
 
 **This scheme worked exactly as designed, and it is the only one of the four that did.**
 B wrote `4ap` while `4ao` was still unwritten and its push passed, because
@@ -240,7 +246,11 @@ of the two before the engine-only section is added. More to the point, that arit
 never a check on anything — `1828` sat in this line for months as a number no run had
 reported, because the MySQL leg had been dying at check 593 and never reached the anchor.
 **Read both figures off a completed run of their own leg.** A leg that stops early cannot
-report the number that would have told you it stopped early.
+report the number that would have told you it stopped early. **And off the right engine**:
+`1823` was first read from a completed MariaDB run, which reached the anchor because
+MariaDB accepts a statement MySQL refuses (§4bb). The figure was right; the run behind it
+was not evidence for the leg it was written into. It has since been read off real MySQL
+5.7.44, and §5 says how to get one.
 
 **And this line has a second reader now.** `tools/mutate.php` runs the suite once per
 mutant and requires the unmutated run to pass first, so an anchor left stale does not
