@@ -128,6 +128,40 @@ anything that vanishes was never saved).
       chose**. This is the one with history: a colour the CSSOM silently discarded was
       published as black.
 
+## D2. The table block: a CSV, and four paddings (§4az)
+
+Needs a real file and a real drag, so nothing in the repo can stand in for it. Make a
+small `.csv` in Excel or Numbers with a heading line — `Title,Price,SKU` over two or three
+rows — and one with `"Sockeye, wild"` in a cell, quoted comma and all.
+
+- [ ] Drag the file onto a table block on the canvas. The block outlines in green while
+      the file is over it, the editor opens on **that** block, and the rows arrive.
+- [ ] The note under the drop zone names the file, the row and column counts, which
+      headings were styled by name, and which became Plain. `SKU` must be *named*, not
+      silently styled.
+- [ ] The quoted comma is still one cell.
+- [ ] Untick **First row names the columns**. The heading line becomes a row of content
+      without the file being asked for again.
+- [ ] Press **Cancel**. The block still holds what it held before the drop — nothing is
+      stored until Save Table.
+- [ ] Drop the same file on the canvas background, not on a table. The browser must
+      **not** open the file: the page stays, and says where the file should have gone.
+      This is the one that costs an unpublished canvas if it regresses.
+- [ ] Drop a `.jpg` on a table block — refused by name, not read.
+- [ ] Save Table, then Publish, and read the sign.
+
+Cell padding, on a table that already has rows:
+
+- [ ] Open a table published **before** this change — one nobody has ever set a padding
+      on. The four boxes must open reading 8, 10, 8, 10, not 0, and the sign must look
+      exactly as it did before the deploy. If a sign's rows tighten up after this goes
+      live, this is the thing that went wrong (§4az).
+- [ ] Set top and bottom to 40, leave the sides. Save, Publish, and confirm on the screen
+      that the rows spread and the sides did not move.
+- [ ] Set all four to 0 with **Same on all four sides** ticked. Save, Publish: the cells
+      really do lose their padding. Zero has to mean zero here — that is the whole
+      difference from the single number this replaced.
+
 ## E. Undo — before you publish anything
 
 Default depth is **5 steps** (Settings, capped at 20). Undo works only *before* a publish

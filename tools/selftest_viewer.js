@@ -414,6 +414,38 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
     check(table.children.length > 0,                    'a table that has rows still draws them');
     check(inkIn(table).indexOf('Sockeye 18.99') > -1,   'with the prices in them');
 
+    // ---- Cell padding, and the tables already on signs ----------------------
+    //
+    // Four sides are written on every cell now, so a side set to 0 is drawn as 0.
+    // That is only safe because readTablePads() knows what the shapes stored
+    // before it meant — and a publish cannot be taken back, so every one of them
+    // is still out there. The `row_padding: 0` case is the load-bearing one: the
+    // Viewer that number was written for skipped a zero and drew this
+    // stylesheet's 8px, so reading it as "no padding" would quietly reformat
+    // every table nobody ever touched.
+
+    /** The padding on the first cell of a table drawn from this stored content. */
+    function padsDrawn(stored) {
+        const b = stubEl('div');
+        renderTable(b, JSON.stringify(Object.assign({ headers: ['free'], rows: [['x']] }, stored)), {});
+        const cell = b.children[0].children[0].children[0].children[0];
+        return [cell.style.paddingTop, cell.style.paddingRight,
+                cell.style.paddingBottom, cell.style.paddingLeft].join(' ');
+    }
+
+    checkSame('8px 10px 8px 10px', padsDrawn({}),
+              'a table that was never given a padding is drawn the way this stylesheet always drew it');
+    checkSame('8px 10px 8px 10px', padsDrawn({ row_padding: 0 }),
+              'and so is one storing the zero the old single number could not express');
+    checkSame('20px 10px 20px 10px', padsDrawn({ row_padding: 20 }),
+              'the old single number is still top and bottom on the signs that hold one');
+    checkSame('2px 4px 6px 8px', padsDrawn({ pad_top: 2, pad_right: 4, pad_bottom: 6, pad_left: 8 }),
+              'four stored sides are four paddings');
+    checkSame('0px 0px 0px 0px', padsDrawn({ pad_top: 0, pad_right: 0, pad_bottom: 0, pad_left: 0 }),
+              'and a zero somebody chose is drawn as no padding at all');
+    checkSame('8px 10px 8px 30px', padsDrawn({ pad_left: 30 }),
+              'one side named leaves the other three at what the stylesheet draws');
+
     const running = stubEl('div');
     renderMarquee(running, JSON.stringify({ text: 'Fresh sockeye landed this morning', bg: '#c0392b' }));
     check(inkIn(running).indexOf('Fresh sockeye landed this morning') > -1,

@@ -528,6 +528,26 @@ through the app again:
     blind in CI, which is the machine pinned to the floor, and would have looked exactly
     like a pass.
 
+32. **A stored shape has one reader, and a shape that reached a sign is read for
+    good** (§4az). `readTablePads()` answers what a stored table's cell padding means,
+    and two files need that answer: `viewer.php` draws it on the sign, `builder.php`
+    shows it in the four boxes somebody is about to type over. A page a Screen loads
+    without `auth.php`, `config.php` or a session has no shared script to put it in, so
+    the function is written out twice and `tools/check_invariants.php` compares the two
+    copies line for line — comments included, because the docblock is where the reason
+    lives and a copy that has drifted from it is one somebody is about to "correct".
+    This is #44's shape caught early: a rule in three places, two of them right, and the
+    two right ones are exactly what made the third invisible.
+    The other half is what the reader has to know. Cell padding used to be one number,
+    `row_padding`, and it meant top and bottom only — the Viewer added it to a stylesheet
+    that already said `padding: 8px 10px`, and **skipped it when it was zero**. So a
+    stored `0` has always drawn 8px, and reading it now as "no padding" would be every
+    untouched table in the shop reformatting itself on the next poll, from a change
+    nobody made. A publish cannot be taken back, so the old shapes are not a migration
+    to run — they are on signs, and they are input. What the four new keys mean is
+    settled per side: a side that is named is an answer about that side, and one that is
+    absent falls back to what the stylesheet draws rather than to zero.
+
 ---
 
 ## 3. Which Display does a request with no tag mean?
@@ -5932,6 +5952,93 @@ the live sign is a second install with its own data, and every step applies ther
 
 ---
 
+### 4az. A price list somebody else wrote, and a padding that was one number
+
+Two requests from the store owner, made together on 2026-08-19: drop a `.csv` on a table
+block and have it fill from the header row, and set the cell padding on each side
+instead of all four at once. Both are entirely in `builder.php` and `viewer.php` — a
+table's content is opaque to the server, which checks that `manual_content` is text under
+65,535 bytes (`LayoutRules`) and nothing else — so no schema statement, no new SQL door
+and no publish path changed. What is interesting is not either feature. It is the two
+places where an obvious implementation of them is a defect, and both were found by asking
+the same question: *what is already out there, and what does it mean?*
+
+**The padding was never a number, it was a number and a stylesheet.** The Builder stored
+`row_padding`, one integer, and the Viewer applied it as
+
+```js
+if (rowPad > 0) { td.style.paddingTop = rowPad + 'px'; td.style.paddingBottom = rowPad + 'px'; }
+```
+
+over `.table-wrap td { padding: 8px 10px }`. So the field never controlled four sides — it
+controlled two — and **zero never meant zero**: the guard skipped it and the cell kept the
+stylesheet's 8px. Every table in the shop that nobody has ever touched holds a `0` today.
+The obvious implementation of "four independent sides" writes all four on every cell,
+which is correct and necessary — a side set to 0 has to be drawn as 0 or the control is a
+lie — and it turns that stored `0` into a real zero the next time each Screen polls.
+Nobody would have made a change; the signs would simply come back tighter one morning.
+`readTablePads()` is where that is decided: four named keys win, a legacy `row_padding`
+above zero is top and bottom, and **a stored zero is the 8px it has always drawn**. The
+sentence is in the docblock rather than here, because that is where somebody tidying up
+will read it.
+
+That reader is now in two files, which is the shape #44 spent a year inside — a rule
+written three times, two copies right, and the two right ones are what made the third
+invisible. There is no shared script to hoist it into: `viewer.php` is loaded by a Screen
+with no session, no `auth.php` and no `config.php`, and giving it one would be a new
+dependency on the page whose whole design is not to have any. So the copies are compared
+instead of trusted — invariant 32, checked in `check_invariants.php`, comments included.
+The check was seen to fail both ways it can: one changed digit in the Viewer's copy, and
+the marker comment removed.
+
+**A CSV's header row is not this app's header row.** `headers` in a stored table is not a
+row of labels; it is which of the seven column *styles* each column is drawn in
+(`item_title`, `price`, `section_header`, …). Copying a spreadsheet's heading line into it
+produces a table whose columns are styled `SKU` and `Notes`, which is to say styled by
+nothing. So the header row is *matched* — normalised for case, spaces and underscores,
+against the style values and the labels the modal shows — and everything it cannot match
+becomes a Plain column **and is named on screen**: `“SKU” has no style of that name here,
+so it is Plain — set the column style above if that is not what you wanted.` A header row
+half-understood in silence is #21 in another form, and the browser pass's lesson (§4ay)
+was that this is exactly the category no suite here was pointed at.
+
+**The drop needed a guard that has nothing to do with tables.** A file dropped on a page
+that does not handle it is not a no-op — the browser navigates to it. The Builder is then
+gone, and so is every block moved since the last Publish, from a tab that is the only
+place that layout exists. So the page refuses the browser default for *any* file drag
+anywhere on it, including on a read-only Builder, which has no import and just as much of
+somebody's work on screen; it then decides separately whether it wanted the file. That is
+the first thing `selftest_builder_table.js` checks and the first thing it was seen to fail.
+
+**What the import refuses, and why refusing is the whole design.** Nothing is stored until
+Save Table, so Cancel is the way out of an import that read the wrong file — but the
+refusals happen before that, at the door, with the numbers in them: a file that is not a
+`.csv`, an empty one, one over 1 MB, more than 500 rows, more than 24 columns, and a table
+that would exceed the 65,535 bytes `LayoutRules` will refuse at Publish. That last one is
+deliberately the same number as the server's: the publish check is what actually protects
+the column, and repeating it here turns a refusal an hour later on a page about publishing
+into one over the file that caused it. Alignments, widths and padding are carried across
+from the table as it stands, so re-importing a corrected price list keeps the layout
+somebody set up by hand.
+
+**Two smaller things are worth writing down because guessing wrong on either is silent.**
+The delimiter is counted rather than assumed — Excel writes semicolons wherever the decimal
+mark is a comma, and getting it wrong is not subtle, it is one column holding the whole
+line. And a file Excel saved as plain "CSV" on a Windows machine is not UTF-8: the `é` is
+already U+FFFD by the time `FileReader` hands the text over, so there is nothing to repair
+and the note says so, naming the format that works.
+
+**The suite is the sixth node harness and the first whose input this app did not write.**
+96 checks: a quoted comma, a doubled quote, CRLF and a bare CR, a BOM, a blank line kept
+where somebody meant a spacer and the trailing one dropped, semicolons and tabs, the
+style matching, every refusal, the four padding shapes, and the drop handlers driven over
+a recording `document` with a stubbed `FileReader`. Twelve mutants were run against it
+before it was believed, and all twelve died by assertion (invariant 30) — including the
+one that matters most, `legacy > 0` loosened to `legacy >= 0`, which is precisely the
+change that would reformat the shop.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
@@ -5972,10 +6079,18 @@ node tools/selftest_builder_undo.js      # and under the fourth: the last thing 
                                          # not what they meant. Round-trips the canvas through
                                          # snapshot and restore, and drives every mutating
                                          # control to prove each one leaves a step
+node tools/selftest_builder_table.js      # and under the fifth: the data is not this
+                                         # app's. A .csv somebody else wrote, dropped on a
+                                         # table block — quoted commas, a semicolon file,
+                                         # a header row naming columns this app has no
+                                         # style for, and the drop that must not navigate
+                                         # the tab away from an unpublished canvas (§4az)
 node tools/selftest_viewer.js            # viewer.php's poll loop, against a fetch this
                                          # test controls: the sign must not blank for one
                                          # dropped packet, and must not stay up for an
-                                         # hour of them (§4af)
+                                         # hour of them (§4af). Also the four cell
+                                         # paddings, including what the shapes stored
+                                         # before them mean (invariant 32)
 ```
 
 And one that is not a gate, because it takes minutes rather than seconds — run it over
