@@ -566,6 +566,38 @@ through the app again:
     one that stays SQLite: MySQL forbids a trigger writing to its own table (1442), so
     it cannot build the interleaving at all, while what is under test is a `catch` in
     PHP that is identical on both.
+33. **No parameter is implicitly nullable, and `php -l` is not what decides that
+    either** (#10). `array $x = null` is deprecated from PHP 8.4, and the explicit form
+    `?array $x = null` is understood back to 7.1 — so the fix costs nothing at the floor
+    and there is no trade to weigh. What makes it an invariant rather than a tidy-up is
+    what could not see it. Five were in this tree; one was `ServerReport::__construct()`,
+    which `admin_panel.php` builds every time somebody opens the panel, so on 8.4 that is
+    a line in the error log on every visit. **`php -l` is clean on both spellings on
+    every version**, because a deprecation is emitted when a file is *compiled*, not when
+    it is parsed. And the steps that do compile it — both self-tests, the rehearsal —
+    stay green, because emitting a notice is not failing a step: the process exits 0, and
+    on a runner whose `error_reporting` excludes `E_DEPRECATED` the line is not printed
+    at all (this container: 22527, against an `E_ALL` of 30719). That was demonstrated
+    rather than reasoned about — putting the exact parameter back left `php -l`,
+    `check_invariants.php` and both suites green — and it matters because `php-lint.yml`
+    had claimed in a comment that those running steps were what caught this class. They
+    were the whole gap.
+    So the rule has two halves and they overlap on purpose. `check_invariants.php` reads
+    parameter lists out of the **tokens**, and only variables at depth 1 inside a
+    `function`/`fn`'s own parentheses — a scan for `$x = null` reports
+    `private static $bytes = null;`, which `UploadLimit` and `ServerReport` both have, and
+    the token before the variable is `static` either way. It knows that one shape on every
+    version, including the 8.2 the shop runs, where the engine itself says nothing. Its
+    eleven fixtures are seven negatives to four positives for that reason: the false
+    positives are the hard part, and every `no` on the list is a shape a scan of
+    `$x = null` really does hit. `tools/check_deprecations.php` is the other half — it
+    compiles every file in a child process with `E_ALL` set and fails on whatever the
+    engine says, which is the instrument that found the five rather than a rule written
+    afterwards. It answers for the version running it, so it will report what 8.5
+    deprecates without anybody teaching it, and it runs on the 8.4 leg because
+    deprecations accumulate and 8.4 says everything 8.2 would. Where opcache is missing it
+    refuses to sweep instead of printing a green line over nothing — there is no way to
+    compile a file without also running it, and `viewer.php` running is not a check.
 
 ---
 
@@ -5975,12 +6007,16 @@ the live sign is a second install with its own data, and every step applies ther
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
 #48 and #51 CI runs everything below except the two things that need a browser or
-a copy of live data. It runs on PHP 8.2, against two engines: SQLite and a real
-MySQL 5.7 service. That 8.2 is now also the repo's declared floor — the store owner
-stated the host runs it (§4k) — so the pin enforces the target rather than merely
-accepting everything the target forbids. As of 2026-08-11 it is **observed** rather than
-stated: 8.2.33 on the runtime card and `ea-php82` pinned to `srcresort.com` in cPanel
-(HANDOFF §7). **CI is therefore the only place the gate below runs at the floor**, and
+a copy of live data. It runs on five PHP × MySQL legs — 8.2, 8.3 and 8.4 against
+MySQL 5.7, and 8.2 against MySQL 8.0 and 8.4 — with SQLite in every one of them, and
+a sixth job for the six node suites. The legs are listed rather than multiplied
+because a leg is supposed to be a question somebody can name. 8.2 is the shop's
+runtime and stays first; 8.3 and 8.4 are where the MultiPHP pin goes next; the MySQL
+axis is the same question one layer down. That 8.2 is also the repo's declared
+floor — the store owner stated the host runs it (§4k) — so it enforces the target
+rather than merely accepting everything the target forbids. As of 2026-08-11 it is
+**observed** rather than stated: 8.2.33 on the runtime card and `ea-php82` pinned to
+`srcresort.com` in cPanel (HANDOFF §7). **CI is therefore the only place the gate below runs at the floor**, and
 that is not a detail — this container is 8.4, so `php -l` here cannot fail on syntax the
 shop cannot parse (invariant 31). Run the suite locally before every push anyway; the
 loop is faster than a push.
@@ -5989,6 +6025,11 @@ loop is faster than a push.
 php -l <every touched .php>              # syntax — but at 8.4 here, so it CANNOT fail on
                                          # 8.3/8.4-only syntax that the 8.2 shop rejects.
                                          # CI's run is the one at the floor (invariant 31)
+php tools/check_deprecations.php          # compiles every file instead of parsing it,
+                                         # which is the only way to see a deprecation
+                                         # (invariant 33). Answers for the version
+                                         # running it — 8.4 here, so locally this is the
+                                         # strongest leg rather than the weakest
 php tools/check_invariants.php           # the greps below, run rather than read —
                                          # comment-aware, so a module documenting a
                                          # rule does not fail it. Also the above-floor
