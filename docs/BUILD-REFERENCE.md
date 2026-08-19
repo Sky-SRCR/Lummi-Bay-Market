@@ -6094,6 +6094,60 @@ check that keeps the canvas from falling through to the reader.
 
 ---
 
+### 4ba. The check that agreed with the bug it was written for
+
+`main` went red on 2026-08-19, an hour after #11 and #14 merged, on one job of six —
+`php 8.2 · mysql 8.0`, at check 1844 of 1844:
+
+```
+FAILED: the edit-lock banner says the time it is where the sign is — expected '3:22pm', got '3:21pm'
+FAILED: and so does the sentence a refused publish prints — "sky has been editing Zoned
+        since 3:21pm." does not mention "since 3:22pm"
+```
+
+One minute, not the two hours #44 was about. The two checks compared what `claimLock()`
+had stamped against a label built from a *second* `time()` call, and a claim and an
+assertion either side of a minute boundary disagree for a reason that has nothing to do
+with zones. The lines dated to `8fecec1` (#44, 2026-08-11) and the file said so four lines
+below them — *"Fix the stamp to a known instant rather than 'now', so the assertion is
+about the conversion and not about the two calls landing in the same minute"* — advice the
+block underneath took and these two did not.
+
+**Why it surfaced then.** These checks sit near the end of the suite, past check 593, where
+the MySQL leg had been stopping since 2026-08-11. For eight days they ran on the SQLite leg
+only: one job a push. #11 revived the leg, and they went to six. The flake did not appear
+that night; it became six times as likely to be *seen*, and was, within the hour. A dead
+leg is not a quiet one — it is a leg whose findings are still accruing.
+
+**The worse half.** Fixing the race meant reading what the pair actually asserted, and the
+answer was: less than it looked. Both sides went through `StoreClock`'s own door, so a
+stamp written in the wrong frame and read in the wrong frame agreed with each other — the
+cancelling pair that is the whole of #44, asserted by a check blind to it. That is not a
+reading of the code, it is a run: with `claimLock()` mutated to `date()` **and**
+`epochOf()`'s `' UTC'` removed, both original checks report `ok`.
+
+So the block now asks the two questions separately, and neither can be answered by the
+other:
+
+- what `claimLock()` **writes** is UTC — measured against a UTC reference, plus the
+  negative that the same string read as local time is hours out. Two checks, because the
+  first reads through `epochOf()` and would pass if `epochOf()` were broken to match; the
+  second is the half that notices. Deleting either restores the blind spot.
+- what `takenAtLabel()` and `editingSentence()` **say** is the store's zone — measured
+  against `2026-08-11 21:15:00` written into the row, so the assertion is about the
+  conversion and not about the clock.
+
+Four checks where there were three; the suite anchors move to 1822 and 1845. Each was seen
+to fail before it was believed (invariant 30) — three of the four under the double mutation
+above, and the write check under `gmdate` → `date` alone.
+
+The lesson is the one invariant 30 exists for, arriving by a route it had not taken before:
+a check can be *flaky* and *weak* for the same reason. Asking the clock twice is what made
+it fail at a minute boundary, and going through one door on both sides is what kept it from
+failing at anything else. The flake is what got it read.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
@@ -6240,7 +6294,7 @@ If a real 5.7 is genuinely out of reach, a fork still answers *does this leg rea
 end*; say which engine the number came from, and treat CI as the one that decides.
 
 **Observed on this tree, 2026-08-19**, against MySQL 5.7.44 installed exactly as above:
-the SQLite leg reports `1821 checks, 0 failed` and the MySQL leg `1844 checks, 0 failed`.
+the SQLite leg reports `1822 checks, 0 failed` and the MySQL leg `1845 checks, 0 failed`.
 The difference is 23, which is the figure §4aa states — the same claim, taken off a
 server rather than restated. Read those as a measurement of a tree on a date, not as an
 anchor to hold to: the suite grows, and a count quoted from memory after it has is how a
