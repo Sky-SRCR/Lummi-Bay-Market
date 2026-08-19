@@ -4,21 +4,30 @@ Status: **all five steps built; none deployed.** Settled in a grilling session o
 2026-08-13; the decisions are recorded here and the one that reverses a previous
 decision is in [ADR-0011](adr/0011-typography-and-colour-belong-to-a-brand.md).
 
-v1 is **live and running**, and `lbm-test/` is still standing. That is the whole
-of why this roadmap looks different from
+v1 is **built and merged but not deployed** — `public_html/lbm/` is still the
+single-sign app — and `lbm-test/` is where everything has run since 2026-08-12.
+This roadmap does look different from
 [`roadmap-multi-display.md`](roadmap-multi-display.md), which was written as one
-big cutover ending in a 22-step deployment visit. There is no backlog to clear
-here: each step below is deployable on its own, and each can be rehearsed against
-`lbm-test/` before it touches the shop — which closes the one gap
+big cutover ending in a 22-step deployment visit, but not for the reason this
+paragraph first gave. **There is a backlog in front of these five steps, and it is
+that visit.** What survives the correction is the shape rather than the ordering:
+each step below is deployable on its own instead of as part of a cutover, and each
+can be rehearsed against `lbm-test/` first — which closes the one gap
 [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) §5 lists as covered by no suite, *"the
-rehearsal against a database that genuinely lags the repo."*
+rehearsal against a database that genuinely lags the repo."* So v1 reaches the shop
+first, and after it none of these five waits on another.
 
-Three documents were stale as of this being written and were corrected in step 1:
-the status line of `roadmap-multi-display.md` (PR #3 is merged and deployed), the
-"what is left is the live deploy" framing in [`work-lanes.md`](work-lanes.md), and
-the "re-run against the live install after the deploy" note in
-[`browser-pass.md`](browser-pass.md) — which is owed *now*, not after something.
-`CLAUDE.md`'s row for that file said the same thing and was corrected with them.
+For one commit on 2026-08-13 three documents said the deploy had happened, and
+step 1 "corrected" them in that direction: the status line of
+`roadmap-multi-display.md`, the "what is left is the live deploy" framing in
+[`work-lanes.md`](work-lanes.md), and the "re-run against the live install after
+the deploy" note in [`browser-pass.md`](browser-pass.md), with `CLAUDE.md`'s row
+for that file alongside. The claim was retracted on main in `0a02b70` and all four
+now read the other way — the walk against `public_html/lbm/` is part of the cutover
+rather than a debt standing in front of it, because nothing of this build is there
+to walk yet. What *is* owed now is a re-walk against `lbm-test/` for step 2's
+workbench and a first walk of the three surfaces steps 3–5 add, none of which any
+browser pass has a step for; `browser-pass.md`'s own table names all five.
 
 ## Why
 

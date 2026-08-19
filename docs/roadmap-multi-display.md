@@ -1,12 +1,14 @@
 # Roadmap — Multi-Display Support
 
-Status: **Done and live.** All six phases were built on
-`claude/app-update-planning-1pjqfr`, merged as
-[PR #3](https://github.com/Sky-SRCR/Lummi-Bay-Market/pull/3), and deployed — the store
-owner confirmed on 2026-08-13 that v1 is running and driving signs. The rehearsal
-install `lbm-test/` is still standing, which is what makes it available to rehearse
-against; see [`roadmap-v2-brands-and-themes.md`](roadmap-v2-brands-and-themes.md),
-whose steps are each deployable on their own precisely because this one was not.
+Status: **Built and merged; not deployed.** All six phases were built on
+`claude/app-update-planning-1pjqfr` and merged as
+[PR #3](https://github.com/Sky-SRCR/Lummi-Bay-Market/pull/3). What the store owner
+confirmed on 2026-08-13 was the *rehearsal* install driving a screen, not the shop's
+sign — `public_html/lbm/` is still the single-sign app, so the deployment visit below
+is the whole of what is left. The rehearsal install `lbm-test/` is still standing,
+which is what makes it available to rehearse against; see
+[`roadmap-v2-brands-and-themes.md`](roadmap-v2-brands-and-themes.md), whose steps are
+each deployable on their own precisely because this one is not.
 
 **Since then, and it changes what the visit walks into rather than whether it happens:**
 the build has run in the rehearsal install `lbm-test/` since 2026-08-12, and the browser
@@ -15,10 +17,12 @@ on 2026-08-13 — ten sections, seven defects, all fixed, six rows of `HANDOFF.m
 each change something a person will see.
 
 **The checklist below is still ahead of us.** `public_html/lbm/` is the single-sign app and
-has not been touched; `lbm-test/` is where everything has been rehearsed. For one commit on
-2026-08-13 this file said the deploy had happened — it had not, and `HANDOFF.md` §1 records
-how the two installs came to be confused, because the mistake is available to anybody who
-reads "live install" as "the sign". How the code is
+has not been touched; `lbm-test/` is where everything has been rehearsed. Twice this file
+has said the deploy had happened — once on 2026-08-13, retracted in `0a02b70`, and again
+through the merge at `9e34a90`, which took that correction into these paragraphs and left
+the status header above them saying the opposite. It had not happened either time, and
+`HANDOFF.md` §1 records how the two installs came to be confused, because the mistake is
+available to anybody who reads "live install" as "the sign". How the code is
 shaped, and the invariants any later change must preserve, are in
 [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that alongside this file.
 
