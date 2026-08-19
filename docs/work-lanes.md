@@ -190,21 +190,20 @@ and the reservation only settles who renumbers on the merge.** As settled:
 - **Lane C took 30**, and only 30 — a check ships having been seen to fail (§4aq). It was
   expected to add several; what it actually needed was one rule about how a check earns
   its line, because the four mechanised greps are rules the *checker* enforces rather than
-  invariants a reader has to hold.
-- **#51 took 31** — no file uses PHP newer than the floor, and `php -l` is not what
-  decides that (§4ar). The CSV branch did not take 32: what it added is one node suite and
-  one write-up, and neither is a rule a reader of this tree has to hold in their head. A
-  suite that exists is not an invariant; the gate list in `BUILD-REFERENCE.md` §5 is where
-  a new suite is announced.
-- **The MySQL-leg branch took 32** — no check writes a value the engine the shop runs
-  would refuse. It has no write-up letter of its own; the rule is stated in full in the
-  `BUILD-REFERENCE.md` §4 invariants list and nowhere else, which is allowed and is worth
-  knowing before you go looking for a `§4` to cite. **33 is the next free number.** Note how the two branches beside
-  each other settled this: the CSV branch wrote down that it was *not* taking 32 before
-  the other one had taken it, which is the only reason the other one could take it
-  without asking. A lane that adds no invariant still owes that sentence — "free" is a
-  claim somebody else is about to act on, and an empty answer reads the same as an
-  unasked question.
+  invariants a reader has to hold. 31 was the next free number then.
+- **Since, on `main` rather than in a lane**: 31 is the PHP floor, 32 is the values the
+  engine the shop runs would refuse, and 33 is the implicitly nullable parameter that
+  `php -l` cannot see. **34 is the next free number.** All three arrived one branch at a
+  time, which is the only reason none of them collided — the note at the top of this file
+  still holds, and a number is still allocated here rather than found.
+- **A lane that adds no invariant still owes a sentence saying so.** The CSV branch wrote
+  down that it was not taking 32 before anything had taken it, and the MySQL-leg recipe
+  branch that 33 was free while #13 was still open — which is what let each of those land
+  without asking. "Free" is a claim somebody else is about to act on, and a lane that
+  simply says nothing reads from the outside exactly like a lane nobody asked. Note the
+  shape of the answer that ages best: *this branch takes none* stays true no matter who
+  lands first, while *N is next* is dated by the next merge. Write both, and expect only
+  the first to survive.
 
 B renumbered nothing and A renumbered everything, and the tie was broken by counting:
 `invariant 28` appeared 15 times across 7 files on B's side and 7 times across 6 on A's,
