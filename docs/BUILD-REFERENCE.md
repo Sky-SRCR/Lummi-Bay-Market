@@ -527,6 +527,22 @@ through the app again:
     as one token and 8.2 as four — matching only the 8.4 shape would have gone quietly
     blind in CI, which is the machine pinned to the floor, and would have looked exactly
     like a pass.
+32. **The suite both engines run asks each engine only what that engine can answer**
+    (§4ba). `tools/selftest_layout.php` runs twice in CI — SQLite, then the engine the
+    shop uses — and the second run is the one that says the sign will work. A statement
+    only SQLite understands does not fail that run politely: it throws, PHP dies, and
+    every check after it goes **unrun rather than unproven**, which reads as one red leg
+    either way. That is how the MySQL leg sat at 593 checks of 1805 for a week, on a base
+    every branch inherited, with its own count anchor — the line whose whole job is to
+    notice a section that stopped running — never reached. Three shapes did it: SQLite
+    DDL (`INTEGER PRIMARY KEY AUTOINCREMENT`), a SQLite trigger (`RAISE(FAIL)`), and a
+    value a typed column refuses (`'nonsense'` into a `DATETIME`, `'carousel'` into an
+    `ENUM`). `tools/check_invariants.php` decides the first two — **a denylist of four
+    tokens, and it says so**, the same shape and the same limit as 31. It cannot decide
+    the third, because whether a column takes a value is not a token; what covers that is
+    the leg completing, which is now the thing the anchor can see. A check whose answer
+    differs by engine asks `testIsMysql()` and asserts both halves, rather than asserting
+    the fixture's and calling it the app's.
 
 ---
 
@@ -5932,6 +5948,78 @@ the live sign is a second install with its own data, and every step applies ther
 
 ---
 
+### 4ba. Two thirds of the suite had never run on the engine the shop uses
+
+CI runs `tools/selftest_layout.php` twice — once on SQLite, once on a real MySQL built
+from `schema.sql` — and #48 added the second leg precisely because SQLite cannot answer
+questions about being MySQL. On 2026-08-19 that leg was reading `ENDED WITHOUT REPORTING
+after 593 checks`, out of 1805. It had been red on `main` since 2026-08-11, so every
+branch cut from it inherited a red CI, and a red leg looks the same whether it stopped at
+check 593 or check 1805.
+
+**The distinction that went missing is between a check that failed and a check that never
+ran.** A failing check prints a line naming what it expected. A fatal prints one line
+about a PDO exception and takes the rest of the file with it — so the 1,212 checks below
+the first fatal were not passing, and were not failing; they were absent, and nothing in
+the output said so. The count anchor at the bottom of the file exists for exactly this,
+and it cannot fire from a process that has already died.
+
+**Three things did it, and they are three different mistakes.**
+
+*A value a typed column refuses.* `UPDATE displays SET last_published_at = 'nonsense'` was
+how a check got an unreadable stamp in front of `lastPublishDescription()`. SQLite stores
+it; `last_published_at` is a `DATETIME` and MySQL in strict mode throws. The column
+refusing the value is the app being **safer** on the engine that ships, not a bug to route
+around — so the row is now built directly and handed to `Display`, which is also closer to
+what was being asserted: a property of the *reader*, whatever put the bad stamp there.
+The same shape, one section earlier, is `assets.type`, an `ENUM('text','image','video')`
+that a `'carousel'` row cannot enter. There the check asserted the fixture's behaviour so
+confidently that it hid a live fact worth knowing: **pooling a carousel, table or marquee
+block's content does nothing on MySQL.** `AssetLibrary::pool()` catches the refusal and
+answers `0`, and `LayoutStore::publish()` is written for that answer — the content stays
+on the element and renders. Nothing is lost and no sign is wrong, but the docblock in
+`lib/assets.php` claiming such a row "is ordinary here" was true only of SQLite. Both
+branches are now asserted, and the MySQL one pins the fallback path that had no test at
+all.
+
+*A statement only SQLite parses.* Three hand-built tables used `INTEGER PRIMARY KEY
+AUTOINCREMENT` — the mid-migration `canvas_elements`, and the retired `canvas_settings` a
+seed still has to read. `testIdColumn()` spells it for whichever engine is under test.
+A fourth is a `BEFORE INSERT` trigger using `RAISE(FAIL)`, which produces the deploy-day
+race in one process; MySQL has `SIGNAL` but forbids a trigger from touching its own table,
+so that interleaving is not producible there. That one is now **guarded and stated**
+rather than quietly skipped: the code under test is PHP either way.
+
+*A fixture that was not shaped like the app's own connection.* `db_connect.php` asks every
+connection for `SET time_zone = '+00:00'`; the fixture did not, so `ServerReport` read the
+session zone back as `SYSTEM (…)` and printed a warning that this host had refused
+something nobody had asked it for. The fixture asks now, the same suppressed way and for
+the same reason (§4ap), and the check over that row is engine-aware — on MySQL it is over
+a real session variable rather than over the absence of one.
+
+**The count anchor was itself a casualty.** `reportChecks(testIsMysql() ? 1828 : 1805)`
+carried a paragraph insisting both figures were read off runs and never summed on paper.
+The SQLite one was. The MySQL one could not have been — the leg had not reached that line
+in months. 1828 was a prediction that looked like a measurement because it sat next to
+one. Both figures are now read off completed runs: **1823 on MySQL**, which is 1805 less
+the five checks two sections cannot ask that engine, plus the 23 in the engine-only
+section.
+
+**Invariant 32 and its check** cover the parseable half — four SQLite-only tokens, refused
+anywhere in that file without `sqlite::memory:` or an explicit `!testIsMysql()` within ten
+lines. It is a denylist and prints that it is one. It was seen to fail before it was
+believed (invariant 30), and the seeing paid immediately: the first version listed
+`RAISE(FAIL)` with its closing bracket, which matches nothing in a file that writes
+`RAISE(FAIL, '…')`. The mutant that should have died survived, and a dead entry in a
+denylist is the one defect a green line cannot distinguish from a clean tree. All four
+tokens are now demonstrated live.
+
+What it cannot decide is the first mistake — whether a column will take a value is not a
+token — and nothing here should pretend otherwise. What covers that is the leg running to
+its end, which is what the anchor can now see.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
@@ -5946,6 +6034,24 @@ that is not a detail — this container is 8.4, so `php -l` here cannot fail on 
 shop cannot parse (invariant 31). Run the suite locally before every push anyway; the
 loop is faster than a push.
 
+**The second engine is worth the trouble of running by hand when you touch that suite.**
+It is CI's leg and it was red, alone, for eight days (§4ba) — the cost of a check that
+only a machine ever runs. Any MySQL-family server will do:
+
+```
+apt-get install -y mariadb-server                       # or a mysql:5.7 container
+mariadbd --user=mysql --datadir=/var/lib/mysql &
+mysql -e "CREATE DATABASE lbm_selftest CHARACTER SET utf8mb4"
+SELFTEST_MYSQL_DSN='mysql:host=127.0.0.1;port=3306;dbname=lbm_selftest;charset=utf8mb4' \
+SELFTEST_MYSQL_USER=... SELFTEST_MYSQL_PASS=... php tools/selftest_layout.php
+```
+
+**It is not the same engine and should not be reported as one.** CI runs MySQL 5.7,
+which is what the shop runs; MariaDB is a fork that agrees about the three things §4ba
+turned on — strict mode refusing a bad `DATETIME`, an `ENUM` refusing an unlisted value,
+and its own DDL spelling — and does not agree about everything. It answers "does this leg
+reach its anchor" locally in seconds. Whether the leg is *green* is still CI's answer.
+
 ```
 php -l <every touched .php>              # syntax — but at 8.4 here, so it CANNOT fail on
                                          # 8.3/8.4-only syntax that the 8.2 shop rejects.
@@ -5955,7 +6061,9 @@ php tools/check_invariants.php           # the greps below, run rather than read
                                          # rule does not fail it. Also the above-floor
                                          # syntax check, which is what covers the hole
                                          # `php -l` leaves on the line above
-php tools/selftest_layout.php            # the real modules, in-memory SQLite
+php tools/selftest_layout.php            # the real modules, in-memory SQLite — and only
+                                         # SQLite: the MySQL leg is CI's, and §4ba is what
+                                         # a leg nobody can run locally costs
 node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
                                          # that has only what a read-only page emits
 node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an

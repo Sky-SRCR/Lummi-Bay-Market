@@ -74,6 +74,22 @@ function testIsMysql()   { return testMysqlDsn() !== null; }
 function testEngineName(){ return testIsMysql() ? 'MySQL' : 'SQLite'; }
 
 /**
+ * `id`, as a primary key that assigns itself, spelled for the engine under test.
+ *
+ * A handful of checks build a table by hand rather than from schema.sql — a
+ * `canvas_elements` caught mid-migration with a nullable `display_id`, the retired
+ * `canvas_settings` a seed still has to read. Those were written in SQLite's
+ * spelling, `INTEGER PRIMARY KEY AUTOINCREMENT`, which is a syntax error on MySQL:
+ * the MySQL leg died on the first of them with `1064`, three quarters of the way
+ * through the suite, and everything after it went unrun rather than unproven.
+ */
+function testIdColumn()
+{
+    return testIsMysql() ? 'id INT AUTO_INCREMENT PRIMARY KEY'
+                         : 'id INTEGER PRIMARY KEY AUTOINCREMENT';
+}
+
+/**
  * DisplayStore with its one non-portable statement swapped out — SQLite only.
  *
  * `SELECT … FOR UPDATE` has no SQLite equivalent. Replacing that single method
@@ -361,6 +377,7 @@ function newMysqlTestDb()
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES   => false,
     ]);
+    testApplySessionZone($pdo);
 
     foreach (sqlStatements(file_get_contents(__DIR__ . '/../schema.sql')) as $sql) {
         $pdo->exec($sql);
@@ -392,12 +409,35 @@ function secondConnectionToLatestTestDb()
     }
     $name = $GLOBALS['_testMysqlDbs'][count($GLOBALS['_testMysqlDbs']) - 1];
 
-    return new PDO(testMysqlDsnFor($name), getenv('SELFTEST_MYSQL_USER') ?: null,
-                   getenv('SELFTEST_MYSQL_PASS') ?: null, [
+    $second = new PDO(testMysqlDsnFor($name), getenv('SELFTEST_MYSQL_USER') ?: null,
+                      getenv('SELFTEST_MYSQL_PASS') ?: null, [
         PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
         PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
         PDO::ATTR_EMULATE_PREPARES   => false,
     ]);
+    testApplySessionZone($second);
+
+    return $second;
+}
+
+/**
+ * What `db_connect.php` does to every connection the app makes, done to every
+ * connection this fixture makes.
+ *
+ * Not a detail: `ServerReport` reads `@@session.time_zone` back and prints it on
+ * Settings → This Server, with a warning when it is not a zero offset. A fixture
+ * that skipped this line left the session on `SYSTEM`, so the MySQL leg asserted
+ * against a connection the app never opens and the row under test warned that the
+ * host had refused something nobody had asked it for. Suppressed the same way, and
+ * for the same reason: a host without it is a fact to report, not a test to fail.
+ */
+function testApplySessionZone(PDO $pdo)
+{
+    try {
+        $pdo->exec("SET time_zone = '+00:00'");
+    } catch (Throwable $e) {
+        // As in db_connect.php: deliberately nothing.
+    }
 }
 
 $GLOBALS['_testMysqlDbs'] = [];

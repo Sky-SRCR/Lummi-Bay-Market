@@ -910,6 +910,52 @@ if (!$axisProblems) {
     $failures[] = 'the grant matrix axes';
 }
 
+// ---- The shared suite asks each engine only what that engine can answer ----------
+// Invariant 32. `tools/selftest_layout.php` runs twice in CI — once on SQLite, once on
+// the engine the shop actually uses — and the second run is the one that says the sign
+// will work. A statement only SQLite understands does not fail that run politely: it
+// throws, PHP dies, and every check after it goes unrun rather than unproven. That is
+// how the MySQL leg sat at 593 of 1805 for a week while the branch it was red on looked
+// like every other branch cut from a red base (§4ba).
+//
+// A denylist, and it says so — the same shape and the same limit as invariant 31. What
+// it can decide is a token; what it cannot decide is a value a typed column will refuse
+// (`'nonsense'` into a DATETIME, `'carousel'` into an ENUM), which is the other half of
+// what §4ba fixed and is listed below as uncovered.
+//
+// The guard it looks for is on purpose the two that are readable at a glance: a PDO
+// built as `sqlite::memory:`, which is a database this suite made for one check and no
+// engine leg touches, or an explicit `!testIsMysql()`. Ten lines is the window, which is
+// further than any of the four real uses needs.
+$sqliteOnly = ['AUTOINCREMENT', 'RAISE(FAIL', 'PRAGMA ', 'sqlite_master'];
+$sqliteGuards = ['sqlite::memory:', '!testIsMysql()'];
+$engineProblems = [];
+$suiteLines = explode("\n", codeWithoutComments(file_get_contents($root . '/tools/selftest_layout.php')));
+foreach ($suiteLines as $i => $line) {
+    foreach ($sqliteOnly as $token) {
+        if (strpos($line, $token) === false) { continue; }
+        $guarded = false;
+        for ($back = max(0, $i - 10); $back <= $i; $back++) {
+            foreach ($sqliteGuards as $guard) {
+                if (strpos($suiteLines[$back], $guard) !== false) { $guarded = true; }
+            }
+        }
+        if (!$guarded) {
+            $engineProblems[] = "selftest_layout.php line " . ($i + 1) . " uses $token with no "
+                              . "sqlite::memory: or !testIsMysql() above it — on the MySQL leg "
+                              . "that is a fatal, and every check after it stops running";
+        }
+    }
+}
+$checked++;
+if (!$engineProblems) {
+    echo "  ok   nothing SQLite-only runs unguarded in the suite both engines run (invariant 32)\n";
+} else {
+    echo "  FAIL the shared suite would die on the MySQL leg (invariant 32)\n";
+    foreach ($engineProblems as $problem) { echo "       $problem\n"; }
+    $failures[] = 'SQLite-only syntax in the shared suite';
+}
+
 // ---- Convergence runs before anything that could hold a transaction --------------
 // The §5 note on this one is right that the *position* is the invariant and not the
 // call, and wrong that a pattern cannot decide it. DDL commits an open transaction in

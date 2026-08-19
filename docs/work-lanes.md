@@ -143,11 +143,21 @@ specific way of going wrong that has now happened at least once.
 
 `check_doc_numbering.php` prints the next free letter, and four branches cut from one
 base all asked it and all got the same answer. Asking is right; asking *at the same
-time* is the failure. So they are allocated in advance. Phase 4 now runs to §4aq, and
-**`4ar` is the next free letter** — ask the tool rather than counting, and if two branches
+time* is the failure. So they are allocated in advance. Phase 4 now runs to §4ba, and
+**`4bb` is the next free letter** — ask the tool rather than counting, and if two branches
 start at once, write the allocation down here before either of them writes prose.
 
 - ~~**Lane A (#33) wrote `4ao`.**~~ ~~**B (#44) wrote `4ap`.**~~ ~~**C (#50) wrote `4aq`.**~~
+- **The MySQL-leg repair writes `4ba`** — cut from `f787aa0` on 2026-08-19, beside a CSV
+  import branch that had already taken `4az` in a tree this one cannot see. So the tool
+  answered `4az` here and the allocation answered `4ba`, and **the allocation is the one
+  that is right**: `check_doc_numbering.php` can only count the tree it is run in, which
+  is the whole reason this list exists rather than the tool being enough. The two branches
+  share no application file — that one is `builder.php` and a node suite, this one is
+  `tools/selftest_layout.php`, `tools/test_fixture.php`, `tools/check_invariants.php` and
+  one docblock in `lib/assets.php` — so the collisions are the usual three: this file,
+  `BUILD-REFERENCE.md`, and the anchor line item 3 is about, which this branch changes on
+  purpose rather than incidentally.
 
 **This scheme worked exactly as designed, and it is the only one of the four that did.**
 B wrote `4ap` while `4ao` was still unwritten and its push passed, because
@@ -181,7 +191,14 @@ and the reservation only settles who renumbers on the merge.** As settled:
 - **Lane C took 30**, and only 30 — a check ships having been seen to fail (§4aq). It was
   expected to add several; what it actually needed was one rule about how a check earns
   its line, because the four mechanised greps are rules the *checker* enforces rather than
-  invariants a reader has to hold. **31 is the next free number.**
+  invariants a reader has to hold.
+- **#51 took 31** — no file uses PHP newer than the floor, and `php -l` is not what
+  decides that (§4ar).
+- **The MySQL-leg repair took 32** — the suite both engines run asks each engine only
+  what that engine can answer (§4ba). An invariant rather than a note because what it
+  names is silent by construction: a fatal on one leg leaves every check below it *unrun*
+  rather than unproven, and no line of the output tells those apart. **33 is the next
+  free number.**
 
 B renumbered nothing and A renumbered everything, and the tie was broken by counting:
 `invariant 28` appeared 15 times across 7 files on B's side and 7 times across 6 on A's,
@@ -213,6 +230,17 @@ not of arithmetic; the same addition was wrong the last time this line was merge
 prediction you can check in one command. Check it. The MySQL figure is the SQLite one plus
 the engine-only section (23 today) — if that section did not change, the difference is
 the same difference.
+
+**The difference between the two figures is not a constant, and that assumption was
+load-bearing until §4ba.** "The MySQL figure is the SQLite one plus the engine-only
+section" holds only while both legs run the *same* checks outside that section, and they
+no longer do: two sections ask MySQL something different because the column answers
+differently there, and one cannot ask it at all. The MySQL figure is now the **smaller**
+of the two before the engine-only section is added. More to the point, that arithmetic was
+never a check on anything — `1828` sat in this line for months as a number no run had
+reported, because the MySQL leg had been dying at check 593 and never reached the anchor.
+**Read both figures off a completed run of their own leg.** A leg that stops early cannot
+report the number that would have told you it stopped early.
 
 **And this line has a second reader now.** `tools/mutate.php` runs the suite once per
 mutant and requires the unmutated run to pass first, so an anchor left stale does not

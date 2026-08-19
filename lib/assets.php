@@ -125,10 +125,17 @@ class AssetLibrary
     /**
      * The two types the Library page can create.
      *
-     * The table holds more than these: publishing pools a block's own content
-     * under the *element's* type, so a `carousel`, `table` or `marquee` row is
-     * ordinary here (see LayoutStore::publish). Those carry JSON or a media path
-     * and are stored exactly as they arrive — stripping one would destroy it.
+     * The table is *written* with more than these: publishing pools a block's own
+     * content under the *element's* type, so pool() is called with `carousel`,
+     * `table` and `marquee` (see LayoutStore::publish). Those carry JSON or a media
+     * path and are stored exactly as they arrive — stripping one would destroy it.
+     *
+     * Whether such a row lands is the column's answer, not this class's, and on the
+     * engine the shop runs it does not: `assets.type` is `ENUM('text','image','video')`
+     * in schema.sql, so MySQL refuses the other three outright. pool() catches that and
+     * answers 0, publish() leaves the content on the element, and the sign is right
+     * either way — but this comment claimed the row was ordinary, and it was only ever
+     * ordinary on the SQLite fixture, which is where the check asserting it ran (§4ba).
      */
     const TYPE_TEXT  = 'text';
     const TYPE_IMAGE = 'image';

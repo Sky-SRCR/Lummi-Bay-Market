@@ -1863,9 +1863,24 @@ date_default_timezone_set($tzWas);
 // syncSessionAccount() normalises this on every request after the first, so a
 // login that stored the column verbatim gave a row spelling it any other way one
 // meaning for one request and another from then on.
+//
+// The two engines cannot be asked the same question here, and pretending they can
+// is what made this check fail on MySQL for a week. `role` is `ENUM('admin','basic')`
+// under a case-insensitive collation, so MySQL does not store `'Admin'` at all — it
+// matches the member and writes back the canonical `'admin'`. SQLite does not enforce
+// the ENUM, so the string lands as typed. Both are correct and they are different
+// rows, so the check reads what the column actually holds and asserts the rule that
+// is true either way: the session's role is an exact match on the stored value, and
+// nothing else is admin. Asserting `'basic'` flat was asserting SQLite's fixture.
 $pdo->exec("UPDATE users SET role = 'Admin' WHERE id = 1");
-checkSame('basic', $signIn->attempt('sky', 'right-password')->role(),
-          'a role the column does not spell exactly "admin" is not admin');
+$storedRole = (string)$pdo->query("SELECT role FROM users WHERE id = 1")->fetchColumn();
+if ($storedRole === 'admin') {
+    checkSame('admin', $signIn->attempt('sky', 'right-password')->role(),
+              'a column that canonicalises the spelling has already decided: the ENUM is the defence');
+} else {
+    checkSame('basic', $signIn->attempt('sky', 'right-password')->role(),
+              'a role the column does not spell exactly "admin" is not admin');
+}
 $pdo->exec("UPDATE users SET role = 'admin' WHERE id = 1");
 checkSame('admin', $signIn->attempt('sky', 'right-password')->role(),
           'and the one that does, is — the same answer every later request will reach');
@@ -2228,9 +2243,22 @@ $pdo->prepare("UPDATE displays SET last_published_at = ?, last_published_by = 1 
     ->execute([$instant, $zoned->id()]);
 checkSame('sky, Aug 11 at 2:15pm', $store->forId($zoned->id())->lastPublishDescription(),
           'and the refusal names the moment in the store\'s zone');
-$pdo->prepare("UPDATE displays SET last_published_at = 'nonsense' WHERE id = ?")
-    ->execute([$zoned->id()]);
-checkSame('sky', $store->forId($zoned->id())->lastPublishDescription(),
+// A stamp that will not read is a property of the *reader*, and it was tested by
+// writing 'nonsense' into the column — which SQLite stores and MySQL refuses, because
+// `last_published_at` is a DATETIME and strict mode is not a suggestion. That refusal
+// was a fatal PDOException, so the MySQL leg ended here, at check 593 of 1805, and the
+// two thirds of this suite below it had never run on the engine the shop uses.
+//
+// The column refusing the value is the app being *safer* on MySQL, not a bug to route
+// around: there is no row on that engine for this check to make. So the row is built
+// directly, which is also closer to what is being asserted — `lastPublishDescription()`
+// degrading to the name when `StoreClock::epochOf()` cannot read the stamp, whatever
+// put it there. It answers on both engines now, and it answers about the reader.
+$publishedRow = $pdo->query("SELECT d.*, u.username AS last_published_by_name FROM displays d "
+                          . "LEFT JOIN users u ON u.id = d.last_published_by WHERE d.id = " . $zoned->id())
+                    ->fetch(PDO::FETCH_ASSOC);
+$publishedRow['last_published_at'] = 'nonsense';
+checkSame('sky', (new Display($publishedRow))->lastPublishDescription(),
           'a stamp that will not read leaves the name rather than a half-written sentence');
 
 date_default_timezone_set($tzWas);
@@ -2272,8 +2300,17 @@ checkMentions($tzReport[StoreClock::LABEL][0], 'America/Los_Angeles', 'and says 
 check(isset($tzReport['PHP time zone']), 'and the server\'s own, which no longer decides anything');
 check(isset($tzReport['Database time zone']),
       'and the database\'s, which is where an account\'s creation date comes from');
-checkSame('not applicable', $tzReport['Database time zone'][0],
-          'SQLite has no session zone at all — every stamp it writes is UTC by definition');
+if (testIsMysql()) {
+    // The row exists for exactly this: db_connect.php asks every connection for
+    // `+00:00`, and a host that refuses says so here and nowhere else. The fixture
+    // asks the same way, so on this leg the check is over a real session variable
+    // rather than over the absence of one.
+    checkSame('+00:00', $tzReport['Database time zone'][0],
+              'MySQL reports the session zone db_connect.php asked it for');
+} else {
+    checkSame('not applicable', $tzReport['Database time zone'][0],
+              'SQLite has no session zone at all — every stamp it writes is UTC by definition');
+}
 checkSame('', $tzReport['Database time zone'][1],
           'so there is nothing to warn about, rather than a warning about the wrong engine');
 checkSame('', $tzReport[StoreClock::LABEL][1],
@@ -2667,17 +2704,33 @@ checkSame(AssetEdit::MISSING, $res->kind(), 'saving an entry that no longer exis
 checkSame(false, $res->isOk(), 'and is never reported as a save');
 
 // ---- The types the page never created but the table holds ---------------------
-// Publishing pools a block's content under the *block's* type, so a carousel row
-// is ordinary here. Its content is JSON: stripping it leaves neither markup nor
-// JSON, and the image allow-list would refuse it outright.
-$carouselId = $library->pool('carousel', '{"slides":[{"caption":"<b>Fresh</b>"}]}');
-check($carouselId > 0, 'publishing a carousel block pools its settings');
-$res = $library->update($carouselId, 'Deli slides', '{"slides":[{"caption":"<b>Fresh today</b>"}]}');
-checkSame(true, $res->isOk(), 'and that entry can still be edited');
-checkMentions($pdo->query("SELECT content FROM assets WHERE id = " . $carouselId)->fetchColumn(),
-              '<b>Fresh today</b>', 'with its JSON stored exactly as it arrived');
-checkSame('carousel', $pdo->query("SELECT type FROM assets WHERE id = " . $carouselId)->fetchColumn(),
-          'and no edit anywhere changes what kind of entry a row is');
+// Publishing pools a block's content under the *block's* type. Whether the table
+// can hold such a row is the engine's answer rather than this app's, and the two
+// disagree: `assets.type` is `ENUM('text','image','video')` in schema.sql, so MySQL
+// refuses a `carousel` row outright, while SQLite does not enforce an ENUM and
+// stores it. Both branches below are real behaviour. The MySQL one is what the shop
+// has been running all along, and this check used to assert the fixture's.
+$carouselJson = '{"slides":[{"caption":"<b>Fresh</b>"}]}';
+$carouselId   = $library->pool('carousel', $carouselJson);
+if (testIsMysql()) {
+    // The contract LayoutStore::publish() is written against: pool() answers 0
+    // rather than throwing, and the block keeps its content and renders it. A throw
+    // here would take the whole publish transaction with it.
+    checkSame(0, $carouselId,
+              'a type the column does not list is refused, and pooling answers 0 rather than throwing');
+    $stray = $pdo->prepare("SELECT COUNT(*) FROM assets WHERE content = ?");
+    $stray->execute([$carouselJson]);
+    checkSame(0, intval($stray->fetchColumn()),
+              'and nothing is filed under some other type instead — the block keeps its own JSON');
+} else {
+    check($carouselId > 0, 'publishing a carousel block pools its settings');
+    $res = $library->update($carouselId, 'Deli slides', '{"slides":[{"caption":"<b>Fresh today</b>"}]}');
+    checkSame(true, $res->isOk(), 'and that entry can still be edited');
+    checkMentions($pdo->query("SELECT content FROM assets WHERE id = " . $carouselId)->fetchColumn(),
+                  '<b>Fresh today</b>', 'with its JSON stored exactly as it arrived');
+    checkSame('carousel', $pdo->query("SELECT type FROM assets WHERE id = " . $carouselId)->fetchColumn(),
+              'and no edit anywhere changes what kind of entry a row is');
+}
 
 // ---- The allow-list itself ----------------------------------------------------
 checkSame(true,  AssetLibrary::isAllowedImageRef('uploads/a.jpg'),        'a jpg is an image');
@@ -4633,8 +4686,11 @@ checkSame(0, intval($mixPdo->query("SELECT auto_pooled FROM assets WHERE label =
 // the plan puts it between the ADD COLUMN and the tighten.
 $midPdo = newTestDb();
 $midPdo->exec("DROP TABLE canvas_elements");
+// Written for whichever engine is under test. The inline REFERENCES is SQLite's
+// cascade; MySQL parses and ignores a column-level one, which costs nothing here —
+// what these checks count is rows the backfill moved, not rows a delete took.
 $midPdo->exec("CREATE TABLE canvas_elements (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    " . testIdColumn() . ",
     display_id INTEGER REFERENCES displays(id) ON DELETE CASCADE,
     type TEXT NOT NULL DEFAULT 'text')");
 $midDrive = makeTestDisplay($midPdo, LEGACY_DISPLAY_TAG, 'Drive-Thru');
@@ -4669,7 +4725,7 @@ checkSame('front-window', $renamed->query("SELECT tag FROM displays")->fetchColu
 // Screen coming back from a deploy on the default navy instead of the store's own
 // wallpaper — visible from the car park, and not obviously a deploy's fault.
 $bgPdo = newTestDb();
-$bgPdo->exec("CREATE TABLE canvas_settings (id INTEGER PRIMARY KEY AUTOINCREMENT,
+$bgPdo->exec("CREATE TABLE canvas_settings (" . testIdColumn() . ",
               bg_type TEXT, bg_val TEXT)");
 $bgPdo->exec("INSERT INTO canvas_settings (bg_type,bg_val) VALUES ('image','uploads/wall.jpg')");
 $bgPdo->exec("INSERT INTO canvas_settings (bg_type,bg_val) VALUES ('color','#ff0000')");
@@ -4690,7 +4746,7 @@ checkSame('#1a1a2e', $freshRow['bg_val'], 'and the colour that row always defaul
 
 // A stored value that is there but empty is not a background either.
 $blankBg = newTestDb();
-$blankBg->exec("CREATE TABLE canvas_settings (id INTEGER PRIMARY KEY AUTOINCREMENT,
+$blankBg->exec("CREATE TABLE canvas_settings (" . testIdColumn() . ",
                 bg_type TEXT, bg_val TEXT)");
 $blankBg->exec("INSERT INTO canvas_settings (bg_type,bg_val) VALUES ('color','')");
 checkSame(true, seedLegacyDisplay($blankBg), 'a canvas_settings row with no colour in it seeds');
@@ -4708,18 +4764,26 @@ checkSame('#1a1a2e', $blankBg->query("SELECT bg_val FROM displays")->fetchColumn
 // statement without undoing what the trigger program already did, so the row the
 // "other request" wrote survives and this one's insert throws. That is the state the
 // catch block is written for, and nothing else in one process can produce it.
-$racePdo = newTestDb();
-$racePdo->exec("CREATE TRIGGER seed_race BEFORE INSERT ON displays BEGIN
-    INSERT INTO displays (tag,title,canvas_width,canvas_height)
-        VALUES ('" . LEGACY_DISPLAY_TAG . "','Drive-Thru',1920,1080);
-    SELECT RAISE(FAIL, 'UNIQUE constraint failed: displays.tag');
-END");
-$err = 'untouched';
-checkSame(true, seedLegacyDisplay($racePdo, $err),
-          'losing the race to create the drive-thru Display is not a failure');
-checkSame('', $err, 'so nothing is reported about it');
-checkSame(1, intval($racePdo->query("SELECT COUNT(*) FROM displays")->fetchColumn()),
-          'and the Display the other request made is the one that is there');
+//
+// SQLite only, and stated rather than skipped quietly. MySQL has `SIGNAL`, but a
+// trigger there may not touch the table it is attached to, so the half that matters
+// — another request's row landing before this one's insert throws — cannot be
+// produced inside one statement on that engine. It is the same code either way:
+// what the check covers is seedLegacyDisplay()'s catch block, which is PHP.
+if (!testIsMysql()) {
+    $racePdo = newTestDb();
+    $racePdo->exec("CREATE TRIGGER seed_race BEFORE INSERT ON displays BEGIN
+        INSERT INTO displays (tag,title,canvas_width,canvas_height)
+            VALUES ('" . LEGACY_DISPLAY_TAG . "','Drive-Thru',1920,1080);
+        SELECT RAISE(FAIL, 'UNIQUE constraint failed: displays.tag');
+    END");
+    $err = 'untouched';
+    checkSame(true, seedLegacyDisplay($racePdo, $err),
+              'losing the race to create the drive-thru Display is not a failure');
+    checkSame('', $err, 'so nothing is reported about it');
+    checkSame(1, intval($racePdo->query("SELECT COUNT(*) FROM displays")->fetchColumn()),
+              'and the Display the other request made is the one that is there');
+}
 
 // ─────────────────────────────────────────────────────────────
 section('A repair nobody asked for is guarded three ways');
@@ -6875,4 +6939,12 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1828 : 1805);
+//
+// And then the MySQL figure turned out to be the exception the paragraph above is
+// about, for longer than anybody looked: 1828 was never a number this suite reported,
+// because the MySQL leg had been dying on a fatal at check 593 since before it was
+// written. An anchor is only an anchor on a run that reaches it. Both figures below
+// were read off a completed run of their own leg (§4ba) — 1823 on MySQL, which is
+// 1805 less the five checks two sections cannot ask that engine, plus the 23 in the
+// engine-only section.
+reportChecks(testIsMysql() ? 1823 : 1805);
