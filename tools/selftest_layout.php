@@ -242,7 +242,7 @@ function basicLayoutFor(PDO $pdo, Display $display, $text)
  * Releasing here models what actually happens — the tab closes — and keeps every
  * lock assertion in the one section that is about locks.
  */
-function publishAs(LayoutStore $layouts, Display $display, array $elements, $stamp, $isAdmin = true, $actorId = 1, Background $bg = null)
+function publishAs(LayoutStore $layouts, Display $display, array $elements, $stamp, $isAdmin = true, $actorId = 1, ?Background $bg = null)
 {
     global $pdo;
     $result = $layouts->publish($display, new PublishRequest(
@@ -2842,7 +2842,7 @@ function storedHash(PDO $pdo, $accountId)
     $stmt->execute([intval($accountId)]);
     return (string)$stmt->fetchColumn();
 }
-function newCompletion(PDO $pdo, AccountStore $accounts = null)
+function newCompletion(PDO $pdo, ?AccountStore $accounts = null)
 {
     return new PasswordResetCompletion($pdo, new ResetTokenStore($pdo),
         $accounts ? $accounts : new AccountStore($pdo));
@@ -5701,7 +5701,7 @@ checkSame(2, count(elementsOf($vPdo, $vSign->id())), 'and lands as two elements'
 
 /** Try to publish this payload over the layout that is already there. */
 function refusedPublish(LayoutStore $layouts, DisplayStore $store, Display $sign, array $elements,
-                        $isAdmin = true, Background $bg = null)
+                        $isAdmin = true, ?Background $bg = null)
 {
     $fresh = $store->forId($sign->id());
     return $layouts->publish($fresh, new PublishRequest(

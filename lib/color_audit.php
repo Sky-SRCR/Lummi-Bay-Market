@@ -73,7 +73,7 @@ class ColorAudit
      *                          ever exercise the values this machine happens to hold.
      */
     public function __construct(DisplayStore $displays, LayoutStore $layouts, BrandStyles $styles,
-                                array $brand = null)
+                                ?array $brand = null)
     {
         $this->displays = $displays;
         $this->layouts  = $layouts;

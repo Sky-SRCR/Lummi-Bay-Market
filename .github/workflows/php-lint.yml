@@ -59,7 +59,37 @@ jobs:
         # Note for anyone running the tools by hand on that host: cPanel Terminal
         # gives the *system* default PHP, which is 8.3 there, not this domain's pin.
         # /opt/cpanel/ea-php82/root/usr/bin/php is the one that matches CI.
-        php: ['8.2']
+        #
+        # 8.3 and 8.4 are here for a different reason than 8.2, and it is worth being
+        # clear which question each leg answers.
+        #
+        # 8.2 is the shop's runtime: this leg is the one that says the sign will work.
+        # It stays first and it stays the version the floor names.
+        #
+        # 8.3 and 8.4 are the versions the sign is *going to* run on, and neither is
+        # far off. PHP 8.2 leaves security support on 2026-12-31, so the pin this repo
+        # relies on stops being a safe place to sit at the end of this year. The host's
+        # system default is already 8.3 (§4k) and this domain is held back from it by
+        # one explicit MultiPHP setting — so "the version changed" is a dropdown away,
+        # not a migration. What made that worth a CI leg rather than a note is that
+        # nothing in the app would say so: ServerReport::phpVersionNote() is silent at
+        # and above the floor by design (a note read every time is a note learned to
+        # skip), so it fires when the host goes *backwards* and never when it moves on.
+        # These two legs are the thing that notices instead.
+        #
+        # They do not raise the floor. Invariant 31 still refuses 8.3+ syntax anywhere
+        # in the tree, and it should: the floor is about what may be written, these
+        # legs are about whether what *is* written still runs. A green 8.4 leg is not
+        # permission to use 8.4 syntax, and the two would disagree loudly if it were.
+        #
+        # One thing these legs catch that the lint step cannot, which is why they are
+        # matrix legs rather than an extra `php -l`: a deprecation is emitted when a
+        # file is compiled, not when it is parsed. `php -l lib/server_report.php` was
+        # clean on 8.4 while the same file, included, emitted "Implicitly marking
+        # parameter $server as nullable is deprecated" on every request that built the
+        # report. The steps that catch that are the ones that actually run the code —
+        # the self-tests and the rehearsal, on each version.
+        php: ['8.2', '8.3', '8.4']
 
     services:
       mysql:
