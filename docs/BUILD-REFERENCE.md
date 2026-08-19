@@ -537,9 +537,11 @@ through the app again:
     (`UPDATE displays SET last_published_at = 'nonsense'`), with every local gate green,
     so the rehearsal and all six node suites had not run since. **Nothing local could
     say so**, which is why this is a gate rather than something CI can be relied on to
-    report: `php -l` sees a string, the suite sees green, and this container has no MySQL
-    to disagree. So a check that needs an unusable value **hands it to the reader as a
-    row** — both readers taking one — or picks a value the column can hold: a colour
+    report: `php -l` sees a string and the suite sees green. A MySQL that *would* disagree
+    can now be had here by hand — §5 says how, and it takes a few minutes — but that is a
+    person choosing to run something, and the eight red days above are what a rule
+    depending on that choice is worth. The gate is what holds when nobody chooses. So a
+    check that needs an unusable value **hands it to the reader as a row** — both readers taking one — or picks a value the column can hold: a colour
     nobody can read has to *fit* its column before anybody can be shown the wrong thing
     by it. `check_invariants.php` reads the declared types out of `schema.sql` and refuses
     the four MySQL actually raises: a non-member of an `ENUM` (1265), a string past the
@@ -6041,6 +6043,71 @@ On MySQL the fixture is built by running `schema.sql`, the `FOR UPDATE` stub is
 gone, and twenty-three further checks run that SQLite cannot be asked — see §4aa.
 Eight of those are the publish collision (§4ab), which needs two database sessions
 and so cannot exist on an in-memory fixture at all.
+
+### Getting a MySQL to point at
+
+**This is CI's leg, and a leg only a machine ever runs is one that can be red for a
+week.** It was — from 2026-08-11, stopping after 593 checks, with every local gate
+green (invariant 32). Invariant 32 is the answer to *catching that class without a
+server*; this is the answer to *not needing to*. Neither replaces the other, and this
+one is a person choosing to run something, which is why it is written down rather than
+gated.
+
+**Run MySQL itself, not a MySQL-family server.** The tarball needs no container, no
+package manager and no root daemon, and it is the version CI runs. Unpack it **outside
+the repo** — it is about 5 GB unpacked and a server tree inside the working copy turns
+`git status` into a haystack:
+
+```
+cd /some/scratch/dir
+curl -sSLO https://cdn.mysql.com/Downloads/MySQL-5.7/mysql-5.7.44-linux-glibc2.12-x86_64.tar.gz
+tar xzf mysql-5.7.44-linux-glibc2.12-x86_64.tar.gz && mv mysql-5.7.44-* my57
+apt-get install -y libaio1t64 && ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 \
+                                        /usr/lib/x86_64-linux-gnu/libaio.so.1
+my57/bin/mysqld --no-defaults --initialize-insecure --user=root \
+                --basedir="$PWD/my57" --datadir="$PWD/my57data"
+my57/bin/mysqld --no-defaults --user=root --basedir="$PWD/my57" \
+                --datadir="$PWD/my57data" --port=3307 --socket="$PWD/my57.sock" &
+mysql -h 127.0.0.1 -P 3307 -uroot -e "CREATE DATABASE lbm_selftest CHARACTER SET utf8mb4"
+```
+
+Four details, each of which cost something the first time:
+
+- **`--basedir` and `--datadir` are absolute on purpose.** A relative `--datadir` is
+  resolved against the *basedir*, not the working directory, so `--datadir=my57data`
+  silently creates `my57/my57data` and the next command cannot find it. Nothing warns.
+- **`--no-defaults` is load-bearing.** It skips any `my.cnf` the host already has, which
+  is what leaves `sql_mode` at 5.7's stock
+  `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,…` — the mode the
+  `mysql:5.7` image CI uses runs with. Strict mode is half of what invariant 32 is about,
+  so a server started with it relaxed is a rehearsal that agrees with SQLite.
+- **The bundled `bin/mysql` client wants `libncurses.so.5`** and will not start. Any
+  system client works instead; it is the **server** that has to be the real one.
+- **Port 3307 and a socket path of its own** keep it clear of anything already listening
+  on 3306 or owning `/tmp/mysql.sock`.
+
+**A MySQL-family server is not MySQL, and a green run on one is not a green leg.** The
+divergence that matters here is not obscure: MySQL refuses a `DEFAULT` on a `TEXT`
+column and always has —
+
+```
+ERROR 1101 (42000): BLOB, TEXT, GEOMETRY or JSON column 't' can't have a default value
+```
+
+— while MariaDB has *allowed* one since 10.2, and SQLite allows one too. A statement of
+that shape is therefore accepted by both engines anybody is likely to rehearse on and
+refused by the only one that decides, and no amount of local running on a fork would
+find it. (`DEFAULT NULL` is a different thing and MySQL permits it — checked here rather
+than reasoned about, since the error message names the column type and not the default.)
+If a real 5.7 is genuinely out of reach, a fork still answers *does this leg reach its
+end*; say which engine the number came from, and treat CI as the one that decides.
+
+**Observed on this tree, 2026-08-19**, against MySQL 5.7.44 installed exactly as above:
+the SQLite leg reports `1821 checks, 0 failed` and the MySQL leg `1844 checks, 0 failed`.
+The difference is 23, which is the figure §4aa states — the same claim, taken off a
+server rather than restated. Read those as a measurement of a tree on a date, not as an
+anchor to hold to: the suite grows, and a count quoted from memory after it has is how a
+number ends up being cited as evidence of something nobody re-ran.
 
 **The greps below are what `tools/check_invariants.php` automates.** They are kept here
 because the annotations are the reasoning, not because anybody has to run them.
