@@ -177,7 +177,7 @@ $rules = [
         'why'    => 'a second file setting any of these is a second opinion (invariant 16)',
     ],
     [
-        // The §4bg rule, and the PHP half of what `tools/page_constants.js` does for
+        // The §4bi rule, and the PHP half of what `tools/page_constants.js` does for
         // the node suites. Everything in this list is a value the *machine* supplies,
         // which means it has exactly one value on any machine that runs the tests and
         // whatever value the shop's server happens to hold everywhere else. That is not
@@ -217,7 +217,7 @@ $rules = [
                      'lib/server_report.php', 'lib/upload_limits.php'],
         'why'    => 'a value taken from the host is one the suite can only ever see this '
                   . 'container\'s copy of, so the branch behind it is asserted in the one '
-                  . 'configuration no shop is running (§4bg)',
+                  . 'configuration no shop is running (§4bi)',
     ],
     [
         'name'   => 'one module knows what the upload ceiling is',
@@ -1859,7 +1859,7 @@ function refusedLiteralWrites($source, $types)
 // of them deliberately SQLite-only — so it asks the narrower question that needs no such
 // answer: would the engine the shop runs accept this literal at all? For eight days the
 // answer was no in four places, and nothing local could say so, because SQLite stores
-// every one of them and the check that reads it back passes (§4bi).
+// every one of them and the check that reads it back passes (§4bk).
 $writeTypes = schemaColumnTypes(file_get_contents($root . '/schema.sql'));
 $checked++;
 if (isset($writeTypes['brands']['bg_type']) && count($writeTypes) >= 8) {
@@ -1886,7 +1886,7 @@ if (!$refusedWrites) {
 }
 
 // ---- And that detector, seen to fail --------------------------------------------
-// Invariant 30. The first four are the four writes §4bi removed, in the order CI would
+// Invariant 30. The first four are the four writes §4bk removed, in the order CI would
 // have hit them; the negative half is where the care is, because the two easy ways to
 // write this rule both break real lines in the suite — an ENUM match that respects
 // lettercase would condemn `role = 'Admin'`, which MySQL has always accepted, and a
@@ -1918,7 +1918,7 @@ $writeProbes = [
      'a real stamp is not a refusal'],
     ['$p->exec("UPDATE nothing_declared SET bg_type = \'nonsense\' WHERE id = 1");', 0,
      'and a table schema.sql does not declare is not this rule\'s business'],
-    ['// UPDATE brands SET bg_type = \'nonsense\' — what §4bi removed', 0,
+    ['// UPDATE brands SET bg_type = \'nonsense\' — what §4bk removed', 0,
      'a write-up quoting the statement it is about is prose, not a write'],
 ];
 foreach ($writeProbes as $probe) {
@@ -1942,7 +1942,7 @@ foreach ($writeProbes as $probe) {
  * The other half of invariant 32, and the half that cost the run once the literals
  * were fixed: a value MySQL refuses is one statement failing, but a `CREATE TABLE`
  * in the wrong dialect is a *fatal* — it throws where no check is looking, the suite
- * ends without reporting, and the rehearsal step under it never starts (§4bj).
+ * ends without reporting, and the rehearsal step under it never starts (§4bl).
  *
  * Which connection a statement is on *is* readable here, unlike for the literals
  * above, because the suite names them: a handle assigned from `newSqliteTestDb()` or
@@ -2045,7 +2045,7 @@ $dialectProbes = [
      0, 'including one opened directly rather than through the fixture'],
     ['$midPdo = newTestDb();' . "\n" . '$midPdo->exec("CREATE TABLE t (id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY)");',
      0, 'and the portable spelling is not mistaken for the SQLite one'],
-    ['// CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT) — what §4bj removed',
+    ['// CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT) — what §4bl removed',
      0, 'a write-up quoting the statement it is about is prose, not a statement'],
 ];
 foreach ($dialectProbes as $probe) {
@@ -2290,11 +2290,11 @@ foreach ([
 // ---- And that every one of them ran ---------------------------------------------
 // Both branches that met here added this independently, which is its own small argument
 // for it. Not a count of rules: a count of what actually *ran*, so a rule that stops
-// being reached is the same failure as one that was deleted. §4bg found this file
+// being reached is the same failure as one that was deleted. §4bi found this file
 // without one — delete the rule that keeps `json_encode` in a single module, one of the
 // most load-bearing lines in the repo, and this printed "60 consistency checks, 0
 // failed" and exited 0. A checker whose own coverage can shrink silently is the failure
-// it exists to prevent, wearing its own uniform. §4bf found the same hole in four of the
+// it exists to prevent, wearing its own uniform. §4bh found the same hole in four of the
 // eight node suites; this was the third place it was hiding, and `selftest_layout.php`
 // has had the same anchor since #48 (`reportChecks()`).
 //

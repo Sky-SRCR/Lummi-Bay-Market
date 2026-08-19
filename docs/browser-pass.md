@@ -46,10 +46,10 @@ owed today:
 | Owed | Why | Where |
 |---|---|---|
 | A walk against `public_html/lbm/`, **after the cutover** | this pass has only ever run against `lbm-test/`, and `lbm/` is still the single-sign app — there is nothing of this build there to walk until the deploy puts it there (`0a02b70`) | this whole list |
-| A re-walk of every step against `lbm-test/` for the **workbench** | step 2 rebuilt the Builder's chrome — three columns, a docked rail, a canvas footer, a new nav — so every screen this pass describes has moved. Nothing in this repo can see a three-column layout fail to be three columns | §4ba |
-| A walk of **Admin Panel → Display Branding**, which this pass has no step for | step 3 replaced a single typography table with a list of Brands, a palette editor, a logo picker and a delete confirm — and the Displays tab gained a Brand dropdown on two forms. The suite reads that file's *source*; nothing renders it | §4bb |
-| A walk of the Builder's **Brand control and palette swatches**, which this pass also has no step for | step 4 put a venue's logo and name at the top of a 178-pixel column, a menu under it, and a row of 17-pixel swatches above four colour pickers. What a suite proves is that switching repaints and writes nothing; what it cannot see is a long venue name truncating, a swatch row pushing a picker off the rail, or a menu opening under the canvas. **Switch a Brand and do not publish, then reload** — the sign must be on the Brand it started on | §4bc |
-| A walk of **Workspace Themes** — the gear's picker, and Site Branding's theme form | step 5 gave the application colours of its own. A suite can prove that switching sets thirteen custom properties and loses no unpublished work; it cannot see whether a light theme leaves white-on-dark text unreadable, whether the picker card fits inside the gear menu at 1080p, or whether the contrast warning wraps. **Make a theme with a light work area, choose it, and read every banner in the Builder.** Then make one whose thirteen colours are identical and check you can still find the gear and get back to the store default | §4bd |
+| A re-walk of every step against `lbm-test/` for the **workbench** | step 2 rebuilt the Builder's chrome — three columns, a docked rail, a canvas footer, a new nav — so every screen this pass describes has moved. Nothing in this repo can see a three-column layout fail to be three columns | §4bc |
+| A walk of **Admin Panel → Display Branding**, which this pass has no step for | step 3 replaced a single typography table with a list of Brands, a palette editor, a logo picker and a delete confirm — and the Displays tab gained a Brand dropdown on two forms. The suite reads that file's *source*; nothing renders it | §4bd |
+| A walk of the Builder's **Brand control and palette swatches**, which this pass also has no step for | step 4 put a venue's logo and name at the top of a 178-pixel column, a menu under it, and a row of 17-pixel swatches above four colour pickers. What a suite proves is that switching repaints and writes nothing; what it cannot see is a long venue name truncating, a swatch row pushing a picker off the rail, or a menu opening under the canvas. **Switch a Brand and do not publish, then reload** — the sign must be on the Brand it started on | §4be |
+| A walk of **Workspace Themes** — the gear's picker, and Site Branding's theme form | step 5 gave the application colours of its own. A suite can prove that switching sets thirteen custom properties and loses no unpublished work; it cannot see whether a light theme leaves white-on-dark text unreadable, whether the picker card fits inside the gear menu at 1080p, or whether the contrast warning wraps. **Make a theme with a light work area, choose it, and read every banner in the Builder.** Then make one whose thirteen colours are identical and check you can still find the gear and get back to the store default | §4bf |
 
 The last three are the gap worth naming precisely, because it is the shape five of this
 pass's seven defects had: the panel's checks are `checkMentions()` over
@@ -154,6 +154,41 @@ anything that vanishes was never saved).
 - [ ] Colour pickers — set a colour, reload, confirm it came back **as the colour you
       chose**. This is the one with history: a colour the CSSOM silently discarded was
       published as black.
+
+## D2. The table block: filling one from a CSV (§4az)
+
+Needs a real file and a real drag, so nothing in the repo can stand in for it. Make a
+small `.csv` in Excel or Numbers with a heading line — `Title,Price,SKU` over two or three
+rows — and put `"Sockeye, wild"` in a cell, quoted comma and all.
+
+- [ ] Select a table block and press **Edit Table**. Drag the file onto the drop area in
+      the modal. It outlines in green while the file is over it, and the rows arrive.
+- [ ] The note under the drop area names the file, the row and column counts, which
+      headings were styled by name, and which became Plain. `SKU` must be *named*, not
+      silently styled.
+- [ ] The quoted comma is still one cell.
+- [ ] Untick **First row names the columns**. The heading line becomes a row of content
+      without the file being asked for again.
+- [ ] Now edit the imported table the way anybody would: type over a price, change a
+      column's style dropdown, set a column width, change **Row padding**, add a row, add
+      a column, delete one of each. All of it must work exactly as it does on a table
+      typed by hand — an import fills the editor, it does not replace it.
+- [ ] Press **Cancel**. The block still holds what it held before the drop — nothing is
+      stored until Save Table.
+- [ ] Click the drop area instead of dragging, and choose the same file. Same result.
+- [ ] Drop a `.jpg` on the drop area — refused by name, not read.
+- [ ] Close the modal. Now drop the file **on a table block on the canvas**, then on the
+      canvas background, then on a text or image block. In all three the browser must
+      **not** open the file: the page stays, nothing is imported, no block outlines, and
+      it says to open the table and use the area inside Edit Table. The block one is the
+      point — a table block is not a drop target — and the navigation is the one that
+      costs an unpublished canvas if it regresses.
+- [ ] On a Display somebody else is holding, drag the file anywhere on the Builder:
+      nothing is imported, the page does not navigate, and it says who is holding it.
+- [ ] Save Table, then Publish, and read the sign.
+- [ ] Open a table that was published **before** this change and save it untouched. Row
+      padding and everything else must come back exactly as it was — this change stores
+      the same shape it always did.
 
 ## E. Undo — before you publish anything
 

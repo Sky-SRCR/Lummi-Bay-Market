@@ -174,7 +174,7 @@ check(empty($dangling),
 
 // ── ─────────────────────────────────────────────────────────
 
-// Anchored, same as `check_invariants.php` and for the same reason (§4bg): every check
+// Anchored, same as `check_invariants.php` and for the same reason (§4bi): every check
 // in this file is a whole *class* of numbering fault, so one going missing is a class
 // nobody is watching any more — and the run would still print a clean line and exit 0.
 $expectedChecks = 6;

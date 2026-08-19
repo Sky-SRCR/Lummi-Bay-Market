@@ -98,7 +98,7 @@ when there is something above it to divide.
 
 ### Step 1 — Publish stops writing what the Brand owns · size S · risk Medium
 
-**Done — 2026-08-13. Written up as §4az; it is invariant 34.** What follows is the
+**Done — 2026-08-13. Written up as §4bb; it is invariant 34.** What follows is the
 plan as it was written, with the two things it got wrong marked. It has not been
 deployed: like every step here it is deployable on its own, and it changes nothing
 anybody can see, which makes it the safe one to send first.
@@ -161,7 +161,7 @@ Gates: `php -l`, `selftest_layout`, `check_invariants`, `check_doc_numbering`,
 
 ### Step 2 — The Builder workbench · size L · risk Medium
 
-**Done — 2026-08-13. Written up as §4ba.** Not deployed; like every step here it
+**Done — 2026-08-13. Written up as §4bc.** Not deployed; like every step here it
 goes on its own. What follows is the plan as written, with what it got wrong
 marked.
 
@@ -270,7 +270,7 @@ the rewritten checks.
 
 ### Step 3 — Brands: data and the admin surface · size L · risk **High**
 
-**Done — 2026-08-13. Written up as §4bb; it is invariant 35.** Not deployed, and
+**Done — 2026-08-13. Written up as §4bd; it is invariant 35.** Not deployed, and
 **the rehearsal against a copy of live data has not been run** — that is this step's
 own stated gate and it needs a person and a database this container cannot reach.
 What follows is the plan as written, with what it got wrong marked.
@@ -346,7 +346,7 @@ narrowed refusal, plus `php tools/mutate.php lib/brands.php` and over
 
 ### Step 4 — Brands in the Builder · size M · risk Medium
 
-**Done — 2026-08-14. Written up as §4bc; it adds no invariant, and the write-up says
+**Done — 2026-08-14. Written up as §4be; it adds no invariant, and the write-up says
 why.** Not deployed; like every step here it goes on its own. What follows is the plan
 as written, with what it got wrong marked.
 
@@ -412,7 +412,7 @@ went from 45 to 65; `selftest_layout.php` from 1,975 to 2,051.
 
 ### Step 5 — Workspace Themes · size M · risk Low
 
-**Done — 2026-08-14. Written up as §4bd; it is invariant 36.** Not deployed; like every
+**Done — 2026-08-14. Written up as §4bf; it is invariant 36.** Not deployed; like every
 step here it goes on its own. What follows is the plan as written, with what it got wrong
 marked.
 
@@ -494,7 +494,7 @@ a page that may be holding unpublished work and no other premise here covers tha
 > config file; the owner's answer is that it falls to the config file, because "use the
 > store default" means that file in every other sentence of this step.
 > `SiteChrome::themeColor()` is the seam, and it took a subprocess to check, since this
-> container has no `branding_config.php` and cannot tell the two apart (§4bd).
+> container has no `branding_config.php` and cannot tell the two apart (§4bf).
 
 ## Risks and watch-items
 

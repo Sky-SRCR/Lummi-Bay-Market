@@ -124,7 +124,7 @@ with no publish. The blast radius is smaller than it was; it is not zero, and
 nothing about this decision makes a brand edit undoable.
 
 **One latent defect had to be fixed before any of this landed — and it has been**
-(2026-08-13, BUILD-REFERENCE §4az, invariant 34). `applyTextStyles()` writes the
+(2026-08-13, BUILD-REFERENCE §4bb, invariant 34). `applyTextStyles()` writes the
 shared standard into a node's inline style, and `serializeBlock()` read those same
 inline styles back and published them into the element's own `font_*` columns.
 It was invisible: the values are identical everywhere and the branded-subtype
@@ -137,7 +137,7 @@ stores the documented defaults whatever it is sent, because the Brand owns them.
 That fix landed on its own, before the feature that activates it.
 
 **The asymmetry above has one collision, and it was found by building it**
-(2026-08-14, BUILD-REFERENCE §4bc). Staged in the Builder and immediate in the
+(2026-08-14, BUILD-REFERENCE §4be). Staged in the Builder and immediate in the
 Admin Panel means a Builder tab that loaded *before* an admin moved that sign to
 another Brand is holding the old venue — and its next Publish is a perfectly
 valid request that puts the old one straight back, silently, across the venue. So

@@ -527,7 +527,7 @@ through the app again:
     as one token and 8.2 as four — matching only the 8.4 shape would have gone quietly
     blind in CI, which is the machine pinned to the floor, and would have looked exactly
     like a pass.
-32. **No check writes a value the engine the shop runs would refuse** (§4bi, §4bj).
+32. **No check writes a value the engine the shop runs would refuse** (§4bk, §4bl).
     SQLite takes a
     word in a `DATETIME`, a non-member in an `ENUM`, and a string wider than the column,
     and the check that reads each one back passes. MySQL's strict mode throws on all
@@ -538,9 +538,11 @@ through the app again:
     (`UPDATE displays SET last_published_at = 'nonsense'`), with every local gate green,
     so the rehearsal and all six node suites had not run since. **Nothing local could
     say so**, which is why this is a gate rather than something CI can be relied on to
-    report: `php -l` sees a string, the suite sees green, and this container has no MySQL
-    to disagree. So a check that needs an unusable value **hands it to the reader as a
-    row** — both readers taking one — or picks a value the column can hold: a colour
+    report: `php -l` sees a string and the suite sees green. A MySQL that *would* disagree
+    can now be had here by hand — §5 says how, and it takes a few minutes — but that is a
+    person choosing to run something, and the eight red days above are what a rule
+    depending on that choice is worth. The gate is what holds when nobody chooses. So a
+    check that needs an unusable value **hands it to the reader as a row** — both readers taking one — or picks a value the column can hold: a colour
     nobody can read has to *fit* its column before anybody can be shown the wrong thing
     by it. `check_invariants.php` reads the declared types out of `schema.sql` and refuses
     the four MySQL actually raises: a non-member of an `ENUM` (1265), a string past the
@@ -576,7 +578,7 @@ through the app again:
     needed and did not have while it was being written: one that would go red if it were
     broken.
 33. **No parameter is implicitly nullable, and `php -l` is not what decides that
-    either** (#10, §4bh). `array $x = null` is deprecated from PHP 8.4, and the explicit form
+    either** (#10, §4bj). `array $x = null` is deprecated from PHP 8.4, and the explicit form
     `?array $x = null` is understood back to 7.1 — so the fix costs nothing at the floor
     and there is no trade to weigh. What makes it an invariant rather than a tidy-up is
     what could not see it. Five were in this tree; one was `ServerReport::__construct()`,
@@ -712,7 +714,7 @@ through the app again:
     no `ON DELETE` clause so the database says the same thing to anything reaching it
     another way. The same shape as a Brand in use, for the same reason.
 37. **Every read of the machine is one somebody named, and every branch behind one has a
-    seam that takes the value** (§4bg). Five files in `lib/` may touch `ini_get`,
+    seam that takes the value** (§4bi). Five files in `lib/` may touch `ini_get`,
     `$_SERVER`, `PHP_VERSION`, `PHP_SAPI`, `phpversion()`, `session_get_cookie_params()` or
     the engine's own `ATTR_SERVER_VERSION` / `ATTR_DRIVER_NAME` — `server_report.php`,
     `error_policy.php`, `upload_limits.php`, `alerts.php` and `displays.php` — and
@@ -6135,7 +6137,141 @@ rather than running it, and no suite renders a pixel. **So this pass is repeatab
 retired.** `browser-pass.md` carries its outcome at the top and stays as the list, because
 the live sign is a second install with its own data, and every step applies there again.
 
-### 4az. The publish had been writing the Brand into every branded block for a year
+
+### 4az. A price list somebody else wrote
+
+A request from the store owner on 2026-08-19: drop a `.csv` into a table block's editor
+and have it fill from the header row, the rows and the columns in the file. It is entirely in
+`builder.php` — a table's content is opaque to the server, which checks that
+`manual_content` is text under 65,535 bytes (`LayoutRules`) and nothing else — so no
+schema statement, no new SQL door, no publish path and **not one line of `viewer.php`**
+changed. What is interesting is not the CSV parsing. It is the three places where the
+obvious implementation is a defect.
+
+**A CSV's header row is not this app's header row.** `headers` in a stored table is not a
+row of labels; it is which of the seven column *styles* each column is drawn in
+(`item_title`, `price`, `section_header`, …). Copying a spreadsheet's heading line into it
+produces a table whose columns are styled `SKU` and `Notes`, which is to say styled by
+nothing. So the header row is *matched* — normalised for case, spaces and underscores,
+against the style values and the labels the modal shows — and everything it cannot match
+becomes a Plain column **and is named on screen**: `“SKU” has no style of that name here,
+so it is Plain — set the column style above if that is not what you wanted.` A header row
+half-understood in silence is #21 in another form, and the browser pass's lesson (§4ay)
+was that a page not *saying* something is exactly the category no suite here was pointed
+at.
+
+**The drop needed a guard that has nothing to do with tables.** A file dropped on a page
+that does not handle it is not a no-op — the browser navigates to it. The Builder is then
+gone, and so is every block moved since the last Publish, from a tab that is the only
+place that layout exists. So the page refuses the browser default for *any* file drag
+anywhere on it, including on a read-only Builder, which has no import and just as much of
+somebody's work on screen; it then decides separately whether it wanted the file.
+Refusing a navigation is not the same as offering a drop, and the difference is the whole
+of the next paragraph.
+
+**One place takes a file, and it is inside the table's own editor.** The drop area in Edit
+Table, and nothing else — not the canvas, and **not the table block on it either**, which
+the store owner asked for explicitly on 2026-08-19 after seeing the block version. A file
+let go anywhere else imports nothing and says where it should have gone. Which table an
+import fills is then decided by the table somebody opened, never by aim: table blocks
+stand beside each other on a sign, they overlap while one is being dragged, and a drop
+read one block wide overwrites a price list nobody was looking at. Only the drop area
+lights up, because a page that highlights is a page that has promised.
+
+**An import fills the editor; it does not replace it.** Everything the table block already
+had still works on the rows that arrive: typing over a cell, the column style dropdowns,
+the alignments, the column widths, row padding, add row, add column, delete row and delete
+column, and the two refusals that keep a table from being emptied. Nothing is stored until
+Save Table, so Cancel is the way back out of an import that read the wrong file. **Row
+padding is untouched by this change** — the import has no opinion about it, carries the
+stored value across, and the single `row_padding` field is exactly what it was.
+
+**What the import refuses, and why refusing is the whole design.** The refusals happen at
+the door, with the numbers in them: a file that is not a `.csv`, an empty one, one over
+1 MB, more than 500 rows, more than 24 columns, and a table that would exceed the 65,535
+bytes `LayoutRules` will refuse at Publish. That last one is deliberately the same number
+as the server's: the publish check is what actually protects the column, and repeating it
+here turns a refusal an hour later on a page about publishing into one over the file that
+caused it. Alignments, widths and padding are carried across from the table as it stands,
+so re-importing a corrected price list keeps the layout somebody set up by hand.
+
+**Two smaller things are worth writing down because guessing wrong on either is silent.**
+The delimiter is counted rather than assumed — Excel writes semicolons wherever the decimal
+mark is a comma, and getting it wrong is not subtle, it is one column holding the whole
+line. And a file Excel saved as plain "CSV" on a Windows machine is not UTF-8: the `é` is
+already U+FFFD by the time `FileReader` hands the text over, so there is nothing to repair
+and the note says so, naming the format that works.
+
+**The suite is the seventh node harness and the first whose input this app did not write.**
+123 checks: a quoted comma, a doubled quote, CRLF and a bare CR, a BOM, a blank line kept
+where somebody meant a spacer and the trailing one dropped, semicolons and tabs, the style
+matching, every refusal, where a file may and may not land, and then every editing control
+driven on an imported table — over a recording `document` with a stubbed `FileReader`. It
+is also the first harness here to parse the markup `builder.php` builds as a string: a
+column header cell is `th.innerHTML = '<select …>'`, and a DOM that keeps that string
+without reading it cannot answer whether `getTableEditorData()` still finds the style, the
+alignment and the width after a rebuild — which is most of what this suite is for. Mutants
+were run against it before it was believed and died by assertion (invariant 30), including
+the delimiter sniffer's tie-break, the column deletion that splices the rows, and the door
+check that keeps the canvas from falling through to the reader.
+
+---
+
+### 4ba. The check that agreed with the bug it was written for
+
+`main` went red on 2026-08-19, an hour after #11 and #14 merged, on one job of six —
+`php 8.2 · mysql 8.0`, at check 1844 of 1844:
+
+```
+FAILED: the edit-lock banner says the time it is where the sign is — expected '3:22pm', got '3:21pm'
+FAILED: and so does the sentence a refused publish prints — "sky has been editing Zoned
+        since 3:21pm." does not mention "since 3:22pm"
+```
+
+One minute, not the two hours #44 was about. The two checks compared what `claimLock()`
+had stamped against a label built from a *second* `time()` call, and a claim and an
+assertion either side of a minute boundary disagree for a reason that has nothing to do
+with zones. The lines dated to `8fecec1` (#44, 2026-08-11) and the file said so four lines
+below them — *"Fix the stamp to a known instant rather than 'now', so the assertion is
+about the conversion and not about the two calls landing in the same minute"* — advice the
+block underneath took and these two did not.
+
+**Why it surfaced then.** These checks sit near the end of the suite, past check 593, where
+the MySQL leg had been stopping since 2026-08-11. For eight days they ran on the SQLite leg
+only: one job a push. #11 revived the leg, and they went to six. The flake did not appear
+that night; it became six times as likely to be *seen*, and was, within the hour. A dead
+leg is not a quiet one — it is a leg whose findings are still accruing.
+
+**The worse half.** Fixing the race meant reading what the pair actually asserted, and the
+answer was: less than it looked. Both sides went through `StoreClock`'s own door, so a
+stamp written in the wrong frame and read in the wrong frame agreed with each other — the
+cancelling pair that is the whole of #44, asserted by a check blind to it. That is not a
+reading of the code, it is a run: with `claimLock()` mutated to `date()` **and**
+`epochOf()`'s `' UTC'` removed, both original checks report `ok`.
+
+So the block now asks the two questions separately, and neither can be answered by the
+other:
+
+- what `claimLock()` **writes** is UTC — measured against a UTC reference, plus the
+  negative that the same string read as local time is hours out. Two checks, because the
+  first reads through `epochOf()` and would pass if `epochOf()` were broken to match; the
+  second is the half that notices. Deleting either restores the blind spot.
+- what `takenAtLabel()` and `editingSentence()` **say** is the store's zone — measured
+  against `2026-08-11 21:15:00` written into the row, so the assertion is about the
+  conversion and not about the clock.
+
+Four checks where there were three; the suite anchors move to 1822 and 1845. Each was seen
+to fail before it was believed (invariant 30) — three of the four under the double mutation
+above, and the write check under `gmdate` → `date` alone.
+
+The lesson is the one invariant 30 exists for, arriving by a route it had not taken before:
+a check can be *flaky* and *weak* for the same reason. Asking the clock twice is what made
+it fail at a minute boundary, and going through one door on both sides is what kept it from
+failing at anything else. The flake is what got it read.
+
+---
+
+### 4bb. The publish had been writing the Brand into every branded block for a year
 
 The first step of v2 ([`roadmap-v2-brands-and-themes.md`](roadmap-v2-brands-and-themes.md)),
 and it is a bug fix that landed on its own, before the feature that would have made it
@@ -6224,7 +6360,7 @@ module's own door, `LayoutRules` refuses a non-word `block_subtype` long before 
 reaches it, and removing the guard throws on an array offset rather than answering wrongly.
 That grade is recorded rather than engineered away.
 
-### 4ba. The panel that looked like a window, and the arithmetic behind it
+### 4bc. The panel that looked like a window, and the arithmetic behind it
 
 v2 step 2. No schema, no new data, no behaviour a server can see — the Builder's
 chrome, rebuilt as option B. It is in §4 rather than in the roadmap alone because
@@ -6306,7 +6442,7 @@ three-column layout fail to be three columns.
 
 ---
 
-### 4bb. The word Brand went back to what it means, and a key changed under a live table
+### 4bd. The word Brand went back to what it means, and a key changed under a live table
 
 v2 step 3, and the high-risk one: it re-keys a table on a database that is driving
 signs. ADR-0011 reversed roadmap decision C — one set of Brand Standards for the whole
@@ -6380,7 +6516,7 @@ of `SHOW KEYS`, both backfills asked as rows rather than as structure, `brand_id
 `NOT NULL` on both tables, and the `RESTRICT` rule on `displays_ibfk_3`. That tool runs
 against a copy of live data, by a person, and **it has not been run** — the rehearsal is
 step 3's stated gate and it is owed before this goes near the shop. So is the browser
-pass, which §4ba already owed and which this step adds a rewritten Display Branding tab
+pass, which §4bc already owed and which this step adds a rewritten Display Branding tab
 to.
 
 **A note on what the mutation runs found**, since invariant 30 is the reason to do them:
@@ -6398,7 +6534,7 @@ that reason: a predicate can only echo its input back.
 
 Six more survivors turned into checks: `destroy()` carried a dead clause refusing an
 empty typed name, which `strcasecmp` already refused (removed, not decorated —
-§4az's dead clause was the one that could still be wrong); `wornBySentence()`
+§4bb's dead clause was the one that could still be wrong); `wornBySentence()`
 truncates at six signs and says "and N more", and no test had ever had more than one
 wearer; `forId()`'s `isIdLike` guard, reached straight from `$_POST['b_id']` on the
 save and delete forms; `NAME_MAX` and `PALETTE_SLOTS` asserted as literals, because a
@@ -6428,7 +6564,7 @@ returns the column, so the `isset()` half can never be the deciding one. Both ar
 worth keeping and neither is testable without making the code worse, which is what
 invariant 30 means by a reason to write down.
 
-### 4bc. A venue you can look at before you commit to it
+### 4be. A venue you can look at before you commit to it
 
 v2 step 4. Step 3 gave a Display a Brand and gave an admin a page to edit Brands on;
 this is the Builder learning to say which venue it is building for, and letting an admin
@@ -6504,7 +6640,7 @@ page did not *say*; this is the same category, caught before rather than after.
 would have been tried both ways, one of those ways would have said yes, and the walker
 would have believed a read-only page can emit the Brand menu. Substituted to `false`,
 with a check pinning the derivation in the source, exactly as `$undoSteps` was handled in
-§4ba. The control itself is the one entry that *joins* `PRESENT` as a feature rather than
+§4bc. The control itself is the one entry that *joins* `PRESENT` as a feature rather than
 leaving it as a leftover: somebody who cannot edit still needs to know which venue they
 are looking at. Its read-only branch carries no ids, so `#brand-name` cannot resolve on a
 page that draws a different one — two copies would make every lookup of it depend on
@@ -6523,7 +6659,7 @@ answered `Color::read()` for them, but a value the CSSOM discards is not a swatc
 a grey box that does nothing — #41's shape, one control along.
 
 **A number this container cannot check, and it was wrong.** Found while raising it:
-§4bb added two checks to the layout suite's MySQL-only section and moved that arm's
+§4bd added two checks to the layout suite's MySQL-only section and moved that arm's
 expected count by three, so from step 3 until this step the MySQL run expected one check
 more than the suite contains. Nothing here could see it — there is no MySQL server in
 this container and that arm never runs — and the comment directly above the line warns
@@ -6563,7 +6699,7 @@ a picker at 1080p, or a venue's name truncate in a 178-pixel column.
 
 ---
 
-### 4bd. The application gets colours of its own, and they never reach a sign
+### 4bf. The application gets colours of its own, and they never reach a sign
 
 *(v2 roadmap step 5, 2026-08-14. It is invariant 36.)*
 
@@ -6684,7 +6820,7 @@ distinction between the two nouns in one assertion.
 assertion; `lib/color.php` 32 of 39, 22; `lib/picker_name.php` 22 of 27, 18; and
 `lib/accounts.php` 156 of 241, 130 — that last file because this step put a method in it
 and one line inside `close()`'s transaction, and that line is killed by an assertion
-rather than by the harness noticing something moved. Measured, for the reason §4bc's
+rather than by the harness noticing something moved. Measured, for the reason §4be's
 paragraph now says out loud.
 
 The runs *during* the work found four things, and all four are fixed inside those figures
@@ -6717,7 +6853,7 @@ What lived is four families, all of them named before this step. `===` → `==` 
 where PHP 8 already guarantees both operands' type. `$out = [];` deleted in front of an
 append, which PHP auto-vivifies, so the line declares a type rather than doing anything.
 `intval($id) <= 0` behind an `isIdLike()` that has already refused everything except zero
-and negatives — §4bc's two agreements about the same thing. And three in `site_chrome.php`
+and negatives — §4be's two agreements about the same thing. And three in `site_chrome.php`
 — `load()`'s body, `logo()`'s `&&`, and `FIELDS[$key][0]` read as `[1]` — which all survived
 because the process running the suite already has the branding constants defined: the
 failure CLAUDE.md names as an absent-setting check running where the setting was present.
@@ -6777,9 +6913,9 @@ its debt table: nothing in this repo can see whether a light theme leaves the Bu
 white-on-dark text unreadable, whether the picker card sits where the gear menu can show
 it at 1080p, or whether the contrast warning wraps.
 
-### 4be. The suite had only ever run on an install nobody has
+### 4bg. The suite had only ever run on an install nobody has
 
-§4bd ends on a fallback that no check in this repo could see, because this container has
+§4bf ends on a fallback that no check in this repo could see, because this container has
 no `branding_config.php` and so the shop's colour and the shipped one are the same string
 here. Two `inFreshProcess()` checks closed that one line. The question worth asking next
 was how big the hole around it was, and it is answerable in ten seconds: define the ten
@@ -6796,7 +6932,7 @@ to convince themselves a deployment went well. `tools/` **is** uploaded (`DEPLOY
 puts it behind an `.htaccess`, not off the server), so that run is a real one.
 
 **None of the seven was wrong about the app.** Each was written as a literal where it
-meant "the store's own", which is the same slip §4bd's fallback was: a phrase that means
+meant "the store's own", which is the same slip §4bf's fallback was: a phrase that means
 `branding_config.php` everywhere else, spelled as `DEFAULTS` because on this machine
 those agree. The fix is to say the thing — `SiteChrome::configColor()` rather than
 `SiteChrome::DEFAULTS`, `StoreClock::zone()` rather than the zone this checkout defaults
@@ -6835,7 +6971,7 @@ on a machine with no shop attached: `php -l` here is 8.4 against an 8.2 floor, t
 needs a server this container has never had, and the five browser walks are still owed. A
 configuration you can define is the cheap half.
 
-### 4bf. And the node suites were running a page where every server value was zero
+### 4bh. And the node suites were running a page where every server value was zero
 
 The same question, asked of the other eight harnesses. They cannot run PHP, so each one
 stripped `<?= … ?>` to the literal `0` and then wrote a handful of the page constants
@@ -6845,7 +6981,7 @@ JavaScript and three reach `viewer.php`'s; what a suite did not think to write b
 zero, and nothing said so.
 
 **Measured the same way: set all twenty-one to what a real page carries, re-run all
-eight, and not one check changes.** So unlike §4be's seven, none of these was *wrong* —
+eight, and not one check changes.** So unlike §4bg's seven, none of these was *wrong* —
 but none was seen either, and two of the zeroes were doing damage that a passing run
 could not show.
 
@@ -6898,12 +7034,12 @@ asserted. The finding is narrower and duller: they were asserting it about a pag
 would ever load, and two things a person does — running out of time on a lock, watching a
 sign on a differently shaped television — were on the other side of that difference.
 
-### 4bg. And the whole suite was running on one server, describing servers
+### 4bi. And the whole suite was running on one server, describing servers
 
 The third time the same question was asked, and the one where the answer was already
 written down in the file it was asked about.
 
-§4be found the suite running in a `branding_config.php` no shop has. §4bf found the node
+§4bg found the suite running in a `branding_config.php` no shop has. §4bh found the node
 suites running a page where every server value was `0`. Both are the same shape: the
 configuration the tests run in is not the configuration the app ships into. The dimension
 neither pass touched is the **machine** — this container's PHP, its `php.ini`, and a
@@ -6976,7 +7112,7 @@ own host and somebody has to read it. It is a rule that the list is short, named
 grows on purpose, because a new read landing quietly is a branch the suite will assert
 about this container for as long as it exists, in green.
 
-**And the same count-anchor hole §4bf found in the node suites was here too**, which is
+**And the same count-anchor hole §4bh found in the node suites was here too**, which is
 worth its own paragraph because it is now three passes in a row. `check_invariants.php`,
 `check_doc_numbering.php` and `selftest_installed.php` all reported a number and anchored
 none of it. Delete the rule that keeps `json_encode` in a single module — one of the most
@@ -7034,7 +7170,7 @@ format and not under `COMPACT`.
 one. What it cost to find the last 16 was somebody pasting a version number this repo had
 already written down.
 
-### 4bh. A deprecation the lint, the suite and the new CI legs all agreed to ignore
+### 4bj. A deprecation the lint, the suite and the new CI legs all agreed to ignore
 
 Found by looking sideways at another branch rather than at the code, which is worth
 recording because it is not how any of the last three were found.
@@ -7081,7 +7217,7 @@ live code in this repo.
 
 ---
 
-### 4bi. Eight days of a green suite over a gate that had already died
+### 4bk. Eight days of a green suite over a gate that had already died
 
 `selftest_layout.php` ends with `2320 checks, 0 failed` and always did. The MySQL arm of
 CI had not reached the end of the file since **2026-08-11**, and nothing in this repo said
@@ -7128,7 +7264,7 @@ app can write, and a floor would be a second rule to be wrong about.
 
 So invariant 32, and a detector, because this class is invisible to everything else here:
 `php -l` sees a string, the suite sees green, and the container has no MySQL server to
-disagree — the same three-way blindness §4bh had, one layer down. It reads `schema.sql`
+disagree — the same three-way blindness §4bj had, one layer down. It reads `schema.sql`
 rather than `lib/schema.php`, because schema.sql is the file that builds the fixture the
 engine will answer from. Eleven probes, and the negative half is again where the care is:
 an ENUM match that respected lettercase would condemn `role = 'Admin'`, which MySQL has
@@ -7143,9 +7279,9 @@ whether the MySQL arm now *finishes*: it has been dead for eight days and roughl
 the suite's checks — every one steps 1 to 5 added — have never run against that engine at
 all. This container has no MySQL, so the run is the only place that answer exists.
 
-### 4bj. The run answers, and there were four more of the same thing behind them
+### 4bl. The run answers, and there were four more of the same thing behind them
 
-§4bi ends by saying the only place the answer exists is the run. The run came back: the
+§4bk ends by saying the only place the answer exists is the run. The run came back: the
 MySQL leg reached **check 1383** instead of dying in the first hundred, and then failed
 four more times. Every one of them is the same defect as the four before it — the suite
 asserting something that is only true where nothing enforces the schema — and every one
@@ -7169,7 +7305,7 @@ there may not write to the table it is defined on, and that write is the half wh
 survive the failure. What is under test is a `catch` block in PHP; only one engine can
 build the interleaving that reaches it.
 
-**Two were readouts asserted off the machine, which §4bg had already named as a class.**
+**Two were readouts asserted off the machine, which §4bi had already named as a class.**
 `ServerReport`'s *Database time zone* row had its note spelled inline, so the two forms it
 can take were the two engines — and the suite could only ever assert whichever one it was
 started on. It is `dbZoneNoteFor($zone)` now, the fifth seam of exactly this shape on that
@@ -7188,7 +7324,7 @@ row the check was about cannot exist there, and the check built the opposite of 
 asserted. Handed to `LoginOutcome::ok()` as a row, it covers the normalisation in code,
 which is what has to hold: a lagging install has its `canvas_elements` ENUMs widened at
 runtime, so what type a column *is* is not something this app gets to assume. Note the
-edge this sits on — §4bi's detector was deliberately built to *permit* `role = 'Admin'`,
+edge this sits on — §4bk's detector was deliberately built to *permit* `role = 'Admin'`,
 because MySQL accepts it. That was correct. Accepting a write and storing what was written
 are different questions, and only the second one a check can assert.
 
@@ -7228,9 +7364,9 @@ prediction rather than a reading: the MySQL anchor was raised to 2361 from 2348 
 engine-only section really is 25 checks, and the arithmetic in the paragraph above
 `reportChecks()` is load-bearing rather than commentary.
 
-### 4bk. Two more engines, and what green on 5.7 was never going to say
+### 4bm. Two more engines, and what green on 5.7 was never going to say
 
-The MySQL leg went green on 5.7 (§4bj) and that is worth exactly what it says: the app
+The MySQL leg went green on 5.7 (§4bl) and that is worth exactly what it says: the app
 works on the engine the shop runs. It says nothing at all about the engine the shop is
 going to run, and that gap is not hypothetical — **MySQL 5.7 left support in October 2023**
 and the live version is 5.7.23-23, from 2018 (HANDOFF §7). This is the one version on the
@@ -7239,7 +7375,7 @@ matrix whose replacement is not a question of if.
 Nothing in the app would notice when it happens. `ServerReport::mysqlVersionNote()` is
 silent at and above the floor by design, the same design as the PHP note beside it and for
 the same reason — a note read every time is a note learned to skip — so it fires when a
-host goes *backwards* and never when it moves on. §4bh made that observation about PHP and
+host goes *backwards* and never when it moves on. §4bj made that observation about PHP and
 answered it with two matrix legs. This is the identical hole one layer down, answered the
 same way.
 
@@ -7262,7 +7398,7 @@ PHP the shop has:
 `caching_sha2_password` where 5.7 defaults to `mysql_native_password`, and that is exactly
 what a host handing the app a newer engine will hand it. Pinning the new legs back to the
 old plugin would make them pass by testing a configuration nobody will be in — which is the
-§4be mistake in another costume, and this file has now made that one twice.
+§4bg mistake in another costume, and this file has now made that one twice.
 
 **These legs do not move the schema's target.** Same rule as the PHP legs, and it is worth
 restating because the two are easy to conflate: a green 8.4 leg says what *is* written still
@@ -7283,7 +7419,7 @@ found *by* the legs as a puzzle rather than as an answer:
   spelling is unchanged.
 
 What the legs themselves said is a reading, not a prediction, and it belongs beside them
-when it exists — the run is the authority, exactly as it was for §4bj, where the honest
+when it exists — the run is the authority, exactly as it was for §4bl, where the honest
 expectation was wrong twice in a row about how much was left. **It exists now: all five
 legs completed green on 2026-08-19**, 2362 checks and a clean rehearsal on each, against
 the `mysql:5.7`, `mysql:8.0` and `mysql:8.4` images, which reported 5.7.44, 8.0.46 and
@@ -7311,27 +7447,26 @@ here would have found it with a working 5.7 leg next to it to compare against, a
 waiting.
 
 ---
-
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
 #48 and #51 CI runs everything below except the two things that need a browser or
 a copy of live data. It runs against SQLite and a real MySQL service, over five
 combinations — PHP 8.2, 8.3 and 8.4 on MySQL 5.7, plus MySQL 8.0 and 8.4 on PHP 8.2
-(§4bk). Deliberately not the product of the two axes: PHP moves against the engine
+(§4bm). Deliberately not the product of the two axes: PHP moves against the engine
 the shop has, the engine moves against the PHP the shop has, and a leg nobody can
 name a question for is not worth its minutes. The node suites are a sixth job rather
 than a step on each leg — they run no PHP, so a version matrix would ask them the same
 question five times. **"Runs" is a claim with a date on it, and this paragraph was
 wrong about it for eight days**: the MySQL arm had not reached the end of the suite
 since 2026-08-11, and neither it nor the rehearsal step underneath it had completed
-a run (§4bi). Invariant 32 is what a local gate can say about that arm; whether it
-finishes is only ever answered by the run. As of §4bj the leg reaches check 1383 rather
+a run (§4bk). Invariant 32 is what a local gate can say about that arm; whether it
+finishes is only ever answered by the run. As of §4bl the leg reaches check 1383 rather
 than the first hundred, four more defects of the same class have been fixed behind the
 fatal that was hiding them, **and on 2026-08-19 the whole gate completed green for the
 first time since 11 August** — 2361 checks on MySQL and a clean rehearsal, on 8.2, 8.3 and
 8.4. The two engine legs were added the same day and completed green on the first run
-(§4bk), so the figure above is now 2362 across all five. The claim has a date again. Keep
+(§4bm), so the figure above is now 2362 across all five. The claim has a date again. Keep
 giving it one. That 8.2 is now also the repo's declared floor — the store owner
 stated the host runs it (§4k) — so the pin enforces the target rather than merely
 accepting everything the target forbids. As of 2026-08-11 it is **observed** rather than
@@ -7360,11 +7495,11 @@ php tools/selftest_installed.php         # the same suite as a real install on a
                                          # server, on two axes. What the shop chose —
                                          # branded, live-like, damaged — because the plain
                                          # run has only ever seen a checkout with no
-                                         # `branding_config.php`, which is no shop (§4be).
+                                         # `branding_config.php`, which is no shop (§4bg).
                                          # And what the machine was set to — a generous
                                          # host, a tight one, one showing errors — because
                                          # the four readouts that describe a server had
-                                         # one form here and the other on none (§4bg)
+                                         # one form here and the other on none (§4bi)
 node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
                                          # that has only what a read-only page emits
 node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an
@@ -7381,11 +7516,18 @@ node tools/selftest_builder_undo.js      # and under the fourth: the last thing 
                                          # not what they meant. Round-trips the canvas through
                                          # snapshot and restore, and drives every mutating
                                          # control to prove each one leaves a step
-node tools/selftest_builder_brands.js    # and under the fifth: an admin deciding which
+node tools/selftest_builder_table.js     # and under the fifth: the data is not this
+                                         # app's. A .csv somebody else wrote, dropped into
+                                         # Edit Table — quoted commas, a semicolon file,
+                                         # a header row naming columns this app has no
+                                         # style for, the drop that must not navigate the
+                                         # tab away from an unpublished canvas, and every
+                                         # editing control still working afterwards (§4az)
+node tools/selftest_builder_brands.js    # and under the sixth: an admin deciding which
                                          # venue this sign belongs to. The switch repaints
                                          # and sends nothing, the palette is offered and
                                          # enforced nowhere, and Publish is what writes it
-node tools/selftest_builder_theme.js     # and under the sixth: somebody changing a setting
+node tools/selftest_builder_theme.js     # and under the seventh: somebody changing a setting
                                          # about *themselves* with unpublished work on the
                                          # canvas. Holds the canvas nodes by identity across
                                          # the switch, and drives the save that fails
@@ -7419,6 +7561,71 @@ On MySQL the fixture is built by running `schema.sql`, the `FOR UPDATE` stub is
 gone, and twenty-three further checks run that SQLite cannot be asked — see §4aa.
 Eight of those are the publish collision (§4ab), which needs two database sessions
 and so cannot exist on an in-memory fixture at all.
+
+### Getting a MySQL to point at
+
+**This is CI's leg, and a leg only a machine ever runs is one that can be red for a
+week.** It was — from 2026-08-11, stopping after 593 checks, with every local gate
+green (invariant 32). Invariant 32 is the answer to *catching that class without a
+server*; this is the answer to *not needing to*. Neither replaces the other, and this
+one is a person choosing to run something, which is why it is written down rather than
+gated.
+
+**Run MySQL itself, not a MySQL-family server.** The tarball needs no container, no
+package manager and no root daemon, and it is the version CI runs. Unpack it **outside
+the repo** — it is about 5 GB unpacked and a server tree inside the working copy turns
+`git status` into a haystack:
+
+```
+cd /some/scratch/dir
+curl -sSLO https://cdn.mysql.com/Downloads/MySQL-5.7/mysql-5.7.44-linux-glibc2.12-x86_64.tar.gz
+tar xzf mysql-5.7.44-linux-glibc2.12-x86_64.tar.gz && mv mysql-5.7.44-* my57
+apt-get install -y libaio1t64 && ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 \
+                                        /usr/lib/x86_64-linux-gnu/libaio.so.1
+my57/bin/mysqld --no-defaults --initialize-insecure --user=root \
+                --basedir="$PWD/my57" --datadir="$PWD/my57data"
+my57/bin/mysqld --no-defaults --user=root --basedir="$PWD/my57" \
+                --datadir="$PWD/my57data" --port=3307 --socket="$PWD/my57.sock" &
+mysql -h 127.0.0.1 -P 3307 -uroot -e "CREATE DATABASE lbm_selftest CHARACTER SET utf8mb4"
+```
+
+Four details, each of which cost something the first time:
+
+- **`--basedir` and `--datadir` are absolute on purpose.** A relative `--datadir` is
+  resolved against the *basedir*, not the working directory, so `--datadir=my57data`
+  silently creates `my57/my57data` and the next command cannot find it. Nothing warns.
+- **`--no-defaults` is load-bearing.** It skips any `my.cnf` the host already has, which
+  is what leaves `sql_mode` at 5.7's stock
+  `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,…` — the mode the
+  `mysql:5.7` image CI uses runs with. Strict mode is half of what invariant 32 is about,
+  so a server started with it relaxed is a rehearsal that agrees with SQLite.
+- **The bundled `bin/mysql` client wants `libncurses.so.5`** and will not start. Any
+  system client works instead; it is the **server** that has to be the real one.
+- **Port 3307 and a socket path of its own** keep it clear of anything already listening
+  on 3306 or owning `/tmp/mysql.sock`.
+
+**A MySQL-family server is not MySQL, and a green run on one is not a green leg.** The
+divergence that matters here is not obscure: MySQL refuses a `DEFAULT` on a `TEXT`
+column and always has —
+
+```
+ERROR 1101 (42000): BLOB, TEXT, GEOMETRY or JSON column 't' can't have a default value
+```
+
+— while MariaDB has *allowed* one since 10.2, and SQLite allows one too. A statement of
+that shape is therefore accepted by both engines anybody is likely to rehearse on and
+refused by the only one that decides, and no amount of local running on a fork would
+find it. (`DEFAULT NULL` is a different thing and MySQL permits it — checked here rather
+than reasoned about, since the error message names the column type and not the default.)
+If a real 5.7 is genuinely out of reach, a fork still answers *does this leg reach its
+end*; say which engine the number came from, and treat CI as the one that decides.
+
+**Observed on this tree, 2026-08-19**, against MySQL 5.7.44 installed exactly as above:
+the SQLite leg reports `2338 checks, 0 failed` and the MySQL leg `2363 checks, 0 failed`.
+The difference is 23, which is the figure §4aa states — the same claim, taken off a
+server rather than restated. Read those as a measurement of a tree on a date, not as an
+anchor to hold to: the suite grows, and a count quoted from memory after it has is how a
+number ends up being cited as evidence of something nobody re-ran.
 
 **The greps below are what `tools/check_invariants.php` automates.** They are kept here
 because the annotations are the reasoning, not because anybody has to run them.
@@ -7747,7 +7954,7 @@ grep -rn "applyHiddenLook\|hidden-badge" --include=*.php .  # builder.php only, 
 grep -rn "BRAND_ID\|CAN_PICK_BRAND\|switchBrand\|PALETTE_TARGETS\|var BRANDS" --include=*.php .
                                               # builder.php only, 18 hits. The Brand a sign wears is
                                               # *staged* in that page and written by the publish that
-                                              # carries it (§4bc), so these are page state and nothing
+                                              # carries it (§4be), so these are page state and nothing
                                               # else may hold an opinion about them. A `BRAND_ID` on
                                               # another page would be a second answer to "which venue
                                               # is this", and the two would differ the moment somebody

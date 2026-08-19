@@ -440,7 +440,7 @@ function newMysqlTestDb()
 // and `TEXT NOT NULL DEFAULT 'text'` is legal here and rejected outright there.
 // Both spellings live in these two functions instead, beside the rest of what this
 // file knows about the difference between the engines, so a test says which state it
-// wants and not how to spell it (§4bj).
+// wants and not how to spell it (§4bl).
 //
 // This matters more than a refused value does. A refused value is a failed check; SQL
 // in the wrong dialect is a **fatal**, which ends the run and takes the step under it

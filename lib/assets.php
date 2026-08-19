@@ -341,7 +341,7 @@ class AssetLibrary
      * it arrived, because a path is not markup and stripping one damages it.
      *
      * This said "the JSON a pooled carousel, table or marquee row carries" until
-     * §4bj, and no such row can exist: `assets.type` offers three members and the
+     * §4bl, and no such row can exist: `assets.type` offers three members and the
      * Builder marks those three block types `pool: false`, because what they hold is
      * the block's own settings rather than a piece of content anybody would reuse.
      */

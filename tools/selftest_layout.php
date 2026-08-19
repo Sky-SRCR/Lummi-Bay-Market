@@ -1802,7 +1802,7 @@ checkSame('image', $nBrands->forId($nSalmon->id())->backgroundType(), 'a Brand c
 // because on the engine the shop runs the column cannot hold it: `bg_type` is an ENUM,
 // strict mode has been MySQL's default since 5.7, and that UPDATE is error 1265 — a
 // thrown PDOException rather than a stored value, which took the whole MySQL leg down
-// and the rehearsal step under it with it (§4bi). What this check is about is the
+// and the rehearsal step under it with it (§4bk). What this check is about is the
 // reader, and the reader takes a row.
 checkSame('color', (new Brand(['bg_type' => 'nonsense']))->backgroundType(),
           'and anything that is not the word image reads as a colour, never as a third kind');
@@ -2296,7 +2296,7 @@ date_default_timezone_set($tzWas);
 // an assignment against its members through the column's collation — `'Admin'` is
 // stored as `admin`, so the row this check is about cannot exist on the shop's
 // engine, and the version that wrote it there asserted the opposite of what it
-// built (§4bj). That folding is a second defence and deliberately not the one under
+// built (§4bl). That folding is a second defence and deliberately not the one under
 // test: a lagging install has its `canvas_elements` ENUMs widened at runtime, so
 // what type a column *is* is not something this app gets to assume, and the
 // normalisation in code is what has to hold either way.
@@ -2591,7 +2591,7 @@ check(abs(strtotime($stamp) - time()) > 3600,
       'read without the UTC suffix that same string is hours out — the line that got forgotten');
 checkSame(0, StoreClock::epochOf('not a date'), 'a stamp that will not read is 0, not a warning');
 checkSame(0, StoreClock::epochOf('0000-00-00 00:00:00'),
-          'and so is the zero date, which reads as year zero rather than failing (§4bi)');
+          'and so is the zero date, which reads as year zero rather than failing (§4bk)');
 checkSame(0, StoreClock::epochOf('0000-00-00'), 'in either of the two shapes MySQL writes it');
 checkSame(0, StoreClock::epochOf(''),           'and neither is an empty one');
 checkSame(0, StoreClock::epochOf(null),         'nor a null column');
@@ -2641,20 +2641,40 @@ $pdo   = newTestDb();
 $store = newTestDisplayStore($pdo);
 $zoned = makeTestDisplay($pdo, 'zoned', 'Zoned');
 
+// Two questions, and they used to be one check that was both flaky and weak. Comparing
+// takenAtLabel() to labelForEpoch(time()) reads the clock a *second* time, so a claim
+// and an assertion landing either side of a minute failed for a reason that has nothing
+// to do with zones — which is what it did on 2026-08-19, once the MySQL leg was running
+// far enough to reach these lines again and they went from one job a push to six. And it
+// could not fail for the reason it was written for: both sides went through the store's
+// door, so a stamp written in the wrong frame and read in the wrong frame agreed with
+// each other. That cancelling pair is the whole of #44, asserted by a check blind to it.
+//
+// So: what claimLock() *writes* is UTC, measured against a UTC reference and not a label.
+// Two checks and not one, because the first reads through epochOf() and would pass if
+// epochOf() were broken the same way; the second is the half that notices. Removing
+// either leaves the cancelling pair invisible again — which is how it got here.
 $store->claimLock($zoned, 1);
-$held = $store->forId($zoned->id())->lockState();
-checkSame(StoreClock::labelForEpoch(time(), 'g:ia'), $held->takenAtLabel(),
-          'the edit-lock banner says the time it is where the sign is');
-checkMentions($store->forId($zoned->id())->editingSentence(),
-              'since ' . StoreClock::labelForEpoch(time(), 'g:ia'),
-              'and so does the sentence a refused publish prints');
+$takenAt = $pdo->query("SELECT lock_taken_at FROM displays WHERE id = " . $zoned->id())->fetchColumn();
+check(abs(StoreClock::epochOf($takenAt) - time()) <= 5,
+      'claiming an edit lock records the moment in UTC, whatever zone the server is on');
+check(abs(strtotime((string)$takenAt) - time()) > 3600,
+      'so that same stamp read as local time is hours out — the banner\'s half of #44');
 
-// Fix the stamp to a known instant rather than "now", so the assertion is about the
-// conversion and not about the two calls landing in the same minute.
+// And what the two callers *say* about it is the store's zone, measured against a known
+// instant so the assertion is about the conversion rather than about two calls landing
+// in the same minute.
 $pdo->prepare("UPDATE displays SET lock_taken_at = ? WHERE id = ?")
     ->execute([$instant, $zoned->id()]);
 checkSame(StoreClock::label($instant, 'g:ia'), $store->forId($zoned->id())->lockState()->takenAtLabel(),
           'a lock taken at 21:15 UTC is a lock taken at the store\'s own hour on the shop floor');
+// The store's zone through the door rather than the literal `2:15pm` main wrote here:
+// this suite now runs as a configured install (§4bg), so the zone is the install's and
+// not this checkout's. `label()` itself is still pinned to a literal two blocks up, so
+// the anchor did not move — it moved to where the zone is known.
+checkMentions($store->forId($zoned->id())->editingSentence(),
+              'since ' . StoreClock::label($instant, 'g:ia'),
+              'and so does the sentence a refused publish prints');
 
 // ---- The publish stamp was the third clock ---------------------------------------
 // last_published_at was written with CURRENT_TIMESTAMP, which is MySQL's *session*
@@ -2680,7 +2700,7 @@ $pdo->prepare("UPDATE displays SET last_published_at = ?, last_published_by = 1 
 checkSame('sky, ' . StoreClock::label($instant, 'n/j/y g:ia'),
           $store->forId($zoned->id())->lastPublishDescription(),
           'and the refusal names the moment in the store\'s zone, year and all');
-// Handed to the reader as a row for the Brand's reason one column along (§4bi): a
+// Handed to the reader as a row for the Brand's reason one column along (§4bk): a
 // DATETIME will not hold 'nonsense' on MySQL — strict mode raises 1292 and the whole run
 // stops here — and `lastPublishDescription()` reads a row rather than a database, so the
 // state this check is about does not need the column's permission to exist.
@@ -2770,7 +2790,7 @@ checkSame('', $tzReport['Database time zone'][1],
 // Seamed for the same reason `phpZoneNoteFor()` above it is, and the two forms this
 // one had were the two engines: spelled inline, the row could only ever be asserted
 // against whichever one the suite was started on, and the MySQL leg then failed on
-// the value the SQLite leg had written down as correct (§4bj).
+// the value the SQLite leg had written down as correct (§4bl).
 checkSame('', ServerReport::dbZoneNoteFor('not applicable'),
           'a database with no session zone at all has nothing to say about one');
 checkSame('', ServerReport::dbZoneNoteFor('+00:00'),
@@ -2787,7 +2807,7 @@ check(strpos($dbZoneWarn, 'Nothing a sign shows') !== false,
       'together with what is not affected, because a sign is what this app is for');
 check(ServerReport::dbZoneNoteFor('America/Chicago') !== '',
       'a named zone that is not UTC is the same refusal by another spelling');
-// The `trim()` inside the predicate, which survived §4bj's sweep. MySQL does not pad
+// The `trim()` inside the predicate, which survived §4bl's sweep. MySQL does not pad
 // what it answers to `@@session.time_zone`, so the line is insurance rather than a
 // path — but this is a public seam now, and one check is cheaper than the paragraph
 // explaining why the line is allowed to be untested.
@@ -3195,7 +3215,7 @@ checkSame(false, $res->isOk(), 'and is never reported as a save');
 // of the types that carry a block's settings rather than a piece of content. Two
 // comments in this app say those rows exist and the schema and the Builder say they
 // cannot, and the suite had been asserting the wrong pair for as long as SQLite was
-// the only engine it ran on, since SQLite has no ENUM to refuse anything (§4bj).
+// the only engine it ran on, since SQLite has no ENUM to refuse anything (§4bl).
 $videoId = $library->pool('video', 'uploads/deli-loop.mp4');
 check($videoId > 0, 'publishing a video block that carries its own path pools it');
 $res = $library->update($videoId, 'Deli loop', 'uploads/deli-loop-v2.mp4');
@@ -4944,7 +4964,7 @@ checkMentions($status['Alerts go to'][1], 'nobody will be told',
 // that — so the two forms of this row are each produced by a real process.
 //
 // Stated as the invariant and not as this machine's answer. Predicting the word from
-// `ini_get('display_errors')` here would be the §4be mistake in miniature — and worse
+// `ini_get('display_errors')` here would be the §4bg mistake in miniature — and worse
 // than usual, because `ini_get` answers the string 'Off' for a flag that is off, which
 // is truthy, so the prediction would have been *wrong* on a host that spells it that
 // way and right on this one, which spells it ''.
@@ -5477,7 +5497,7 @@ checkSame('#1a1a2e', $blankBg->query("SELECT bg_val FROM displays")->fetchColumn
 // (1442), which is the half that has to survive the failure, and its second
 // connection cannot be made to interleave *inside* a statement. What is under test
 // is a catch block in PHP, identical on both engines; what only one engine can build
-// is the interleaving that reaches it (§4bj).
+// is the interleaving that reaches it (§4bl).
 $racePdo = newSqliteTestDb();
 $racePdo->exec("CREATE TRIGGER seed_race BEFORE INSERT ON displays BEGIN
     INSERT INTO displays (tag,title,canvas_width,canvas_height,brand_id)
@@ -7893,7 +7913,7 @@ checkSame(SiteChrome::configColor('nav_bg'), SiteChrome::navBg(),
 // Four characters, not the eight 'darkblue' would take: the column is `VARCHAR(7)`, so
 // MySQL's strict mode refuses the longer name outright (error 1406) and the state this
 // check is about never arrives. A colour that cannot be read has to *fit* the column
-// before anybody can be shown the wrong thing by it (§4bi). 'gold' is still a colour a
+// before anybody can be shown the wrong thing by it (§4bk). 'gold' is still a colour a
 // browser would happily paint, which is the property that matters here.
 $tPdo->prepare("UPDATE workspace_themes SET nav_bg = 'gold', panel = '' WHERE id = ?")
      ->execute([$tOne->id()]);
@@ -7921,7 +7941,7 @@ $tPdo->prepare("UPDATE workspace_themes SET nav_bg = '#101820', panel = '#1a252f
 // fallback to either passes. On the live install they are a dark red and a dark slate.
 // So the layering is asserted in a process built to have both, which is the same
 // machinery `StoreClock`'s absent-setting branch uses and the only way anything here
-// reaches this line at all: mutation moved it and every check lived (§4bd).
+// reaches this line at all: mutation moved it and every check lived (§4bf).
 checkSame('#8b0000|#123456|' . SiteChrome::DEFAULTS['work_area'], inFreshProcess('
         define("BRAND_NAV_BG", "#8b0000");
         require LBM_ROOT . "/lib/workspace_themes.php";
@@ -8170,7 +8190,7 @@ checkSame(true, $tThrew,
 // finds nothing.
 $tAuditTheme = $tStore->insert(['name' => 'Night shift']);
 check($tAuditTheme instanceof WorkspaceTheme, 'a theme for the audit to find something in');
-// Six characters rather than ten, for the `VARCHAR(7)` reason above (§4bi).
+// Six characters rather than ten, for the `VARCHAR(7)` reason above (§4bk).
 $tPdo->prepare("UPDATE workspace_themes SET status_warn = 'tomato' WHERE id = ?")
      ->execute([$tAuditTheme->id()]);
 $tAudit = new ColorAudit(new DisplayStore($tPdo), new LayoutStore($tPdo, new DisplayStore($tPdo)),
@@ -8507,12 +8527,12 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Step 5 moved it from 2068 to 2257, its mutation runs added the eleven checks its
 // survivors asked for (2268), and changing which layer an unusable theme colour falls
 // through to added three more, two of them in a subprocess. Running the suite as an
-// install that has actually been set up (§4be) then rewrote seven checks that were
+// install that has actually been set up (§4bg) then rewrote seven checks that were
 // asserting this checkout's own configuration and added two that say what the rewrites
 // gave up. None of that touched the engine-only section, so the count below it is still
 // 25 — read, not assumed, which is the whole of the paragraph above.
 //
-// Then §4bg: the four readouts that describe *the machine* and had no seam between them
+// Then §4bi: the four readouts that describe *the machine* and had no seam between them
 // and it — the PHP time zone note, the upload ceiling note, `ErrorPolicy::status()` in
 // its entirety, and the log's request tag. 31 checks, all engine-independent, so 25 is
 // still the difference and 2304 was what that run reported.
@@ -8522,15 +8542,15 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // eight days earlier without anything being done with it. 14 more checks, all through the
 // seam and so all engine-independent again: 2320, and 25 is still the difference.
 //
-// Then §4bi, which is the first change to this number the MySQL arm had a vote in: three
+// Then §4bk, which is the first change to this number the MySQL arm had a vote in: three
 // checks over the zero date, all engine-independent, and four writes this file had been
 // making that MySQL will not accept — two of them replaced by handing the reader a row
 // instead of a column, which is where they belonged. 2323, and 25 is still the
 // difference, because nothing here added or removed a check inside that section.
 //
-// Then §4bj, which is the first change to this number that a *failing* MySQL run asked
+// Then §4bl, which is the first change to this number that a *failing* MySQL run asked
 // for rather than a local reading: four more of the same class, found only once the four
-// in §4bi stopped killing the run before it reached them. Two engine-dependent readouts
+// in §4bk stopped killing the run before it reached them. Two engine-dependent readouts
 // went through seams and lost the value they were asserting off the machine, the library
 // block moved onto the type the column actually offers and gained the schema-and-Builder
 // agreement that says why, and the role check was handed a row. 13 net, none of them
@@ -8538,7 +8558,7 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // is the first entry in this paragraph the MySQL arm has *confirmed* rather than been
 // predicted at: run 32286293398 reported 2361 having never been asked locally.
 //
-// Then one more, in the same breath as §4bk: the `trim()` in `isUtcOffset()` survived the
+// Then one more, in the same breath as §4bm: the `trim()` in `isUtcOffset()` survived the
 // sweep, and a public seam is worth a check rather than a note about why a line is
 // allowed to be untested. 25 is still the difference.
 //
@@ -8548,4 +8568,12 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // fix over the same file, so the merge's whole diff here is one comment. Adding the two
 // deltas would have claimed checks that do not exist. The run said 2337, unchanged, and
 // the engine-only section is untouched, so the MySQL figure stays its 25 above.
-reportChecks(testIsMysql() ? 2362 : 2337);
+//
+// **Then the merge with `main` that carried #16 across, and this time one moved.** Same
+// file, same block, the same class of fix again — main had rewritten the edit-lock stamp
+// checks this branch had already touched (§4ba there), so git conflicted rather than
+// merging quietly. What survives the resolution is main's split of the write from the
+// read plus this branch's zone-through-the-door form, and that is one check more than
+// either side had alone: main's `editingSentence()` assertion had no counterpart here.
+// Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
+reportChecks(testIsMysql() ? 2363 : 2338);

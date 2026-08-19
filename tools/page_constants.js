@@ -12,7 +12,7 @@
 //
 // What that cost, measured rather than guessed: setting all twenty-one to what a real
 // page carries and re-running all eight suites changes not one check. So the zeroes
-// were never *wrong* — unlike the seven checks §4be found on the PHP side — but they
+// were never *wrong* — unlike the seven checks §4bg found on the PHP side — but they
 // were never *seen* either, and two of them were doing damage:
 //
 //   LOCK_LAPSE_SECONDS and LOCK_WARN_SECONDS were 0 in all eight. The idle warning is

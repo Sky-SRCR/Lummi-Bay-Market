@@ -597,7 +597,7 @@ checkSame(DAY.id, THEME_ID, 'and leaves the page where it was');
 
     // Anchored, for the reason `selftest_layout.php` anchors its own: without a
     // number here, deleting half this file still reports a clean run. Four of the
-    // eight node suites carried one and four did not (§4bf).
+    // eight node suites carried one and four did not (§4bh).
     const expected = 110;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected '

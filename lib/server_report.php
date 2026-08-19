@@ -94,7 +94,7 @@ class ServerReport
     // deprecated and every request that builds this report emits a notice into the
     // error log. The explicit form is understood back to 7.1, so this costs nothing
     // below the floor and is one fewer thing between here and the next version.
-    // It is invariant 33 now (§4bh), which is what stops the next one being found by
+    // It is invariant 33 now (§4bj), which is what stops the next one being found by
     // compiling the tree by hand — and the sentence above is the reason it is a rule.
     public function __construct(PDO $pdo, ?array $server = null)
     {
@@ -161,7 +161,7 @@ class ServerReport
         // `created_at` comes from, PHP cannot convert what it did not write, and until
         // `db_connect.php` set it there was no screen anywhere that showed it. The note
         // is seamed rather than spelled here, because the value is read off the
-        // connection and its two forms are the two engines (§4bj) — and the question
+        // connection and its two forms are the two engines (§4bl) — and the question
         // it answers is whether the stamps are in UTC, not whether the `SET` ran.
         $dbZone = $this->databaseTimeZone();
         $out['Database time zone'] = [$dbZone, self::dbZoneNoteFor($dbZone)];
@@ -524,7 +524,7 @@ class ServerReport
      * card has one: the value is read off the machine, so spelled inline it has one
      * form on whatever ran the suite and the other form on nothing — and here the
      * two forms are the two engines, which is why the suite could only ever assert
-     * whichever one it happened to be running against (§4bj).
+     * whichever one it happened to be running against (§4bl).
      *
      * `SYSTEM (UTC)` is the case that made this more than tidiness. It means the
      * `SET time_zone` in `db_connect.php` did not take *and* the host's own zone is

@@ -521,7 +521,7 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
 
     section('The canvas fills the Screen without distorting a price');
 
-    // The one piece of geometry on the page a customer looks at, and until §4bf nothing
+    // The one piece of geometry on the page a customer looks at, and until §4bh nothing
     // here could assert it: CANVAS_W and CANVAS_H are interpolated by PHP, this suite
     // stripped that to the literal `0`, and every scale it computed was
     // `1920 / 0` — Infinity, with NaN margins. Nothing threw, so nothing noticed.
@@ -577,7 +577,7 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
 
     // Anchored, for the reason `selftest_layout.php` anchors its own: without a
     // number here, deleting half this file still reports a clean run. Four of the
-    // eight node suites carried one and four did not (§4bf).
+    // eight node suites carried one and four did not (§4bh).
     const expected = 179;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected '
