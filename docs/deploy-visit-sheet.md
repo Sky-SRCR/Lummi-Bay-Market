@@ -144,7 +144,7 @@ announces itself and the app comes up looking fine.
 - [ ] **C.3 (step 4a) — `php tools/audit_colors.php`**, read-only, pointed at the live
   database. After convergence, because it reads `displays`.
 - [ ] **C.4 — The clear answer is `Every stored colour reads. Nothing to do.`** It
-  belongs on this visit because of C.7: a `font_color` nobody can read makes its Display
+  belongs on this visit because of D.3: a `font_color` nobody can read makes its Display
   **refuse every publish from here on, by name** (§4ac). Better to learn it now than
   standing at the sign. Fixes are a person picking colours in the Builder and Settings.
 - [ ] **C.5 — Settings → This Server, the database's session zone.** Anything other than
@@ -254,12 +254,12 @@ free for the "somebody else can take it" half of step 20.
 ### The timeline
 
 ```
-T+0    F.1–F.5   grants set up in A, B lands in its Display
-T+0    F.6       ── start the idle timer: B opens D2, touches nothing ──
-T+0    F.7–F.24  everything else, on D1, while D2 sits there
-T+13   F.25–F.27 the warning bar on D2, and Keep editing
-T+15   F.28–F.30 the release, and A takes D2
-T+15   F.31–F.32 leaving releases at once
+T+0    F.1–F.5    grants set up in A, B lands in its Display
+T+0    F.6        ── start the idle timer: B opens D2, touches nothing ──
+T+0    F.7–F.28   everything else, on D1, while D2 just sits there
+T+13   F.29–F.30  the warning bar on D2, and Keep editing
+T+15   F.31–F.33  the release, and the other browser takes D2
+T+15   F.34       leaving releases at once
 ```
 
 - [ ] **F.1 (step 15) — Add a `basic` account.** Sign in as it in Browser B.
