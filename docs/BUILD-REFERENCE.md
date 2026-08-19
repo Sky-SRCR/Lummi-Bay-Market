@@ -7232,9 +7232,20 @@ found *by* the legs as a puzzle rather than as an answer:
   spelling is unchanged.
 
 What the legs themselves said is a reading, not a prediction, and it belongs beside them
-when it exists: at the time of writing they have been added and not yet run. The run is the
-authority, exactly as it was for §4bj — where the honest expectation was wrong twice in a
-row about how much was left.
+when it exists — the run is the authority, exactly as it was for §4bj, where the honest
+expectation was wrong twice in a row about how much was left. **It exists now: all five
+legs completed green on 2026-08-19**, 2362 checks and a clean rehearsal on each, against
+MySQL 5.7.44, 8.0.46 and 8.4.11. Both new engines took the schema, the writes and the
+convergence plan without a single change to the app — which is the answer the two static
+checks above predicted and is worth having *from a run* rather than from a reading of the
+release notes, because the two checks above are only the changes somebody thought to look
+up. Nothing was pinned or relaxed to get there, so the two legs mean what they say.
+
+The one thing to hold onto is what a green 8.0 leg *cost*: nothing, this time. That is the
+argument for adding a leg while the app is known-good on the engine beside it rather than
+on the afternoon a host moves — the same run that would have found a real incompatibility
+here would have found it with a working 5.7 leg next to it to compare against, and no shop
+waiting.
 
 ---
 
@@ -7254,7 +7265,9 @@ finishes is only ever answered by the run. As of §4bj the leg reaches check 138
 than the first hundred, four more defects of the same class have been fixed behind the
 fatal that was hiding them, **and on 2026-08-19 the whole gate completed green for the
 first time since 11 August** — 2361 checks on MySQL and a clean rehearsal, on 8.2, 8.3 and
-8.4. The claim has a date again. Keep giving it one. That 8.2 is now also the repo's declared floor — the store owner
+8.4. The two engine legs were added the same day and completed green on the first run
+(§4bk), so the figure above is now 2362 across all five. The claim has a date again. Keep
+giving it one. That 8.2 is now also the repo's declared floor — the store owner
 stated the host runs it (§4k) — so the pin enforces the target rather than merely
 accepting everything the target forbids. As of 2026-08-11 it is **observed** rather than
 stated: 8.2.33 on the runtime card and `ea-php82` pinned to `srcresort.com` in cPanel
