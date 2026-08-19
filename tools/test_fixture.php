@@ -584,7 +584,7 @@ function schemaFactsFrom(array $shape)
  * even on a MySQL run — which is checked below rather than left as a convention,
  * because the failure otherwise is a confusing one about ATTACH.
  */
-function fakeCatalogue(array $shape, PDO $onto = null)
+function fakeCatalogue(array $shape, ?PDO $onto = null)
 {
     if ($onto !== null && $onto->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite') {
         throw new RuntimeException(
