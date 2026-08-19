@@ -33,6 +33,17 @@
  * Not a silent pass when it cannot answer: without opcache there is no way to compile
  * without running, so it says so and exits 1 rather than sweeping nothing and printing
  * a green line.
+ *
+ * And one thing the first run on CI had to teach it: **not everything on the child's
+ * stderr is about the file**. The runner's PHP starts JIT, something on that image
+ * overrides `zend_execute_ex()`, and every child printed `JIT is incompatible with third
+ * party extensions ... in Unknown on line 0` before it compiled a line. Read as findings
+ * that was 49 failures with one cause and none of them in the tree — and it was green
+ * here, where the engine is quiet, which is this tool's own hole in the shape of the one
+ * it exists for. Two answers: JIT is turned off in the child, because a sweep that
+ * compiles and never executes does not use it; and whatever a host still says with
+ * nothing to compile is measured once and subtracted, so a startup line is reported as
+ * the engine's rather than a file's.
  */
 
 $root = dirname(__DIR__);
@@ -57,15 +68,27 @@ if (childErrors($root . '/tools/check_deprecations.php') === null) {
     exit(1);
 }
 
+// What this engine says when there is nothing to say. Everything below is read against
+// it, so a line the host prints at startup is never reported as a fact about a file.
+$baseline = childBaseline();
+if ($baseline) {
+    echo "  Note: this engine says the following whatever it is compiling, so it is read\n";
+    echo "        as the host's and not counted against any file:\n";
+    foreach ($baseline as $line) { echo "          $line\n"; }
+    echo "\n";
+}
+
 $flagged = 0;
 $swept   = 0;
 foreach (phpFiles($root) as $rel) {
     $swept++;
     $errors = childErrors($root . '/' . $rel);
-    if ($errors === null || $errors === '') { continue; }
+    if ($errors === null) { continue; }
+    $lines = array_values(array_diff(errorLines($errors), $baseline));
+    if (!$lines) { continue; }
     $flagged++;
     echo "  FAIL $rel\n";
-    foreach (explode("\n", trim($errors)) as $line) { echo '       ' . trim($line) . "\n"; }
+    foreach ($lines as $line) { echo '       ' . $line . "\n"; }
 }
 
 echo "\n$swept files compiled on PHP " . PHP_VERSION . ", $flagged with something to say\n";
@@ -90,6 +113,10 @@ function childErrors($path)
     $args = [
         $php,
         '-d', 'opcache.enable_cli=1',
+        // Off because this sweep compiles and never executes, so the one thing JIT is for
+        // cannot happen here — and its startup has an opinion about the other extensions
+        // on the host, which arrives on the same stderr as the answer being read.
+        '-d', 'opcache.jit=disable',
         '-d', 'error_reporting=' . E_ALL,
         '-d', 'display_errors=stderr',
         '-d', 'log_errors=0',
@@ -115,6 +142,41 @@ function childErrors($path)
 
     if ($code === 3) { return null; }
     return $stderr;
+}
+
+/**
+ * The lines this engine writes while compiling a file that has nothing wrong with it —
+ * its startup noise, which is not about any file in this tree.
+ *
+ * Subtracting exact lines is safe in the direction that matters: a line about a file
+ * names the file and a line number, so it cannot equal one the engine produced with no
+ * file in hand. A host that prints something *only* while compiling a real file is
+ * therefore still reported, which is the whole point.
+ */
+function childBaseline()
+{
+    $empty = sys_get_temp_dir() . '/lbm_deprecations_baseline_' . getmypid() . '.php';
+    if (file_put_contents($empty, "<?php\n") === false) {
+        fwrite(STDERR, "FAIL could not write $empty, and without a file that has nothing to\n"
+                     . "     say there is no way to tell this engine's startup lines from a\n"
+                     . "     finding — which is 49 failures with one cause and none of them\n"
+                     . "     in the tree.\n");
+        exit(1);
+    }
+    $errors = childErrors($empty);
+    unlink($empty);
+    return errorLines((string) $errors);
+}
+
+/** One trimmed line per thing the engine had to say, blanks dropped. */
+function errorLines($errors)
+{
+    $lines = [];
+    foreach (explode("\n", trim($errors)) as $line) {
+        $line = trim($line);
+        if ($line !== '') { $lines[] = $line; }
+    }
+    return $lines;
 }
 
 /** Every .php file under $root, vendor and .git excluded, in a stable order. */

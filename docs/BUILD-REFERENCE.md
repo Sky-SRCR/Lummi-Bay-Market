@@ -598,6 +598,16 @@ through the app again:
     deprecations accumulate and 8.4 says everything 8.2 would. Where opcache is missing it
     refuses to sweep instead of printing a green line over nothing — there is no way to
     compile a file without also running it, and `viewer.php` running is not a check.
+    It also reads the child's stderr against a **baseline**, because its own first run on
+    CI failed all 49 files with one cause and none of them in the tree: the runner starts
+    JIT, something on that image overrides `zend_execute_ex()`, and the resulting startup
+    warning arrives on the same stderr as the answer. JIT is off in the child now — a
+    sweep that compiles and never executes has no use for it — and whatever a host still
+    says while compiling a file with nothing in it is measured once, printed as the
+    engine's, and subtracted. Subtracting exact lines is safe in the direction that
+    matters: a line about a file names the file and a line number, so it can never equal
+    one produced with no file in hand, and that was checked with a real deprecation and
+    the noise present together.
 
 ---
 
