@@ -6013,6 +6013,85 @@ the live sign is a second install with its own data, and every step applies ther
 
 ---
 
+### 4az. A price list somebody else wrote
+
+A request from the store owner on 2026-08-19: drop a `.csv` into a table block's editor
+and have it fill from the header row, the rows and the columns in the file. It is entirely in
+`builder.php` — a table's content is opaque to the server, which checks that
+`manual_content` is text under 65,535 bytes (`LayoutRules`) and nothing else — so no
+schema statement, no new SQL door, no publish path and **not one line of `viewer.php`**
+changed. What is interesting is not the CSV parsing. It is the three places where the
+obvious implementation is a defect.
+
+**A CSV's header row is not this app's header row.** `headers` in a stored table is not a
+row of labels; it is which of the seven column *styles* each column is drawn in
+(`item_title`, `price`, `section_header`, …). Copying a spreadsheet's heading line into it
+produces a table whose columns are styled `SKU` and `Notes`, which is to say styled by
+nothing. So the header row is *matched* — normalised for case, spaces and underscores,
+against the style values and the labels the modal shows — and everything it cannot match
+becomes a Plain column **and is named on screen**: `“SKU” has no style of that name here,
+so it is Plain — set the column style above if that is not what you wanted.` A header row
+half-understood in silence is #21 in another form, and the browser pass's lesson (§4ay)
+was that a page not *saying* something is exactly the category no suite here was pointed
+at.
+
+**The drop needed a guard that has nothing to do with tables.** A file dropped on a page
+that does not handle it is not a no-op — the browser navigates to it. The Builder is then
+gone, and so is every block moved since the last Publish, from a tab that is the only
+place that layout exists. So the page refuses the browser default for *any* file drag
+anywhere on it, including on a read-only Builder, which has no import and just as much of
+somebody's work on screen; it then decides separately whether it wanted the file.
+Refusing a navigation is not the same as offering a drop, and the difference is the whole
+of the next paragraph.
+
+**One place takes a file, and it is inside the table's own editor.** The drop area in Edit
+Table, and nothing else — not the canvas, and **not the table block on it either**, which
+the store owner asked for explicitly on 2026-08-19 after seeing the block version. A file
+let go anywhere else imports nothing and says where it should have gone. Which table an
+import fills is then decided by the table somebody opened, never by aim: table blocks
+stand beside each other on a sign, they overlap while one is being dragged, and a drop
+read one block wide overwrites a price list nobody was looking at. Only the drop area
+lights up, because a page that highlights is a page that has promised.
+
+**An import fills the editor; it does not replace it.** Everything the table block already
+had still works on the rows that arrive: typing over a cell, the column style dropdowns,
+the alignments, the column widths, row padding, add row, add column, delete row and delete
+column, and the two refusals that keep a table from being emptied. Nothing is stored until
+Save Table, so Cancel is the way back out of an import that read the wrong file. **Row
+padding is untouched by this change** — the import has no opinion about it, carries the
+stored value across, and the single `row_padding` field is exactly what it was.
+
+**What the import refuses, and why refusing is the whole design.** The refusals happen at
+the door, with the numbers in them: a file that is not a `.csv`, an empty one, one over
+1 MB, more than 500 rows, more than 24 columns, and a table that would exceed the 65,535
+bytes `LayoutRules` will refuse at Publish. That last one is deliberately the same number
+as the server's: the publish check is what actually protects the column, and repeating it
+here turns a refusal an hour later on a page about publishing into one over the file that
+caused it. Alignments, widths and padding are carried across from the table as it stands,
+so re-importing a corrected price list keeps the layout somebody set up by hand.
+
+**Two smaller things are worth writing down because guessing wrong on either is silent.**
+The delimiter is counted rather than assumed — Excel writes semicolons wherever the decimal
+mark is a comma, and getting it wrong is not subtle, it is one column holding the whole
+line. And a file Excel saved as plain "CSV" on a Windows machine is not UTF-8: the `é` is
+already U+FFFD by the time `FileReader` hands the text over, so there is nothing to repair
+and the note says so, naming the format that works.
+
+**The suite is the seventh node harness and the first whose input this app did not write.**
+123 checks: a quoted comma, a doubled quote, CRLF and a bare CR, a BOM, a blank line kept
+where somebody meant a spacer and the trailing one dropped, semicolons and tabs, the style
+matching, every refusal, where a file may and may not land, and then every editing control
+driven on an imported table — over a recording `document` with a stubbed `FileReader`. It
+is also the first harness here to parse the markup `builder.php` builds as a string: a
+column header cell is `th.innerHTML = '<select …>'`, and a DOM that keeps that string
+without reading it cannot answer whether `getTableEditorData()` still finds the style, the
+alignment and the width after a rebuild — which is most of what this suite is for. Mutants
+were run against it before it was believed and died by assertion (invariant 30), including
+the delimiter sniffer's tie-break, the column deletion that splices the rows, and the door
+check that keeps the canvas from falling through to the reader.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
@@ -6062,6 +6141,13 @@ node tools/selftest_builder_undo.js      # and under the fourth: the last thing 
                                          # not what they meant. Round-trips the canvas through
                                          # snapshot and restore, and drives every mutating
                                          # control to prove each one leaves a step
+node tools/selftest_builder_table.js     # and under the fifth: the data is not this
+                                         # app's. A .csv somebody else wrote, dropped into
+                                         # Edit Table — quoted commas, a semicolon file,
+                                         # a header row naming columns this app has no
+                                         # style for, the drop that must not navigate the
+                                         # tab away from an unpublished canvas, and every
+                                         # editing control still working afterwards (§4az)
 node tools/selftest_viewer.js            # viewer.php's poll loop, against a fetch this
                                          # test controls: the sign must not blank for one
                                          # dropped packet, and must not stay up for an

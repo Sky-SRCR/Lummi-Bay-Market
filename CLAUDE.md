@@ -141,6 +141,7 @@ node tools/selftest_builder_uploads.js     # if builder.php was touched
 node tools/selftest_builder_colors.js      # if builder.php was touched
 node tools/selftest_builder_editing.js     # if builder.php was touched
 node tools/selftest_builder_undo.js        # if builder.php was touched
+node tools/selftest_builder_table.js       # if builder.php was touched
 node tools/selftest_viewer.js              # if viewer.php was touched
 ```
 
@@ -202,16 +203,18 @@ block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
 sign rather than a stack trace anybody will read.
 
-The six node suites go further and *run* that JavaScript, each under a premise the
+The seven node suites go further and *run* that JavaScript, each under a premise the
 others cannot hold — a page that may not edit, an admin uploading a file, an admin
 opening a Display whose stored data is already wrong, an admin working the controls the
-inspector puts on a block, an admin taking back the last thing they did, and a Screen
-whose server has stopped answering or whose blocks have nothing in them — because the
+inspector puts on a block, an admin taking back the last thing they did, an admin
+filling a table from a file this app did not write, and a Screen whose server has
+stopped answering or whose blocks have nothing in them — because the
 defects they exist for are invisible to a parse: a lookup for a control the edit lock
 took away, a `fetch` chain with no `.catch()`, a colour the CSSOM discarded in silence
 and the publish payload then sent as black, a field a rebuild forgot to carry, a
 `.catch()` that correctly ignores a dropped packet and therefore also ignored a failure
-that was never going to stop, and a sentence written for whoever was building the
+that was never going to stop, a dropped file that navigates the tab away from an
+unpublished canvas, and a sentence written for whoever was building the
 layout, drawn on the board a customer reads prices off.
 
 - **`json_encode` is never called outside `lib/http_reply.php`.** It returns `false`,

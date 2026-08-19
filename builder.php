@@ -560,6 +560,17 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 .del-col-btn { width:100%; font-size:10px; padding:2px 4px; }
 .del-row-td  { width:32px; text-align:center; background:#0d1b24; }
 
+/* ── Table modal: the CSV drop zone ── */
+#table-csv-drop {
+    border:2px dashed #4a6278; border-radius:6px; padding:12px 14px; margin-bottom:12px;
+    background:#16212b; color:#bdc3c7; font-size:12px; text-align:center; cursor:pointer;
+}
+#table-csv-drop.drag-over { border-color:#27ae60; background:#17302a; color:#ecf0f1; }
+#table-csv-drop .csv-hint { color:#7f8c8d; font-size:11px; margin-top:3px; }
+#table-csv-note { font-size:11px; margin-top:6px; min-height:14px; }
+#table-csv-note.bad { color:#e67e22; }
+#table-csv-note.good { color:#7fb069; }
+
 /* ── Toast ── */
 #toast {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
@@ -1090,6 +1101,22 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                 px
             </label>
         </div>
+
+        <!-- CSV import. The file never leaves this browser: it is read here and
+             turned into the same rows the boxes below hold, and nothing is stored
+             until Save Table — so Cancel is the way back out of an import that read
+             the wrong file. -->
+        <div id="table-csv-drop" onclick="pickCsvFile()">
+            <strong>Drop a .csv file here</strong> to fill this table &mdash; or click to choose one
+            <div class="csv-hint">The first row names the columns. Commas, semicolons and tabs are all read.</div>
+        </div>
+        <input type="file" id="table-csv-file" accept=".csv,.tsv,.txt,text/csv" style="display:none;"
+               onchange="csvFileChosen(this)">
+        <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#bdc3c7;margin:-6px 0 10px;">
+            <input type="checkbox" id="table-csv-has-header" checked onchange="csvHeaderRowToggled()">
+            First row names the columns
+        </label>
+        <div id="table-csv-note"></div>
         <div class="table-editor-wrap">
             <table class="table-editor">
                 <thead id="table-editor-head"></thead>
@@ -2629,6 +2656,10 @@ function setupCanvas() {
     });
     document.addEventListener('keydown', handleBuilderKeydown);
     document.addEventListener('keyup',   function(e) { if (e.key === 'Shift') _shiftDown = false; });
+    // Wired on every page, read-only included: its first job is to stop a dropped
+    // file navigating this tab away from an unpublished canvas, and a page that may
+    // not edit has just as much on screen to lose.
+    setupCsvDrop();
 }
 
 /**
@@ -4431,6 +4462,394 @@ function buildTablePreview(block, data) {
     block.appendChild(preview);
 }
 
+// ---- CSV import --------------------------------------------------------------
+//
+// The file is read in this browser and never uploaded: a price list is rows, and
+// rows are what a table block already stores, so there is nothing for the server
+// to keep. That also means the import cannot half-succeed — it either fills the
+// boxes below or refuses and says why, and Cancel closes the modal over the top
+// of it either way, because nothing is stored until Save Table.
+
+var CSV_MAX_ROWS        = 500;
+var CSV_MAX_COLS        = 24;
+var CSV_FILE_MAX_BYTES  = 1024 * 1024;
+// lib/layout_rules.php refuses a longer manual_content at Publish, naming the
+// block. Refusing here as well costs one comparison and turns a refusal an hour
+// later on a page about something else into one over the file that caused it.
+var TABLE_CONTENT_MAX   = 65535;
+
+// A header name as somebody actually writes it, against the seven column styles
+// this app has. Everything is lower-cased and its underscores and dashes turned
+// into spaces before the lookup, so 'Item_Title', 'item title' and 'ITEM TITLE'
+// are one key rather than three.
+var CSV_STYLE_NAMES = {
+    'title': 'item_title', 'item': 'item_title', 'item title': 'item_title',
+    'name': 'item_title', 'item name': 'item_title', 'product': 'item_title',
+    'title 2': 'item_title_2', 'title2': 'item_title_2', 'item title 2': 'item_title_2',
+    'subtitle': 'item_title_2', 'second title': 'item_title_2',
+    'price': 'price', 'cost': 'price', 'amount': 'price',
+    'price 2': 'price_2', 'price2': 'price_2', 'second price': 'price_2',
+    'sale price': 'price_2', 'member price': 'price_2',
+    'description': 'description', 'desc': 'description', 'details': 'description',
+    'notes': 'description',
+    'section header': 'section_header', 'section': 'section_header', 'header': 'section_header',
+    'plain': 'free', 'free': 'free', 'text': 'free'
+};
+
+/** The style a CSV header name asks for, or '' for one this app has no style for. */
+function csvStyleFor(name) {
+    var key = String(name === null || name === undefined ? '' : name)
+                .toLowerCase().replace(/[_\-]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!key) { return ''; }
+    return Object.prototype.hasOwnProperty.call(CSV_STYLE_NAMES, key) ? CSV_STYLE_NAMES[key] : '';
+}
+
+/**
+ * Which character separates the fields.
+ *
+ * Excel writes a semicolon wherever the decimal separator is a comma, and a
+ * spreadsheet copied out of a browser is usually tabs. Guessing wrong is not a
+ * subtle failure — it is one column holding the whole line — so the first line
+ * is counted rather than assumed, and a comma wins a tie because that is what
+ * the extension says.
+ */
+function sniffCsvDelimiter(text) {
+    var line = String(text || '').split(/\r\n|\r|\n/)[0] || '';
+    var best = ',', bestCount = 0;
+    [',', ';', '\t'].forEach(function (d) {
+        var n = line.split(d).length - 1;
+        if (n > bestCount) { best = d; bestCount = n; }
+    });
+    return best;
+}
+
+/**
+ * A CSV file as a grid of strings.
+ *
+ * Quoted fields are the whole reason this is not `split(',')`: a price list is
+ * exactly the file with `"Sockeye, wild"` in it, and a naive split turns that
+ * one cell into two and shifts every price on the row one column left.
+ *
+ * A row of nothing but empty cells is kept where it sits — a blank line between
+ * two groups of prices is a spacer somebody meant — but trailing ones are
+ * dropped, because every spreadsheet in the world ends its file with a newline
+ * and one of those is not a row anybody typed.
+ */
+function parseCsvGrid(text) {
+    text = String(text === null || text === undefined ? '' : text);
+    if (text.charAt(0) === '\uFEFF') { text = text.slice(1); }   // Excel's UTF-8 mark
+    var delim = sniffCsvDelimiter(text);
+    var rows = [], row = [], field = '', quoted = false, i = 0;
+
+    while (i < text.length) {
+        var ch = text.charAt(i);
+        if (quoted) {
+            if (ch === '"') {
+                if (text.charAt(i + 1) === '"') { field += '"'; i += 2; continue; }
+                quoted = false; i++; continue;
+            }
+            field += ch; i++; continue;
+        }
+        if (ch === '"' && field === '') { quoted = true; i++; continue; }
+        if (ch === delim) { row.push(field); field = ''; i++; continue; }
+        if (ch === '\r' || ch === '\n') {
+            if (ch === '\r' && text.charAt(i + 1) === '\n') { i++; }
+            row.push(field); rows.push(row);
+            row = []; field = ''; i++; continue;
+        }
+        field += ch; i++;
+    }
+    row.push(field); rows.push(row);
+
+    while (rows.length && rows[rows.length - 1].every(function (c) { return c === ''; })) { rows.pop(); }
+    return rows;
+}
+
+/** How many bytes this string is once stored, which is what the 64 KB limit counts. */
+function utf8Bytes(str) {
+    str = String(str === null || str === undefined ? '' : str);
+    var n = 0;
+    for (var i = 0; i < str.length; i++) {
+        var c = str.charCodeAt(i);
+        if (c < 0x80)                    { n += 1; }
+        else if (c < 0x800)              { n += 2; }
+        else if (c >= 0xD800 && c <= 0xDBFF && i + 1 < str.length) { n += 4; i++; }
+        else                             { n += 3; }
+    }
+    return n;
+}
+
+/** 'a', 'a and b', 'a, b and c' — the list in a sentence somebody reads. */
+function csvNameList(list) {
+    var names = (list || []).map(function (n) { return '“' + n + '”'; });
+    if (names.length === 0) { return ''; }
+    if (names.length === 1) { return names[0]; }
+    return names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+}
+
+/**
+ * A parsed grid as this block's stored shape, or a refusal saying why not.
+ *
+ * The column *styles* are the interesting half. `headers` is not a row of labels
+ * — it is which of the seven styles each column is drawn in — so a CSV's header
+ * row cannot be copied into it. It is matched by name, anything unrecognised
+ * becomes a Plain column, and the caller says which was which: a header row
+ * quietly half-understood is the same class of defect as a colour silently
+ * substituted (#21).
+ *
+ * Alignments and widths are carried across from the table as it stands, so
+ * re-importing a corrected price list keeps the layout somebody set up by hand.
+ * So is the row padding, which the import has no opinion about at all.
+ */
+function csvGridToTable(grid, hasHeader, current) {
+    grid    = grid || [];
+    current = current || {};
+    var names = hasHeader ? (grid[0] || []) : [];
+    var body  = hasHeader ? grid.slice(1)   : grid.slice(0);
+
+    var cols = hasHeader ? names.length : 0;
+    body.forEach(function (r) { if (r.length > cols) { cols = r.length; } });
+
+    if (body.length === 0 || cols === 0) {
+        return { refusal: hasHeader
+            ? 'That file has a header row and no rows under it, so there was nothing to import.'
+            : 'That file has no rows in it, so there was nothing to import.' };
+    }
+    if (cols > CSV_MAX_COLS) {
+        return { refusal: 'That file has ' + cols + ' columns and a table here holds at most '
+                        + CSV_MAX_COLS + '. Nothing was imported.' };
+    }
+    if (body.length > CSV_MAX_ROWS) {
+        return { refusal: 'That file has ' + body.length + ' rows and a table here holds at most '
+                        + CSV_MAX_ROWS + '. Nothing was imported — split it across two tables.' };
+    }
+
+    var headers = [], matched = [], plain = [];
+    for (var ci = 0; ci < cols; ci++) {
+        var raw   = hasHeader ? String(names[ci] === null || names[ci] === undefined ? '' : names[ci]).trim() : '';
+        var style = hasHeader ? csvStyleFor(raw) : '';
+        if (style)          { matched.push(raw); }
+        else if (hasHeader) { plain.push(raw === '' ? 'column ' + (ci + 1) : raw); }
+        headers.push(style || 'free');
+    }
+
+    function carried(list, fallback) {
+        var src = list || [], out = [];
+        for (var ci2 = 0; ci2 < cols; ci2++) {
+            out.push(src[ci2] === undefined || src[ci2] === null ? fallback : src[ci2]);
+        }
+        return out;
+    }
+
+    var data = {
+        headers: headers,
+        valigns: carried(current.valigns, 'top'),
+        haligns: carried(current.haligns, 'left'),
+        widths:  carried(current.widths, 0),
+        rows: body.map(function (r) {
+            var out = [];
+            for (var ci3 = 0; ci3 < cols; ci3++) {
+                out.push(r[ci3] === undefined || r[ci3] === null ? '' : String(r[ci3]));
+            }
+            return out;
+        })
+    };
+    if (current.row_padding !== undefined) { data.row_padding = current.row_padding; }
+
+    var bytes = utf8Bytes(JSON.stringify(data));
+    if (bytes > TABLE_CONTENT_MAX) {
+        return { refusal: 'That file makes a table of ' + bytes + ' bytes and the most a block can '
+                        + 'store is ' + TABLE_CONTENT_MAX + '. Nothing was imported — split it '
+                        + 'across two tables, or shorten the text in it.' };
+    }
+
+    return { data: data, matched: matched, plain: plain,
+             rowCount: data.rows.length, colCount: cols, bytes: bytes };
+}
+
+// The last file dropped, kept so the header-row tick can be changed without
+// asking for the file again — the browser will not hand the same one back.
+var _csvGrid   = null;
+var _csvName   = '';
+var _csvGarbled = false;
+
+function setCsvNote(text, good) {
+    var note = document.getElementById('table-csv-note');
+    if (!note) { return; }
+    note.textContent = text || '';
+    note.className   = text ? (good ? 'good' : 'bad') : '';
+}
+
+function pickCsvFile() {
+    var input = document.getElementById('table-csv-file');
+    if (input && !READ_ONLY) { input.click(); }
+}
+
+function csvFileChosen(input) {
+    var file = input && input.files ? input.files[0] : null;
+    // Cleared straight away: picking the same file twice in a row fires no change
+    // event otherwise, so a second import of a file somebody has just corrected
+    // in Excel would do nothing at all and say nothing about why.
+    if (input) { input.value = ''; }
+    readCsvFile(file);
+}
+
+function csvHeaderRowToggled() { if (_csvGrid) { applyCsvGrid(); } }
+
+/** Whether this is a file the import will even try to read. */
+function looksLikeCsv(file) {
+    if (!file) { return false; }
+    var name = String(file.name || '').toLowerCase();
+    if (/\.(csv|tsv|txt)$/.test(name)) { return true; }
+    return ['text/csv', 'text/tab-separated-values', 'text/plain',
+            'application/csv'].indexOf(String(file.type || '')) > -1;
+}
+
+function readCsvFile(file) {
+    if (READ_ONLY || !file) { return; }
+    if (!looksLikeCsv(file)) {
+        showToast('That is not a .csv file (' + (file.type || 'unknown type') + '), so nothing was '
+                + 'imported. Save the price list as CSV and drop that.', true);
+        return;
+    }
+    if (file.size === 0) {
+        showToast('That file is empty, so nothing was imported.', true);
+        return;
+    }
+    if (file.size > CSV_FILE_MAX_BYTES) {
+        showToast('That file is ' + describeBytes(file.size) + ' and a table stores at most '
+                + TABLE_CONTENT_MAX + ' bytes of rows, so it was not read.', true);
+        return;
+    }
+    var r = new FileReader();
+    r.onload = function (e) {
+        var text = String(e.target.result === null || e.target.result === undefined ? '' : e.target.result);
+        var grid = parseCsvGrid(text);
+        if (!grid.length) {
+            setCsvNote('There was nothing in ' + (file.name || 'that file') + ' to import.', false);
+            showToast('That file has nothing in it, so nothing was imported.', true);
+            return;
+        }
+        _csvGrid    = grid;
+        _csvName    = file.name || 'that file';
+        // A file Excel saved as "CSV" on a Windows machine is not UTF-8, and a £ or
+        // an é in it arrives here as U+FFFD — the byte is gone before this code sees
+        // it, so there is nothing to fix and everything to say.
+        _csvGarbled = text.indexOf('\uFFFD') > -1;
+        applyCsvGrid();
+    };
+    r.onerror = function () {
+        showToast('That file could not be read, so nothing was imported. If it is on a drive or '
+                + 'a share, copy it to this computer first.', true);
+    };
+    r.readAsText(file);
+}
+
+/** Turn the file already read into rows on screen, and say what it did. */
+function applyCsvGrid() {
+    if (!_csvGrid) { return; }
+    var tick      = document.getElementById('table-csv-has-header');
+    var hasHeader = tick ? !!tick.checked : true;
+    var out = csvGridToTable(_csvGrid, hasHeader, getTableEditorData());
+    if (out.refusal) {
+        setCsvNote(out.refusal, false);
+        showToast(out.refusal, true);
+        return;
+    }
+    rebuildTableEditor(out.data);
+
+    var said = _csvName + ' — ' + out.rowCount + (out.rowCount === 1 ? ' row' : ' rows')
+             + ' × ' + out.colCount + (out.colCount === 1 ? ' column' : ' columns') + '.';
+    if (out.matched.length) { said += ' Styled by name: ' + csvNameList(out.matched) + '.'; }
+    if (out.plain.length) {
+        said += ' ' + csvNameList(out.plain) + (out.plain.length === 1 ? ' has' : ' have')
+             +  ' no style of that name here, so ' + (out.plain.length === 1 ? 'it is' : 'they are')
+             +  ' Plain — set the column style above if that is not what you wanted.';
+    }
+    if (!hasHeader) { said += ' Every row was read as content.'; }
+    if (_csvGarbled) {
+        said += ' Some characters could not be read and were replaced. Save the file as UTF-8 — '
+             +  'in Excel that is the "CSV UTF-8" format — and drop it again.';
+    }
+    setCsvNote(said, !_csvGarbled && !out.plain.length);
+    showToast('Imported ' + out.rowCount + (out.rowCount === 1 ? ' row' : ' rows')
+            + '. Nothing is stored until Save Table.');
+}
+
+// ---- Dropping the file -------------------------------------------------------
+
+function dragCarriesFiles(e) {
+    var types = e && e.dataTransfer ? e.dataTransfer.types : null;
+    if (!types) { return false; }
+    return Array.prototype.indexOf.call(types, 'Files') > -1;
+}
+
+/** The Edit Table drop area under the pointer, or null for anywhere else on the page. */
+function csvDropZone(e) {
+    return (e && e.target && e.target.closest) ? e.target.closest('#table-csv-drop') : null;
+}
+
+function highlightCsvZone(zone) {
+    var box = document.getElementById('table-csv-drop');
+    if (!box || !box.classList) { return; }
+    if (zone === box) { box.classList.add('drag-over'); } else { box.classList.remove('drag-over'); }
+}
+
+/**
+ * Where a dragged file may be dropped, and what happens everywhere else.
+ *
+ * One place takes a file: the drop area inside Edit Table. A table block on the
+ * canvas is **not** a drop target, and neither is the canvas — a file let go
+ * anywhere else imports nothing and is told where it belongs. Which table an
+ * import fills is decided by the one somebody opened, not by where a pointer
+ * happened to be when they let go, because a table block sits under the tables
+ * either side of it on a busy sign and the cost of reading that aim wrong is a
+ * price list overwritten while nobody was looking at it.
+ *
+ * That still leaves the everywhere-else half, which matters most and has nothing
+ * to do with tables: a file dropped on a page that ignores it is a *navigation*.
+ * The browser leaves the Builder and opens the CSV, and every block moved since
+ * the last Publish goes with it — no prompt, no undo, and the canvas is only in
+ * this tab. So the default is refused for any file drag anywhere on this page —
+ * refusing a navigation is not the same as offering a drop, and only the drop
+ * area ever lights up or reads anything.
+ */
+function setupCsvDrop() {
+    document.addEventListener('dragover', function (e) {
+        if (!dragCarriesFiles(e)) { return; }   // dragging text inside a block is not this
+        e.preventDefault();
+        if (READ_ONLY) { return; }
+        highlightCsvZone(csvDropZone(e));
+    });
+
+    document.addEventListener('dragleave', function (e) {
+        if (!dragCarriesFiles(e)) { return; }
+        highlightCsvZone(null);
+    });
+
+    document.addEventListener('drop', function (e) {
+        if (!dragCarriesFiles(e)) { return; }
+        e.preventDefault();
+        highlightCsvZone(null);
+        if (READ_ONLY) {
+            // The default is already refused, which is the part that matters on a page
+            // holding somebody else's canvas. The sentence is worth adding because the
+            // drop area they would have aimed for is not on this page at all.
+            showToast(LOCK_HOLDER + ' is editing this display — nothing can be imported from here.', true);
+            return;
+        }
+        if (!csvDropZone(e)) {
+            showToast('Open the table you want to fill, then drop the file on the area inside Edit Table.', true);
+            return;
+        }
+        var file = (e.dataTransfer && e.dataTransfer.files) ? e.dataTransfer.files[0] : null;
+        if (!file) { return; }
+        readCsvFile(file);
+    });
+}
+
+// ---- The modal itself --------------------------------------------------------
+
 function openTableModal() {
     if (!activeBlock || activeBlock.dataset.type !== 'table') return;
     var td = {};
@@ -4446,6 +4865,12 @@ function openTableModal() {
         return r.slice(0, headers.length);
     });
     document.getElementById('table-row-padding').value = rowPad;
+    // The file from the last table opened is not this table's file, and the note
+    // beside the drop zone is about an import that happened to something else.
+    _csvGrid = null; _csvName = ''; _csvGarbled = false;
+    setCsvNote('', true);
+    var tick = document.getElementById('table-csv-has-header');
+    if (tick) { tick.checked = true; }
     rebuildTableEditor({ headers: headers, rows: rows, valigns: valigns, haligns: haligns, widths: widths });
     document.getElementById('table-modal-overlay').classList.add('open');
 }

@@ -143,11 +143,20 @@ specific way of going wrong that has now happened at least once.
 
 `check_doc_numbering.php` prints the next free letter, and four branches cut from one
 base all asked it and all got the same answer. Asking is right; asking *at the same
-time* is the failure. So they are allocated in advance. Phase 4 now runs to §4aq, and
-**`4ar` is the next free letter** — ask the tool rather than counting, and if two branches
+time* is the failure. So they are allocated in advance. Phase 4 now runs to §4az, and
+**`4ba` is the next free letter** — ask the tool rather than counting, and if two branches
 start at once, write the allocation down here before either of them writes prose.
 
 - ~~**Lane A (#33) wrote `4ao`.**~~ ~~**B (#44) wrote `4ap`.**~~ ~~**C (#50) wrote `4aq`.**~~
+- ~~**The browser pass wrote `4as`–`4ax`, and `4ay` for what the pass says about
+  itself.**~~
+- ~~**The CSV import wrote `4az`**~~ — cut from `f787aa0` on 2026-08-19, beside an
+  app-completion audit running in another session. Written down here first, which is this
+  item working as designed rather than by luck: the two branches share no application
+  file, and the three files they were always going to collide in are this one,
+  `BUILD-REFERENCE.md` and the invariant list. **This branch added no invariant**, so the
+  only one of the three it touches is `BUILD-REFERENCE.md`, in two places that are
+  appends: a new §4 write-up and a line in the §5 gate list.
 
 **This scheme worked exactly as designed, and it is the only one of the four that did.**
 B wrote `4ap` while `4ao` was still unwritten and its push passed, because
@@ -187,6 +196,14 @@ and the reservation only settles who renumbers on the merge.** As settled:
   `php -l` cannot see. **34 is the next free number.** All three arrived one branch at a
   time, which is the only reason none of them collided — the note at the top of this file
   still holds, and a number is still allocated here rather than found.
+- **A lane that adds no invariant still owes a sentence saying so.** The CSV branch wrote
+  down that it was not taking 32 before anything had taken it, and the MySQL-leg recipe
+  branch that 33 was free while #13 was still open — which is what let each of those land
+  without asking. "Free" is a claim somebody else is about to act on, and a lane that
+  simply says nothing reads from the outside exactly like a lane nobody asked. Note the
+  shape of the answer that ages best: *this branch takes none* stays true no matter who
+  lands first, while *N is next* is dated by the next merge. Write both, and expect only
+  the first to survive.
 
 B renumbered nothing and A renumbered everything, and the tie was broken by counting:
 `invariant 28` appeared 15 times across 7 files on B's side and 7 times across 6 on A's,
