@@ -1863,12 +1863,23 @@ date_default_timezone_set($tzWas);
 // syncSessionAccount() normalises this on every request after the first, so a
 // login that stored the column verbatim gave a row spelling it any other way one
 // meaning for one request and another from then on.
-$pdo->exec("UPDATE users SET role = 'Admin' WHERE id = 1");
-checkSame('basic', $signIn->attempt('sky', 'right-password')->role(),
-          'a role the column does not spell exactly "admin" is not admin');
+//
+// The odd spelling is handed to the reader as a row rather than written to the column,
+// because the column will not hold it: `role` is an ENUM, and MySQL matches an
+// assignment against its members through the column's collation — `'Admin'` is stored
+// as `admin`, so the row this check is about cannot exist on the shop's engine, and the
+// version that wrote it there asserted the opposite of what it built (invariant 32).
+// That folding is a second defence and deliberately not the one under
+// test: a lagging install has its `canvas_elements` ENUMs widened at runtime, so what
+// type a column *is* is not something this app gets to assume, and the normalisation in
+// code is what has to hold either way.
+checkSame('basic', LoginOutcome::ok(['id' => 1, 'username' => 'sky', 'role' => 'Admin'])->role(),
+          'a role the reader is handed that is not spelled exactly "admin" is not admin');
+checkSame('basic', LoginOutcome::ok(['id' => 1, 'username' => 'sky', 'role' => 'root'])->role(),
+          'and neither is a word the column never offered');
 $pdo->exec("UPDATE users SET role = 'admin' WHERE id = 1");
 checkSame('admin', $signIn->attempt('sky', 'right-password')->role(),
-          'and the one that does, is — the same answer every later request will reach');
+          'while the spelling it does hold is admin — the same answer every later request will reach');
 
 // ---- The database where the runtime ALTER never applied ------------------------
 // login.php used to carry a second SELECT and a try/catch for exactly this, and
@@ -2152,6 +2163,9 @@ check(abs(StoreClock::epochOf($stamp) - time()) <= 5,
 check(abs(strtotime($stamp) - time()) > 3600,
       'read without the UTC suffix that same string is hours out — the line that got forgotten');
 checkSame(0, StoreClock::epochOf('not a date'), 'a stamp that will not read is 0, not a warning');
+checkSame(0, StoreClock::epochOf('0000-00-00 00:00:00'),
+          'and so is the zero date, which reads as year zero rather than failing (invariant 32)');
+checkSame(0, StoreClock::epochOf('0000-00-00'), 'in either of the two shapes MySQL writes it');
 checkSame(0, StoreClock::epochOf(''),           'and neither is an empty one');
 checkSame(0, StoreClock::epochOf(null),         'nor a null column');
 
@@ -2228,10 +2242,19 @@ $pdo->prepare("UPDATE displays SET last_published_at = ?, last_published_by = 1 
     ->execute([$instant, $zoned->id()]);
 checkSame('sky, Aug 11 at 2:15pm', $store->forId($zoned->id())->lastPublishDescription(),
           'and the refusal names the moment in the store\'s zone');
-$pdo->prepare("UPDATE displays SET last_published_at = 'nonsense' WHERE id = ?")
-    ->execute([$zoned->id()]);
-checkSame('sky', $store->forId($zoned->id())->lastPublishDescription(),
+// Handed to the reader as a row rather than written to the column (invariant 32):
+// a DATETIME will not hold 'nonsense' on MySQL — strict mode raises 1292 and the whole
+// run stops here — and `lastPublishDescription()` reads a row rather than a database, so
+// the state this check is about does not need the column's permission to exist.
+checkSame('sky', (new Display(['last_published_at'      => 'nonsense',
+                               'last_published_by_name' => 'sky']))->lastPublishDescription(),
           'a stamp that will not read leaves the name rather than a half-written sentence');
+// And the one unreadable stamp MySQL *can* hold, which is why the line above is not the
+// whole check: a host running without strict mode, or a dump taken from one, leaves a
+// zero date, and `strtotime()` reads that as a moment in year zero rather than failing.
+checkSame('sky', (new Display(['last_published_at'      => '0000-00-00 00:00:00',
+                               'last_published_by_name' => 'sky']))->lastPublishDescription(),
+          'and so does the zero date a non-strict host writes, which does not fail to parse');
 
 date_default_timezone_set($tzWas);
 
@@ -6875,4 +6898,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1828 : 1805);
+reportChecks(testIsMysql() ? 1832 : 1809);

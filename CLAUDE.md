@@ -153,6 +153,24 @@ survivors were load-bearing. And a kill has grades — only the `assertion` grad
 check knowing what the line was for; `diagnostic`, `count` and `fatal` are the harness
 noticing something moved.
 
+And one thing a local run cannot tell you at all: **the suite passes on SQLite over values
+MySQL refuses.** SQLite stores a word in a `DATETIME`, a non-member in an `ENUM`, and a
+string wider than the column, and the check that reads each one back passes; MySQL's strict
+mode throws on all three. Mid-run, that ends the job — and takes down the *rehearsal step
+under it*, which is the only thing that exercises the publish transaction's
+`SELECT … FOR UPDATE` and convergence against a real catalogue. That is what had this
+branch's MySQL leg dead from 2026-08-11: it stopped after 593 of the suite's checks on an
+`UPDATE displays SET last_published_at = 'nonsense'`, and every local gate was green.
+
+So a check that needs an unusable value **hands it to the reader as a row** — both readers
+taking one — or uses a value the column can actually hold: a colour nobody can read has to
+*fit* its column before anybody can be shown the wrong thing by it. Invariant 32 in
+`check_invariants.php` is the local half, and it covers the class that ends the run rather
+than every way an engine can disagree: an `ENUM` write MySQL *accepts* and silently folds to
+a member (`role = 'Admin'` becoming `admin`) is not a refusal, so it stays an ordinary failed
+check, reported rather than fatal. Whether the MySQL arm *finishes* is only ever answered by
+the run.
+
 `check_doc_numbering.php` also prints the next free section letter. That is the
 question every branch cut from the same base has to answer before it writes a
 write-up, and four of them once answered it with the same letter — ask the tool
