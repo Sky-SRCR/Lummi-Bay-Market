@@ -463,9 +463,14 @@ all got the same answer. Two things it corrected the hard way:
   the same base and both wrote invariant 28 — correctly, because the checker requires the
   list to run unbroken from 1, so neither could have written 29. #44 kept 28 and #33
   renumbered to 29. The rule is that every branch writes the next free number *in its own
-  tree* and the reservation only settles who renumbers at the merge. **31 is next, and
-  `4ar` is the next free letter** — written without a `§` on purpose, since a citation of
+  tree* and the reservation only settles who renumbers at the merge. **38 is next, and
+  `4bl` is the next free letter** — written without a `§` on purpose, since a citation of
   a write-up nobody has written is what `check_doc_numbering.php` fails on, and it does.
+  Which side renumbers is decided by cost while both are unmerged, and by publication
+  once one of them has landed: this branch moved six numbers on 2026-08-19 against
+  `main`'s two, the more expensive half by a factor of two, because a number on `main` is
+  an address that a merge commit and a pull request body already quote
+  ([`docs/work-lanes.md`](docs/work-lanes.md) item 2a).
 - **The count line does not conflict when it should.** Both branches wrote the same wrong
   total against a base that could only see its own item close, and git merged it clean.
   Recount from the table with the one-liner in item 4 on every merge.

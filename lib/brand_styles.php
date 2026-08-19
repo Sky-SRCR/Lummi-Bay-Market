@@ -243,7 +243,7 @@ class BrandStyles
      * exactly the same one. All three have to agree, and they disagree in opposite
      * directions: a publish that stripped typography a renderer was still going to
      * read blanks the block on the sign, and a publish that keeps typography the
-     * Brand paints writes the fossil this method exists to stop (invariant 32).
+     * Brand paints writes the fossil this method exists to stop (invariant 34).
      *
      * `$stored` is `all()`'s output, keyed by block type, which is what makes a
      * **missing** row mean "the Brand paints nothing here, so the block's own values

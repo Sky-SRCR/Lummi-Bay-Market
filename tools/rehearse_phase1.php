@@ -308,7 +308,7 @@ report(isset($dcols['lock_taken_at']),    'displays.lock_taken_at exists');
 
 // The other half of the Brand migration, and the one that can empty a shop: a sign
 // with no Brand renders its branded blocks from its own stored typography, which
-// invariant 32 has just stopped publish writing — so an unbranded Display is a sign
+// invariant 34 has just stopped publish writing — so an unbranded Display is a sign
 // whose prices go 16px Arial black on the next publish. Added nullable, backfilled,
 // then tightened, and it is the tighten that proves the backfill left nothing behind.
 report(isset($dcols['brand_id']), 'displays.brand_id exists');

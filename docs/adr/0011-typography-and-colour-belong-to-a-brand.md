@@ -124,7 +124,7 @@ with no publish. The blast radius is smaller than it was; it is not zero, and
 nothing about this decision makes a brand edit undoable.
 
 **One latent defect had to be fixed before any of this landed — and it has been**
-(2026-08-13, BUILD-REFERENCE §4az, invariant 32). `applyTextStyles()` writes the
+(2026-08-13, BUILD-REFERENCE §4az, invariant 34). `applyTextStyles()` writes the
 shared standard into a node's inline style, and `serializeBlock()` read those same
 inline styles back and published them into the element's own `font_*` columns.
 It was invisible: the values are identical everywhere and the branded-subtype

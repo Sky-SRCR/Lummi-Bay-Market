@@ -9,7 +9,7 @@
 // roadmap says they are never one word, and this file is the half of that which the
 // database can enforce: there is no column here for anything drawn on a canvas.
 //
-// **Nothing outside this file writes `workspace_themes`** (invariant 34), the same
+// **Nothing outside this file writes `workspace_themes`** (invariant 36), the same
 // rule `brands`, `displays`, `assets`, `block_styles` and `canvas_elements` each
 // have. The one thing that looks like an exception is the *choice* — which theme an
 // account picked — and that is a column on `users`, written by `AccountStore`,

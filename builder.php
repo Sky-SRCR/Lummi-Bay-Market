@@ -2250,7 +2250,7 @@ function switchBrand(id) {
  * blocks and re-applying styles: `renderBlock()` is the one place that knows how an
  * element becomes a node, and `applyTextStyles()` decides whose typography a block
  * wears at the moment it paints — a second copy of that decision here is exactly what
- * invariant 32's comment forbids, and it would be a copy that only runs on this path.
+ * invariant 34's comment forbids, and it would be a copy that only runs on this path.
  *
  * `restoreCanvas()` raises `undoRestoring` for the duration, so nothing here records a
  * step. It cannot fail on its own output, and its return value is deliberately ignored:
@@ -2702,7 +2702,7 @@ function renderBlock(el, parent, isNew) {
 // APPLY TEXT STYLES
 // ============================================================
 // Two jobs, and the second one is why this function decides rather than reports:
-// paint the block, and record *whose* typography got painted (invariant 32).
+// paint the block, and record *whose* typography got painted (invariant 34).
 //
 // serializeBlock() needs the same answer and must not work it out again. A second
 // copy of `sub !== 'free' && blockStyles[sub]` somewhere else is a second thing to
@@ -4027,7 +4027,7 @@ function serializeSection(s) {
 /**
  * One non-section block, as publish sends it.
  *
- * The six typography fields are sent only when the block owns them (invariant 32).
+ * The six typography fields are sent only when the block owns them (invariant 34).
  * A branded block's inline font, size, colour, weight, style and line height are
  * the Brand's, painted on by applyTextStyles() so the block looks like what it
  * will become — reading them back out and publishing them wrote the shared

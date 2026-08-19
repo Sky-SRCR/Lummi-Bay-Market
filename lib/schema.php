@@ -880,7 +880,7 @@ function signageSchemaPlan(SchemaFacts $facts)
     // Only succeeds once nothing is NULL, which is the condition worth enforcing:
     // ADR-0011 makes this NOT NULL because a sign with no identity has no sensible
     // rendering, and a Display left unbranded is one whose branded blocks would fall
-    // back to their own columns — which invariant 32 has just stopped publish writing.
+    // back to their own columns — which invariant 34 has just stopped publish writing.
     $sql($facts->needsNotNull('displays', 'brand_id'), 'displays.brand_id is NOT NULL',
          "ALTER TABLE displays MODIFY COLUMN brand_id INT(11) NOT NULL");
     $sql($facts->needsIndex('displays', 'brand_id'), 'displays.brand_id indexed',

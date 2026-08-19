@@ -527,7 +527,56 @@ through the app again:
     as one token and 8.2 as four — matching only the 8.4 shape would have gone quietly
     blind in CI, which is the machine pinned to the floor, and would have looked exactly
     like a pass.
-32. **Publish never writes what a Brand paints** (ADR-0011). A branded text block's
+32. **No check writes a value the engine the shop runs would refuse** (§4bi). A suite that
+    proves a reader degrades gracefully has to get the bad value *into* the column first,
+    and SQLite takes anything: it stored `bg_type = 'nonsense'` in an ENUM, `'nonsense'` in
+    a DATETIME and eight characters in a `VARCHAR(7)`, and the check that read each one
+    back passed. On MySQL all three are errors under the strict mode that has been the
+    default since 5.7 — a thrown `PDOException`, mid-run, which ends the job and takes the
+    rehearsal step under it down as well. **That is what had CI's MySQL half dead for eight
+    days**, over four writes, while the SQLite half stayed green and every local gate agreed
+    with it. So the rule is not "guard the write": it is that a value the column cannot hold
+    does not belong in a column. Hand it to the reader as a row — both readers take one —
+    and where the point is genuinely a stored value, make it one the column can store: a
+    colour nobody can read has to **fit** `VARCHAR(7)` before anybody can be shown the wrong
+    thing by it. `tools/check_invariants.php` reads `schema.sql` for the four types that can
+    refuse a literal and matches ENUM members **case-insensitively**, because MySQL does —
+    `role = 'Admin'` has always been accepted and is not what this is about.
+
+    The rule has a second half (§4bj), and it is the half that cost the run once the
+    literals were fixed: **no check sends SQLite-only SQL down a connection the MySQL leg
+    may be holding.** A refused value is one statement failing; the wrong *dialect* is a
+    fatal, thrown where no check is looking, so the suite ends without reporting and the
+    rehearsal step never starts. `AUTOINCREMENT`, a trigger body, `PRAGMA`,
+    `sqlite_master`, `INSERT OR REPLACE` — and `TEXT … DEFAULT`, which is valid SQLite and
+    rejected by InnoDB, the same fatal by a subtler route. Unlike the literals, this one
+    can read *which* connection a statement is on, because the suite names them: a handle
+    from `newSqliteTestDb()` is believed, one from `newTestDb()` is whichever engine the
+    run chose. Accepting a write and storing what was written are also different
+    questions, and only the second is one a check can assert — the same `role = 'Admin'`
+    MySQL accepts is stored as `admin`, so the state that check wanted has to be handed to
+    the reader as a row too.
+
+    What neither half can answer is whether the arm *finishes*. Only the run says that,
+    and a dead gate hides how much is still wrong behind it: fixing §4bi's four took the
+    leg from ~100 checks to 1383, where four more of the same class were waiting. Both
+    rounds landed, and the run went green on 2026-08-19 — so the rule now has what it
+    never had while it was being written, which is an arm that would go red if it were
+    broken.
+33. **No parameter is implicitly nullable** (§4bh). `?Type $x = null`, never
+    `Type $x = null` — understood back to 7.1, deprecated from 8.4. The sibling of 31 and
+    the opposite direction: that one refuses syntax the shop's PHP cannot *parse*, and its
+    cost is a blank sign; this one refuses syntax that parses everywhere and whose cost is a
+    line in the error log on **every request that compiles the file**. Separate rules
+    because what to do about each differs. `SiteChrome::wear()` was one, called on every
+    signed-in page load, and three things could not see it: `php -l` is clean on both
+    spellings; the deprecation fires when a file is *compiled*, so it precedes any handler
+    the suite installs; and this container's `error_reporting` excludes `E_DEPRECATED`, so
+    the suite runs green on 8.4 while the notice is emitted. A CI leg for a newer PHP does
+    not close this — it would go green too. `tools/check_invariants.php` reads real tokens
+    and **only inside parameter lists**, because a scan of every `$x = null` reports
+    `private static $bytes = null;`, which `UploadLimit` and `ServerReport` both have.
+34. **Publish never writes what a Brand paints** (ADR-0011). A branded text block's
     typography lives in `block_styles`; both renderers read it from there and neither
     ever looks at the element's own six `font_*` columns. The Builder nevertheless
     paints the standard onto the node's inline style — it has to, or the block would
@@ -567,7 +616,7 @@ through the app again:
     element to fall back to and only the serializer can produce one. Both ends therefore
     keep asking exactly once, in the same two functions, which is the property this rule
     has always been about.
-33. **Nothing outside `lib/brands.php` writes `brands`** (ADR-0011), and no page decides
+35. **Nothing outside `lib/brands.php` writes `brands`** (ADR-0011), and no page decides
     what a Brand *is*. A Brand is the identity several signs read their typography,
     palette, logo and default canvas background from, so a second writer is a venue
     repainted by a page that did not know it was the one deciding — and repainted
@@ -592,7 +641,7 @@ through the app again:
     `DisplayStore::editedByAnyoneElseUsingBrand()` instead. That is the one place this
     work makes the app less restrictive, and it is a rule getting *more* correct rather
     than being relaxed.
-34. **Nothing outside `lib/workspace_themes.php` writes `workspace_themes`, and no chrome
+36. **Nothing outside `lib/workspace_themes.php` writes `workspace_themes`, and no chrome
     role is drawn on the canvas** (v2 roadmap decisions 10 and 11). Two halves of one
     rule, because the second is the only thing keeping the first from being a table like
     any other. A Workspace Theme is what an *employee's screen* is painted in and reaches
@@ -621,7 +670,7 @@ through the app again:
     wearing is refused rather than reassigned**, naming them, with `users_ibfk_1` carrying
     no `ON DELETE` clause so the database says the same thing to anything reaching it
     another way. The same shape as a Brand in use, for the same reason.
-35. **Every read of the machine is one somebody named, and every branch behind one has a
+37. **Every read of the machine is one somebody named, and every branch behind one has a
     seam that takes the value** (§4bg). Five files in `lib/` may touch `ini_get`,
     `$_SERVER`, `PHP_VERSION`, `PHP_SAPI`, `phpversion()`, `session_get_cookie_params()` or
     the engine's own `ATTR_SERVER_VERSION` / `ATTR_DRIVER_NAME` — `server_report.php`,
@@ -641,55 +690,6 @@ through the app again:
     `tools/selftest_installed.php` are the half that proves the real reads still work, and
     they refuse an arm set to what this machine already holds, because that one would agree
     with the plain run and say so in green.
-36. **No parameter is implicitly nullable** (§4bh). `?Type $x = null`, never
-    `Type $x = null` — understood back to 7.1, deprecated from 8.4. The sibling of 31 and
-    the opposite direction: that one refuses syntax the shop's PHP cannot *parse*, and its
-    cost is a blank sign; this one refuses syntax that parses everywhere and whose cost is a
-    line in the error log on **every request that compiles the file**. Separate rules
-    because what to do about each differs. `SiteChrome::wear()` was one, called on every
-    signed-in page load, and three things could not see it: `php -l` is clean on both
-    spellings; the deprecation fires when a file is *compiled*, so it precedes any handler
-    the suite installs; and this container's `error_reporting` excludes `E_DEPRECATED`, so
-    the suite runs green on 8.4 while the notice is emitted. A CI leg for a newer PHP does
-    not close this — it would go green too. `tools/check_invariants.php` reads real tokens
-    and **only inside parameter lists**, because a scan of every `$x = null` reports
-    `private static $bytes = null;`, which `UploadLimit` and `ServerReport` both have.
-37. **No check writes a value the engine the shop runs would refuse** (§4bi). A suite that
-    proves a reader degrades gracefully has to get the bad value *into* the column first,
-    and SQLite takes anything: it stored `bg_type = 'nonsense'` in an ENUM, `'nonsense'` in
-    a DATETIME and eight characters in a `VARCHAR(7)`, and the check that read each one
-    back passed. On MySQL all three are errors under the strict mode that has been the
-    default since 5.7 — a thrown `PDOException`, mid-run, which ends the job and takes the
-    rehearsal step under it down as well. **That is what had CI's MySQL half dead for eight
-    days**, over four writes, while the SQLite half stayed green and every local gate agreed
-    with it. So the rule is not "guard the write": it is that a value the column cannot hold
-    does not belong in a column. Hand it to the reader as a row — both readers take one —
-    and where the point is genuinely a stored value, make it one the column can store: a
-    colour nobody can read has to **fit** `VARCHAR(7)` before anybody can be shown the wrong
-    thing by it. `tools/check_invariants.php` reads `schema.sql` for the four types that can
-    refuse a literal and matches ENUM members **case-insensitively**, because MySQL does —
-    `role = 'Admin'` has always been accepted and is not what this is about.
-
-    The rule has a second half (§4bj), and it is the half that cost the run once the
-    literals were fixed: **no check sends SQLite-only SQL down a connection the MySQL leg
-    may be holding.** A refused value is one statement failing; the wrong *dialect* is a
-    fatal, thrown where no check is looking, so the suite ends without reporting and the
-    rehearsal step never starts. `AUTOINCREMENT`, a trigger body, `PRAGMA`,
-    `sqlite_master`, `INSERT OR REPLACE` — and `TEXT … DEFAULT`, which is valid SQLite and
-    rejected by InnoDB, the same fatal by a subtler route. Unlike the literals, this one
-    can read *which* connection a statement is on, because the suite names them: a handle
-    from `newSqliteTestDb()` is believed, one from `newTestDb()` is whichever engine the
-    run chose. Accepting a write and storing what was written are also different
-    questions, and only the second is one a check can assert — the same `role = 'Admin'`
-    MySQL accepts is stored as `admin`, so the state that check wanted has to be handed to
-    the reader as a row too.
-
-    What neither half can answer is whether the arm *finishes*. Only the run says that,
-    and a dead gate hides how much is still wrong behind it: fixing §4bi's four took the
-    leg from ~100 checks to 1383, where four more of the same class were waiting. Both
-    rounds landed, and the run went green on 2026-08-19 — so the rule now has what it
-    never had while it was being written, which is an arm that would go red if it were
-    broken.
 
 ---
 
@@ -6153,7 +6153,7 @@ partly to look for exactly that.
 
 **`copyLayout()` is the writer that looks like an exception and is not.** It copies rows
 verbatim, and copying a pre-fix row faithfully would carry a fossil onto a sign that never
-had one. It asks the same question, so invariant 32 holds for every row the module writes
+had one. It asks the same question, so invariant 34 holds for every row the module writes
 rather than for the rows one of its two writers happened to write.
 
 **One thing narrowed as a side effect, and it narrowed the right way.** #41's rule — a
@@ -6412,7 +6412,7 @@ suite drives its list from the four ids rather than from the plan's sentence.
 
 The plan said "repaints the canvas in the browser" and left the mechanism open. It has
 to be **`restoreCanvas(snapshotCanvas())`**, the pair the undo history already uses, and
-the reason is invariant 32: a branded block's own six typography fields are not on the
+the reason is invariant 34: a branded block's own six typography fields are not on the
 node, because publish deliberately stopped carrying them. So a repaint cannot be a walk
 over the blocks re-applying styles — `applyTextStyles()` needs the *element* to fall back
 to, and the only thing that can produce one is the serializer. Going through the pair
@@ -6428,7 +6428,7 @@ The plan did not mention that **the publish has to re-read the Display**.
 publish that *changes* the Brand, the Display it was handed is wearing the old one. The
 rows are about to be read under the new Brand, so that is the Brand that has to decide —
 which is the rule `copyLayout()` already states one method over about a duplicate's
-target, arriving by the door that had not needed it. Left alone it is invariant 32's
+target, arriving by the door that had not needed it. Left alone it is invariant 34's
 fossil with a new entrance, and the observable difference is exactly one field: a `price`
 block publishing onto a Brand with no `price` standard keeps its own size, and onto one
 that has it stores the documented default. The suite checks both directions, because a
@@ -6523,7 +6523,7 @@ a picker at 1080p, or a venue's name truncate in a 178-pixel column.
 
 ### 4bd. The application gets colours of its own, and they never reach a sign
 
-*(v2 roadmap step 5, 2026-08-14. It is invariant 34.)*
+*(v2 roadmap step 5, 2026-08-14. It is invariant 36.)*
 
 The last step of the v2 plan, and the second of `CONTEXT.md`'s two nouns: a **Brand** is
 what a customer sees on a TV, a **Workspace Theme** is what an employee's screen is
@@ -6564,7 +6564,7 @@ declared once per page in a `:root` block and used as `var(--…)` everywhere, a
 theme is thirteen `setProperty()` calls with the canvas, the undo history and the edit
 lock untouched. Three other things fell out of it: one validated echo per page instead of
 the hundred-odd the alternative needed, a live preview in the admin form that costs
-nothing, and — the one that matters for invariant 34 — decision 11 became *checkable*,
+nothing, and — the one that matters for invariant 36 — decision 11 became *checkable*,
 because a `var(--…)` in a stylesheet is something a check can find and a hex literal is
 not.
 
@@ -6727,7 +6727,7 @@ belong to a person — and ADR-0011 already draws the line this sits on the othe
 What an ADR is *for* is the rejected alternatives, and the two that mattered are above:
 the seeded "Store default" row, and the picker that posts and reloads. Both are recorded
 with what they would have cost, which is the same service, in the file the roadmap's step
-already points at. Invariant 34 is where the rule itself lives, because it is a rule that
+already points at. Invariant 36 is where the rule itself lives, because it is a rule that
 spans files rather than a decision somebody might re-open.
 
 **Still owed, and this step does not close it.** The browser pass now has *five* things on
@@ -6957,7 +6957,7 @@ The driver is a parameter and not an afterthought — the fixture is **SQLite**,
 note written without it would have fired on every SQLite run in the project and told the
 reader the shop's engine was ancient.
 
-Two things fell out of writing it. Extending invariant 35's regex to cover
+Two things fell out of writing it. Extending invariant 37's regex to cover
 `ATTR_SERVER_VERSION` and `ATTR_DRIVER_NAME` — engine facts are machine facts — immediately
 failed on a **fifth** file the rule had not known about: `DisplayStore::limitPublishLockWait()`
 branches on the driver to skip a MySQL-only `SET SESSION`, in the publish path. It turned out
@@ -7017,7 +7017,7 @@ and the gap between those two is a whole class of defect: anything the newer eng
 *warns* about. On the shop's 8.2 none of this is live; the day the host moves, it is a line
 in the error log on every request — the log that alerts admins and rotates at a size cap.
 
-So invariant 36, and it is deliberately a separate rule from 31 rather than an extension of
+So invariant 33, and it is deliberately a separate rule from 31 rather than an extension of
 it, because the consequences are not the same shape: 31's is a parse error and a blank sign,
 36's is a silent per-request notice. The detector reads real tokens and **only inside
 parameter lists**, which is the whole difficulty — a scan of every `$x = null` reports
@@ -7075,7 +7075,7 @@ to prevent, in the one form the engine can actually produce. One line, matched o
 date rather than on an epoch floor: a stamp genuinely older than 1970 is not something this
 app can write, and a floor would be a second rule to be wrong about.
 
-So invariant 37, and a detector, because this class is invisible to everything else here:
+So invariant 32, and a detector, because this class is invisible to everything else here:
 `php -l` sees a string, the suite sees green, and the container has no MySQL server to
 disagree — the same three-way blindness §4bh had, one layer down. It reads `schema.sql`
 rather than `lib/schema.php`, because schema.sql is the file that builds the fixture the
@@ -7272,7 +7272,7 @@ the shop has, the engine moves against the PHP the shop has, and a leg nobody ca
 name a question for is not worth its minutes. **"Runs" is a claim with a date on it, and this paragraph was
 wrong about it for eight days**: the MySQL arm had not reached the end of the suite
 since 2026-08-11, and neither it nor the rehearsal step underneath it had completed
-a run (§4bi). Invariant 37 is what a local gate can say about that arm; whether it
+a run (§4bi). Invariant 32 is what a local gate can say about that arm; whether it
 finishes is only ever answered by the run. As of §4bj the leg reaches check 1383 rather
 than the first hundred, four more defects of the same class have been fixed behind the
 fatal that was hiding them, **and on 2026-08-19 the whole gate completed green for the

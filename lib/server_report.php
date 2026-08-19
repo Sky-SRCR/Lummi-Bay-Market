@@ -94,7 +94,7 @@ class ServerReport
     // deprecated and every request that builds this report emits a notice into the
     // error log. The explicit form is understood back to 7.1, so this costs nothing
     // below the floor and is one fewer thing between here and the next version.
-    // It is invariant 36 now (§4bh), which is what stops the next one being found by
+    // It is invariant 33 now (§4bh), which is what stops the next one being found by
     // compiling the tree by hand — and the sentence above is the reason it is a rule.
     public function __construct(PDO $pdo, ?array $server = null)
     {

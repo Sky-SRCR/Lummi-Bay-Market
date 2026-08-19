@@ -98,7 +98,7 @@ when there is something above it to divide.
 
 ### Step 1 — Publish stops writing what the Brand owns · size S · risk Medium
 
-**Done — 2026-08-13. Written up as §4az; it is invariant 32.** What follows is the
+**Done — 2026-08-13. Written up as §4az; it is invariant 34.** What follows is the
 plan as it was written, with the two things it got wrong marked. It has not been
 deployed: like every step here it is deployable on its own, and it changes nothing
 anybody can see, which makes it the safe one to send first.
@@ -270,7 +270,7 @@ the rewritten checks.
 
 ### Step 3 — Brands: data and the admin surface · size L · risk **High**
 
-**Done — 2026-08-13. Written up as §4bb; it is invariant 33.** Not deployed, and
+**Done — 2026-08-13. Written up as §4bb; it is invariant 35.** Not deployed, and
 **the rehearsal against a copy of live data has not been run** — that is this step's
 own stated gate and it needs a person and a database this container cannot reach.
 What follows is the plan as written, with what it got wrong marked.
@@ -392,7 +392,7 @@ went from 45 to 65; `selftest_layout.php` from 1,975 to 2,051.
 >
 > The plan said "repaints the canvas in the browser" and left the mechanism open. It has
 > to be `restoreCanvas(snapshotCanvas())` — the pair the undo history already uses —
-> because invariant 32 is why a branded block's own typography is *not* on the node, so
+> because invariant 34 is why a branded block's own typography is *not* on the node, so
 > `applyTextStyles()` needs an element to fall back to and only the serializer produces
 > one.
 >
@@ -412,7 +412,7 @@ went from 45 to 65; `selftest_layout.php` from 1,975 to 2,051.
 
 ### Step 5 — Workspace Themes · size M · risk Low
 
-**Done — 2026-08-14. Written up as §4bd; it is invariant 34.** Not deployed; like every
+**Done — 2026-08-14. Written up as §4bd; it is invariant 36.** Not deployed; like every
 step here it goes on its own. What follows is the plan as written, with what it got wrong
 marked.
 
@@ -520,9 +520,14 @@ a page that may be holding unpublished work and no other premise here covers tha
   publish sends no brand-owned typography; no canvas colour resolves through a
   theme; nothing outside `lib/brands.php` writes `brands`; nothing outside
   `lib/workspace_themes.php` writes `workspace_themes` — take their numbers when
-  they land, not here. The first landed with step 1 and took **32**; the third
-  landed with step 3 and took **33**; the other two are still unnumbered, and a
-  branch cut beside another one has to read that item before writing one down.
+  they land, not here. All four have landed and they are three invariants: the
+  first took **34** with step 1, the third took **35** with step 3, and the second
+  and fourth turned out to be two halves of one rule and took **36** together with
+  step 5 — a theme's colours are dangerous because of where they are *read*, so the
+  writer and the canvas are not separable. Each of those three was renumbered once
+  after the fact, which is the item this bullet points at doing exactly what it
+  says: `main` had meanwhile spent 32 and 33 on rules of its own, and a number is
+  settled by whoever merges second.
 - **The browser pass is a list, not a receipt.** Step 2 rewrites every page it
   describes, and five of its seven defects were things a screen did not *say* —
   the category no harness here is pointed at. It gets re-walked.

@@ -340,7 +340,7 @@ section('An unreadable colour on a branded block is the Brand\'s, and is reporte
 // ─────────────────────────────────────────────────────────────
 // #41 is about a colour the *block* owns. On a branded block the colour comes from
 // `block_styles`, and publish stopped carrying the six fields the Brand owns at all
-// (invariant 32) — so a brand colour nobody can read is now one row, audited where
+// (invariant 34) — so a brand colour nobody can read is now one row, audited where
 // it can be fixed, instead of the same fault copied onto every price on every sign
 // and reported as though there were eleven of them.
 //

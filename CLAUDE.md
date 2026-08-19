@@ -24,15 +24,15 @@ edited in place and every change reaches the sign by hand.
   outside `lib/layout_store.php` may write SQL against `canvas_elements`, nothing
   outside `lib/displays.php` against `displays`, nothing outside `lib/assets.php`
   against `assets`, nothing outside `lib/brand_styles.php` against `block_styles`,
-  and nothing outside `lib/brands.php` against `brands` (invariant 33), and nothing outside
-  `lib/workspace_themes.php` against `workspace_themes` (invariant 34 — whose other
+  and nothing outside `lib/brands.php` against `brands` (invariant 35), and nothing outside
+  `lib/workspace_themes.php` against `workspace_themes` (invariant 36 — whose other
   half is that no chrome role is ever drawn on the canvas).
 - **Deep modules**: small interface, substantial implementation. A new query
   means a new method on the module, not a `$pdo` handed to a caller.
 - **A value read from the machine gets a seam beside it that takes the value.** Five files
   may read one at all — `server_report.php`, `error_policy.php`, `upload_limits.php`,
   `alerts.php` and `displays.php` — and `check_invariants.php` fails on a sixth (invariant
-  35). The reason is not tidiness: `ini_get`, `PHP_VERSION`, `PHP_SAPI`, `$_SERVER` and the
+  37). The reason is not tidiness: `ini_get`, `PHP_VERSION`, `PHP_SAPI`, `$_SERVER` and the
   engine's own `ATTR_SERVER_VERSION` have exactly one value on every machine that runs the
   tests, so a branch chosen by one is asserted in the single configuration no shop is
   running. `ServerReport` gets this right three times over and says why each time —
@@ -127,7 +127,7 @@ edited in place and every change reaches the sign by hand.
   refuses seven above-floor constructs and twenty functions, and prints on every run that
   it is a denylist. So the gate now disagrees with you when it can — but a denylist cannot
   know what 8.5 adds, so a construct you have not seen before is still worth looking up
-  rather than trusting the green line. **Invariant 36 is the same hole in the other
+  rather than trusting the green line. **Invariant 33 is the same hole in the other
   direction**: `?Type $x = null`, never `Type $x = null`. The implicit form parses on every
   version, is deprecated from 8.4, and costs a line in the error log on *every request that
   compiles the file* — and nothing else here can see it, because the notice fires when a
@@ -195,7 +195,7 @@ colour nobody can read has to *fit* `VARCHAR(7)` before anybody can be shown the
 by it. And SQL in the wrong *dialect* is worse than a refused value, because it is a fatal
 rather than a failed check: `AUTOINCREMENT` and `TEXT … DEFAULT` are correct here and end
 the run there, so the two spellings live in `test_fixture.php` and a test that genuinely
-needs SQLite says `newSqliteTestDb()` and is believed. Invariant 37 in
+needs SQLite says `newSqliteTestDb()` and is believed. Invariant 32 in
 `check_invariants.php` is the local half of both. Whether the MySQL arm *finishes* is only
 ever answered by the run — and a dead gate hides how much is still wrong behind it: fixing
 the first four took the leg from ~100 checks to 1383, where four more of the same class

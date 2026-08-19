@@ -851,7 +851,7 @@ check(clipRestored.querySelector(':scope > .clip-badge') !== null,
       'and it says again that it is hiding a block, having been rebuilt from nothing');
 
 // ============================================================
-section('Repainting a Brand is not a change to the canvas (invariant 32)');
+section('Repainting a Brand is not a change to the canvas (invariant 34)');
 // ============================================================
 // The fault this is about is the one the round trip cannot see, because it is not
 // about restoring: applyTextStyles() paints the shared standard onto a branded

@@ -1942,7 +1942,7 @@ checkSame([], $nClient['palette'],          'and a palette that is read rather t
 checkSame(0, $nClient['logo_asset_id'],     'and 0 for a Brand with no logo, never null');
 
 // ─────────────────────────────────────────────────────────────
-section('Publish never writes what a Brand paints (invariant 32)');
+section('Publish never writes what a Brand paints (invariant 34)');
 // ─────────────────────────────────────────────────────────────
 // The Builder paints the shared standard onto a branded block's inline style so it
 // looks like what it will become, and serialising read that straight back out — so
@@ -6511,7 +6511,7 @@ check($vLayouts->publish($vSign, new PublishRequest(
 //
 // On a `free` block rather than the baseline's price. A branded subtype's line
 // height belongs to Brand Standards and publish no longer carries it at all
-// (invariant 32), so the baseline would now pass this check for the wrong reason:
+// (invariant 34), so the baseline would now pass this check for the wrong reason:
 // the stored 1.40 would be the *default*, proving the value never arrived rather
 // than that it was clamped on the way in. This caught it.
 $vSign  = $vStore->forId($vSign->id());
@@ -6846,7 +6846,7 @@ check($kLayouts->publish($kSign, new PublishRequest(
 // ---- The Brand a publish sets is the Brand its rows are read under ---------------
 // The `copyLayout()` rule, arriving by the one door that had not needed it: what
 // decides whether a typography column is the Brand's to paint is the Brand the row
-// will be read under (invariant 32), and the publish that *changes* the Brand is the
+// will be read under (invariant 34), and the publish that *changes* the Brand is the
 // one publish where "before" and "after" differ. Deciding it from the Display this
 // method was handed would bake the old venue's answer into the new venue's rows.
 //

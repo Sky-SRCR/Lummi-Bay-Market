@@ -58,7 +58,7 @@ require_once __DIR__ . '/brand_styles.php';
 // For `BrandChoice` and for the one read this module makes of `brands`: a publish that
 // carries a Brand has to establish that the Brand is still there before it writes the
 // id onto the sign, and asking that question is not a licence to write the table —
-// `BrandStore` is still its only writer (invariant 33).
+// `BrandStore` is still its only writer (invariant 35).
 require_once __DIR__ . '/brands.php';
 require_once __DIR__ . '/assets.php';
 require_once __DIR__ . '/layout_rules.php';
@@ -456,7 +456,7 @@ class LayoutStore
             $oldSection = $row['section_id'] !== null ? intval($row['section_id']) : null;
             $newSection = $oldSection !== null && isset($idMap[$oldSection]) ? $idMap[$oldSection] : null;
 
-            // The same question a publish asks, so invariant 32 holds for every row
+            // The same question a publish asks, so invariant 34 holds for every row
             // this module writes rather than for the rows one of its two writers
             // happened to write. A source row that predates the fix carries the
             // baked standard; copying it faithfully would be copying a fossil into
@@ -746,7 +746,7 @@ class LayoutStore
                 // The Brand, asked the same way and for the same reason: the row lock is
                 // held, so a Brand that is there now is there when the UPDATE runs. Read
                 // through BrandStore, which owns that table — this module writes no
-                // statement against `brands` and reads none of its own (invariant 33).
+                // statement against `brands` and reads none of its own (invariant 35).
                 $wanted = $request->brand();
                 $problem = $wanted->problemWith(
                     $wanted->kind() === 'brand' ? $this->brands()->forId($wanted->id()) : null
@@ -772,7 +772,7 @@ class LayoutStore
                 // is the Brand the row will be read under — the same rule `copyLayout()`
                 // states one method over about a duplicate's target. Writing them from
                 // the object this method was handed would decide it with the Brand the
-                // sign wore a moment ago, which is invariant 32's fossil arriving by a
+                // sign wore a moment ago, which is invariant 34's fossil arriving by a
                 // new door: the one publish where the answer changes is the publish that
                 // changes the Brand.
                 //
@@ -1008,7 +1008,7 @@ class LayoutStore
     }
 
     /**
-     * The six typography values an element row should carry (invariant 32).
+     * The six typography values an element row should carry (invariant 34).
      *
      * Brand Standards owns the typography of a branded text block: both renderers
      * read `block_styles` for it and never look at these six columns. The Builder
@@ -1106,7 +1106,7 @@ class LayoutStore
         // Read once, outside the loop: the answer is the same for every element and
         // this runs inside the publish transaction, a line at a time down the sign.
         // Scoped to the Brand this sign wears, which is the same question the two
-        // renderers ask of the snapshot they were given (invariant 32, ADR-0011).
+        // renderers ask of the snapshot they were given (invariant 34, ADR-0011).
         $brandStandards = $this->brandStyles()->all($display->brandId());
 
         $order = 0;

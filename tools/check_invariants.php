@@ -155,7 +155,7 @@ $rules = [
                      'tools/test_fixture.php'],
         'why'    => 'a Brand is what several signs read their typography, palette and logo '
                   . 'from, so a second writer is a venue repainted by a page that did not '
-                  . 'know it was the one deciding (ADR-0011, invariant 33)',
+                  . 'know it was the one deciding (ADR-0011, invariant 35)',
     ],
     [
         'name'   => 'one module encodes JSON',
@@ -1560,7 +1560,7 @@ foreach ($floorClean as $probe) {
 
 // ---- No parameter is implicitly nullable ----------------------------------------
 /**
- * Every `Type $x = null` that should be `?Type $x = null` (invariant 36).
+ * Every `Type $x = null` that should be `?Type $x = null` (invariant 33).
  *
  * The sibling of invariant 31 and the opposite direction. That one refuses syntax the
  * shop's PHP cannot *parse* — a blank sign. This one refuses syntax that parses
@@ -1661,15 +1661,15 @@ foreach (phpFilesUnder($root, '', []) as $rel) {
 }
 $checked++;
 if (!$implicit) {
-    echo "  ok   no parameter is implicitly nullable, so nothing logs a deprecation on 8.4 (invariant 36)\n";
+    echo "  ok   no parameter is implicitly nullable, so nothing logs a deprecation on 8.4 (invariant 33)\n";
 } else {
-    echo "  FAIL a parameter is implicitly nullable, which 8.4 deprecates (invariant 36)\n";
+    echo "  FAIL a parameter is implicitly nullable, which 8.4 deprecates (invariant 33)\n";
     foreach ($implicit as $where) { echo "       $where\n"; }
     echo "       Write it `?Type \$x = null`. Understood back to 7.1, so it costs nothing\n";
     echo "       below the floor. `php -l` is clean either way and the deprecation fires\n";
     echo "       when the file is compiled — before any handler the suite installs — so\n";
     echo "       this check is the only thing here that can see it.\n";
-    $failures[] = 'an implicitly nullable parameter (invariant 36)';
+    $failures[] = 'an implicitly nullable parameter (invariant 33)';
 }
 
 // ---- And that detector, seen to fail --------------------------------------------
@@ -1718,7 +1718,7 @@ foreach ($nullableProbes as $probe) {
 
 // ---- No test writes a value the engine the shop runs would refuse ----------------
 /**
- * The column types `schema.sql` declares, as `[table][column] => type` (invariant 37).
+ * The column types `schema.sql` declares, as `[table][column] => type` (invariant 32).
  *
  * Read from that file rather than from `lib/schema.php` on purpose: schema.sql is what
  * builds the MySQL fixture the suite runs against, so it is the file whose answer the
@@ -1919,7 +1919,7 @@ foreach ($writeProbes as $probe) {
 /**
  * SQLite-only SQL handed to a connection the MySQL leg can also be holding.
  *
- * The other half of invariant 37, and the half that cost the run once the literals
+ * The other half of invariant 32, and the half that cost the run once the literals
  * were fixed: a value MySQL refuses is one statement failing, but a `CREATE TABLE`
  * in the wrong dialect is a *fatal* — it throws where no check is looking, the suite
  * ends without reporting, and the rehearsal step under it never starts (§4bj).

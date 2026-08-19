@@ -202,14 +202,41 @@ and the reservation only settles who renumbers on the merge.** As settled:
   expected to add several; what it actually needed was one rule about how a check earns
   its line, because the four mechanised greps are rules the *checker* enforces rather than
   invariants a reader has to hold. **38 is now the next free number**: 31 went to the
-  above-floor syntax check, 32 to a branded block's own typography, 33 to `brands`, 34 to
-  `workspace_themes`, 35 to every read of the machine (§4bg), 36 to the implicit-nullable
-  form 8.4 deprecates (§4bh), and 37 to a value the shop's engine would refuse (§4bi) — which
+  above-floor syntax check, 32 to a value the shop's engine would refuse (§4bi) — which
   grew a second half in §4bj, under the same number, because SQLite dialect on a portable
-  handle is the same rule failing a different way and a reader holding one holds both. Seven
-  allocated since this paragraph last said "31", which is the
-  reason it is worth updating rather than recomputing — the sentence that names the next
-  number is the one a branch reads.
+  handle is the same rule failing a different way and a reader holding one holds both — 33
+  to the implicit-nullable form 8.4 deprecates (§4bh), 34 to a branded block's own
+  typography, 35 to `brands`, 36 to `workspace_themes` and the canvas colours a theme may
+  not reach, and 37 to every read of the machine (§4bg). Seven allocated since this
+  paragraph last said "31", which is the reason it is worth updating rather than
+  recomputing — the sentence that names the next number is the one a branch reads.
+
+### 2a. The collision this file predicted, with the half it got wrong
+
+**Six of those seven were renumbered on 2026-08-19, and not because two lanes collided.**
+This branch had written 32 through 37 in its own tree, correctly by the rule above. While
+it ran, `main` spent **32** on a value the engine would refuse and **33** on the implicitly
+nullable parameter — arriving one branch at a time, so neither of *those* collided with
+anything. Then the two sides met, and the same two rules held two different numbers each:
+what this tree called 37 was `main`'s 32, and what it called 36 was `main`'s 33.
+
+So the permutation, applied here rather than on `main`: `37→32`, `36→33`, `32→34`, `33→35`,
+`34→36`, `35→37`. The list runs unbroken and the two numbers a reader has already seen
+elsewhere mean what they say.
+
+**The cost tiebreak pointed the other way, and was overruled.** `invariant 32` and
+`invariant 33` appear 20 times across 8 files on `main`; the six moved here appear 48 times
+across 17. By the rule two paragraphs up — cost, not seniority — `main`'s should have moved.
+It could not: `main` is merged, every branch is cut from it, and the numbers are quoted in a
+merge commit and a pull request body that no edit here can reach. So the clause the A/B
+round could not have discovered, because both its lanes were unmerged: **cost decides
+between two branches that have not landed; publication decides once one of them has.** A
+number in a tree nobody has merged is a draft. A number on `main` is an address.
+
+And one thing the renumber cannot do, which is worth saying because a green gate will not
+say it: both sides *implement* 32 and 33, independently and under different names, because
+each wrote its own detector for a rule the other was writing at the same time. Numbering
+them alike is what makes that visible; the merge still has to pick one of each.
 
 B renumbered nothing and A renumbered everything, and the tie was broken by counting:
 `invariant 28` appeared 15 times across 7 files on B's side and 7 times across 6 on A's,

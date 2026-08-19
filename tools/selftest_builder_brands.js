@@ -419,7 +419,7 @@ function buildFixture() {
         type: 'section', temp_id: 'tmp-sec-1', id: 11,
         x_pos: 40, y_pos: 20, width: 900, height: 500, section_bg: null, locked: 0, z_index: 1
     });
-    // Branded: its six typography fields are the Brand's to paint (invariant 32).
+    // Branded: its six typography fields are the Brand's to paint (invariant 34).
     renderBlock({
         type: 'text', block_subtype: 'price', x_pos: 20, y_pos: 20, width: 160, height: 60,
         manual_content: '18.99', asset_id: null, locked: 0, z_index: 1, hidden: 0
