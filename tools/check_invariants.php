@@ -2093,6 +2093,160 @@ foreach ($commentProbes as $probe) {
     }
 }
 
+// ---- Every gate in tools/ is a step in the workflow that runs it ------------------
+/**
+ * Suites and gates that CI does not run, and steps that name a file that is not there.
+ *
+ * The hole this closes was found by the merge that produced it. The node job's comment
+ * said "six suites" while its step list ran eight, and the count had already been
+ * corrected twice — each time by a merge, because two branches each adding a suite is
+ * two clean diffs and no conflict. `selftest_builder_readonly.js` does assert there are
+ * eight, but it counts `selftest_*.js` **files**: a ninth added without a step here
+ * passed every gate in the repo and never ran, which is a suite in the same state as a
+ * check that cannot fail (invariant 30) — it costs its minutes and answers nothing.
+ *
+ * Both directions, because they fail differently. A suite with no step is **silent**:
+ * green everywhere, running nowhere. A step naming a file that is not there is loud —
+ * CI goes red — but it goes red on a push, after the review, and the answer to it is
+ * one line in this file away from whoever renamed the suite.
+ *
+ * Comments are stripped from the workflow first, and that is the check inside the check:
+ * this file's own YAML discusses `tools/check_deprecations.php` and `mutate.php` in
+ * prose, and a scan that read those as steps would report a clean CI for a suite nobody
+ * runs. A step is a `run:` line. Naming one in a sentence is not running it.
+ *
+ * The exemptions carry their reasons and are held to existing, so the list cannot rot
+ * into a name nobody has run since a rename. A gate is anything that asserts; `mutate.php`
+ * is deliberately not one — it takes minutes rather than seconds and is a tool to point at
+ * what you changed (§4aq) — and a fixture is not a gate at all.
+ *
+ * @return array ['unrun' => [...], 'missing' => [...], 'stale' => [...]]
+ */
+function toolsNotRunByCi(array $toolFiles, $workflow, array $notGates)
+{
+    // A `#` comment in YAML is a line whose first non-space character is `#`. Trailing
+    // comments cannot appear on a `run:` line here without becoming part of the shell
+    // command, so line-leading is the whole rule.
+    $lines = [];
+    foreach (explode("\n", $workflow) as $line) {
+        if (preg_match('/^\s*#/', $line)) { continue; }
+        $lines[] = $line;
+    }
+    $steps = [];
+    if (preg_match_all('~\b(?:php|node)\s+tools/([A-Za-z0-9_.-]+\.(?:php|js))~',
+                       implode("\n", $lines), $m)) {
+        $steps = array_unique($m[1]);
+    }
+
+    $unrun = [];
+    foreach ($toolFiles as $file) {
+        if (in_array($file, array_keys($notGates), true)) { continue; }
+        if (!in_array($file, $steps, true))              { $unrun[] = $file; }
+    }
+    $missing = [];
+    foreach ($steps as $step) {
+        if (!in_array($step, $toolFiles, true)) { $missing[] = $step; }
+    }
+    $stale = [];
+    foreach (array_keys($notGates) as $exempt) {
+        if (!in_array($exempt, $toolFiles, true)) { $stale[] = $exempt; }
+    }
+    sort($unrun);
+    sort($missing);
+    sort($stale);
+    return ['unrun' => $unrun, 'missing' => $missing, 'stale' => $stale];
+}
+
+// Not a gate, and why. Each of these is asked to exist, so a rename cannot leave a name
+// here that means nothing.
+$notGates = [
+    'mutate.php'         => 'minutes rather than seconds — a tool to point at what you changed (§4aq)',
+    'audit_colors.php'   => 'reports what is stored, and asserts nothing about it',
+    'test_fixture.php'   => 'the fixture every PHP suite requires, not a suite',
+    'page_constants.js'  => 'what the server puts on a page, read by the node suites',
+];
+$toolFiles = [];
+foreach (scandir($root . '/tools') as $entry) {
+    if (!is_file($root . '/tools/' . $entry)) { continue; }
+    $ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
+    if ($ext === 'php' || $ext === 'js') { $toolFiles[] = $entry; }
+}
+$ciFile = '.github/workflows/php-lint.yml';
+$ci     = toolsNotRunByCi($toolFiles, (string) file_get_contents($root . '/' . $ciFile), $notGates);
+$checked++;
+if (!$ci['unrun'] && !$ci['missing'] && !$ci['stale']) {
+    echo '  ok   every gate in tools/ is a step in ' . $ciFile
+       . ', and every step names a file that is there' . "\n";
+} else {
+    echo "  FAIL tools/ and $ciFile disagree about what runs\n";
+    foreach ($ci['unrun'] as $f) {
+        echo "       + tools/$f asserts something and no step runs it — green here, running nowhere\n";
+    }
+    foreach ($ci['missing'] as $f) {
+        echo "       - a step runs tools/$f, which does not exist\n";
+    }
+    foreach ($ci['stale'] as $f) {
+        echo "       ? tools/$f is on the not-a-gate list and is not there either\n";
+    }
+    echo "       Add the step, or add the file to \$notGates above with the reason it is\n";
+    echo "       not a gate. A suite CI does not run costs its minutes and answers nothing.\n";
+    $failures[] = 'a gate in tools/ that CI does not run, or a step with no file';
+}
+
+// ---- And that detector, seen to fail --------------------------------------------
+// Invariant 30. The first probe is the hole itself, and the fourth is the one that made
+// stripping comments worth doing rather than assuming: this workflow talks about tools it
+// does not run, in prose, a few lines above the steps that run other ones.
+$ciYaml = "jobs:\n  a:\n    steps:\n      - run: php tools/selftest_layout.php\n"
+        . "      - run: node tools/selftest_viewer.js\n";
+$ciProbes = [
+    [['selftest_layout.php', 'selftest_viewer.js', 'selftest_ghost.js'], $ciYaml, [],
+     ['selftest_ghost.js'], [], [],
+     'a suite with no step in the workflow is reported — the hole this was written for'],
+    [['selftest_layout.php', 'selftest_viewer.js'], $ciYaml, [],
+     [], [], [],
+     'and a tools/ directory the workflow covers exactly is clean'],
+    [['selftest_layout.php'], $ciYaml, [],
+     [], ['selftest_viewer.js'], [],
+     'a step naming a file that is not there is reported too, which is a rename half done'],
+    [['selftest_layout.php', 'selftest_viewer.js', 'selftest_ghost.js'],
+     $ciYaml . "      # node tools/selftest_ghost.js is what this used to run\n", [],
+     ['selftest_ghost.js'], [], [],
+     'and a comment naming a suite does not count as running it'],
+    [['selftest_layout.php', 'selftest_viewer.js', 'mutate.php'], $ciYaml,
+     ['mutate.php' => 'minutes rather than seconds'],
+     [], [], [],
+     'a file the list says is not a gate is left alone'],
+    [['selftest_layout.php', 'selftest_viewer.js'], $ciYaml,
+     ['gone.php' => 'renamed away three merges ago'],
+     [], [], ['gone.php'],
+     'but an exemption for a file that no longer exists is reported, so the list cannot rot'],
+    [['selftest_layout.php', 'rehearse_phase1.php'],
+     "jobs:\n  a:\n    steps:\n      - run: php tools/selftest_layout.php\n"
+     . "      - run: |\n          mysql -e \"CREATE DATABASE x;\"\n"
+     . "          php tools/rehearse_phase1.php \\\n            --host=127.0.0.1 --confirm-copy\n",
+     [], [], [], [],
+     'a multi-line run block counts, which is the shape the rehearsal is written in'],
+];
+foreach ($ciProbes as $probe) {
+    list($files, $yaml, $exempt, $wantUnrun, $wantMissing, $wantStale, $label) = $probe;
+    $checked++;
+    $got = toolsNotRunByCi($files, $yaml, $exempt);
+    if ($got['unrun'] === $wantUnrun && $got['missing'] === $wantMissing
+        && $got['stale'] === $wantStale) {
+        echo "  ok   $label\n";
+    } else {
+        echo "  FAIL the CI-coverage detector is wrong about: $label\n";
+        echo '       expected unrun ' . json_encode($wantUnrun)
+           . ', missing ' . json_encode($wantMissing)
+           . ', stale ' . json_encode($wantStale) . "\n";
+        echo '       got      unrun ' . json_encode($got['unrun'])
+           . ', missing ' . json_encode($got['missing'])
+           . ', stale ' . json_encode($got['stale']) . "\n";
+        $failures[] = "CI-coverage detector: $label";
+    }
+}
+
 // ---- What this does not cover ---------------------------------------------------
 // The five §5 greps that used to be listed here are checked above as of #50. Four were
 // mechanised outright; the fifth kept the half of itself that is a judgement. What is
@@ -2154,11 +2308,12 @@ foreach ([
 // It counts itself, which is main's half of this and the better one: an anchor that
 // prints nothing when it passes is a check whose own presence is unreadable.
 //
-// 98 reconciles, and that is the only reason the deletion above is trustworthy: 94 before
-// the merge, plus the three probes main's copy had that this one did not, plus one for the
-// anchor now counting itself. A duplicate detector removed by hand is exactly the edit that
-// takes a rule with it, and this number is what noticed it had not.
-$expectedChecks = 98;
+// 98 reconciled the merge that deleted 553 duplicated lines, and that is the only reason
+// the deletion was trustworthy: 94 before it, plus the three probes main's copy had that
+// this one did not, plus one for the anchor now counting itself. A duplicate detector
+// removed by hand is exactly the edit that takes a rule with it, and this number is what
+// noticed it had not. 106 is that plus the CI-coverage rule and its seven probes.
+$expectedChecks = 106;
 $checked++;
 if ($checked === $expectedChecks) {
     echo "  ok   this checker ran every check it is supposed to ($checked)\n";

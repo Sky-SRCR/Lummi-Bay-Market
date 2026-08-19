@@ -260,9 +260,13 @@ jobs:
   # This count is on its third correction and both were merges: the branch that added
   # brands and themes wrote two suites and left the word "four", main corrected it to
   # "six" against the six it could see, and the step list below has run eight since.
-  # `selftest_builder_readonly.js` does assert there are eight — but it counts
+  # `selftest_builder_readonly.js` asserts there are eight — but it counts
   # `selftest_*.js` **files**, not the steps below, so a ninth suite added without a
-  # step here passes every gate in the repo and never runs. Nothing checks that yet.
+  # step here used to pass every gate in the repo and never run. `check_invariants.php`
+  # now reads this file and holds the two lists to each other in both directions: a
+  # gate in `tools/` that no step runs, and a step naming a file that is not there.
+  # Comments are stripped first — this workflow discusses tools it does not run, a few
+  # lines above the steps that run other ones.
   builder-js:
     runs-on: ubuntu-latest
     steps:

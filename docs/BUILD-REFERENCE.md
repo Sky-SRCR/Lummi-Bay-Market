@@ -6878,6 +6878,15 @@ as the `lock-holder` entry that sat in that suite's PRESENT list for months poin
 nothing, and it is now checked for all eight, in that suite, because
 `check_invariants.php` reads PHP and these are JavaScript.
 
+That last clause held for the *contents* of a suite and was read, once, as covering the
+**list** of them too. It does not: this check counts `selftest_*.js` files on disk, so a
+ninth suite added without a step in `php-lint.yml` passed here and ran nowhere. The merge
+with `main` is what surfaced it — the node job's comment said six against a step list of
+eight, its third such correction and every one a merge — and the half that was missing is
+not JavaScript at all but YAML, which `check_invariants.php` can read perfectly well. It
+holds the two lists to each other now, in both directions and with the workflow's comments
+stripped, because that file's own YAML names tools it does not run.
+
 **Four of the eight also had no count anchor**, which is the third of the three ways
 `selftest_layout.php`'s own header says a suite reports "0 failed" while broken: delete
 half of `selftest_viewer.js` and it printed a clean run and exited 0. All eight carry one
