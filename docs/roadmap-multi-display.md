@@ -335,6 +335,14 @@ that is where anything a later change needs at deploy time is recorded, and at t
 time of writing one of its rows is a permission that has to be right before branding
 can be edited at all.
 
+There is also a **walk sheet** derived from this list, HANDOFF §5 and
+[`DEPLOY-SKIP.md`](DEPLOY-SKIP.md) — [`deploy-visit-sheet.md`](deploy-visit-sheet.md). It owns no content and this list
+wins wherever they differ; what it adds is the three things prose cannot hold in one
+hand at a sign: the 22 steps broken into the 89 separate things that must actually be
+true, the sentence each one should produce quoted verbatim from the source, and an
+order that starts step 20's fifteen-minute wait at step 15 instead of standing still
+for it.
+
 In order, on the one visit:
 
 1. **Back up the database.** Publishing has no undo and this deploy rewrites how
