@@ -1404,6 +1404,335 @@ foreach ($commentProbes as $probe) {
     }
 }
 
+// ---- No test writes a value the engine the shop runs would refuse ----------------
+/**
+ * The column types `schema.sql` declares, as `[table][column] => type` (invariant 32).
+ *
+ * Read from that file rather than from `lib/schema.php` on purpose: schema.sql is what
+ * builds the MySQL fixture the suite runs against, so it is the file whose answer the
+ * engine will actually give. Only the four kinds of type that can *refuse* a literal
+ * are read — an ENUM, a fixed-width string, and a date — because the rule below is
+ * about a write MySQL rejects, not about type-checking the suite.
+ *
+ * @return array
+ */
+function schemaColumnTypes($sql)
+{
+    $types = [];
+    if (!preg_match_all('/CREATE TABLE(?: IF NOT EXISTS)?\s+`?(\w+)`?\s*\((.*?)\n\)\s*ENGINE/is',
+                        $sql, $tables, PREG_SET_ORDER)) {
+        return $types;
+    }
+    foreach ($tables as $table) {
+        $types[$table[1]] = [];
+        foreach (explode("\n", $table[2]) as $line) {
+            // The lookahead is not decoration: `\b` after a closing paren is not a word
+            // boundary — a space follows a non-word character — so the ENUM and VARCHAR
+            // halves of this pattern matched nothing at all while the date half worked,
+            // which is a rule reading green over the two column kinds that broke CI.
+            if (preg_match('/^\s*`?(\w+)`?\s+(ENUM\([^)]*\)|VARCHAR\(\d+\)|CHAR\(\d+\)|DATETIME|TIMESTAMP|DATE)(?=[\s,]|$)/i',
+                           $line, $col)) {
+                $types[$table[1]][$col[1]] = strtoupper(substr($col[2], 0, 5)) === 'ENUM('
+                                           ? $col[2] : strtoupper($col[2]);
+            }
+        }
+    }
+    return $types;
+}
+
+/**
+ * Why MySQL would refuse this literal for this column, or '' if it would not.
+ *
+ * The three refusals are the three that actually happened, and the fourth is the one
+ * that would have happened next:
+ *
+ *   · a value that is not an ENUM member — error 1265, and lettercase does **not**
+ *     make one: MySQL matches a member through the column's case-insensitive
+ *     collation, which is why the suite's `role = 'Admin'` write has always been fine
+ *     on both engines and is not what this looks for;
+ *   · a string longer than the column is wide — error 1406. A colour nobody can read
+ *     has to *fit* `VARCHAR(7)` before anybody can be shown the wrong thing by it;
+ *   · anything that is not a date in a date column — error 1292;
+ *   · the zero date, which is a date and still refused, by NO_ZERO_DATE.
+ *
+ * SQLite has none of these limits: it stores every one of them and the check that
+ * reads it back passes, which is the whole reason this is a gate here rather than
+ * something CI can be relied on to say. CI *does* say it — as a fatal, in the middle
+ * of a run, which also takes down the rehearsal step underneath.
+ */
+function valueRefusedByColumn($columns, $column, $value)
+{
+    if (!isset($columns[$column])) { return ''; }
+    $type = $columns[$column];
+
+    if (strtoupper(substr($type, 0, 5)) === 'ENUM(') {
+        preg_match_all("/'([^']*)'/", $type, $members);
+        foreach ($members[1] as $member) {
+            if (strcasecmp($member, $value) === 0) { return ''; }
+        }
+        return $type . " has no member '" . $value . "'";
+    }
+    if (preg_match('/^(?:VAR)?CHAR\((\d+)\)$/', $type, $width)) {
+        return strlen($value) > intval($width[1])
+             ? $type . ' cannot hold ' . strlen($value) . " characters ('" . $value . "')"
+             : '';
+    }
+    if ($type === 'DATETIME' || $type === 'TIMESTAMP' || $type === 'DATE') {
+        if (strpos($value, '0000-00-00') === 0) {
+            return $type . " refuses the zero date, which NO_ZERO_DATE has covered since 5.7";
+        }
+        return preg_match('/^\d{4}-\d{2}-\d{2}/', $value) ? '' : $type . " will not read '" . $value . "'";
+    }
+    return '';
+}
+
+/**
+ * Every literal write in this source the engine the shop runs would refuse.
+ *
+ * Comments are dropped first, for the reason every other rule in this file drops them:
+ * the write-ups quote the statements they are about.
+ *
+ * @return array of ['line' => int, 'what' => string]
+ */
+function refusedLiteralWrites($source, $types)
+{
+    $out = [];
+    foreach (explode("\n", codeWithoutComments($source)) as $i => $line) {
+        $n = $i + 1;
+        if (preg_match_all('/UPDATE\s+(\w+)\s+SET\s+(.*?)(?:\s+WHERE|"|$)/i', $line, $sets, PREG_SET_ORDER)) {
+            foreach ($sets as $set) {
+                if (!isset($types[$set[1]])) { continue; }
+                preg_match_all("/(\w+)\s*=\s*'([^']*)'/", $set[2], $pairs, PREG_SET_ORDER);
+                foreach ($pairs as $pair) {
+                    $why = valueRefusedByColumn($types[$set[1]], $pair[1], $pair[2]);
+                    if ($why !== '') { $out[] = ['line' => $n, 'what' => $set[1] . '.' . $pair[1] . ': ' . $why]; }
+                }
+            }
+        }
+        if (preg_match_all('/INSERT\s+INTO\s+(\w+)\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)/i',
+                           $line, $ins, PREG_SET_ORDER)) {
+            foreach ($ins as $one) {
+                if (!isset($types[$one[1]])) { continue; }
+                $columns = array_map(function ($c) { return trim(trim($c), '`'); }, explode(',', $one[2]));
+                $values  = array_map('trim', explode(',', $one[3]));
+                if (count($columns) !== count($values)) { continue; }
+                foreach ($columns as $at => $column) {
+                    $value = $values[$at];
+                    if (strlen($value) < 2 || $value[0] !== "'" || substr($value, -1) !== "'") { continue; }
+                    $why = valueRefusedByColumn($types[$one[1]], $column, substr($value, 1, -1));
+                    if ($why !== '') { $out[] = ['line' => $n, 'what' => $one[1] . '.' . $column . ': ' . $why]; }
+                }
+            }
+        }
+    }
+    return $out;
+}
+
+// The rule, over every tool that can be pointed at the MySQL fixture. Which connection
+// a given statement is on is not something this can read — the suite holds several, two
+// of them deliberately SQLite-only — so it asks the narrower question that needs no such
+// answer: would the engine the shop runs accept this literal at all? For eight days the
+// answer was no in two places here, and nothing local could say so, because SQLite
+// stores both and the check that reads each one back passes (invariant 32).
+$writeTypes = schemaColumnTypes(file_get_contents($root . '/schema.sql'));
+$checked++;
+if (isset($writeTypes['displays']['bg_type']) && count($writeTypes) >= 7) {
+    echo "  ok   schema.sql's column types were read, so the rule below has something to check against\n";
+} else {
+    echo "  FAIL schema.sql's column types were not read — " . count($writeTypes) . " tables\n";
+    $failures[] = 'schemaColumnTypes read schema.sql';
+}
+
+$refusedWrites = [];
+foreach (glob($root . '/tools/*.php') as $tool) {
+    if (basename($tool) === basename(__FILE__)) { continue; }
+    foreach (refusedLiteralWrites(file_get_contents($tool), $writeTypes) as $hit) {
+        $refusedWrites[] = 'tools/' . basename($tool) . ':' . $hit['line'] . '  ' . $hit['what'];
+    }
+}
+$checked++;
+if (!$refusedWrites) {
+    echo "  ok   no tool writes a literal the engine the shop runs would refuse\n";
+} else {
+    echo "  FAIL a tool writes a literal MySQL refuses — a fatal mid-run, and the rehearsal under it never runs\n";
+    foreach ($refusedWrites as $one) { echo "       $one\n"; }
+    $failures[] = 'literal writes MySQL refuses: ' . count($refusedWrites);
+}
+
+// ---- And that detector, seen to fail --------------------------------------------
+// Invariant 30. The first two are the writes this branch removed, in the order CI hit
+// them: the ENUM spelling that failed as a check and the stamp that ended the run as a
+// fatal. The negative half is where the care is, because the two easy ways to write this
+// rule both break real lines in the suite — an ENUM match that respected lettercase
+// would condemn `role = 'admin'` reads that MySQL has always accepted, and a length rule
+// that did not read the declared width would condemn every colour.
+$writeProbes = [
+    ['$p->exec("UPDATE users SET role = \'Admin\' WHERE id = 1");', 0,
+     'an ENUM member in another lettercase is left alone — MySQL folds it, and always has'],
+    ['$p->exec("UPDATE users SET role = \'root\' WHERE id = 1");', 1,
+     'a word the ENUM never offered is refused — the check that failed on main'],
+    ['$p->exec("UPDATE displays SET last_published_at = \'nonsense\' WHERE id = 1");', 1,
+     'and so is the stamp that is not a date — the fatal that ended the run'],
+    ['$p->exec("UPDATE displays SET last_published_at = \'0000-00-00 00:00:00\' WHERE id = 1");', 1,
+     'and the zero date, which is a date and still refused'],
+    ['$p->exec("UPDATE block_styles SET font_color = \'linear-gradient(to right, #ffffff 0%, #000000 100%)\' WHERE id = 1");', 1,
+     'and a value wider than the column, which no database client could have stored either'],
+    ['$p->exec("INSERT INTO displays (screen_name, bg_type) VALUES (\'Drive-Thru\', \'nonsense\');");', 1,
+     'an INSERT is read the same way as an UPDATE, by column position'],
+    ['$p->exec("UPDATE displays SET bg_type = \'image\' WHERE id = 1");', 0,
+     'a member of the ENUM is left alone'],
+    ['$p->exec("UPDATE displays SET bg_type = \'Image\' WHERE id = 1");', 0,
+     'and so is one in another lettercase, because MySQL matches a member case-insensitively'],
+    ['$p->exec("UPDATE block_styles SET font_color = \'gold\' WHERE id = 1");', 0,
+     'a colour that will not read but fits the column is exactly the state a check wants'],
+    ['$p->exec("UPDATE displays SET last_published_at = \'2026-08-19 12:00:00\' WHERE id = 1");', 0,
+     'a real stamp is not a refusal'],
+    ['$p->exec("UPDATE nothing_declared SET bg_type = \'nonsense\' WHERE id = 1");', 0,
+     'and a table schema.sql does not declare is not this rule\'s business'],
+    ['// UPDATE displays SET bg_type = \'nonsense\' — what this branch removed', 0,
+     'a write-up quoting the statement it is about is prose, not a write'],
+];
+foreach ($writeProbes as $probe) {
+    list($snippet, $expected, $label) = $probe;
+    $checked++;
+    $hits = refusedLiteralWrites("<?php\n" . $snippet . "\n", $writeTypes);
+    if (count($hits) === $expected) {
+        echo "  ok   $label\n";
+    } else {
+        echo "  FAIL the refused-write detector is wrong about: $label\n";
+        echo "       expected $expected hit(s), got " . count($hits) . "\n";
+        foreach ($hits as $hit) { echo "         line {$hit['line']}: {$hit['what']}\n"; }
+        $failures[] = "refused-write detector: $label";
+    }
+}
+
+// ---- Nor SQLite dialect on a connection that may be MySQL ------------------------
+/**
+ * SQLite-only SQL handed to a connection the MySQL leg can also be holding.
+ *
+ * The other half of invariant 37, and the half that cost the run once the literals
+ * were fixed: a value MySQL refuses is one statement failing, but a `CREATE TABLE`
+ * in the wrong dialect is a *fatal* — it throws where no check is looking, the suite
+ * ends without reporting, and the rehearsal step under it never starts.
+ *
+ * Which connection a statement is on *is* readable here, unlike for the literals
+ * above, because the suite names them: a handle assigned from `newSqliteTestDb()` or
+ * from `new PDO('sqlite:…')` is SQLite for the life of the file, and one assigned
+ * from `newTestDb()` is whichever engine the run was started against. So the rule is
+ * narrow on purpose — it fires only on a handle of the second kind, which leaves a
+ * test that genuinely needs SQLite free to say so and be believed.
+ *
+ * Its blind spot is the same narrowness read the other way: a handle this cannot
+ * classify is left alone, so the `$pdo` parameter the two fixture helpers take is
+ * invisible here. That is where both dialects are *supposed* to be written out, side
+ * by side, which is why it is a reasonable place to be blind — but it means adding a
+ * third such helper is not something this gate will check for you.
+ *
+ * @return array of ['line' => int, 'what' => string]
+ */
+function sqliteOnlyOnPortableHandle($source)
+{
+    $code = codeWithoutComments($source);
+
+    // Which handles are pinned to SQLite, and which are whatever the run chose.
+    $sqliteOnly = [];
+    $portable   = [];
+    if (preg_match_all('/\$(\w+)\s*=\s*(newSqliteTestDb\(|new\s+PDO\s*\(\s*[\'"]sqlite:)/',
+                       $code, $pins, PREG_SET_ORDER)) {
+        foreach ($pins as $pin) { $sqliteOnly[$pin[1]] = true; }
+    }
+    if (preg_match_all('/\$(\w+)\s*=\s*newTestDb\(/', $code, $both, PREG_SET_ORDER)) {
+        foreach ($both as $one) { $portable[$one[1]] = true; }
+    }
+
+    // Constructs MySQL has no spelling for at all, so a statement carrying one is in
+    // the wrong dialect however the rest of it is written. `TEXT … DEFAULT` is here
+    // for a different reason than the others: it is valid SQLite and MySQL rejects
+    // *the default*, which is the same fatal by a subtler route.
+    $sqliteisms = [
+        'AUTOINCREMENT'                       => 'AUTOINCREMENT is AUTO_INCREMENT on MySQL',
+        'RAISE('                              => 'RAISE() is SQLite\'s only way to abort a trigger',
+        'CREATE TRIGGER'                      => 'a SQLite trigger body is not a MySQL one',
+        'sqlite_master'                       => 'sqlite_master is SQLite\'s catalogue',
+        'PRAGMA '                             => 'PRAGMA is a SQLite statement',
+        'INSERT OR REPLACE'                   => 'INSERT OR REPLACE is REPLACE INTO on MySQL',
+    ];
+
+    // The receiver a statement is sent through, which is what decides whether it can
+    // reach MySQL. A heredoc or a statement split over lines keeps the receiver on the
+    // first line, so the handle in scope is carried forward until the next one appears.
+    $out     = [];
+    $holding = '';
+    foreach (explode("\n", $code) as $i => $line) {
+        if (preg_match('/\$(\w+)\s*->\s*(?:exec|query|prepare)\s*\(/', $line, $call)) {
+            $holding = $call[1];
+        }
+        foreach ($sqliteisms as $needle => $why) {
+            if (stripos($line, $needle) === false) { continue; }
+            if ($holding === '' || !isset($portable[$holding])) { continue; }
+            $out[] = ['line' => $i + 1, 'what' => '$' . $holding . ': ' . $why];
+        }
+        if (preg_match('/\bTEXT\b[^,)]*\bDEFAULT\b/i', $line)
+            && $holding !== '' && isset($portable[$holding])) {
+            $out[] = ['line' => $i + 1,
+                      'what' => '$' . $holding . ': MySQL allows no DEFAULT on a TEXT column'];
+        }
+    }
+    return $out;
+}
+
+$dialectHits = [];
+foreach (glob($root . '/tools/*.php') as $tool) {
+    if (basename($tool) === basename(__FILE__)) { continue; }
+    foreach (sqliteOnlyOnPortableHandle(file_get_contents($tool)) as $hit) {
+        $dialectHits[] = 'tools/' . basename($tool) . ':' . $hit['line'] . '  ' . $hit['what'];
+    }
+}
+$checked++;
+if (!$dialectHits) {
+    echo "  ok   no tool sends SQLite-only SQL down a connection the MySQL leg may be holding
+";
+} else {
+    echo "  FAIL SQLite dialect on a portable handle — a fatal on the MySQL leg, not a failed check
+";
+    foreach ($dialectHits as $one) { echo "       $one
+"; }
+    $failures[] = 'SQLite dialect on a portable handle: ' . count($dialectHits);
+}
+
+// And that one seen to fail as well. The first probe is the statement that ended the
+// run at check 1383; the negative half is the whole reason the rule reads the handle at
+// all, since the same text is correct on a connection that is pinned to SQLite.
+$dialectProbes = [
+    ['$midPdo = newTestDb();' . "\n" . '$midPdo->exec("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT)");',
+     1, 'the CREATE TABLE that ended the MySQL leg at check 1187 is refused'],
+    ['$racePdo = newTestDb();' . "\n" . '$racePdo->exec("CREATE TRIGGER seed_race BEFORE INSERT ON displays BEGIN");',
+     1, 'and so is a trigger, which MySQL spells nothing like'],
+    ['$midPdo = newTestDb();' . "\n" . '$midPdo->exec("CREATE TABLE t (type TEXT NOT NULL DEFAULT \'text\')");',
+     1, 'and a DEFAULT on a TEXT column, which is valid here and rejected there'],
+    ['$racePdo = newSqliteTestDb();' . "\n" . '$racePdo->exec("CREATE TRIGGER seed_race BEFORE INSERT ON displays BEGIN");',
+     0, 'a handle that says it is SQLite is believed, which is what makes the rule usable'],
+    ['$bare = new PDO(\'sqlite::memory:\');' . "\n" . '$bare->exec("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT)");',
+     0, 'including one opened directly rather than through the fixture'],
+    ['$midPdo = newTestDb();' . "\n" . '$midPdo->exec("CREATE TABLE t (id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY)");',
+     0, 'and the portable spelling is not mistaken for the SQLite one'],
+    ['// CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT) — what this branch removed',
+     0, 'a write-up quoting the statement it is about is prose, not a statement'],
+];
+foreach ($dialectProbes as $probe) {
+    list($snippet, $expected, $label) = $probe;
+    $checked++;
+    $hits = sqliteOnlyOnPortableHandle("<?php\n" . $snippet . "\n");
+    if (count($hits) === $expected) {
+        echo "  ok   $label\n";
+    } else {
+        echo "  FAIL the SQLite-dialect detector is wrong about: $label\n";
+        echo "       expected $expected hit(s), got " . count($hits) . "\n";
+        foreach ($hits as $hit) { echo "         line {$hit['line']}: {$hit['what']}\n"; }
+        $failures[] = "SQLite-dialect detector: $label";
+    }
+}
+
 // ---- What this does not cover ---------------------------------------------------
 // The five §5 greps that used to be listed here are checked above as of #50. Four were
 // mechanised outright; the fifth kept the half of itself that is a judgement. What is
