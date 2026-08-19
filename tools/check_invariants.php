@@ -1915,6 +1915,133 @@ foreach ($writeProbes as $probe) {
     }
 }
 
+// ---- Nor SQLite dialect on a connection that may be MySQL ------------------------
+/**
+ * SQLite-only SQL handed to a connection the MySQL leg can also be holding.
+ *
+ * The other half of invariant 37, and the half that cost the run once the literals
+ * were fixed: a value MySQL refuses is one statement failing, but a `CREATE TABLE`
+ * in the wrong dialect is a *fatal* — it throws where no check is looking, the suite
+ * ends without reporting, and the rehearsal step under it never starts (§4bj).
+ *
+ * Which connection a statement is on *is* readable here, unlike for the literals
+ * above, because the suite names them: a handle assigned from `newSqliteTestDb()` or
+ * from `new PDO('sqlite:…')` is SQLite for the life of the file, and one assigned
+ * from `newTestDb()` is whichever engine the run was started against. So the rule is
+ * narrow on purpose — it fires only on a handle of the second kind, which leaves a
+ * test that genuinely needs SQLite free to say so and be believed.
+ *
+ * Its blind spot is the same narrowness read the other way: a handle this cannot
+ * classify is left alone, so the `$pdo` parameter the two fixture helpers take is
+ * invisible here. That is where both dialects are *supposed* to be written out, side
+ * by side, which is why it is a reasonable place to be blind — but it means adding a
+ * third such helper is not something this gate will check for you.
+ *
+ * @return array of ['line' => int, 'what' => string]
+ */
+function sqliteOnlyOnPortableHandle($source)
+{
+    $code = codeWithoutComments($source);
+
+    // Which handles are pinned to SQLite, and which are whatever the run chose.
+    $sqliteOnly = [];
+    $portable   = [];
+    if (preg_match_all('/\$(\w+)\s*=\s*(newSqliteTestDb\(|new\s+PDO\s*\(\s*[\'"]sqlite:)/',
+                       $code, $pins, PREG_SET_ORDER)) {
+        foreach ($pins as $pin) { $sqliteOnly[$pin[1]] = true; }
+    }
+    if (preg_match_all('/\$(\w+)\s*=\s*newTestDb\(/', $code, $both, PREG_SET_ORDER)) {
+        foreach ($both as $one) { $portable[$one[1]] = true; }
+    }
+
+    // Constructs MySQL has no spelling for at all, so a statement carrying one is in
+    // the wrong dialect however the rest of it is written. `TEXT … DEFAULT` is here
+    // for a different reason than the others: it is valid SQLite and MySQL rejects
+    // *the default*, which is the same fatal by a subtler route.
+    $sqliteisms = [
+        'AUTOINCREMENT'                       => 'AUTOINCREMENT is AUTO_INCREMENT on MySQL',
+        'RAISE('                              => 'RAISE() is SQLite\'s only way to abort a trigger',
+        'CREATE TRIGGER'                      => 'a SQLite trigger body is not a MySQL one',
+        'sqlite_master'                       => 'sqlite_master is SQLite\'s catalogue',
+        'PRAGMA '                             => 'PRAGMA is a SQLite statement',
+        'INSERT OR REPLACE'                   => 'INSERT OR REPLACE is REPLACE INTO on MySQL',
+    ];
+
+    // The receiver a statement is sent through, which is what decides whether it can
+    // reach MySQL. A heredoc or a statement split over lines keeps the receiver on the
+    // first line, so the handle in scope is carried forward until the next one appears.
+    $out     = [];
+    $holding = '';
+    foreach (explode("\n", $code) as $i => $line) {
+        if (preg_match('/\$(\w+)\s*->\s*(?:exec|query|prepare)\s*\(/', $line, $call)) {
+            $holding = $call[1];
+        }
+        foreach ($sqliteisms as $needle => $why) {
+            if (stripos($line, $needle) === false) { continue; }
+            if ($holding === '' || !isset($portable[$holding])) { continue; }
+            $out[] = ['line' => $i + 1, 'what' => '$' . $holding . ': ' . $why];
+        }
+        if (preg_match('/\bTEXT\b[^,)]*\bDEFAULT\b/i', $line)
+            && $holding !== '' && isset($portable[$holding])) {
+            $out[] = ['line' => $i + 1,
+                      'what' => '$' . $holding . ': MySQL allows no DEFAULT on a TEXT column'];
+        }
+    }
+    return $out;
+}
+
+$dialectHits = [];
+foreach (glob($root . '/tools/*.php') as $tool) {
+    if (basename($tool) === basename(__FILE__)) { continue; }
+    foreach (sqliteOnlyOnPortableHandle(file_get_contents($tool)) as $hit) {
+        $dialectHits[] = 'tools/' . basename($tool) . ':' . $hit['line'] . '  ' . $hit['what'];
+    }
+}
+$checked++;
+if (!$dialectHits) {
+    echo "  ok   no tool sends SQLite-only SQL down a connection the MySQL leg may be holding
+";
+} else {
+    echo "  FAIL SQLite dialect on a portable handle — a fatal on the MySQL leg, not a failed check
+";
+    foreach ($dialectHits as $one) { echo "       $one
+"; }
+    $failures[] = 'SQLite dialect on a portable handle: ' . count($dialectHits);
+}
+
+// And that one seen to fail as well. The first probe is the statement that ended the
+// run at check 1383; the negative half is the whole reason the rule reads the handle at
+// all, since the same text is correct on a connection that is pinned to SQLite.
+$dialectProbes = [
+    ['$midPdo = newTestDb();' . "\n" . '$midPdo->exec("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT)");',
+     1, 'the CREATE TABLE that ended the MySQL leg at check 1383 is refused'],
+    ['$racePdo = newTestDb();' . "\n" . '$racePdo->exec("CREATE TRIGGER seed_race BEFORE INSERT ON displays BEGIN");',
+     1, 'and so is a trigger, which MySQL spells nothing like'],
+    ['$midPdo = newTestDb();' . "\n" . '$midPdo->exec("CREATE TABLE t (type TEXT NOT NULL DEFAULT \'text\')");',
+     1, 'and a DEFAULT on a TEXT column, which is valid here and rejected there'],
+    ['$racePdo = newSqliteTestDb();' . "\n" . '$racePdo->exec("CREATE TRIGGER seed_race BEFORE INSERT ON displays BEGIN");',
+     0, 'a handle that says it is SQLite is believed, which is what makes the rule usable'],
+    ['$bare = new PDO(\'sqlite::memory:\');' . "\n" . '$bare->exec("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT)");',
+     0, 'including one opened directly rather than through the fixture'],
+    ['$midPdo = newTestDb();' . "\n" . '$midPdo->exec("CREATE TABLE t (id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY)");',
+     0, 'and the portable spelling is not mistaken for the SQLite one'],
+    ['// CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT) — what §4bj removed',
+     0, 'a write-up quoting the statement it is about is prose, not a statement'],
+];
+foreach ($dialectProbes as $probe) {
+    list($snippet, $expected, $label) = $probe;
+    $checked++;
+    $hits = sqliteOnlyOnPortableHandle("<?php\n" . $snippet . "\n");
+    if (count($hits) === $expected) {
+        echo "  ok   $label\n";
+    } else {
+        echo "  FAIL the SQLite-dialect detector is wrong about: $label\n";
+        echo "       expected $expected hit(s), got " . count($hits) . "\n";
+        foreach ($hits as $hit) { echo "         line {$hit['line']}: {$hit['what']}\n"; }
+        $failures[] = "SQLite-dialect detector: $label";
+    }
+}
+
 // ---- The instrument itself -------------------------------------------------------
 // Every rule above is read through codeWithoutComments(), so what that function drops
 // decides what all thirty-two of them can see. It gained HTML comments in #50, and the
@@ -1992,7 +2119,7 @@ foreach ([
 //
 // Not a count of rules: a count of what actually *ran*, so a rule that stops being
 // reached is the same failure as one that was deleted.
-$expectedChecks = 86;
+$expectedChecks = 94;
 if ($checked !== $expectedChecks) {
     $failures[] = 'this checker ran every check it is supposed to — expected '
                 . $expectedChecks . ', ran ' . $checked;

@@ -431,6 +431,61 @@ function newMysqlTestDb()
     return $pdo;
 }
 
+// ---- Tables a test builds by hand, on either engine --------------------------
+//
+// Two states in this app are not a schema — they are a schema part-way through
+// changing, or one this build replaced — so no `schema.sql` describes them and a
+// test that needs one writes the `CREATE TABLE` itself. Written inline, that DDL is
+// SQLite dialect: `AUTOINCREMENT` is one word on this engine and another on MySQL,
+// and `TEXT NOT NULL DEFAULT 'text'` is legal here and rejected outright there.
+// Both spellings live in these two functions instead, beside the rest of what this
+// file knows about the difference between the engines, so a test says which state it
+// wants and not how to spell it (§4bj).
+
+/**
+ * `canvas_elements` as it exists between the ADD COLUMN and the tighten.
+ *
+ * A nullable `display_id`, which is the only state the backfill ever sees: the plan
+ * puts it between the two, so a fixture with the column already NOT NULL would be
+ * testing the statement against a database it never runs on.
+ *
+ * The inline `REFERENCES` is honoured by SQLite and ignored by InnoDB, which is
+ * accepted rather than worked around — nothing here deletes a Display, so the
+ * cascade is not what is under test.
+ */
+function createNullableDisplayIdElements(PDO $pdo)
+{
+    $pdo->exec("DROP TABLE canvas_elements");
+    $pdo->exec(testIsMysql()
+        ? "CREATE TABLE canvas_elements (
+               id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+               display_id INT(11) DEFAULT NULL,
+               type VARCHAR(50) NOT NULL DEFAULT 'text') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        : "CREATE TABLE canvas_elements (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               display_id INTEGER REFERENCES displays(id) ON DELETE CASCADE,
+               type TEXT NOT NULL DEFAULT 'text')");
+}
+
+/**
+ * `canvas_settings` — the single-sign app's one row of canvas background.
+ *
+ * Gone from `schema.sql` on purpose: this build keeps the background on the Display.
+ * It is still the table the deploy-day seed reads the store's own wallpaper out of,
+ * on an install that has not converged yet, so the seed has to be tested against a
+ * database that still has one.
+ */
+function createLegacyCanvasSettings(PDO $pdo)
+{
+    $pdo->exec(testIsMysql()
+        ? "CREATE TABLE canvas_settings (
+               id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+               bg_type VARCHAR(20) DEFAULT NULL,
+               bg_val VARCHAR(255) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        : "CREATE TABLE canvas_settings (id INTEGER PRIMARY KEY AUTOINCREMENT,
+               bg_type TEXT, bg_val TEXT)");
+}
+
 /**
  * A *second* connection to the database `newMysqlTestDb()` most recently made.
  *

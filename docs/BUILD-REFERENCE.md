@@ -670,6 +670,24 @@ through the app again:
     refuse a literal and matches ENUM members **case-insensitively**, because MySQL does —
     `role = 'Admin'` has always been accepted and is not what this is about.
 
+    The rule has a second half (§4bj), and it is the half that cost the run once the
+    literals were fixed: **no check sends SQLite-only SQL down a connection the MySQL leg
+    may be holding.** A refused value is one statement failing; the wrong *dialect* is a
+    fatal, thrown where no check is looking, so the suite ends without reporting and the
+    rehearsal step never starts. `AUTOINCREMENT`, a trigger body, `PRAGMA`,
+    `sqlite_master`, `INSERT OR REPLACE` — and `TEXT … DEFAULT`, which is valid SQLite and
+    rejected by InnoDB, the same fatal by a subtler route. Unlike the literals, this one
+    can read *which* connection a statement is on, because the suite names them: a handle
+    from `newSqliteTestDb()` is believed, one from `newTestDb()` is whichever engine the
+    run chose. Accepting a write and storing what was written are also different
+    questions, and only the second is one a check can assert — the same `role = 'Admin'`
+    MySQL accepts is stored as `admin`, so the state that check wanted has to be handed to
+    the reader as a row too.
+
+    What neither half can answer is whether the arm *finishes*. Only the run says that,
+    and a dead gate hides how much is still wrong behind it: fixing §4bi's four took the
+    leg from ~100 checks to 1383, where four more of the same class were waiting.
+
 ---
 
 ## 3. Which Display does a request with no tag mean?
@@ -7071,6 +7089,85 @@ whether the MySQL arm now *finishes*: it has been dead for eight days and roughl
 the suite's checks — every one steps 1 to 5 added — have never run against that engine at
 all. This container has no MySQL, so the run is the only place that answer exists.
 
+### 4bj. The run answers, and there were four more of the same thing behind them
+
+§4bi ends by saying the only place the answer exists is the run. The run came back: the
+MySQL leg reached **check 1383** instead of dying in the first hundred, and then failed
+four more times. Every one of them is the same defect as the four before it — the suite
+asserting something that is only true where nothing enforces the schema — and every one
+of them had been sitting behind a fatal that stopped the run before it got there. That is
+the part worth keeping: fixing the visible four did not fix the class, it *revealed* the
+class. A dead gate hides its own remaining work, and the count of what is wrong behind it
+is not knowable until it runs.
+
+**One was a fatal, and it is the reason there is a second detector.** A value MySQL
+refuses is one statement failing; SQL in the wrong *dialect* throws where no check is
+looking, so the suite ends without reporting and the rehearsal step under it never
+starts. Three tables the suite builds by hand were written in SQLite:
+`AUTOINCREMENT`, which MySQL spells `AUTO_INCREMENT`, and — found by reading rather than
+by CI — `type TEXT NOT NULL DEFAULT 'text'`, which is valid SQLite and rejected outright
+by MySQL, since InnoDB allows no default on a `TEXT` column. Both spellings now live in
+`test_fixture.php` beside the rest of what that file knows about the difference between
+the engines: `createNullableDisplayIdElements()` and `createLegacyCanvasSettings()`, so a
+test says which state it wants and not how to spell it. A fourth — the deploy-day race —
+moved to `newSqliteTestDb()`, because MySQL cannot express that state at all: a trigger
+there may not write to the table it is defined on, and that write is the half which has to
+survive the failure. What is under test is a `catch` block in PHP; only one engine can
+build the interleaving that reaches it.
+
+**Two were readouts asserted off the machine, which §4bg had already named as a class.**
+`ServerReport`'s *Database time zone* row had its note spelled inline, so the two forms it
+can take were the two engines — and the suite could only ever assert whichever one it was
+started on. It is `dbZoneNoteFor($zone)` now, the fifth seam of exactly this shape on that
+card. Writing it turned up a false alarm the row had been giving all along: `SYSTEM (UTC)`
+means the `SET time_zone` did not take *and* the host was already on UTC, so the stamps are
+in UTC regardless — and the note said dates may read hours out, which is the sentence
+somebody acts on. A protection that turns out not to have been needed is not a problem to
+report. The predicate unwraps `SYSTEM (x)` and asks again; an abbreviation like `GMT` is
+left warning rather than added on the strength of what it looks like, because a wrong entry
+there is silence about stamps that really are out.
+
+**One was a state the shop's engine cannot hold, and the ENUM was right.** The suite wrote
+`role = 'Admin'` and asserted the reader answered `basic`. MySQL matches an ENUM assignment
+against its members through the column's collation, so `'Admin'` *stores as* `admin` — the
+row the check was about cannot exist there, and the check built the opposite of what it
+asserted. Handed to `LoginOutcome::ok()` as a row, it covers the normalisation in code,
+which is what has to hold: a lagging install has its `canvas_elements` ENUMs widened at
+runtime, so what type a column *is* is not something this app gets to assume. Note the
+edge this sits on — §4bi's detector was deliberately built to *permit* `role = 'Admin'`,
+because MySQL accepts it. That was correct. Accepting a write and storing what was written
+are different questions, and only the second one a check can assert.
+
+**And one found a defect that was not in the app at all.** The suite pooled a `carousel`
+row into the asset library and asserted it was ordinary. `assets.type` is
+`ENUM('text','image','video')` and refuses it — and the right answer turned out to be that
+the schema is correct: `builder.php` marks `carousel`, `table` and `marquee` `pool: false`,
+because what those carry is the block's own settings rather than a piece of content anybody
+would reuse. Two comments said otherwise — `AssetLibrary::contentFor()`'s docblock ("the
+JSON a pooled carousel, table or marquee row carries") and the Library edit form's third
+branch in `crud.php`, which named all three. Both were describing a design the `pool: false`
+decision had superseded, and the third branch they were explaining is real and reachable
+and is for **`video`**: the one type in the library nobody can create by hand, since the add
+form offers two and the third arrives when a publish pools a video block carrying its own
+path. So the block now tests `video`, which is also the only way to assert that the image
+allow-list is type-scoped — no `.mp4` could pass it. Two comments corrected, no code
+changed, and the agreement they had drifted from is now read out of `schema.sql` and
+`builder.php` rather than restated: a block type added to the Builder's poolable set and
+not to the column is a publish whose "save to library" silently does nothing, and neither
+side says a word.
+
+86 → 94 consistency checks; 2323 → 2336 suite checks, 2348 → 2361 on MySQL. The dialect
+detector reads the *handle* rather than only the SQL, which is what makes it usable — a
+test that genuinely needs SQLite says `newSqliteTestDb()` and is believed. Seen to fail
+against the real statement, not just its probes: restoring the `CREATE TABLE` that ended
+the run names both problems on it, including the `TEXT DEFAULT` one CI never got far
+enough to reach.
+
+Whether the leg now reaches the end is, again, only answerable by the run. What has
+changed since §4bi is the honest expectation: the first fix took it from ~100 checks to
+1383, and there are roughly 950 past that point which have still never executed against
+this engine.
+
 ---
 
 ## 5. Verification
@@ -7082,7 +7179,10 @@ MySQL 5.7 service. **"Runs" is a claim with a date on it, and this paragraph was
 wrong about it for eight days**: the MySQL arm had not reached the end of the suite
 since 2026-08-11, and neither it nor the rehearsal step underneath it had completed
 a run (§4bi). Invariant 37 is what a local gate can say about that arm; whether it
-finishes is only ever answered by the run. That 8.2 is now also the repo's declared floor — the store owner
+finishes is only ever answered by the run. As of §4bj the leg reaches check 1383 rather
+than the first hundred, four more defects of the same class have been fixed behind the
+fatal that was hiding them, and it has still not been observed to complete. Read the run
+before repeating the claim. That 8.2 is now also the repo's declared floor — the store owner
 stated the host runs it (§4k) — so the pin enforces the target rather than merely
 accepting everything the target forbids. As of 2026-08-11 it is **observed** rather than
 stated: 8.2.33 on the runtime card and `ea-php82` pinned to `srcresort.com` in cPanel

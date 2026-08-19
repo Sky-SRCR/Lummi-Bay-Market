@@ -192,8 +192,14 @@ down as well — and that is what had CI's MySQL half dead for eight days over f
 with every local gate green (§4bi). So a check that needs an unusable value hands it to the
 reader as a row, both readers taking one, or uses a value the column can actually hold: a
 colour nobody can read has to *fit* `VARCHAR(7)` before anybody can be shown the wrong thing
-by it. Invariant 37 in `check_invariants.php` is the local half of that. Whether the MySQL
-arm *finishes* is only ever answered by the run.
+by it. And SQL in the wrong *dialect* is worse than a refused value, because it is a fatal
+rather than a failed check: `AUTOINCREMENT` and `TEXT … DEFAULT` are correct here and end
+the run there, so the two spellings live in `test_fixture.php` and a test that genuinely
+needs SQLite says `newSqliteTestDb()` and is believed. Invariant 37 in
+`check_invariants.php` is the local half of both. Whether the MySQL arm *finishes* is only
+ever answered by the run — and a dead gate hides how much is still wrong behind it: fixing
+the first four took the leg from ~100 checks to 1383, where four more of the same class
+were waiting (§4bj).
 
 `check_doc_numbering.php` also prints the next free section letter. That is the
 question every branch cut from the same base has to answer before it writes a

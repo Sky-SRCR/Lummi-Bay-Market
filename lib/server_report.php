@@ -159,15 +159,12 @@ class ServerReport
 
         // MySQL's, and the reason it is worth a row of its own: it is where
         // `created_at` comes from, PHP cannot convert what it did not write, and until
-        // `db_connect.php` set it there was no screen anywhere that showed it. Anything
-        // other than a zero offset means that `SET time_zone` did not take.
+        // `db_connect.php` set it there was no screen anywhere that showed it. The note
+        // is seamed rather than spelled here, because the value is read off the
+        // connection and its two forms are the two engines (§4bj) — and the question
+        // it answers is whether the stamps are in UTC, not whether the `SET` ran.
         $dbZone = $this->databaseTimeZone();
-        $out['Database time zone'] = [$dbZone,
-            $this->isUtcOffset($dbZone) ? ''
-                : 'The app asks the database for UTC on every connection and this one '
-                  . 'is not, so this host refused it. Dates recorded by the database '
-                  . 'itself — when an account was created — may read a few hours out. '
-                  . 'Nothing a sign shows is affected.'];
+        $out['Database time zone'] = [$dbZone, self::dbZoneNoteFor($dbZone)];
 
         // What happens when something goes wrong is no longer a property of the
         // server: lib/error_policy.php sets it in code on every request, and
@@ -521,18 +518,50 @@ class ServerReport
     }
 
     /**
-     * Is this zone a zero offset — i.e. did the `SET time_zone` in `db_connect.php`
-     * take?
+     * What to say about the zone the database writes `created_at` in, if anything.
+     *
+     * A seam beside `databaseTimeZone()` for the reason every other readout on this
+     * card has one: the value is read off the machine, so spelled inline it has one
+     * form on whatever ran the suite and the other form on nothing — and here the
+     * two forms are the two engines, which is why the suite could only ever assert
+     * whichever one it happened to be running against (§4bj).
+     *
+     * `SYSTEM (UTC)` is the case that made this more than tidiness. It means the
+     * `SET time_zone` in `db_connect.php` did not take *and* the host's own zone is
+     * already UTC, so the stamps are in UTC regardless — and the note below says
+     * they may read hours out, which is the sentence somebody acts on. A protection
+     * that turns out not to have been needed is not a problem to report.
+     */
+    public static function dbZoneNoteFor($zone)
+    {
+        if (self::isUtcOffset($zone)) { return ''; }
+        return 'The app asks the database for UTC on every connection and this one '
+             . 'is not, so this host refused it. Dates recorded by the database '
+             . 'itself — when an account was created — may read a few hours out. '
+             . 'Nothing a sign shows is affected.';
+    }
+
+    /**
+     * Is this zone a zero offset — i.e. are the database's own stamps in UTC?
      *
      * `+00:00` is what is asked for; `UTC` and `+0:00` are the same instant written
      * differently and a host that normalises the value is not a host that refused it.
      * `not applicable` is the non-MySQL case and is not a failure either.
+     *
+     * `SYSTEM (x)` is unwrapped and asked again, because the name is standing in for
+     * `x` and the question is about the instant, not about which statement set it.
+     * Only what this predicate already recognises counts as zero — an abbreviation
+     * like `GMT` is left warning rather than added on the strength of what it looks
+     * like, since a wrong entry here is silence about stamps that really are out.
      */
-    private function isUtcOffset($zone)
+    private static function isUtcOffset($zone)
     {
         $zone = trim((string)$zone);
         if ($zone === 'not applicable') { return true; }
         if (strcasecmp($zone, 'UTC') === 0) { return true; }
+        if (preg_match('/^SYSTEM \((.+)\)$/i', $zone, $m) === 1) {
+            return self::isUtcOffset($m[1]);
+        }
         return preg_match('/^[+-]0?0:00$/', $zone) === 1;
     }
 

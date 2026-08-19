@@ -204,7 +204,9 @@ and the reservation only settles who renumbers on the merge.** As settled:
   invariants a reader has to hold. **38 is now the next free number**: 31 went to the
   above-floor syntax check, 32 to a branded block's own typography, 33 to `brands`, 34 to
   `workspace_themes`, 35 to every read of the machine (§4bg), 36 to the implicit-nullable
-  form 8.4 deprecates (§4bh), and 37 to a value the shop's engine would refuse (§4bi). Seven
+  form 8.4 deprecates (§4bh), and 37 to a value the shop's engine would refuse (§4bi) — which
+  grew a second half in §4bj, under the same number, because SQLite dialect on a portable
+  handle is the same rule failing a different way and a reader holding one holds both. Seven
   allocated since this paragraph last said "31", which is the
   reason it is worth updating rather than recomputing — the sentence that names the next
   number is the one a branch reads.
