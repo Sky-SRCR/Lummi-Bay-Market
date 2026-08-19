@@ -143,8 +143,8 @@ specific way of going wrong that has now happened at least once.
 
 `check_doc_numbering.php` prints the next free letter, and four branches cut from one
 base all asked it and all got the same answer. Asking is right; asking *at the same
-time* is the failure. So they are allocated in advance. Phase 4 now runs to §4az, and
-**`4ba` is the next free letter** — ask the tool rather than counting, and if two branches
+time* is the failure. So they are allocated in advance. Phase 4 now runs to §4ba, and
+**`4bb` is the next free letter** — ask the tool rather than counting, and if two branches
 start at once, write the allocation down here before either of them writes prose.
 
 - ~~**Lane A (#33) wrote `4ao`.**~~ ~~**B (#44) wrote `4ap`.**~~ ~~**C (#50) wrote `4aq`.**~~

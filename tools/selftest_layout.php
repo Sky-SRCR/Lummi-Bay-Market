@@ -2208,20 +2208,35 @@ $pdo   = newTestDb();
 $store = newTestDisplayStore($pdo);
 $zoned = makeTestDisplay($pdo, 'zoned', 'Zoned');
 
+// Two questions, and they used to be one check that was both flaky and weak. Comparing
+// takenAtLabel() to labelForEpoch(time()) reads the clock a *second* time, so a claim
+// and an assertion landing either side of a minute failed for a reason that has nothing
+// to do with zones — which is what it did on 2026-08-19, once the MySQL leg was running
+// far enough to reach these lines again and they went from one job a push to six. And it
+// could not fail for the reason it was written for: both sides went through the store's
+// door, so a stamp written in the wrong frame and read in the wrong frame agreed with
+// each other. That cancelling pair is the whole of #44, asserted by a check blind to it.
+//
+// So: what claimLock() *writes* is UTC, measured against a UTC reference and not a label.
+// Two checks and not one, because the first reads through epochOf() and would pass if
+// epochOf() were broken the same way; the second is the half that notices. Removing
+// either leaves the cancelling pair invisible again — which is how it got here.
 $store->claimLock($zoned, 1);
-$held = $store->forId($zoned->id())->lockState();
-checkSame(StoreClock::labelForEpoch(time(), 'g:ia'), $held->takenAtLabel(),
-          'the edit-lock banner says the time it is where the sign is');
-checkMentions($store->forId($zoned->id())->editingSentence(),
-              'since ' . StoreClock::labelForEpoch(time(), 'g:ia'),
-              'and so does the sentence a refused publish prints');
+$takenAt = $pdo->query("SELECT lock_taken_at FROM displays WHERE id = " . $zoned->id())->fetchColumn();
+check(abs(StoreClock::epochOf($takenAt) - time()) <= 5,
+      'claiming an edit lock records the moment in UTC, whatever zone the server is on');
+check(abs(strtotime((string)$takenAt) - time()) > 3600,
+      'so that same stamp read as local time is hours out — the banner\'s half of #44');
 
-// Fix the stamp to a known instant rather than "now", so the assertion is about the
-// conversion and not about the two calls landing in the same minute.
+// And what the two callers *say* about it is the store's zone, measured against a known
+// instant so the assertion is about the conversion rather than about two calls landing
+// in the same minute.
 $pdo->prepare("UPDATE displays SET lock_taken_at = ? WHERE id = ?")
     ->execute([$instant, $zoned->id()]);
 checkSame('2:15pm', $store->forId($zoned->id())->lockState()->takenAtLabel(),
           'a lock taken at 21:15 UTC is a lock taken at 2:15pm on the shop floor');
+checkMentions($store->forId($zoned->id())->editingSentence(), 'since 2:15pm',
+              'and so does the sentence a refused publish prints');
 
 // ---- The publish stamp was the third clock ---------------------------------------
 // last_published_at was written with CURRENT_TIMESTAMP, which is MySQL's *session*
@@ -6951,4 +6966,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1844 : 1821);
+reportChecks(testIsMysql() ? 1845 : 1822);
