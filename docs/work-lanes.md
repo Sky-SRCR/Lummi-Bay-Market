@@ -181,7 +181,12 @@ and the reservation only settles who renumbers on the merge.** As settled:
 - **Lane C took 30**, and only 30 — a check ships having been seen to fail (§4aq). It was
   expected to add several; what it actually needed was one rule about how a check earns
   its line, because the four mechanised greps are rules the *checker* enforces rather than
-  invariants a reader has to hold. **31 is the next free number.**
+  invariants a reader has to hold. 31 was the next free number then.
+- **Since, on `main` rather than in a lane**: 31 is the PHP floor, 32 is the values the
+  engine the shop runs would refuse, and 33 is the implicitly nullable parameter that
+  `php -l` cannot see. **34 is the next free number.** All three arrived one branch at a
+  time, which is the only reason none of them collided — the note at the top of this file
+  still holds, and a number is still allocated here rather than found.
 
 B renumbered nothing and A renumbered everything, and the tie was broken by counting:
 `invariant 28` appeared 15 times across 7 files on B's side and 7 times across 6 on A's,

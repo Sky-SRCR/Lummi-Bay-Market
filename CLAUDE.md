@@ -109,7 +109,17 @@ edited in place and every change reaches the sign by hand.
   know what 8.5 adds, so a construct you have not seen before is still worth looking up
   rather than trusting the green line. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
   for the reason they always did: they cover a host that moves, and what they prevent
-  is silent.
+  is silent. **Invariant 33 is the same hole in the other direction**, and the same
+  lesson about `php -l`: `array $x = null` is deprecated from 8.4, the explicit
+  `?array $x = null` is understood back to 7.1, and lint is clean on both on every
+  version — because a deprecation is emitted when a file is *compiled*, not when it is
+  parsed. Nor do the suites close it: they compile the file, so the notice **is**
+  emitted, and emitting a notice is not failing a step. Five of these were in the tree,
+  one of them on the admin panel's request path, and reintroducing it left every local
+  gate green. So two things ask now — `check_invariants.php` reads parameter lists out
+  of the tokens and knows that one shape at the floor, and `tools/check_deprecations.php`
+  compiles the tree in child processes and reports whatever the engine running it has to
+  say, which is the half that will know about 8.5 before anybody here does.
 - **Nothing that has been published can be taken back.** Publishing overwrites; a
   deleted Display, a swept asset row and a saved brand standard are gone. Prefer
   refusing a write to merging one. The **one** exception is the Builder's Undo
@@ -122,6 +132,7 @@ edited in place and every change reaches the sign by hand.
 
 ```
 php -l <every touched .php>
+php tools/check_deprecations.php           # compiles them, which is what `php -l` does not
 php tools/selftest_layout.php
 php tools/check_invariants.php             # the mechanical half of BUILD-REFERENCE §5
 php tools/check_doc_numbering.php          # if a doc gained a section or invariant
