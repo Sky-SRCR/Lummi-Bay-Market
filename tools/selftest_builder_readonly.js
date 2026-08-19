@@ -70,18 +70,24 @@ const php = fs.readFileSync(BUILDER, 'utf8');
 
 section('Every suite gets its page the one way');
 
-// The rule §4bf closed lives across eight files, and this is the only mechanical place
+// The rule §4bf closed lives across nine files, and this is the only mechanical place
 // to hold it: `check_invariants.php` reads PHP and these are JavaScript. A suite that
 // strips `<?= … ?>` for itself is a suite back to leaving every value it did not think
 // of as the literal 0 — which is how the edit lock's warning window came to be
 // unreachable in all eight at once, and how the Viewer scaled its canvas by Infinity.
+//
+// The ninth is why this check counts rather than only filters. `selftest_builder_table.js`
+// was written in another lane on the day this rule landed here, stripped the PHP for
+// itself, and arrived with the hole already in it — so the rule caught a suite it had
+// never been run against, on a merge, which a filter over the eight known files would
+// have passed in silence.
 const SUITES = fs.readdirSync(path.join(__dirname))
                  .filter(f => f.startsWith('selftest_') && f.endsWith('.js'));
 const handRolled = SUITES.filter(f =>
     /php\.replace\(\/<\\\?/.test(fs.readFileSync(path.join(__dirname, f), 'utf8')));
 const notAsking = SUITES.filter(f =>
     !/require\('\.\/page_constants'\)/.test(fs.readFileSync(path.join(__dirname, f), 'utf8')));
-check(SUITES.length === 8, 'there are eight node suites, which is the number this audit covers');
+check(SUITES.length === 9, 'there are nine node suites, which is the number this audit covers');
 check(handRolled.length === 0,
       'and none of them strips the page\'s PHP for itself' +
       (handRolled.length ? ' — ' + handRolled.join(', ') + ' does' : ''));

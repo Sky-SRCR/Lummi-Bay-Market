@@ -130,12 +130,19 @@ edited in place and every change reaches the sign by hand.
   rather than trusting the green line. **Invariant 36 is the same hole in the other
   direction**: `?Type $x = null`, never `Type $x = null`. The implicit form parses on every
   version, is deprecated from 8.4, and costs a line in the error log on *every request that
-  compiles the file* — and nothing else here can see it, because the notice fires when a
+  compiles the file* — and nothing else here could see it, because the notice fires when a
   file is compiled rather than parsed (so it precedes any handler the suite installs) and
   this container's `error_reporting` excludes `E_DEPRECATED`. A CI leg on a newer PHP does
-  not close it either; that leg goes green too. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
-  for the reason they always did: they cover a host that moves, and what they prevent
-  is silent.
+  not close it either; that leg goes green too. Nor do the suites: they compile the file, so
+  the notice **is** emitted, and emitting a notice is not failing a step. Five of these were
+  in the tree, one of them on the admin panel's request path, and reintroducing one left
+  every local gate green. So two things ask now, and neither replaces the other —
+  `check_invariants.php` reads parameter lists out of the tokens and knows that one shape
+  *at the floor*, where the engine says nothing, and `tools/check_deprecations.php` compiles
+  the tree in child processes and reports whatever the engine running it has to say, which
+  is the half that will know about 8.5 before anybody here does. The 7.1-era fallbacks in
+  `auth.php` and `.htaccess` stay for the reason they always did: they cover a host that
+  moves, and what they prevent is silent.
 - **Nothing that has been published can be taken back.** Publishing overwrites; a
   deleted Display, a swept asset row and a saved brand standard are gone. Prefer
   refusing a write to merging one. The **one** exception is the Builder's Undo
@@ -148,6 +155,7 @@ edited in place and every change reaches the sign by hand.
 
 ```
 php -l <every touched .php>
+php tools/check_deprecations.php           # compiles them, which is what `php -l` does not
 php tools/selftest_layout.php
 php tools/selftest_installed.php           # the same suite as a real install on a real
                                            # server: what the shop chose, and what the
@@ -161,6 +169,7 @@ node tools/selftest_builder_editing.js     # if builder.php was touched
 node tools/selftest_builder_undo.js        # if builder.php was touched
 node tools/selftest_builder_brands.js      # if builder.php was touched
 node tools/selftest_builder_theme.js       # if builder.php was touched
+node tools/selftest_builder_table.js       # if builder.php was touched
 node tools/selftest_viewer.js              # if viewer.php was touched
 ```
 
@@ -187,21 +196,33 @@ noticing something moved.
 And one thing a local run cannot tell you at all: **the suite passes on SQLite over values
 MySQL refuses.** SQLite stores a word in a `DATETIME`, a non-member in an `ENUM` and eight
 characters in a `VARCHAR(7)`, and the check that reads each one back passes; MySQL's strict
-mode throws on all three, mid-run, which ends the job and takes the rehearsal step under it
-down as well — and that is what had CI's MySQL half dead for eight days over four writes,
-with every local gate green (§4bi). So a check that needs an unusable value hands it to the
-reader as a row, both readers taking one, or uses a value the column can actually hold: a
-colour nobody can read has to *fit* `VARCHAR(7)` before anybody can be shown the wrong thing
-by it. And SQL in the wrong *dialect* is worse than a refused value, because it is a fatal
-rather than a failed check: `AUTOINCREMENT` and `TEXT … DEFAULT` are correct here and end
-the run there, so the two spellings live in `test_fixture.php` and a test that genuinely
-needs SQLite says `newSqliteTestDb()` and is believed. Invariant 37 in
-`check_invariants.php` is the local half of both. Whether the MySQL arm *finishes* is only
-ever answered by the run — and a dead gate hides how much is still wrong behind it: fixing
-the first four took the leg from ~100 checks to 1383, where four more of the same class
-were waiting (§4bj). Both rounds landed and the arm went green on 2026-08-19, after eight
-days dead: 2361 checks and a clean rehearsal, on three PHP versions. It is a live gate
-again, which is the only state in which any of the above is worth anything.
+mode throws on all three. Mid-run, that ends the job — and takes down the *rehearsal step
+under it*, which is the only thing that exercises the publish transaction's
+`SELECT … FOR UPDATE` and convergence against a real catalogue. That is what had CI's MySQL
+half dead for eight days over four writes, with every local gate green: it stopped after 593
+of the suite's checks on an `UPDATE displays SET last_published_at = 'nonsense'` (§4bi).
+
+So a check that needs an unusable value **hands it to the reader as a row** — both readers
+taking one — or uses a value the column can actually hold: a colour nobody can read has to
+*fit* `VARCHAR(7)` before anybody can be shown the wrong thing by it. Invariant 37 in
+`check_invariants.php` is the local half, and it covers the class that ends the run rather
+than every way an engine can disagree: an `ENUM` write MySQL *accepts* and silently folds to
+a member (`role = 'Admin'` becoming `admin`) is not a refusal, so it stays an ordinary failed
+check, reported rather than fatal.
+
+And SQL in the wrong **dialect** is worse than a refused value, because it is a fatal rather
+than a failed check: `AUTOINCREMENT` and `TEXT … DEFAULT` are correct here and end the run
+there. So both spellings live in `test_fixture.php` — `createNullableDisplayIdElements()` and
+`createLegacyCanvasSettings()`, the two states that are not a schema at all — and a test that
+genuinely needs SQLite says `newSqliteTestDb()` and is believed. Invariant 37 covers this half
+too, and it can: a handle's engine *is* readable from how it was assigned.
+
+Whether the MySQL arm *finishes* is only ever answered by the run — and a dead gate hides how
+much is still wrong behind it: fixing the first four took the leg from ~100 checks to 1383,
+where four more of the same class were waiting (§4bj). Both rounds landed and the arm went
+green on 2026-08-19, after eight days dead: 2361 checks and a clean rehearsal, on three PHP
+versions. It is a live gate again, which is the only state in which any of the above is worth
+anything.
 
 `check_doc_numbering.php` also prints the next free section letter. That is the
 question every branch cut from the same base has to answer before it writes a
@@ -215,21 +236,23 @@ block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
 sign rather than a stack trace anybody will read.
 
-The eight node suites go further and *run* that JavaScript, each under a premise the
+The nine node suites go further and *run* that JavaScript, each under a premise the
 others cannot hold — a page that may not edit, an admin uploading a file, an admin
 opening a Display whose stored data is already wrong, an admin working the controls the
 inspector puts on a block, an admin taking back the last thing they did, an admin
 deciding which venue a sign belongs to, somebody changing a setting about *themselves*
-with unpublished work on the canvas, and a Screen whose server has stopped answering
-or whose blocks have nothing in them — because the
+with unpublished work on the canvas, an admin filling a table from a file this app did
+not write, and a Screen whose server has stopped answering or whose blocks have nothing
+in them — because the
 defects they exist for are invisible to a parse: a lookup for a control the edit lock
 took away, a `fetch` chain with no `.catch()`, a colour the CSSOM discarded in silence
 and the publish payload then sent as black, a field a rebuild forgot to carry, a
 `.catch()` that correctly ignores a dropped packet and therefore also ignored a failure
 that was never going to stop, a swatch that fills a control and changes nothing on the
 canvas because setting `.value` from script fires no event, a preference that repaints
-the screen and was never stored, and a sentence written for
-whoever was building the layout, drawn on the board a customer reads prices off. What the server puts on those
+the screen and was never stored, a dropped file that navigates the tab away from an
+unpublished canvas, and a sentence written for whoever was building the layout, drawn on
+the board a customer reads prices off. What the server puts on those
 pages comes from `tools/page_constants.js` and nowhere else — a suite that strips the PHP
 for itself leaves every value it did not think of as the literal `0`, which is how the
 edit lock's idle warning came to be unreachable in all eight at once (§4bf).

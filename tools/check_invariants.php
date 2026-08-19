@@ -1877,6 +1877,13 @@ if (!$refusedWrites) {
 // write this rule both break real lines in the suite — an ENUM match that respects
 // lettercase would condemn `role = 'Admin'`, which MySQL has always accepted, and a
 // length rule that did not read the declared width would condemn every colour.
+//
+// Two lanes wrote this rule at once and their fixtures did not overlap: this list read
+// `brands` and `workspace_themes`, and main's read `users`, `displays` and
+// `block_styles`. The functions turned out identical and the *coverage* did not, so the
+// merge kept both sets rather than one — four ENUM columns and two width columns across
+// four tables, which is the difference between a detector proven on the tables one lane
+// happened to touch and one proven on the shape.
 $writeProbes = [
     ['$p->exec("UPDATE brands SET bg_type = \'nonsense\' WHERE id = 1");', 1,
      'the ENUM write that ended the MySQL leg is refused'],
@@ -1888,10 +1895,16 @@ $writeProbes = [
      'and the zero date, which is a date and still refused'],
     ['$p->exec("INSERT INTO brands (name, bg_type) VALUES (\'Salmon House\', \'nonsense\');");', 1,
      'an INSERT is read the same way as an UPDATE, by column position'],
+    ['$p->exec("UPDATE users SET role = \'root\' WHERE id = 1");', 1,
+     'a word the ENUM never offered is refused on a second table too — the case main hit'],
+    ['$p->exec("UPDATE block_styles SET font_color = \'linear-gradient(to right, #ffffff 0%, #000000 100%)\' WHERE id = 1");', 1,
+     'and a gradient in a VARCHAR(7), which is how a value wider than its column really arrives'],
     ['$p->exec("UPDATE brands SET bg_type = \'image\' WHERE id = 1");', 0,
      'a member of the ENUM is left alone'],
     ['$p->exec("UPDATE brands SET bg_type = \'Image\' WHERE id = 1");', 0,
      'and so is one in another lettercase, because MySQL matches a member case-insensitively'],
+    ['$p->exec("UPDATE users SET role = \'Admin\' WHERE id = 1");', 0,
+     'and so is `role` in another lettercase, which is a real read this rule must not condemn'],
     ['$p->exec("UPDATE workspace_themes SET nav_bg = \'gold\' WHERE id = 1");', 0,
      'a colour that will not read but fits the column is exactly the state a check wants'],
     ['$p->exec("UPDATE displays SET last_published_at = \'2026-08-19 12:00:00\' WHERE id = 1");', 0,
@@ -2044,11 +2057,13 @@ foreach ($dialectProbes as $probe) {
 
 // ---- The instrument itself -------------------------------------------------------
 // Every rule above is read through codeWithoutComments(), so what that function drops
-// decides what all thirty-two of them can see. It gained HTML comments in #50, and the
-// decision it embodies — a comment holding PHP is code and stays — is worth an
-// assertion rather than a paragraph, because both halves fail silently: dropping too
-// little is the false positive #44 hit, and dropping too much blinds every rule to
-// whatever a page hid inside a comment.
+// decides what all of them can see. Invariant 33, below, is the one that does not use
+// it — token_get_all() hands it comments as tokens and it drops them itself, which is
+// what lets it read a parameter list rather than a pattern. It gained HTML comments in
+// #50, and the decision it embodies — a comment holding PHP is code and stays — is
+// worth an assertion rather than a paragraph, because both halves fail silently:
+// dropping too little is the false positive #44 hit, and dropping too much blinds
+// every rule to whatever a page hid inside a comment.
 $commentProbes = [
     ["<?php \$a = 1; ?>\n<!-- no strtotime() here -->\n",
      'strtotime', false, 'an HTML comment is prose, and a rule does not match inside it'],
@@ -2110,17 +2125,33 @@ foreach ([
     echo "  · $note\n";
 }
 
-// The count is anchored for the reason `selftest_layout.php`'s is, and §4bg found this
-// file without one: delete the rule that keeps `json_encode` in a single module — one of
-// the most load-bearing lines in the repo — and this printed "60 consistency checks, 0
-// failed" and exited 0. A checker whose own coverage can shrink silently is the failure
-// it exists to prevent, wearing its own uniform. §4bf found the same hole in four of the
-// eight node suites; this is the third place it was hiding.
-//
+// ---- And that every one of them ran ---------------------------------------------
 // Not a count of rules: a count of what actually *ran*, so a rule that stops being
-// reached is the same failure as one that was deleted.
-$expectedChecks = 94;
-if ($checked !== $expectedChecks) {
+// reached is the same failure as one that was deleted. The suite next door has had this
+// since #48 (`reportChecks()`), and §4bg found this file without one: delete the rule
+// that keeps `json_encode` in a single module — one of the most load-bearing lines in
+// the repo — and this printed "60 consistency checks, 0 failed" and exited 0. A checker
+// whose own coverage can shrink silently is the failure it exists to prevent, wearing
+// its own uniform. §4bf found the same hole in four of the eight node suites; this was
+// the third place it was hiding.
+//
+// The ways it goes wrong are not theoretical: a `continue` landing above a block, a
+// probe list losing an entry to a merge, or a detector guarded by a `defined()` that is
+// false on the host all read as one fewer `ok` line in three hundred, against a total
+// nobody knows. This merge is the case in point — two lanes had both added this anchor,
+// with different numbers and only one of them printing a line, and the count below is
+// the first one either lane has read off a tree containing both.
+//
+// It counts itself, which is why the number is one higher than the checks above it.
+// Update it when a check is added on purpose. That is the point: it makes adding one
+// deliberate and losing one loud.
+$expectedChecks = 98;
+$checked++;
+if ($checked === $expectedChecks) {
+    echo "  ok   this checker ran every check it is supposed to ($checked)\n";
+} else {
+    echo "  FAIL this checker did not run every check it is supposed to\n";
+    echo "       expected $expectedChecks, ran $checked\n";
     $failures[] = 'this checker ran every check it is supposed to — expected '
                 . $expectedChecks . ', ran ' . $checked;
 }

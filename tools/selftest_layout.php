@@ -8540,4 +8540,13 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Then one more, in the same breath as §4bk: the `trim()` in `isUtcOffset()` survived the
 // sweep, and a public seam is worth a check rather than a note about why a line is
 // allowed to be untested. 25 is still the difference.
+//
+// Then `main` came in, and this number did not move (§4bm). That is worth a line rather
+// than silence, because it is the one thing about this merge a reader would expect to see
+// here and will not: both lanes had written the same §4bi and §4bj fixes to this file
+// independently, so `main`'s 107 changed lines were 107 lines of the same corrections in
+// different wrapping. Nothing was dropped to keep the figure still — the six assertions
+// that differ are ones *this* lane deliberately reworded when the publish line moved into
+// the canvas footer and the seed stopped existing. Where the two lanes' work genuinely
+// did not overlap was one file over, in `check_invariants.php`'s fixtures: 94 to 98.
 reportChecks(testIsMysql() ? 2362 : 2337);

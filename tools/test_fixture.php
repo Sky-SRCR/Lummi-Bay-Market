@@ -441,6 +441,10 @@ function newMysqlTestDb()
 // Both spellings live in these two functions instead, beside the rest of what this
 // file knows about the difference between the engines, so a test says which state it
 // wants and not how to spell it (§4bj).
+//
+// This matters more than a refused value does. A refused value is a failed check; SQL
+// in the wrong dialect is a **fatal**, which ends the run and takes the step under it
+// down as well — and on SQLite it is simply correct, so nothing local disagrees.
 
 /**
  * `canvas_elements` as it exists between the ADD COLUMN and the tighten.

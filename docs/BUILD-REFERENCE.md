@@ -641,34 +641,84 @@ through the app again:
     `tools/selftest_installed.php` are the half that proves the real reads still work, and
     they refuse an arm set to what this machine already holds, because that one would agree
     with the plain run and say so in green.
-36. **No parameter is implicitly nullable** (§4bh). `?Type $x = null`, never
-    `Type $x = null` — understood back to 7.1, deprecated from 8.4. The sibling of 31 and
-    the opposite direction: that one refuses syntax the shop's PHP cannot *parse*, and its
-    cost is a blank sign; this one refuses syntax that parses everywhere and whose cost is a
-    line in the error log on **every request that compiles the file**. Separate rules
-    because what to do about each differs. `SiteChrome::wear()` was one, called on every
-    signed-in page load, and three things could not see it: `php -l` is clean on both
-    spellings; the deprecation fires when a file is *compiled*, so it precedes any handler
-    the suite installs; and this container's `error_reporting` excludes `E_DEPRECATED`, so
-    the suite runs green on 8.4 while the notice is emitted. A CI leg for a newer PHP does
-    not close this — it would go green too. `tools/check_invariants.php` reads real tokens
-    and **only inside parameter lists**, because a scan of every `$x = null` reports
-    `private static $bytes = null;`, which `UploadLimit` and `ServerReport` both have.
+36. **No parameter is implicitly nullable, and `php -l` is not what decides that either**
+    (#10, §4bh). `?Type $x = null`, never `Type $x = null` — understood back to 7.1,
+    deprecated from 8.4, so the fix costs nothing at the floor and there is no trade to
+    weigh. The sibling of 31 and the opposite direction: that one refuses syntax the shop's
+    PHP cannot *parse*, and its cost is a blank sign; this one refuses syntax that parses
+    everywhere and whose cost is a line in the error log on **every request that compiles
+    the file**. Separate rules because what to do about each differs.
+
+    What makes it an invariant rather than a tidy-up is what could not see it. Five were in
+    this tree; `SiteChrome::wear()` was one, on every signed-in page load, and
+    `ServerReport::__construct()` another, which `admin_panel.php` builds every time
+    somebody opens the panel. **`php -l` is clean on both spellings on every version**,
+    because a deprecation is emitted when a file is *compiled*, not when it is parsed. Nor
+    do the steps that do compile it — both self-tests, the rehearsal — because emitting a
+    notice is not failing a step: the process exits 0, and on a runner whose
+    `error_reporting` excludes `E_DEPRECATED` the line is not printed at all (this
+    container: 22527, against an `E_ALL` of 30719). A CI leg for a newer PHP does not close
+    it either; that leg goes green too. All of which was demonstrated rather than reasoned
+    about — putting the exact parameter back left `php -l`, `check_invariants.php` and both
+    suites green — and it matters because `php-lint.yml` had claimed in a comment that
+    those running steps were what caught this class. They were the whole gap.
+
+    So the rule has two halves and they overlap on purpose. `tools/check_invariants.php`
+    reads parameter lists out of the **tokens**, and only variables at depth 1 inside a
+    `function`/`fn`'s own parentheses — a scan of every `$x = null` reports
+    `private static $bytes = null;`, which `UploadLimit` and `ServerReport` both have, and
+    the token before the variable is `static` either way. It knows that one shape on every
+    version, including the 8.2 the shop runs, where the engine itself says nothing. Its
+    eleven fixtures are seven negatives to four positives for that reason: the false
+    positives are the hard part, and every `no` on the list is a shape a scan of
+    `$x = null` really does hit. `tools/check_deprecations.php` is the other half — it
+    compiles every file in a child process with `E_ALL` set and fails on whatever the engine
+    says, which is the instrument that found the five rather than a rule written afterwards.
+    It answers for the version running it, so it will report what 8.5 deprecates without
+    anybody teaching it. Where opcache is missing it refuses to sweep instead of printing a
+    green line over nothing — there is no way to compile a file without also running it, and
+    `viewer.php` running is not a check. It also reads the child's stderr against a
+    **baseline**, because its own first run on CI failed all 49 files with one cause and none
+    of them in the tree: the runner starts JIT, something on that image overrides
+    `zend_execute_ex()`, and the resulting startup warning arrives on the same stderr as the
+    answer. JIT is off in the child now, and whatever a host still says while compiling a
+    file with nothing in it is measured once, printed as the engine's, and subtracted.
+    Subtracting exact lines is safe in the direction that matters: a line about a file names
+    the file and a line number, so it can never equal one produced with no file in hand.
 37. **No check writes a value the engine the shop runs would refuse** (§4bi). A suite that
     proves a reader degrades gracefully has to get the bad value *into* the column first,
     and SQLite takes anything: it stored `bg_type = 'nonsense'` in an ENUM, `'nonsense'` in
     a DATETIME and eight characters in a `VARCHAR(7)`, and the check that read each one
     back passed. On MySQL all three are errors under the strict mode that has been the
     default since 5.7 — a thrown `PDOException`, mid-run, which ends the job and takes the
-    rehearsal step under it down as well. **That is what had CI's MySQL half dead for eight
-    days**, over four writes, while the SQLite half stayed green and every local gate agreed
-    with it. So the rule is not "guard the write": it is that a value the column cannot hold
+    step underneath it down as well: the rehearsal against real MySQL, the only thing that
+    exercises the publish transaction's `SELECT … FOR UPDATE` and convergence against a real
+    catalogue. **That is what had CI's MySQL half dead for eight days**, over four writes —
+    it stopped after 593 of the suite's checks on
+    `UPDATE displays SET last_published_at = 'nonsense'` — while the SQLite half stayed green
+    and every local gate agreed with it. **Nothing local could say so**, which is why this is
+    a gate rather than something CI can be relied on to report: `php -l` sees a string and the
+    suite sees green. A MySQL that *would* disagree can now be had here by hand — §5 says how,
+    and it takes a few minutes — but that is a person choosing to run something, and the eight
+    red days are what a rule depending on that choice is worth. The gate is what holds when
+    nobody chooses.
+
+    So the rule is not "guard the write": it is that a value the column cannot hold
     does not belong in a column. Hand it to the reader as a row — both readers take one —
     and where the point is genuinely a stored value, make it one the column can store: a
     colour nobody can read has to **fit** `VARCHAR(7)` before anybody can be shown the wrong
-    thing by it. `tools/check_invariants.php` reads `schema.sql` for the four types that can
-    refuse a literal and matches ENUM members **case-insensitively**, because MySQL does —
-    `role = 'Admin'` has always been accepted and is not what this is about.
+    thing by it. `tools/check_invariants.php` reads the declared types out of `schema.sql`
+    and refuses the four MySQL actually raises: a non-member of an `ENUM` (1265), a string
+    past the declared width (1406), a non-date in a date column (1292), and the zero date
+    (`NO_ZERO_DATE`). **Its scope is the class that ends the run, not every way an engine can
+    disagree** — an `ENUM` write MySQL *accepts* and silently folds to a member
+    (`role = 'Admin'` stored as `admin`) is no refusal at all, so it stays an ordinary failed
+    check that reports itself, and the detector matches ENUM members **case-insensitively**
+    on purpose, because matching them case-sensitively would condemn writes MySQL has always
+    taken. The negative half of its fixtures is where that care lives — and the fixtures are
+    the two lanes' put together, four ENUM columns and two width columns across four tables,
+    because both lanes wrote this rule at once and each had proven it only on the tables it
+    happened to touch.
 
     The rule has a second half (§4bj), and it is the half that cost the run once the
     literals were fixed: **no check sends SQLite-only SQL down a connection the MySQL leg
@@ -676,10 +726,19 @@ through the app again:
     fatal, thrown where no check is looking, so the suite ends without reporting and the
     rehearsal step never starts. `AUTOINCREMENT`, a trigger body, `PRAGMA`,
     `sqlite_master`, `INSERT OR REPLACE` — and `TEXT … DEFAULT`, which is valid SQLite and
-    rejected by InnoDB, the same fatal by a subtler route. Unlike the literals, this one
-    can read *which* connection a statement is on, because the suite names them: a handle
-    from `newSqliteTestDb()` is believed, one from `newTestDb()` is whichever engine the
-    run chose. Accepting a write and storing what was written are also different
+    rejected by InnoDB, the same fatal by a subtler route. Once the literals above were
+    fixed the leg got 594 checks further and died on exactly that. Unlike the literals, this
+    one can read *which* connection a statement is on, because the suite names them: a
+    handle from `newSqliteTestDb()` or `new PDO('sqlite:…')` is SQLite for the life of the
+    file and is believed, one from `newTestDb()` is whichever engine the run chose, and the
+    rule fires only on the second kind. Two states are not a schema at all —
+    `canvas_elements` between the ADD COLUMN and the tighten, and the retired
+    `canvas_settings` — so both spellings live in `test_fixture.php`
+    (`createNullableDisplayIdElements()`, `createLegacyCanvasSettings()`) and a test says
+    which state it wants rather than how to spell it. The deploy-day race is the one that
+    stays SQLite on purpose: MySQL forbids a trigger writing to its own table (1442), so it
+    cannot build the interleaving at all, while what is under test is a `catch` in PHP that
+    is identical on both. Accepting a write and storing what was written are also different
     questions, and only the second is one a check can assert — the same `role = 'Admin'`
     MySQL accepts is stored as `admin`, so the state that check wanted has to be handed to
     the reader as a row too.
@@ -7261,14 +7320,148 @@ waiting.
 
 ---
 
+### 4bl. A price list somebody else wrote
+
+A request from the store owner on 2026-08-19: drop a `.csv` into a table block's editor
+and have it fill from the header row, the rows and the columns in the file. It is entirely in
+`builder.php` — a table's content is opaque to the server, which checks that
+`manual_content` is text under 65,535 bytes (`LayoutRules`) and nothing else — so no
+schema statement, no new SQL door, no publish path and **not one line of `viewer.php`**
+changed. What is interesting is not the CSV parsing. It is the three places where the
+obvious implementation is a defect.
+
+**A CSV's header row is not this app's header row.** `headers` in a stored table is not a
+row of labels; it is which of the seven column *styles* each column is drawn in
+(`item_title`, `price`, `section_header`, …). Copying a spreadsheet's heading line into it
+produces a table whose columns are styled `SKU` and `Notes`, which is to say styled by
+nothing. So the header row is *matched* — normalised for case, spaces and underscores,
+against the style values and the labels the modal shows — and everything it cannot match
+becomes a Plain column **and is named on screen**: `“SKU” has no style of that name here,
+so it is Plain — set the column style above if that is not what you wanted.` A header row
+half-understood in silence is #21 in another form, and the browser pass's lesson (§4ay)
+was that a page not *saying* something is exactly the category no suite here was pointed
+at.
+
+**The drop needed a guard that has nothing to do with tables.** A file dropped on a page
+that does not handle it is not a no-op — the browser navigates to it. The Builder is then
+gone, and so is every block moved since the last Publish, from a tab that is the only
+place that layout exists. So the page refuses the browser default for *any* file drag
+anywhere on it, including on a read-only Builder, which has no import and just as much of
+somebody's work on screen; it then decides separately whether it wanted the file.
+Refusing a navigation is not the same as offering a drop, and the difference is the whole
+of the next paragraph.
+
+**One place takes a file, and it is inside the table's own editor.** The drop area in Edit
+Table, and nothing else — not the canvas, and **not the table block on it either**, which
+the store owner asked for explicitly on 2026-08-19 after seeing the block version. A file
+let go anywhere else imports nothing and says where it should have gone. Which table an
+import fills is then decided by the table somebody opened, never by aim: table blocks
+stand beside each other on a sign, they overlap while one is being dragged, and a drop
+read one block wide overwrites a price list nobody was looking at. Only the drop area
+lights up, because a page that highlights is a page that has promised.
+
+**An import fills the editor; it does not replace it.** Everything the table block already
+had still works on the rows that arrive: typing over a cell, the column style dropdowns,
+the alignments, the column widths, row padding, add row, add column, delete row and delete
+column, and the two refusals that keep a table from being emptied. Nothing is stored until
+Save Table, so Cancel is the way back out of an import that read the wrong file. **Row
+padding is untouched by this change** — the import has no opinion about it, carries the
+stored value across, and the single `row_padding` field is exactly what it was.
+
+**What the import refuses, and why refusing is the whole design.** The refusals happen at
+the door, with the numbers in them: a file that is not a `.csv`, an empty one, one over
+1 MB, more than 500 rows, more than 24 columns, and a table that would exceed the 65,535
+bytes `LayoutRules` will refuse at Publish. That last one is deliberately the same number
+as the server's: the publish check is what actually protects the column, and repeating it
+here turns a refusal an hour later on a page about publishing into one over the file that
+caused it. Alignments, widths and padding are carried across from the table as it stands,
+so re-importing a corrected price list keeps the layout somebody set up by hand.
+
+**Two smaller things are worth writing down because guessing wrong on either is silent.**
+The delimiter is counted rather than assumed — Excel writes semicolons wherever the decimal
+mark is a comma, and getting it wrong is not subtle, it is one column holding the whole
+line. And a file Excel saved as plain "CSV" on a Windows machine is not UTF-8: the `é` is
+already U+FFFD by the time `FileReader` hands the text over, so there is nothing to repair
+and the note says so, naming the format that works.
+
+**The suite is the seventh node harness and the first whose input this app did not write.**
+123 checks: a quoted comma, a doubled quote, CRLF and a bare CR, a BOM, a blank line kept
+where somebody meant a spacer and the trailing one dropped, semicolons and tabs, the style
+matching, every refusal, where a file may and may not land, and then every editing control
+driven on an imported table — over a recording `document` with a stubbed `FileReader`. It
+is also the first harness here to parse the markup `builder.php` builds as a string: a
+column header cell is `th.innerHTML = '<select …>'`, and a DOM that keeps that string
+without reading it cannot answer whether `getTableEditorData()` still finds the style, the
+alignment and the width after a rebuild — which is most of what this suite is for. Mutants
+were run against it before it was believed and died by assertion (invariant 30), including
+the delimiter sniffer's tie-break, the column deletion that splices the rows, and the door
+check that keeps the canvas from falling through to the reader.
+
+### 4bm. Two lanes wrote the same week, and the merge is where anybody found out
+
+`main` took four pull requests on 2026-08-19 while the v2 lane sat at 54 commits with none.
+Merging it back was expected to be a numbering chore: rename two invariants, fix the
+citations, done. What it actually surfaced is the thing
+[`work-lanes.md`](work-lanes.md) is about, in three forms nobody had predicted, and **all
+three were invisible to both lanes separately.**
+
+**Duplication that git cannot see as duplication.** Both lanes had implemented §4bi and
+§4bj — the engine-refuses rule and its dialect half — and the five functions came out
+**byte-identical**. Placed at different offsets in the file, so git took them as two
+independent insertions and kept both: `Cannot redeclare function schemaColumnTypes()`,
+and the same again in `test_fixture.php`, which had reported no conflict at all. A clean
+merge is not a working tree. What made it recoverable rather than a guess was that
+*identical* is checkable — `diff` over the two copies of each function said so, five times
+out of five, and the choice was then only which surrounding prose to keep.
+
+**And the fixtures were not identical, which is the part worth remembering.** The
+functions matched and the probe lists did not: this lane had proven the detector on
+`brands` and `workspace_themes`, main's on `users`, `displays` and `block_styles`. Either
+copy alone reads like full coverage. Deleting the duplicate would have silently halved the
+tables the rule is proven against, and the count anchor would have gone green on the
+smaller number, because the anchor asks how many checks ran and not what they were about.
+The merged list is both, and `check_invariants.php` went 94 → 98 for that reason: **the
+only place in this merge where two lanes' work actually added up rather than repeating.**
+`selftest_layout.php`'s 2337 did not move at all, which is stated where the number lives,
+because a reader will look for it there.
+
+**A section letter claimed twice.** Both lanes wrote a §4az — v2 step 1 here, the CSV
+import on `main` — and each had honestly read the next free letter out of its own tree.
+`check_doc_numbering.php` caught it on the merge, named all six ambiguous citations, and
+refused. Settled by the same rule as the invariants: 6 citations against 2, so the CSV
+write-up became §4bl and the file already had it in the right place, after §4bk.
+
+**A gate catching a file it had never been run against.** §4bf's rule — no node suite
+strips the page's PHP for itself — is held mechanically in `selftest_builder_readonly.js`,
+because `check_invariants.php` reads PHP and these are JavaScript. `main`'s new
+`selftest_builder_table.js` was written the same day in the other lane, replaced every
+`<?= … ?>` with the literal `0`, and wrote three constants back by hand: the exact shape
+§4bf was filed about, with eighteen values left at zero and nothing saying so. It arrived
+green, on a branch where nothing could tell it otherwise, and failed the first time the two
+trees were in one place. It reads its constants through `page_constants.js` now — and its
+123 checks are unchanged by the fix, which is §4bf's own finding restated: the zeroes were
+never *wrong*, they were never *seen*.
+
+The lesson is not "merge more often", though that is true. It is that **a lane's gates only
+ever run over what that lane can see**, so the merge is a verification step in its own
+right rather than an administrative one — and the three things it found here were a fatal,
+a refused document and a hollow suite, none of which either side's green run could have
+reported. Where two lanes are open at once, the cheap protections are the ones that count
+rather than filter: a count anchor notices an insertion a filter over known files waves
+through, and `SUITES.length === 9` is what turned a suite nobody had audited into a failing
+check instead of a silent pass.
+
+---
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
 #48 and #51 CI runs everything below except the two things that need a browser or
 a copy of live data. It runs against SQLite and a real MySQL service, over five
 combinations — PHP 8.2, 8.3 and 8.4 on MySQL 5.7, plus MySQL 8.0 and 8.4 on PHP 8.2
-(§4bk). Deliberately not the product of the two axes: PHP moves against the engine
-the shop has, the engine moves against the PHP the shop has, and a leg nobody can
+(§4bk) — with a sixth job for the nine node suites. Deliberately not the product of the
+two axes: 8.2 is the shop's runtime and stays first, 8.3 and 8.4 are where the MultiPHP
+pin goes next, the engine axis is the same question one layer down, and a leg nobody can
 name a question for is not worth its minutes. **"Runs" is a claim with a date on it, and this paragraph was
 wrong about it for eight days**: the MySQL arm had not reached the end of the suite
 since 2026-08-11, and neither it nor the rehearsal step underneath it had completed
@@ -7292,6 +7485,11 @@ loop is faster than a push.
 php -l <every touched .php>              # syntax — but at 8.4 here, so it CANNOT fail on
                                          # 8.3/8.4-only syntax that the 8.2 shop rejects.
                                          # CI's run is the one at the floor (invariant 31)
+php tools/check_deprecations.php          # compiles every file instead of parsing it,
+                                         # which is the only way to see a deprecation
+                                         # (invariant 33). Answers for the version
+                                         # running it — 8.4 here, so locally this is the
+                                         # strongest leg rather than the weakest
 php tools/check_invariants.php           # the greps below, run rather than read —
                                          # comment-aware, so a module documenting a
                                          # rule does not fail it. Also the above-floor
@@ -7331,6 +7529,13 @@ node tools/selftest_builder_theme.js     # and under the sixth: somebody changin
                                          # about *themselves* with unpublished work on the
                                          # canvas. Holds the canvas nodes by identity across
                                          # the switch, and drives the save that fails
+node tools/selftest_builder_table.js     # and under the seventh: the data is not this
+                                         # app's. A .csv somebody else wrote, dropped into
+                                         # Edit Table — quoted commas, a semicolon file,
+                                         # a header row naming columns this app has no
+                                         # style for, the drop that must not navigate the
+                                         # tab away from an unpublished canvas, and every
+                                         # editing control still working afterwards (§4bl)
 node tools/selftest_viewer.js            # viewer.php's poll loop, against a fetch this
                                          # test controls: the sign must not blank for one
                                          # dropped packet, and must not stay up for an
@@ -7361,6 +7566,71 @@ On MySQL the fixture is built by running `schema.sql`, the `FOR UPDATE` stub is
 gone, and twenty-three further checks run that SQLite cannot be asked — see §4aa.
 Eight of those are the publish collision (§4ab), which needs two database sessions
 and so cannot exist on an in-memory fixture at all.
+
+### Getting a MySQL to point at
+
+**This is CI's leg, and a leg only a machine ever runs is one that can be red for a
+week.** It was — from 2026-08-11, stopping after 593 checks, with every local gate
+green (invariant 32). Invariant 32 is the answer to *catching that class without a
+server*; this is the answer to *not needing to*. Neither replaces the other, and this
+one is a person choosing to run something, which is why it is written down rather than
+gated.
+
+**Run MySQL itself, not a MySQL-family server.** The tarball needs no container, no
+package manager and no root daemon, and it is the version CI runs. Unpack it **outside
+the repo** — it is about 5 GB unpacked and a server tree inside the working copy turns
+`git status` into a haystack:
+
+```
+cd /some/scratch/dir
+curl -sSLO https://cdn.mysql.com/Downloads/MySQL-5.7/mysql-5.7.44-linux-glibc2.12-x86_64.tar.gz
+tar xzf mysql-5.7.44-linux-glibc2.12-x86_64.tar.gz && mv mysql-5.7.44-* my57
+apt-get install -y libaio1t64 && ln -sf /usr/lib/x86_64-linux-gnu/libaio.so.1t64 \
+                                        /usr/lib/x86_64-linux-gnu/libaio.so.1
+my57/bin/mysqld --no-defaults --initialize-insecure --user=root \
+                --basedir="$PWD/my57" --datadir="$PWD/my57data"
+my57/bin/mysqld --no-defaults --user=root --basedir="$PWD/my57" \
+                --datadir="$PWD/my57data" --port=3307 --socket="$PWD/my57.sock" &
+mysql -h 127.0.0.1 -P 3307 -uroot -e "CREATE DATABASE lbm_selftest CHARACTER SET utf8mb4"
+```
+
+Four details, each of which cost something the first time:
+
+- **`--basedir` and `--datadir` are absolute on purpose.** A relative `--datadir` is
+  resolved against the *basedir*, not the working directory, so `--datadir=my57data`
+  silently creates `my57/my57data` and the next command cannot find it. Nothing warns.
+- **`--no-defaults` is load-bearing.** It skips any `my.cnf` the host already has, which
+  is what leaves `sql_mode` at 5.7's stock
+  `ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,…` — the mode the
+  `mysql:5.7` image CI uses runs with. Strict mode is half of what invariant 32 is about,
+  so a server started with it relaxed is a rehearsal that agrees with SQLite.
+- **The bundled `bin/mysql` client wants `libncurses.so.5`** and will not start. Any
+  system client works instead; it is the **server** that has to be the real one.
+- **Port 3307 and a socket path of its own** keep it clear of anything already listening
+  on 3306 or owning `/tmp/mysql.sock`.
+
+**A MySQL-family server is not MySQL, and a green run on one is not a green leg.** The
+divergence that matters here is not obscure: MySQL refuses a `DEFAULT` on a `TEXT`
+column and always has —
+
+```
+ERROR 1101 (42000): BLOB, TEXT, GEOMETRY or JSON column 't' can't have a default value
+```
+
+— while MariaDB has *allowed* one since 10.2, and SQLite allows one too. A statement of
+that shape is therefore accepted by both engines anybody is likely to rehearse on and
+refused by the only one that decides, and no amount of local running on a fork would
+find it. (`DEFAULT NULL` is a different thing and MySQL permits it — checked here rather
+than reasoned about, since the error message names the column type and not the default.)
+If a real 5.7 is genuinely out of reach, a fork still answers *does this leg reach its
+end*; say which engine the number came from, and treat CI as the one that decides.
+
+**Observed on this tree, 2026-08-19**, against MySQL 5.7.44 installed exactly as above:
+the SQLite leg reports `1821 checks, 0 failed` and the MySQL leg `1844 checks, 0 failed`.
+The difference is 23, which is the figure §4aa states — the same claim, taken off a
+server rather than restated. Read those as a measurement of a tree on a date, not as an
+anchor to hold to: the suite grows, and a count quoted from memory after it has is how a
+number ends up being cited as evidence of something nobody re-ran.
 
 **The greps below are what `tools/check_invariants.php` automates.** They are kept here
 because the annotations are the reasoning, not because anybody has to run them.

@@ -155,6 +155,41 @@ anything that vanishes was never saved).
       chose**. This is the one with history: a colour the CSSOM silently discarded was
       published as black.
 
+## D2. The table block: filling one from a CSV (§4bl)
+
+Needs a real file and a real drag, so nothing in the repo can stand in for it. Make a
+small `.csv` in Excel or Numbers with a heading line — `Title,Price,SKU` over two or three
+rows — and put `"Sockeye, wild"` in a cell, quoted comma and all.
+
+- [ ] Select a table block and press **Edit Table**. Drag the file onto the drop area in
+      the modal. It outlines in green while the file is over it, and the rows arrive.
+- [ ] The note under the drop area names the file, the row and column counts, which
+      headings were styled by name, and which became Plain. `SKU` must be *named*, not
+      silently styled.
+- [ ] The quoted comma is still one cell.
+- [ ] Untick **First row names the columns**. The heading line becomes a row of content
+      without the file being asked for again.
+- [ ] Now edit the imported table the way anybody would: type over a price, change a
+      column's style dropdown, set a column width, change **Row padding**, add a row, add
+      a column, delete one of each. All of it must work exactly as it does on a table
+      typed by hand — an import fills the editor, it does not replace it.
+- [ ] Press **Cancel**. The block still holds what it held before the drop — nothing is
+      stored until Save Table.
+- [ ] Click the drop area instead of dragging, and choose the same file. Same result.
+- [ ] Drop a `.jpg` on the drop area — refused by name, not read.
+- [ ] Close the modal. Now drop the file **on a table block on the canvas**, then on the
+      canvas background, then on a text or image block. In all three the browser must
+      **not** open the file: the page stays, nothing is imported, no block outlines, and
+      it says to open the table and use the area inside Edit Table. The block one is the
+      point — a table block is not a drop target — and the navigation is the one that
+      costs an unpublished canvas if it regresses.
+- [ ] On a Display somebody else is holding, drag the file anywhere on the Builder:
+      nothing is imported, the page does not navigate, and it says who is holding it.
+- [ ] Save Table, then Publish, and read the sign.
+- [ ] Open a table that was published **before** this change and save it untouched. Row
+      padding and everything else must come back exactly as it was — this change stores
+      the same shape it always did.
+
 ## E. Undo — before you publish anything
 
 Default depth is **5 steps** (Settings, capped at 20). Undo works only *before* a publish

@@ -163,11 +163,20 @@ specific way of going wrong that has now happened at least once.
 
 `check_doc_numbering.php` prints the next free letter, and four branches cut from one
 base all asked it and all got the same answer. Asking is right; asking *at the same
-time* is the failure. So they are allocated in advance. Phase 4 now runs to §4aq, and
-**`4ar` is the next free letter** — ask the tool rather than counting, and if two branches
+time* is the failure. So they are allocated in advance. Phase 4 now runs to §4bl, and
+**`4ba` is the next free letter** — ask the tool rather than counting, and if two branches
 start at once, write the allocation down here before either of them writes prose.
 
 - ~~**Lane A (#33) wrote `4ao`.**~~ ~~**B (#44) wrote `4ap`.**~~ ~~**C (#50) wrote `4aq`.**~~
+- ~~**The browser pass wrote `4as`–`4ax`, and `4ay` for what the pass says about
+  itself.**~~
+- ~~**The CSV import wrote `4az`**~~ — cut from `f787aa0` on 2026-08-19, beside an
+  app-completion audit running in another session. Written down here first, which is this
+  item working as designed rather than by luck: the two branches share no application
+  file, and the three files they were always going to collide in are this one,
+  `BUILD-REFERENCE.md` and the invariant list. **This branch added no invariant**, so the
+  only one of the three it touches is `BUILD-REFERENCE.md`, in two places that are
+  appends: a new §4 write-up and a line in the §5 gate list.
 
 **This scheme worked exactly as designed, and it is the only one of the four that did.**
 B wrote `4ap` while `4ao` was still unwritten and its push passed, because
@@ -201,15 +210,35 @@ and the reservation only settles who renumbers on the merge.** As settled:
 - **Lane C took 30**, and only 30 — a check ships having been seen to fail (§4aq). It was
   expected to add several; what it actually needed was one rule about how a check earns
   its line, because the four mechanised greps are rules the *checker* enforces rather than
-  invariants a reader has to hold. **38 is now the next free number**: 31 went to the
-  above-floor syntax check, 32 to a branded block's own typography, 33 to `brands`, 34 to
-  `workspace_themes`, 35 to every read of the machine (§4bg), 36 to the implicit-nullable
-  form 8.4 deprecates (§4bh), and 37 to a value the shop's engine would refuse (§4bi) — which
-  grew a second half in §4bj, under the same number, because SQLite dialect on a portable
-  handle is the same rule failing a different way and a reader holding one holds both. Seven
-  allocated since this paragraph last said "31", which is the
-  reason it is worth updating rather than recomputing — the sentence that names the next
-  number is the one a branch reads.
+  invariants a reader has to hold. 31 was the next free number then.
+- **Then two lanes allocated at once, and this is the collision the file was written
+  for.** The v2 lane took 32 through 37 in its own tree — 32 a branded block's own
+  typography, 33 `brands`, 34 `workspace_themes`, 35 every read of the machine (§4bg), 36
+  the implicit-nullable form 8.4 deprecates (§4bh), 37 a value the shop's engine would
+  refuse (§4bi), which grew a second half in §4bj under the same number because SQLite
+  dialect on a portable handle is the same rule failing a different way and a reader
+  holding one holds both. Meanwhile `main` took 32 for the engine-refuses rule and 33 for
+  the implicitly nullable parameter, one branch at a time, and its note here said that
+  arriving one at a time was "the only reason none of them collided". It was not: nothing
+  had asked the lane, and the lane already held both numbers.
+  **Settled on the merge, by counting, as the rule above says:** the v2 lane kept 32 and
+  33 — 13 files cite its 32 against `main`'s 4 — and `main`'s two rules renumbered into
+  the slots the lane had already given them, engine-refuses to **37** and
+  implicitly-nullable to **36**. That both trees had independently landed on the same two
+  destinations is luck, not a process: the numbers matched because the lane allocated in
+  order and `main` happened to add two rules, and one more rule on either side would have
+  made them disagree. **38 is now the next free number.**
+- **A lane that adds no invariant still owes a sentence saying so.** The CSV branch wrote
+  down that it was not taking 32 before anything had taken it, and the MySQL-leg recipe
+  branch that 33 was free while #13 was still open — which is what let each of those land
+  without asking. "Free" is a claim somebody else is about to act on, and a lane that
+  simply says nothing reads from the outside exactly like a lane nobody asked. Note the
+  shape of the answer that ages best: *this branch takes none* stays true no matter who
+  lands first, while *N is next* is dated by the next merge. Write both, and expect only
+  the first to survive. And note what the collision above adds to that: **a lane saying
+  "N is free" has only read its own tree.** Both sides here wrote that sentence honestly
+  and both were wrong, because neither could see the other. The sentence is worth writing
+  for the renumbering it makes cheap, not for the collision it prevents.
 
 B renumbered nothing and A renumbered everything, and the tie was broken by counting:
 `invariant 28` appeared 15 times across 7 files on B's side and 7 times across 6 on A's,
