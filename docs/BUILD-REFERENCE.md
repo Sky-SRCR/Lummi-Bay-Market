@@ -641,6 +641,19 @@ through the app again:
     `tools/selftest_installed.php` are the half that proves the real reads still work, and
     they refuse an arm set to what this machine already holds, because that one would agree
     with the plain run and say so in green.
+36. **No parameter is implicitly nullable** (§4bh). `?Type $x = null`, never
+    `Type $x = null` — understood back to 7.1, deprecated from 8.4. The sibling of 31 and
+    the opposite direction: that one refuses syntax the shop's PHP cannot *parse*, and its
+    cost is a blank sign; this one refuses syntax that parses everywhere and whose cost is a
+    line in the error log on **every request that compiles the file**. Separate rules
+    because what to do about each differs. `SiteChrome::wear()` was one, called on every
+    signed-in page load, and three things could not see it: `php -l` is clean on both
+    spellings; the deprecation fires when a file is *compiled*, so it precedes any handler
+    the suite installs; and this container's `error_reporting` excludes `E_DEPRECATED`, so
+    the suite runs green on 8.4 while the notice is emitted. A CI leg for a newer PHP does
+    not close this — it would go green too. `tools/check_invariants.php` reads real tokens
+    and **only inside parameter lists**, because a scan of every `$x = null` reports
+    `private static $bytes = null;`, which `UploadLimit` and `ServerReport` both have.
 
 ---
 
@@ -6917,6 +6930,51 @@ format and not under `COMPACT`.
 `php -d` and reading which checks cared. None did — which was the answer, not the absence of
 one. What it cost to find the last 16 was somebody pasting a version number this repo had
 already written down.
+
+### 4bh. A deprecation the lint, the suite and the new CI legs all agreed to ignore
+
+Found by looking sideways at another branch rather than at the code, which is worth
+recording because it is not how any of the last three were found.
+
+`claude/project-hosting-options-4goiyv` has PR #10 open — *"Make the tree 8.4-clean, and
+test 8.3/8.4 in CI"* — and its own write-up makes an argument this repo had not: **PHP 8.2
+leaves security support on 2026-12-31**, the host's system default is already 8.3, and this
+domain is held off it by one explicit MultiPHP setting. So "the version moved" is a dropdown
+away, and `phpVersionNote()` is silent at and above the floor *by design* — it fires when a
+host goes backwards and never when it moves on.
+
+Its five signature fixes turn out to be **already present on this branch**, from `362f9c7`.
+What it could not fix is the one that mattered: `lib/site_chrome.php` does not exist on
+`main` at all — it is step 5, unmerged — and `SiteChrome::wear(WorkspaceTheme $theme = null)`
+is the implicit-nullable form 8.4 deprecates, called on **every signed-in page load**.
+
+**Three things were unable to see it, and the third is the one worth keeping.**
+
+- `php -l` is clean on both spellings, on every version. Already known (invariant 31).
+- The deprecation is emitted when a file is *compiled*, not parsed — so it fires at
+  `require` time, before any handler the self-test installs exists. The suite's "no PHP
+  diagnostics during the run" check is downstream of the event.
+- **This container's `error_reporting` is 22527, which excludes `E_DEPRECATED`** (`E_ALL`
+  is 30719 here). So the suite runs green at 2320/0 **on PHP 8.4** while the notice is
+  being emitted, and I watched both halves happen. `ErrorPolicy::install()` does set
+  `E_ALL` — on a real request, which is the one place nobody is watching a console.
+
+That third one also means **PR #10's new 8.3 and 8.4 legs would have gone green over this.**
+Adding a CI leg for a version is not the same as adding a check for what that version says,
+and the gap between those two is a whole class of defect: anything the newer engine only
+*warns* about. On the shop's 8.2 none of this is live; the day the host moves, it is a line
+in the error log on every request — the log that alerts admins and rotates at a size cap.
+
+So invariant 36, and it is deliberately a separate rule from 31 rather than an extension of
+it, because the consequences are not the same shape: 31's is a parse error and a blank sign,
+36's is a silent per-request notice. The detector reads real tokens and **only inside
+parameter lists**, which is the whole difficulty — a scan of every `$x = null` reports
+`private static $bytes = null;`, and `UploadLimit` and `ServerReport` both have exactly
+that. Eleven probes, four positive and seven negative, and the negative half carries the
+weight: every one is a shape a naive scan really does hit, and the first two of them are
+live code in this repo.
+
+61 → 73 invariant checks. The fix is one character.
 
 ---
 

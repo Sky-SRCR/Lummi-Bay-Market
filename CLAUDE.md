@@ -127,7 +127,13 @@ edited in place and every change reaches the sign by hand.
   refuses seven above-floor constructs and twenty functions, and prints on every run that
   it is a denylist. So the gate now disagrees with you when it can — but a denylist cannot
   know what 8.5 adds, so a construct you have not seen before is still worth looking up
-  rather than trusting the green line. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
+  rather than trusting the green line. **Invariant 36 is the same hole in the other
+  direction**: `?Type $x = null`, never `Type $x = null`. The implicit form parses on every
+  version, is deprecated from 8.4, and costs a line in the error log on *every request that
+  compiles the file* — and nothing else here can see it, because the notice fires when a
+  file is compiled rather than parsed (so it precedes any handler the suite installs) and
+  this container's `error_reporting` excludes `E_DEPRECATED`. A CI leg on a newer PHP does
+  not close it either; that leg goes green too. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
   for the reason they always did: they cover a host that moves, and what they prevent
   is silent.
 - **Nothing that has been published can be taken back.** Publishing overwrites; a

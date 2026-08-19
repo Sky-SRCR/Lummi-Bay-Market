@@ -228,9 +228,18 @@ class SiteChrome
      * is passing, and requiring it here would be a cycle — that module reads `ROLES`
      * out of this one.
      *
+     * `?WorkspaceTheme` and not `WorkspaceTheme … = null`: from PHP 8.4 the implicit form
+     * is deprecated, and this method is called on every signed-in page load — so on a host
+     * that has moved to 8.4 it writes a line into the error log on every request, into the
+     * same log that alerts admins and rotates at a size cap. The explicit form is
+     * understood back to 7.1, so it costs nothing below the floor. Invariant 36 is why
+     * this is the only spelling in the tree, and why it is checked rather than remembered:
+     * `php -l` is clean on both forms, and the deprecation fires when the file is
+     * *compiled*, which is before any error handler the suite installs exists.
+     *
      * @param WorkspaceTheme|null $theme
      */
-    public static function wear(WorkspaceTheme $theme = null)
+    public static function wear(?WorkspaceTheme $theme = null)
     {
         self::$worn = $theme;
     }

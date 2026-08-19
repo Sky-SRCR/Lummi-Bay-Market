@@ -1558,6 +1558,164 @@ foreach ($floorClean as $probe) {
     }
 }
 
+// ---- No parameter is implicitly nullable ----------------------------------------
+/**
+ * Every `Type $x = null` that should be `?Type $x = null` (invariant 36).
+ *
+ * The sibling of invariant 31 and the opposite direction. That one refuses syntax the
+ * shop's PHP cannot *parse* — a blank sign. This one refuses syntax that parses
+ * everywhere and is **deprecated from 8.4**, whose cost is a line in the error log on
+ * every request that compiles the file. `SiteChrome::wear()` was one, and it is called
+ * on every signed-in page load.
+ *
+ * Three things could not see it, which is why it is a check and not a convention:
+ *
+ *   · `php -l` is clean on both spellings, on every version.
+ *   · The deprecation is emitted when a file is **compiled**, not when it is parsed —
+ *     so it fires at `require` time, before any error handler the self-test installs
+ *     exists, and the suite's "no PHP diagnostics during the run" check never sees it.
+ *   · This container's `error_reporting` is 22527, which excludes `E_DEPRECATED`
+ *     (`E_ALL` is 30719 here). So the suite runs green on PHP 8.4 while the notice is
+ *     being emitted. `ErrorPolicy::install()` does set `E_ALL` — on a real request,
+ *     which is the one place nobody is watching a console.
+ *
+ * Only parameter lists are examined, and that is the whole difficulty. A scan that
+ * looks at every `$x = null` in the file reports `private static $bytes = null;` —
+ * `UploadLimit` has exactly that, and so does `ServerReport` — because the token before
+ * the variable is `static` either way. So this walks to a `function`/`fn`, finds its
+ * parameter list, and only reads variables at depth 1 inside it.
+ *
+ * @return array of ['line' => int, 'what' => string]
+ */
+function implicitNullableUses($source)
+{
+    $ts = array_values(array_filter(token_get_all($source), function ($t) {
+        return !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true);
+    }));
+
+    // A parameter type is these tokens and nothing else.
+    //
+    // `static` is absent because it is not legal as a parameter type — and **that is all
+    // it is**. It would be easy to write that excluding it is what stops a static property
+    // reading as one, and a mutation check says otherwise: putting `T_STATIC` back into
+    // this list changes nothing, because the parameter-list walk below never reaches a
+    // property or a `static $x = null` in the first place. The scoping is load-bearing and
+    // this line is not, which is worth saying rather than letting the comment take credit
+    // (invariant 30 — the mutant survived and the answer was to fix the sentence).
+    $typeTokens = [T_STRING, T_ARRAY, T_CALLABLE];
+    if (defined('T_NAME_QUALIFIED'))       { $typeTokens[] = T_NAME_QUALIFIED; }
+    if (defined('T_NAME_FULLY_QUALIFIED')) { $typeTokens[] = T_NAME_FULLY_QUALIFIED; }
+
+    $isType = function ($t) use ($typeTokens) {
+        if (is_array($t)) { return in_array($t[0], $typeTokens, true); }
+        return $t === '\\' || $t === '|' || $t === '&';
+    };
+
+    $out   = [];
+    $count = count($ts);
+    for ($i = 0; $i < $count; $i++) {
+        $t = $ts[$i];
+        if (!is_array($t) || ($t[0] !== T_FUNCTION && !(defined('T_FN') && $t[0] === T_FN))) {
+            continue;
+        }
+        // Walk to this function's own '('. A name or `&` may sit between.
+        $open = $i + 1;
+        while ($open < $count && $ts[$open] !== '(') { $open++; }
+        if ($open >= $count) { continue; }
+
+        $depth = 0;
+        for ($j = $open; $j < $count; $j++) {
+            if ($ts[$j] === '(') { $depth++; continue; }
+            if ($ts[$j] === ')') { $depth--; if ($depth === 0) { $i = $j; break; } continue; }
+            if ($depth !== 1 || !is_array($ts[$j]) || $ts[$j][0] !== T_VARIABLE) { continue; }
+
+            // Does it default to null?
+            if (!isset($ts[$j + 1], $ts[$j + 2]) || $ts[$j + 1] !== '='
+                || !is_array($ts[$j + 2]) || $ts[$j + 2][0] !== T_STRING
+                || strcasecmp($ts[$j + 2][1], 'null') !== 0) { continue; }
+
+            // Collect the type immediately before it.
+            $type = [];
+            for ($k = $j - 1; $k >= $open; $k--) {
+                if ($ts[$k] === '?') { $type[] = '?'; continue; }
+                if ($isType($ts[$k])) { $type[] = is_array($ts[$k]) ? $ts[$k][1] : $ts[$k]; continue; }
+                break;
+            }
+            if (!$type) { continue; }                                  // untyped: legal forever
+            $spelled = implode('', array_reverse($type));
+            if (strpos($spelled, '?') !== false) { continue; }          // already explicit
+            if (preg_match('/\bnull\b/i', $spelled)) { continue; }      // union already holds null
+
+            $out[] = ['line' => $ts[$j][2], 'what' => $spelled . ' ' . $ts[$j][1] . ' = null'];
+        }
+    }
+    return $out;
+}
+
+$implicit = [];
+foreach (phpFilesUnder($root, '', []) as $rel) {
+    if ($rel === 'tools/check_invariants.php') { continue; }   // holds the probes below
+    foreach (implicitNullableUses(file_get_contents($root . '/' . $rel)) as $hit) {
+        $implicit[] = $rel . ':' . $hit['line'] . '  ' . $hit['what'];
+    }
+}
+$checked++;
+if (!$implicit) {
+    echo "  ok   no parameter is implicitly nullable, so nothing logs a deprecation on 8.4 (invariant 36)\n";
+} else {
+    echo "  FAIL a parameter is implicitly nullable, which 8.4 deprecates (invariant 36)\n";
+    foreach ($implicit as $where) { echo "       $where\n"; }
+    echo "       Write it `?Type \$x = null`. Understood back to 7.1, so it costs nothing\n";
+    echo "       below the floor. `php -l` is clean either way and the deprecation fires\n";
+    echo "       when the file is compiled — before any handler the suite installs — so\n";
+    echo "       this check is the only thing here that can see it.\n";
+    $failures[] = 'an implicitly nullable parameter (invariant 36)';
+}
+
+// ---- And that detector, seen to fail --------------------------------------------
+// Invariant 30, and the negative half carries the weight: every `no` below is a shape a
+// scan of `$x = null` really does hit, and the first two are live code in this repo.
+$nullableProbes = [
+    ['function f(array $x = null) {}',                     1, 'array $x = null',
+     'a built-in type defaulting to null is the deprecated form'],
+    ['function f(WorkspaceTheme $t = null) {}',            1, 'WorkspaceTheme $t = null',
+     'and so is a class type — the one SiteChrome::wear() had'],
+    ['class A { function f(int $n = null) {} }',            1, 'int $n = null',
+     'inside a class body as well as at top level'],
+    ['function f(?Foo $a = null, Bar $b = null) {}',        1, 'Bar $b = null',
+     'and only the offending one of two, so a mixed signature reports once'],
+    ['function f(?array $x = null) {}',                     0, '',
+     'the explicit form is what this exists to leave alone'],
+    ['function f($x = null) {}',                            0, '',
+     'an untyped parameter has always been legal and is not touched'],
+    ['function f(array|null $x = null) {}',                 0, '',
+     'a union already naming null is explicit enough for 8.4'],
+    ['function f(array $x = []) {}',                        0, '',
+     'a default that is not null is not the deprecation'],
+    ['class A { private static $bytes = null; }',           0, '',
+     'a static property is not a parameter — the false positive a naive scan gives'],
+    ['function f() { static $c = null; return $c; }',       0, '',
+     'and neither is a static variable, which reads identically to one'],
+    ['$x = null;',                                          0, '',
+     'nor a plain assignment, which is most of what the pattern would hit'],
+];
+foreach ($nullableProbes as $probe) {
+    list($snippet, $expected, $needle, $label) = $probe;
+    $checked++;
+    $hits = implicitNullableUses("<?php\n" . $snippet . "\n");
+    $ok = count($hits) === $expected
+          && ($expected === 0 || ($hits[0]['line'] === 2 && $hits[0]['what'] === $needle));
+    if ($ok) {
+        echo "  ok   $label\n";
+    } else {
+        echo "  FAIL the implicit-nullable detector is wrong about: $label\n";
+        echo "       expected $expected hit(s)"
+           . ($expected ? " on line 2 reading `$needle`" : '') . ', got ' . count($hits) . "\n";
+        foreach ($hits as $hit) { echo "         line {$hit['line']}: {$hit['what']}\n"; }
+        $failures[] = "implicit-nullable detector: $label";
+    }
+}
+
 // ---- The instrument itself -------------------------------------------------------
 // Every rule above is read through codeWithoutComments(), so what that function drops
 // decides what all thirty-two of them can see. It gained HTML comments in #50, and the
@@ -1635,7 +1793,7 @@ foreach ([
 //
 // Not a count of rules: a count of what actually *ran*, so a rule that stops being
 // reached is the same failure as one that was deleted.
-$expectedChecks = 61;
+$expectedChecks = 73;
 if ($checked !== $expectedChecks) {
     $failures[] = 'this checker ran every check it is supposed to — expected '
                 . $expectedChecks . ', ran ' . $checked;
