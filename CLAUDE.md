@@ -199,7 +199,9 @@ needs SQLite says `newSqliteTestDb()` and is believed. Invariant 37 in
 `check_invariants.php` is the local half of both. Whether the MySQL arm *finishes* is only
 ever answered by the run — and a dead gate hides how much is still wrong behind it: fixing
 the first four took the leg from ~100 checks to 1383, where four more of the same class
-were waiting (§4bj).
+were waiting (§4bj). Both rounds landed and the arm went green on 2026-08-19, after eight
+days dead: 2361 checks and a clean rehearsal, on three PHP versions. It is a live gate
+again, which is the only state in which any of the above is worth anything.
 
 `check_doc_numbering.php` also prints the next free section letter. That is the
 question every branch cut from the same base has to answer before it writes a

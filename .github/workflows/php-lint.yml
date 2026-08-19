@@ -46,6 +46,8 @@ jobs:
   php:
     runs-on: ubuntu-latest
 
+    name: php ${{ matrix.php }} · mysql ${{ matrix.mysql }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -89,12 +91,45 @@ jobs:
         # parameter $server as nullable is deprecated" on every request that built the
         # report. The steps that catch that are the ones that actually run the code —
         # the self-tests and the rehearsal, on each version.
-        php: ['8.2', '8.3', '8.4']
+        #
+        # Two axes, and deliberately not their product. A full cross would be nine jobs,
+        # most of them combinations nobody will ever run — the point of a leg is that
+        # somebody can say which question it answers, and "PHP 8.4 on MySQL 5.7" is not
+        # a question anyone here has. So the combinations are listed rather than
+        # multiplied: PHP moves against the engine the shop has, and the engine moves
+        # against the PHP the shop has.
+        #
+        # The MySQL axis exists for the same reason the 8.3 and 8.4 legs above do, one
+        # layer down. 5.7 is what the shop runs and is the declared floor
+        # (`ServerReport::mysqlVersionNote()`), and it is also **eight years old and
+        # out of support since October 2023** — so this is the one version on this list
+        # whose replacement is not a question of if. Nothing in the app would notice:
+        # the version note, like the PHP one, is silent at and above the floor by
+        # design, so it fires when a host goes backwards and never when it moves on.
+        #
+        # 8.0 is where a host upgrading from 5.7 lands, and 8.4 is the current LTS —
+        # the two ends of where the engine can go. Both are paired with 8.2, the shop's
+        # PHP, so a failure on either is unambiguously the engine's doing.
+        #
+        # What these legs are *not* is permission to write 8.0-only SQL. Same rule as
+        # the PHP legs: they say whether what is written still runs, not what may be
+        # written. `schema.sql` is verified against 5.7 and stays that way.
+        include:
+          - { php: '8.2', mysql: '5.7' }   # the shop, today: this leg says the sign works
+          - { php: '8.3', mysql: '5.7' }   # after the MultiPHP pin moves
+          - { php: '8.4', mysql: '5.7' }   # and after it moves again
+          - { php: '8.2', mysql: '8.0' }   # where a host upgrading off 5.7 lands
+          - { php: '8.2', mysql: '8.4' }   # and the current LTS, which is where it stays
 
     services:
       mysql:
-        # 5.7 to match the live server, which schema.sql was verified against.
-        image: mysql:5.7
+        # 5.7 matches the live server and is what schema.sql was verified against; the
+        # other two are the upgrade path (see the matrix note above). Left on each
+        # image's default authentication plugin on purpose — 8.0 and 8.4 default to
+        # `caching_sha2_password`, which is what a host that upgrades will actually
+        # hand the app, so making these legs pass by pinning them back to
+        # `mysql_native_password` would be testing a configuration nobody will be in.
+        image: mysql:${{ matrix.mysql }}
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: lbm_selftest

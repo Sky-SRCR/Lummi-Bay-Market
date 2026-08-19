@@ -2786,6 +2786,12 @@ check(strpos($dbZoneWarn, 'Nothing a sign shows') !== false,
       'together with what is not affected, because a sign is what this app is for');
 check(ServerReport::dbZoneNoteFor('America/Chicago') !== '',
       'a named zone that is not UTC is the same refusal by another spelling');
+// The `trim()` inside the predicate, which survived §4bj's sweep. MySQL does not pad
+// what it answers to `@@session.time_zone`, so the line is insurance rather than a
+// path — but this is a public seam now, and one check is cheaper than the paragraph
+// explaining why the line is allowed to be untested.
+checkSame('', ServerReport::dbZoneNoteFor("  UTC \n"),
+          'and a zone arriving with whitespace round it is still that zone');
 checkSame('', $tzReport[StoreClock::LABEL][1],
           'and nothing to say about a setting this app can read');
 // The note is the whole point of the row: a stored value nobody can use has to be
@@ -8527,5 +8533,11 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // went through seams and lost the value they were asserting off the machine, the library
 // block moved onto the type the column actually offers and gained the schema-and-Builder
 // agreement that says why, and the role check was handed a row. 13 net, none of them
-// inside the engine-only section, so 25 is still the difference.
-reportChecks(testIsMysql() ? 2361 : 2336);
+// inside the engine-only section, so 25 is still the difference. 2336 and 2361, and this
+// is the first entry in this paragraph the MySQL arm has *confirmed* rather than been
+// predicted at: run 32286293398 reported 2361 having never been asked locally.
+//
+// Then one more, in the same breath as §4bk: the `trim()` in `isUtcOffset()` survived the
+// sweep, and a public seam is worth a check rather than a note about why a line is
+// allowed to be untested. 25 is still the difference.
+reportChecks(testIsMysql() ? 2362 : 2337);

@@ -686,7 +686,10 @@ through the app again:
 
     What neither half can answer is whether the arm *finishes*. Only the run says that,
     and a dead gate hides how much is still wrong behind it: fixing §4bi's four took the
-    leg from ~100 checks to 1383, where four more of the same class were waiting.
+    leg from ~100 checks to 1383, where four more of the same class were waiting. Both
+    rounds landed, and the run went green on 2026-08-19 — so the rule now has what it
+    never had while it was being written, which is an arm that would go red if it were
+    broken.
 
 ---
 
@@ -7163,10 +7166,75 @@ against the real statement, not just its probes: restoring the `CREATE TABLE` th
 the run names both problems on it, including the `TEXT DEFAULT` one CI never got far
 enough to reach.
 
-Whether the leg now reaches the end is, again, only answerable by the run. What has
-changed since §4bi is the honest expectation: the first fix took it from ~100 checks to
-1383, and there are roughly 950 past that point which have still never executed against
-this engine.
+**The run then answered it: `2361 checks, 0 failed` on MySQL, `Rehearsal clean.`, and all
+three PHP legs green** (run 32286293398, head `9befaf6`, 2026-08-19 18:16 UTC). That is the
+first time since 2026-08-11 that either step has completed, and the ~950 checks past check
+1383 — every one steps 1 to 5 added — have now executed against the engine the shop runs.
+
+One detail from it is worth keeping, because it is the only part of this that was a
+prediction rather than a reading: the MySQL anchor was raised to 2361 from 2348 by adding
+13 to a number this container could not verify, and 2361 is what the leg reported. The
+engine-only section really is 25 checks, and the arithmetic in the paragraph above
+`reportChecks()` is load-bearing rather than commentary.
+
+### 4bk. Two more engines, and what green on 5.7 was never going to say
+
+The MySQL leg went green on 5.7 (§4bj) and that is worth exactly what it says: the app
+works on the engine the shop runs. It says nothing at all about the engine the shop is
+going to run, and that gap is not hypothetical — **MySQL 5.7 left support in October 2023**
+and the live version is 5.7.44. This is the one version on the matrix whose replacement is
+not a question of if.
+
+Nothing in the app would notice when it happens. `ServerReport::mysqlVersionNote()` is
+silent at and above the floor by design, the same design as the PHP note beside it and for
+the same reason — a note read every time is a note learned to skip — so it fires when a
+host goes *backwards* and never when it moves on. §4bh made that observation about PHP and
+answered it with two matrix legs. This is the identical hole one layer down, answered the
+same way.
+
+**Two axes, deliberately not their product.** A full cross of three PHP versions and three
+engines is nine jobs, and most of them are combinations nobody will ever be in: "PHP 8.4 on
+MySQL 5.7" is not a question anybody here has. The rule that keeps the list honest is that
+every leg has to have a question somebody can state, so they are enumerated rather than
+multiplied — PHP moves against the engine the shop has, and the engine moves against the
+PHP the shop has:
+
+| PHP | MySQL | The question it answers |
+|---|---|---|
+| 8.2 | 5.7 | The shop, today. This leg is the one that says the sign works. |
+| 8.3 | 5.7 | After the MultiPHP pin moves — a dropdown, not a migration (§4k). |
+| 8.4 | 5.7 | And after it moves again. |
+| 8.2 | 8.0 | Where a host upgrading off 5.7 lands. |
+| 8.2 | 8.4 | The current LTS, which is where it then stays. |
+
+**Left on each image's default authentication plugin, on purpose.** 8.0 and 8.4 default to
+`caching_sha2_password` where 5.7 defaults to `mysql_native_password`, and that is exactly
+what a host handing the app a newer engine will hand it. Pinning the new legs back to the
+old plugin would make them pass by testing a configuration nobody will be in — which is the
+§4be mistake in another costume, and this file has now made that one twice.
+
+**These legs do not move the schema's target.** Same rule as the PHP legs, and it is worth
+restating because the two are easy to conflate: a green 8.4 leg says what *is* written still
+runs, not that 8.0-only SQL may now be written. `schema.sql` is verified against 5.7 and
+stays that way.
+
+Two behaviour changes were checked before adding the legs, because both would have been
+found *by* the legs as a puzzle rather than as an answer:
+
+- **`explicit_defaults_for_timestamp` defaults to ON from 8.0.** A `TIMESTAMP NOT NULL`
+  with no default then gets no auto-initialisation, and an `INSERT` omitting it is error
+  1364 under strict mode rather than the current time. Every `TIMESTAMP` in `schema.sql`
+  declares its default explicitly, so the flag changes nothing here.
+- **`INT(11)` reports as `int` in 8.0's `information_schema`**, the display width dropped.
+  If a convergence gate compared an integer `COLUMN_TYPE` this would be an `ALTER` re-running
+  on every signed-in page load — the exact failure the gating rule exists to prevent. There
+  are two `needsColumnType()` calls in the whole plan and both are on ENUMs, whose reported
+  spelling is unchanged.
+
+What the legs themselves said is a reading, not a prediction, and it belongs beside them
+when it exists: at the time of writing they have been added and not yet run. The run is the
+authority, exactly as it was for §4bj — where the honest expectation was wrong twice in a
+row about how much was left.
 
 ---
 
@@ -7174,15 +7242,19 @@ this engine.
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
 #48 and #51 CI runs everything below except the two things that need a browser or
-a copy of live data. It runs on PHP 8.2, against two engines: SQLite and a real
-MySQL 5.7 service. **"Runs" is a claim with a date on it, and this paragraph was
+a copy of live data. It runs against SQLite and a real MySQL service, over five
+combinations — PHP 8.2, 8.3 and 8.4 on MySQL 5.7, plus MySQL 8.0 and 8.4 on PHP 8.2
+(§4bk). Deliberately not the product of the two axes: PHP moves against the engine
+the shop has, the engine moves against the PHP the shop has, and a leg nobody can
+name a question for is not worth its minutes. **"Runs" is a claim with a date on it, and this paragraph was
 wrong about it for eight days**: the MySQL arm had not reached the end of the suite
 since 2026-08-11, and neither it nor the rehearsal step underneath it had completed
 a run (§4bi). Invariant 37 is what a local gate can say about that arm; whether it
 finishes is only ever answered by the run. As of §4bj the leg reaches check 1383 rather
 than the first hundred, four more defects of the same class have been fixed behind the
-fatal that was hiding them, and it has still not been observed to complete. Read the run
-before repeating the claim. That 8.2 is now also the repo's declared floor — the store owner
+fatal that was hiding them, **and on 2026-08-19 the whole gate completed green for the
+first time since 11 August** — 2361 checks on MySQL and a clean rehearsal, on 8.2, 8.3 and
+8.4. The claim has a date again. Keep giving it one. That 8.2 is now also the repo's declared floor — the store owner
 stated the host runs it (§4k) — so the pin enforces the target rather than merely
 accepting everything the target forbids. As of 2026-08-11 it is **observed** rather than
 stated: 8.2.33 on the runtime card and `ea-php82` pinned to `srcresort.com` in cPanel
