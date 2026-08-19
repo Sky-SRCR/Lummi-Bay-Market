@@ -103,10 +103,12 @@ $pdo = new PDO(
     ]
 );
 
-$failures = [];
+$failures   = [];
+$checkCount = 0;
 function report($ok, $label)
 {
-    global $failures;
+    global $failures, $checkCount;
+    $checkCount++;
     echo ($ok ? "  ok   " : "  FAIL ") . $label . "\n";
     if (!$ok) { $failures[] = $label; }
 }
@@ -763,6 +765,87 @@ echo "  longer from the admin panel's own ALTER — both are gated plan entries 
 echo "  On a database missing them the first sign-in has no lockout, and the Builder\n";
 echo "  it lands on adds them (BUILD-REFERENCE 4v). password_resets is the one that\n";
 echo "  still converges from an unauthenticated page, deliberately.\n";
+
+// ---- Did it ask everything it has? -----------------------------------------
+// Until this section landed, deleting half this file printed "Rehearsal clean." and
+// exited 0. That is the third failure mode `reportChecks()` was written for in
+// `tools/test_fixture.php` — "193 checks, 0 failed" over a suite that had stopped
+// running half its assertions — and this file was the last gate here without the
+// answer to it. It is also the worst place to be missing one: this is the only gate
+// that runs *nowhere but CI*, so a section that stopped being asked would go unread
+// on every developer machine as well.
+//
+// The number cannot be a literal the way `reportChecks(2337)` is, because eleven of
+// the `report()` calls above sit behind a fact about the database rather than behind
+// a branch of the code: a copy of live data has accounts and several Brands, and a
+// database built from `schema.sql` has one Brand and nobody at all. So the anchor is
+// an expression — and every term in it is declared *here*, at the bottom, rather than
+// beside the block it counts. That placement is the whole mechanism. Deleting a block
+// above leaves its term behind, the sum stops matching, and the run fails; a term
+// written next to its own block would be deleted along with it and the anchor would
+// agree with the smaller file.
+//
+// The 48 is what the run reported minus the eleven conditional terms below, and it is
+// the number to change when a check is added — on purpose, which is the point of an
+// anchor.
+//
+// One thing writing it down immediately made visible, which is the argument for
+// anchors in one paragraph: **five of these checks have never run on CI.** A database
+// built from `schema.sql` seeds no accounts, so the edit lock and the grant are asked
+// of nothing — and their own comments say they are here because MySQL is the only
+// engine that can answer for the claim's bound `DATETIME` comparison and the holder
+// name's second `LEFT JOIN`. Today the only run that reaches them is a deploy-day run
+// against a copy of live data. Nothing was hiding that; nothing was saying it either,
+// which is §4bf's whole shape. The rows below are printed rather than passed over in
+// silence for that reason.
+$checkGroups = [
+    // what                                                     how many   asked here
+    ['asked of every database',                                        48, true],
+    ['the two grant foreign keys and their delete rules',               4,  $hasGrants],
+    ['a Brand exists for every sign to wear',                           1,  $hasBrands],
+    ['a typography row for each Brand',                count($brandRows), true],
+    ['a column per chrome role, none of them nullable',                 2,  $hasThemes],
+    ['the theme delete rule, and nobody left pointing at one',          2,  $hasThemes],
+    ['the drive-thru Display, and its backfilled elements',             1,  (bool) $legacy],
+    ['a publish carrying a second Brand',                               2,  count($brandList) > 1],
+    ['a grant stored and read back',                                    1,  $hasGrants && $anAccount],
+    ['the edit lock taken, named, and released',                        3,  (bool) $accounts],
+    ['a second account refused a lock somebody holds',                  1,  count($accounts) > 1],
+    ['the grants a deleted Display took with it',                       1,  $grantedA],
+];
+
+heading('Every check this rehearsal has');
+
+$expected = 0;
+$notAsked = [];
+foreach ($checkGroups as $group) {
+    list($what, $howMany, $askedHere) = $group;
+    if ($askedHere) {
+        $expected += $howMany;
+        continue;
+    }
+    $notAsked[] = $howMany . ' — ' . $what;
+}
+
+// Not through report(): this is the summary of the count, so counting it would make
+// the printed total one more than the number of ok/FAIL lines above it, and that
+// total is the one thing here somebody can check by hand.
+if ($checkCount === $expected) {
+    echo "  ok   $checkCount checks, which is every one this database can be asked\n";
+} else {
+    echo "  FAIL this rehearsal did not ask every check it has\n";
+    echo "       expected $expected, asked $checkCount\n";
+    $failures[] = 'the rehearsal asked every check it has — expected ' . $expected
+                . ', asked ' . $checkCount;
+}
+foreach ($notAsked as $line) {
+    echo "  ----   not asked of this database: $line\n";
+}
+if ($notAsked) {
+    echo "  ----   Not a failure: a database without accounts or a second Brand cannot\n";
+    echo "         be asked these. It is printed because a check nobody runs and a\n";
+    echo "         check nobody knows is not running are two different problems.\n";
+}
 
 echo "\n" . (count($failures) ? count($failures) . " FAILED\n" : "Rehearsal clean.\n");
 exit(count($failures) ? 1 : 0);

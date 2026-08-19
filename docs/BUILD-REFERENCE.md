@@ -6985,6 +6985,43 @@ old layout for good — and the checker printed `60 consistency checks, 0 failed
 0. A checker whose own coverage can shrink in silence is the failure it exists to prevent,
 wearing its uniform. All three are anchored now, and each was watched failing.
 
+**And there was a fourth, which this pass did not sweep for and the next one found.**
+`tools/rehearse_phase1.php` reported nothing at all — no count, anchored or otherwise —
+so deleting half of it printed `Rehearsal clean.` and exited 0. The sweep above went
+looking for tools that *printed a number and anchored none of it*, and a tool printing no
+number was outside the shape it was looking for. That is the same mistake as §4bf's, one
+level up: a search written from the last defect's silhouette rather than from what it was
+for. And the rehearsal is the worst of the four to have missed, because it is the only
+gate here that runs **nowhere but CI** — nothing on a developer machine would ever have
+shown the smaller green number.
+
+Its anchor could not be `reportChecks(59)`, and the reason is worth writing down because
+it will come up again: eleven of its `report()` calls sit behind a fact about *the
+database* rather than a branch of the code. A copy of live data has accounts and several
+Brands; a database built from `schema.sql` has one Brand and nobody at all. So the number
+is a sum of declared terms — 48 asked of every database, plus each conditional group with
+its own count — and every term is declared **at the bottom of the file, beside the
+anchor**, never next to the block it counts. That placement is the whole mechanism:
+deleting a block leaves its term behind and the sum stops matching, where a term written
+beside its own block would be deleted along with it and the anchor would cheerfully agree
+with the smaller file. Watched failing three ways — one check deleted, a whole conditional
+block deleted, and a check added without the number moving — and the three states of the
+sum were read off real runs rather than added up on paper: 59 on `schema.sql`, 65 once the
+database has accounts, 68 once it has a second Brand.
+
+**And writing it down immediately answered a question nobody had asked: five of those
+checks have never run on CI.** `schema.sql` seeds no accounts, so `$accounts` is empty and
+`$anAccount` is 0 — which means the edit lock being taken, its holder's name coming back
+from the second `LEFT JOIN`, a second account being refused, the lock being released, and
+the grant surviving to the cascade check are all skipped, on every leg, every run. Their
+own comments say they are here *because* MySQL is the only engine that can answer for the
+bound `DATETIME` comparison and the holder-name join. So the one place they run is a
+deploy-day run against a copy of live data. Nothing was hiding that and nothing was saying
+it either, which is §4bf in one sentence — so the anchor prints the groups it could not
+ask, with their counts. Seeding two accounts into the CI database would make them run; the
+run that proved the terms locally did exactly that and came back clean, which is a reason
+to think it would work and not a reason to think it has been done.
+
 `selftest_installed.php` got a second one of a different kind: each arm must print exactly
 one summary line. Its filter reads two shapes out of somebody else's output, and "found
 neither" and "found nothing wrong" print identically — a distinction that has already been
