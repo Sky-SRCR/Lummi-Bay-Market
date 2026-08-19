@@ -550,6 +550,22 @@ through the app again:
     failed check that reports itself, and the detector deliberately does not flag it:
     matching ENUM members case-sensitively would condemn writes MySQL has always taken.
     The negative half of its twelve fixtures is where that care lives.
+    **The rule has a second half, and it is the worse one**: SQL in the wrong *dialect*.
+    A refused value fails one check; `AUTOINCREMENT`, a `DEFAULT` on a `TEXT` column, or
+    a `CREATE TRIGGER` body is a **fatal**, and on SQLite it is simply correct, so
+    nothing local disagrees. Once the literals above were fixed this leg got 594 checks
+    further and died on exactly that. Which connection a statement is on *is* readable
+    here, unlike for the literals: a handle from `newSqliteTestDb()` or
+    `new PDO('sqlite:…')` is SQLite for the life of the file, and one from `newTestDb()`
+    follows the run — so the rule fires only on the second kind, which leaves a test
+    that genuinely needs SQLite free to say so and be believed. Two states are not a
+    schema at all — `canvas_elements` between the ADD COLUMN and the tighten, and the
+    retired `canvas_settings` — so both spellings live in `test_fixture.php`
+    (`createNullableDisplayIdElements()`, `createLegacyCanvasSettings()`) and a test
+    says which state it wants rather than how to spell it. The deploy-day race is the
+    one that stays SQLite: MySQL forbids a trigger writing to its own table (1442), so
+    it cannot build the interleaving at all, while what is under test is a `catch` in
+    PHP that is identical on both.
 
 ---
 

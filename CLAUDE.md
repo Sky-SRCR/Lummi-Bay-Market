@@ -168,8 +168,16 @@ taking one — or uses a value the column can actually hold: a colour nobody can
 `check_invariants.php` is the local half, and it covers the class that ends the run rather
 than every way an engine can disagree: an `ENUM` write MySQL *accepts* and silently folds to
 a member (`role = 'Admin'` becoming `admin`) is not a refusal, so it stays an ordinary failed
-check, reported rather than fatal. Whether the MySQL arm *finishes* is only ever answered by
-the run.
+check, reported rather than fatal.
+
+And SQL in the wrong **dialect** is worse than a refused value, because it is a fatal rather
+than a failed check: `AUTOINCREMENT` and `TEXT … DEFAULT` are correct here and end the run
+there. So both spellings live in `test_fixture.php` — `createNullableDisplayIdElements()` and
+`createLegacyCanvasSettings()`, the two states that are not a schema at all — and a test that
+genuinely needs SQLite says `newSqliteTestDb()` and is believed. Invariant 32 covers this half
+too, and it can: a handle's engine *is* readable from how it was assigned.
+
+Whether the MySQL arm *finishes* is only ever answered by the run.
 
 `check_doc_numbering.php` also prints the next free section letter. That is the
 question every branch cut from the same base has to answer before it writes a
