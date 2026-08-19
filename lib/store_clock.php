@@ -208,7 +208,7 @@ class StoreClock
      * sticking, and one heartbeat rewrites the stamp correctly.
      *
      * **A zero date is one of those, and it is the only unreadable stamp MySQL can
-     * actually hold** (§4bi). Strict mode refuses a string that is not a datetime, so
+     * actually hold** (§4bk). Strict mode refuses a string that is not a datetime, so
      * the garbage this function was written for cannot reach the column at all — but a
      * host running without strict mode, or a dump taken from one, leaves
      * `0000-00-00 00:00:00`, and `strtotime()` reads that as a real moment in year zero

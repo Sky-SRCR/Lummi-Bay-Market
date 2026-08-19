@@ -294,7 +294,7 @@ class SiteChrome
      * mean two things one method apart. What made it worth deciding rather than leaving
      * is that no check in this repo can tell: the container has no branding file, so
      * the shop's colour and the documented one are the same string here, and the
-     * mutation run that changed this line lived (§4bd).
+     * mutation run that changed this line lived (§4bf).
      *
      * The nine roles with no `FIELDS` entry have no config layer at all — they were
      * literals in three stylesheets until step 5 and are a theme's to change or

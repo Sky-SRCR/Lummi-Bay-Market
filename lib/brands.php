@@ -258,7 +258,7 @@ class BrandChoice
             // is what makes the test live rather than decorative: every INVALID reaches
             // it and fails it, so removing it changes an answer somebody is asserting.
             // A separate early `return` for INVALID would leave this line unreachable
-            // through the factory, which is a guard no check can hold (§4bb's
+            // through the factory, which is a guard no check can hold (§4bd's
             // `logoAssetId()`, and one more copy of the same sentence to keep in step).
             case self::INVALID:
             case 'brand':

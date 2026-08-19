@@ -106,7 +106,7 @@ $sweptLedger = [
     'lib/upload_limits.php'   => ['§4aq', '§4au'],  // and again when the browser pass widened it
     'lib/http_reply.php'      => ['§4aq'],
     'lib/layout_rules.php'    => ['§4aq'],          // 208 mutants — the one §4aq then called undone
-    // 84 mutants, 45 killed, 39 survived at §4bg — the lowest score in this ledger, and
+    // 84 mutants, 45 killed, 39 survived at §4bi — the lowest score in this ledger, and
     // the reason was worth carrying rather than looking like neglect: fifteen of the
     // survivors were in `databaseTimeZone()` and `isUtcOffset()`, which SQLite cannot
     // reach at all (`@@session.time_zone` does not exist there and the catch returns
@@ -114,14 +114,14 @@ $sweptLedger = [
     // run anywhere. Four more are in `sameSiteFromPath()`, a private string parser with
     // no seam.
     //
-    // §4bj: 108 mutants, 71 killed, 37 survived. Mutants up 24, kills up 26, survivors
+    // §4bl: 108 mutants, 71 killed, 37 survived. Mutants up 24, kills up 26, survivors
     // *down* 2 — and the reason is the half of that note which stopped being true. The
     // Database time zone row got a seam, so `isUtcOffset()` is now reachable from
     // SQLite: every semantic mutant in it dies by assertion, and the four left there are
     // `=== → ==` on operands PHP 8 makes equivalent. `databaseTimeZone()` itself is
     // unchanged and still unreachable here — six survivors, and that is the honest
     // remainder of the paragraph above rather than all of it.
-    'lib/server_report.php'   => ['§4bg', '§4bj'],
+    'lib/server_report.php'   => ['§4bi', '§4bl'],
 ];
 
 // Worth doing next, in this order, because each is a module where a wrong answer

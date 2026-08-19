@@ -343,7 +343,7 @@ section('An admin who loses the display mid-edit');
 // stripped that to the literal `0`, and the warning is drawn when
 // `idle >= WARN && idle < LAPSE` — which with both at zero is false for every idle
 // there has ever been. So the bar that says an edit lock is about to lapse, and the
-// countdown inside it, were not untested but unreachable (§4bf). The numbers come from
+// countdown inside it, were not untested but unreachable (§4bh). The numbers come from
 // `page_constants.js` now, which is what makes the band exist at all.
 function idleFor(seconds) {
     lastInteraction = Date.now() - seconds * 1000;

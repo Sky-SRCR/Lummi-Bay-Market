@@ -70,18 +70,22 @@ const php = fs.readFileSync(BUILDER, 'utf8');
 
 section('Every suite gets its page the one way');
 
-// The rule §4bf closed lives across eight files, and this is the only mechanical place
+// The rule §4bh closed lives across nine files, and this is the only mechanical place
 // to hold it: `check_invariants.php` reads PHP and these are JavaScript. A suite that
 // strips `<?= … ?>` for itself is a suite back to leaving every value it did not think
 // of as the literal 0 — which is how the edit lock's warning window came to be
 // unreachable in all eight at once, and how the Viewer scaled its canvas by Infinity.
+// Nine rather than eight because the merge with `main` brought a suite written beside
+// this rule and not under it: `selftest_builder_table.js` stripped the page for itself
+// and named three constants, which is exactly the shape above. This check is what said
+// so — the count and the seam, both, on a file no gate on either branch had compared.
 const SUITES = fs.readdirSync(path.join(__dirname))
                  .filter(f => f.startsWith('selftest_') && f.endsWith('.js'));
 const handRolled = SUITES.filter(f =>
     /php\.replace\(\/<\\\?/.test(fs.readFileSync(path.join(__dirname, f), 'utf8')));
 const notAsking = SUITES.filter(f =>
     !/require\('\.\/page_constants'\)/.test(fs.readFileSync(path.join(__dirname, f), 'utf8')));
-check(SUITES.length === 8, 'there are eight node suites, which is the number this audit covers');
+check(SUITES.length === 9, 'there are nine node suites, which is the number this audit covers');
 check(handRolled.length === 0,
       'and none of them strips the page\'s PHP for itself' +
       (handRolled.length ? ' — ' + handRolled.join(', ') + ' does' : ''));
@@ -365,7 +369,7 @@ global.clearTimeout = () => {};
 // the page really carries here: one Brand — the one this sign wears, which the control
 // names — and no permission to change it. Everything this suite has no opinion about
 // comes from `page_constants.js`, which is what makes it a value somebody chose rather
-// than the literal 0 that used to be left behind (§4bf).
+// than the literal 0 that used to be left behind (§4bh).
 let js = buildPageJs(BUILDER, {
     READ_ONLY:      true,
     IS_ADMIN:       false,

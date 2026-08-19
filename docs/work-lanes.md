@@ -20,8 +20,8 @@ whose five steps are each deployable on their own — so the thing this file is 
 two branches colliding in the three files every branch touches, is more likely rather
 than less.
 
-**As of 2026-08-14 all five of those steps are built and none is deployed** (§4az, §4ba,
-§4bb, §4bc, §4bd). That changes what a branch cut now is likely to collide *with*: not
+**As of 2026-08-14 all five of those steps are built and none is deployed** (§4bb, §4bc,
+§4bd, §4be, §4bf). That changes what a branch cut now is likely to collide *with*: not
 another feature branch, but the deployment of five that are queued behind each other in a
 fixed order, and a browser pass that owes five re-walks. A branch starting here should
 say which of those it is in front of.
@@ -163,11 +163,20 @@ specific way of going wrong that has now happened at least once.
 
 `check_doc_numbering.php` prints the next free letter, and four branches cut from one
 base all asked it and all got the same answer. Asking is right; asking *at the same
-time* is the failure. So they are allocated in advance. Phase 4 now runs to §4aq, and
-**`4ar` is the next free letter** — ask the tool rather than counting, and if two branches
+time* is the failure. So they are allocated in advance. Phase 4 now runs to §4bm, and
+**`4bn` is the next free letter** — ask the tool rather than counting, and if two branches
 start at once, write the allocation down here before either of them writes prose.
 
 - ~~**Lane A (#33) wrote `4ao`.**~~ ~~**B (#44) wrote `4ap`.**~~ ~~**C (#50) wrote `4aq`.**~~
+- ~~**The browser pass wrote `4as`–`4ax`, and `4ay` for what the pass says about
+  itself.**~~
+- ~~**The CSV import wrote `4az`**~~ — cut from `f787aa0` on 2026-08-19, beside an
+  app-completion audit running in another session. Written down here first, which is this
+  item working as designed rather than by luck: the two branches share no application
+  file, and the three files they were always going to collide in are this one,
+  `BUILD-REFERENCE.md` and the invariant list. **This branch added no invariant**, so the
+  only one of the three it touches is `BUILD-REFERENCE.md`, in two places that are
+  appends: a new §4 write-up and a line in the §5 gate list.
 
 **This scheme worked exactly as designed, and it is the only one of the four that did.**
 B wrote `4ap` while `4ao` was still unwritten and its push passed, because
@@ -202,12 +211,12 @@ and the reservation only settles who renumbers on the merge.** As settled:
   expected to add several; what it actually needed was one rule about how a check earns
   its line, because the four mechanised greps are rules the *checker* enforces rather than
   invariants a reader has to hold. **38 is now the next free number**: 31 went to the
-  above-floor syntax check, 32 to a value the shop's engine would refuse (§4bi) — which
-  grew a second half in §4bj, under the same number, because SQLite dialect on a portable
+  above-floor syntax check, 32 to a value the shop's engine would refuse (§4bk) — which
+  grew a second half in §4bl, under the same number, because SQLite dialect on a portable
   handle is the same rule failing a different way and a reader holding one holds both — 33
-  to the implicit-nullable form 8.4 deprecates (§4bh), 34 to a branded block's own
+  to the implicit-nullable form 8.4 deprecates (§4bj), 34 to a branded block's own
   typography, 35 to `brands`, 36 to `workspace_themes` and the canvas colours a theme may
-  not reach, and 37 to every read of the machine (§4bg). Seven allocated since this
+  not reach, and 37 to every read of the machine (§4bi). Seven allocated since this
   paragraph last said "31", which is the reason it is worth updating rather than
   recomputing — the sentence that names the next number is the one a branch reads.
 
@@ -265,6 +274,18 @@ plus one for counting itself, is 98, and 98 is what the run reported. Deleting a
 detector by hand is exactly the edit that takes a live rule with it. The number is how you
 find out it did not.
 
+And one thing `main` learned while this branch was renumbering, which is about the
+saying rather than the number:
+
+- **A lane that adds no invariant still owes a sentence saying so.** The CSV branch wrote
+  down that it was not taking 32 before anything had taken it, and the MySQL-leg recipe
+  branch that 33 was free while #13 was still open — which is what let each of those land
+  without asking. "Free" is a claim somebody else is about to act on, and a lane that
+  simply says nothing reads from the outside exactly like a lane nobody asked. Note the
+  shape of the answer that ages best: *this branch takes none* stays true no matter who
+  lands first, while *N is next* is dated by the next merge. Write both, and expect only
+  the first to survive.
+
 B renumbered nothing and A renumbered everything, and the tie was broken by counting:
 `invariant 28` appeared 15 times across 7 files on B's side and 7 times across 6 on A's,
 so moving A's was the smaller edit. **That is the tiebreak — cost, not seniority.** Note
@@ -272,6 +293,39 @@ what it implies: the write-ups now read `§4ao` → invariant 29 and `§4ap` →
 out of order with each other. That is fine and it is not worth a renumber to fix; the
 invariant list is ordered by when a rule was written, and the letters by when a write-up
 was.
+
+### 2c. The second merge, where the letters collided and the loud thing was a file
+
+`main` was merged again on 2026-08-19, carrying #12, #14 and #16. Three collisions, and
+they are worth separating by **how each announced itself**, because that is the only
+property that decides how much a document like this is worth.
+
+- **The section letters — silent.** This branch held §4az–§4bk, allocated correctly when
+  it was cut. By the time it merged, `main` had spent §4az on the CSV import and §4ba on
+  the edit-lock stamp checks. Twelve headings shifted two letters to §4bb–§4bm, and 138
+  citations across 29 files moved with them. Git merged the duplicate `### 4az.` headings
+  without a marker, exactly as the note at the top of this file says it does — the two
+  headings are not the same lines. `check_doc_numbering.php` is what would have caught it
+  on the way in, which is why the instruction is to run it before opening a PR *and again
+  before merging one that has been open a while*. This branch was open eight days.
+- **The check-count anchor — loud, and resolved by running.** 2337 became 2338: `main`'s
+  §4ba split the edit-lock write from the read, and its `editingSentence()` assertion had
+  no counterpart here. One check, arrived at by running the suite. Item 3 below is the
+  rule and this is the second merge in a row where adding the two deltas would have been
+  wrong in a different direction.
+- **The ninth node suite — loud, and the interesting one.** `main` arrived with
+  `selftest_builder_table.js`, written on a branch that never saw §4bh's rule. It stripped
+  `builder.php`'s PHP for itself and named three constants, leaving eighteen at the
+  literal `0` — including the two that make the edit lock's idle warning unreachable. It
+  also had no step in `php-lint.yml`, so it had never run in CI at all. **Both were caught
+  by checks this branch wrote, on a file it had never seen**: the suite-count audit in
+  `selftest_builder_readonly.js` and the tools-versus-workflow invariant. Ported onto
+  `page_constants.js` and given a step; nine suites now, and its 123 checks run.
+
+The lesson is not that merging is dangerous. It is that **the collision which needed this
+document was the one no gate could see** — the letters — and the two that could hurt a
+person were both caught by a machine within a minute of the merge. A rule written down in
+prose is worth what a rule written into a check is worth only while nobody is tired.
 
 ### 3. `reportChecks()` — the anchor conflicts every time, and adding is wrong
 

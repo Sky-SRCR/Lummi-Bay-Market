@@ -570,7 +570,7 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
                  offered to replace it with a picture. Shown as what it is instead,
                  and stored as it arrives.
 
-                 This comment named carousel, table and marquee until §4bj. Those
+                 This comment named carousel, table and marquee until §4bl. Those
                  three are marked `pool: false` in the Builder and are not members of
                  `assets.type`, so no such entry has ever reached this branch. -->
             <div class="form-group">

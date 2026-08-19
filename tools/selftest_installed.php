@@ -36,7 +36,7 @@
 //              fails on it is a suite that fails on the customer's data rather than on
 //              the code, which is the sort of red line people learn to skip.
 //
-//   ── what the machine was set to (php.ini) — §4bg ──
+//   ── what the machine was set to (php.ini) — §4bi ──
 //   generous   a host that will carry a video: 64M/128M, so the app's own 50 MB ceiling
 //              is the binding one and the upload note falls silent. Plus a process zone
 //              that is not UTC, which is the clock `viewer.php` runs on.
@@ -46,7 +46,7 @@
 //              something is wrong — unreachable here, because this container ships the
 //              flag off and the suite deliberately never calls ErrorPolicy::install().
 //
-// Four readouts in this app describe the host, and until §4bg not one of them had a
+// Four readouts in this app describe the host, and until §4bi not one of them had a
 // seam between its sentence and the `ini_get` that chose it. So each had exactly one
 // form on any machine that ran the suite and the other form on none of them, and one —
 // `ErrorPolicy::status()`, the whole Settings-tab readout of what happens when
@@ -70,7 +70,7 @@ require_once __DIR__ . '/../lib/branding.php';
 
 // Two axes, because an install is two things. `settings` is what the shop chose and
 // `branding_config.php` holds; `host` is what the *machine* was set to and nobody in
-// the shop has ever seen. The second axis is §4bg: four readouts in this app describe
+// the shop has ever seen. The second axis is §4bi: four readouts in this app describe
 // the host, and until that pass none of them had a seam between the sentence and the
 // `ini_get` that chose it — so each had exactly one form on any machine that ran the
 // suite, and the other form on none of them.
@@ -154,7 +154,7 @@ foreach ($arms as $name => $arm) {
 $suite  = __DIR__ . '/selftest_layout.php';
 $failed = [];
 
-// Anchored, for the reason `selftest_layout.php` anchors its check count and §4bf found
+// Anchored, for the reason `selftest_layout.php` anchors its check count and §4bh found
 // four node suites without one: an arm deleted from the list above is a configuration
 // nobody is testing any more, and the run would still print a clean line and exit 0. Two
 // axes, so the count is written as its two halves — deleting the whole host axis is the

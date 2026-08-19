@@ -29,7 +29,7 @@ A page that is roughly right is a page that has not been checked.
 
 **What this deploys:** v1 — phases 1–6 of the multi-display build, from `main`.
 Roadmap v2 (Brands, Workspace Themes) is not in this visit; its own deploy row is
-already in HANDOFF §5 (`v2 step 3` · §4bb) for when it is.
+already in HANDOFF §5 (`v2 step 3` · §4bd) for when it is.
 
 ---
 
@@ -80,7 +80,7 @@ if it is discovered at the shop.
   way to see whether the live database is genuinely finished (HANDOFF §5).
 
 > **New since this step was written:** the rehearsal script now runs in CI against real
-> MySQL 5.7, 8.0 and 8.4 on every push (§4bk). Until 2026-08-19 it had not completed a
+> MySQL 5.7, 8.0 and 8.4 on every push (§4bm). Until 2026-08-19 it had not completed a
 > run since 11 August. This is the gate protecting your live data and it was unproven
 > the last time you read this list.
 
