@@ -97,7 +97,8 @@ class ServerReport
 
         $out['PHP version'] = [PHP_VERSION, self::phpVersionNote(PHP_VERSION_ID)];
 
-        $out['MySQL version'] = [$this->mysqlVersion(), ''];
+        $out['MySQL version'] = [$this->mysqlVersion(),
+            self::mysqlVersionNote($this->driverName(), $this->mysqlVersion())];
 
         // Which install this is, and which database it is talking to. Together these
         // are the only place a person can *see* that a rehearsal copy is isolated,
@@ -365,6 +366,94 @@ class ServerReport
         } catch (Throwable $e) {
             return 'unknown';
         }
+    }
+
+    /** Which engine is answering, so a note about MySQL is not printed about SQLite. */
+    private function driverName()
+    {
+        try {
+            return (string)$this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        } catch (Throwable $e) {
+            return 'unknown';
+        }
+    }
+
+    /**
+     * The database floor the SQL in this repo is written to.
+     *
+     * 5.7 because that is what the host **is** — `5.7.23-23`, read off this very card on
+     * 2026-08-11 and recorded in `HANDOFF.md`. Which is the whole reason this note exists
+     * now and did not before: the version sat in that table for eight days beside two
+     * rows that each settled a standing question, and this one produced nothing. The row
+     * printed a number and said `''`, hardcoded, while the row above it had three bands
+     * of commentary and a declared floor.
+     */
+    const ASSUMED_MYSQL = '5.7';
+
+    /**
+     * What this server's database engine means, given the SQL this repo actually sends.
+     *
+     * Takes the driver and the version rather than reading either, for the reason
+     * `phpVersionNote()` takes the version id: one process talks to one engine, and the
+     * bands that matter are the ones no test database is. The driver is a parameter and
+     * not an afterthought — the self-test fixture is **SQLite**, whose
+     * `ATTR_SERVER_VERSION` is something like `3.45.1`. Parsed as a MySQL version that is
+     * far below the floor, so a note written without the driver would have fired on every
+     * SQLite run in the project and said the shop's engine was ancient.
+     *
+     * Silent at and above the floor, for the reason the PHP note is: a sentence an admin
+     * reads every time is one they learn to skip.
+     *
+     * The band below the floor names consequences rather than the number, because the
+     * number is already in the row beside it, and because a failed schema statement here
+     * is **logged and emailed, never thrown** (#9) — so an engine that refuses one of
+     * these does not announce itself. The page carries on and dies later at the first
+     * query against what was never created.
+     */
+    public static function mysqlVersionNote($driver, $version)
+    {
+        if ($driver !== 'mysql') { return ''; }
+
+        // MariaDB reports 10.x, which is numerically above the floor and tells you
+        // nothing, because it is a different product. No mechanism is invented here: the
+        // honest statement is that nothing in this project has ever run on it.
+        //
+        // `!== false` and not `!= false`: `stripos` answers 0 for a match at the start of
+        // the string, and 0 is falsy. No version string PDO hands back begins with the
+        // word — MariaDB reports `10.6.16-MariaDB`, and some builds `5.5.5-10.6.16-MariaDB`
+        // — so the loose form would work here by luck rather than by being right. The
+        // suite pins the strict form with a string starting at position 0, which is the
+        // only way to tell the two spellings apart (invariant 30).
+        if (stripos((string)$version, 'mariadb') !== false) {
+            return 'This is MariaDB, not the MySQL ' . self::ASSUMED_MYSQL . ' the SQL in '
+                 . 'this app was written against and observed on. Nothing here has run on '
+                 . 'it. Rehearse against a copy before publishing — tools/rehearse_phase1.php.';
+        }
+
+        // A comparable integer, not a meaningful number. The two multipliers survive
+        // mutation on purpose and it is worth saying why rather than leaving it to be
+        // rediscovered: any base in which the major version outranks the minor gives the
+        // same answer at the one threshold below, so `10001` and `101` are the same
+        // function as `10000` and `100` for every version string a MySQL host produces.
+        // What the encoding has to get right is the ordering, and that is what the
+        // boundary checks at 5.6 / 5.7 / 8.0 assert.
+        if (!preg_match('/^(\d+)\.(\d+)/', (string)$version, $m)) { return ''; }
+        $id = intval($m[1]) * 10000 + intval($m[2]) * 100;
+
+        if ($id >= 50700) { return ''; }
+
+        // Deliberately no SQL keyword in this sentence. Two reasons, and the second is
+        // the one that bit: an admin reading this card does not need the identifier, and
+        // `check_invariants.php` holds the whole repo to one place that may name the
+        // database's own clock — a rule it enforces over string literals, which unlike
+        // comments it cannot drop. The first draft of this note failed that check.
+        return 'Older than the MySQL ' . self::ASSUMED_MYSQL . ' this app\'s SQL is '
+             . 'written for. Two things it needs stop being safe below that: a date column '
+             . 'that defaults to the time the row was made, and the unique index on a '
+             . '255-character utf8mb4 email address, which is 1020 bytes and needs '
+             . 'innodb_large_prefix — off by default before 5.7.7. A schema statement this '
+             . 'server refuses is logged and emailed, never thrown, so it will not announce '
+             . 'itself. Tell the developer before the next deploy.';
     }
 
     /**

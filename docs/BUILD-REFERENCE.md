@@ -622,10 +622,11 @@ through the app again:
     no `ON DELETE` clause so the database says the same thing to anything reaching it
     another way. The same shape as a Brand in use, for the same reason.
 35. **Every read of the machine is one somebody named, and every branch behind one has a
-    seam that takes the value** (§4bg). Four files in `lib/` may touch `ini_get`,
-    `$_SERVER`, `PHP_VERSION`, `PHP_SAPI`, `phpversion()` or `session_get_cookie_params()`
-    — `server_report.php`, `error_policy.php`, `upload_limits.php`, `alerts.php` — and
-    `tools/check_invariants.php` fails when a fifth appears. Not a ban: this app reports on
+    seam that takes the value** (§4bg). Five files in `lib/` may touch `ini_get`,
+    `$_SERVER`, `PHP_VERSION`, `PHP_SAPI`, `phpversion()`, `session_get_cookie_params()` or
+    the engine's own `ATTR_SERVER_VERSION` / `ATTR_DRIVER_NAME` — `server_report.php`,
+    `error_policy.php`, `upload_limits.php`, `alerts.php` and `displays.php` — and
+    `tools/check_invariants.php` fails when a sixth appears. Not a ban: this app reports on
     its own host, so somebody has to read it. The rule is that a value taken from the
     machine has exactly *one* value on every machine that runs the tests, and whatever the
     shop's server holds everywhere else — so a branch chosen by one is a branch the suite
@@ -6874,8 +6875,48 @@ neither" and "found nothing wrong" print identically — a distinction that has 
 wrong once here, when the first version matched `" checks, "` as a substring and printed a
 check's own sentence as a summary.
 
-31 checks, 2273 → 2304. What it cost to find: running the suite under `php -d` and reading
-which checks cared. None did — which was the answer, not the absence of one.
+**A postscript that arrived four days later, and is the same finding wearing a worse face.**
+The owner sent the server's information panel. Its MySQL row read `5.7.23-23` — which this
+repo already knew: it had been read off this very card on 2026-08-11 and written into
+`HANDOFF.md`, in a table whose own sentence calls itself "the first time anything in this
+project has read these rather than assumed them". The rows either side of it each settled a
+standing question and got follow-through: a declared PHP floor observed twice, a corrected
+§4ap, an invariant. **The engine row got recorded and then nothing.** It printed the number
+beside a hardcoded `''` for eight days while the row above it carried three bands and a
+floor.
+
+So it now has `mysqlVersionNote($driver, $version)`, and 5.7 is the declared database floor
+for the same reason 8.2 is the PHP one: it is what the machine is, read rather than assumed.
+The driver is a parameter and not an afterthought — the fixture is **SQLite**, whose
+`ATTR_SERVER_VERSION` is `3.45.1`, which parsed as a MySQL version is far below any floor. A
+note written without it would have fired on every SQLite run in the project and told the
+reader the shop's engine was ancient.
+
+Two things fell out of writing it. Extending invariant 35's regex to cover
+`ATTR_SERVER_VERSION` and `ATTR_DRIVER_NAME` — engine facts are machine facts — immediately
+failed on a **fifth** file the rule had not known about: `DisplayStore::limitPublishLockWait()`
+branches on the driver to skip a MySQL-only `SET SESSION`, in the publish path. It turned out
+to be the one read on that list already covered the right way before the rule existed, with
+`checkSame(testIsMysql(), …)` — a check that asserts the answer *depends* on the engine and
+is true in both arms rather than pinning either. And the first draft of the note said
+`CURRENT_TIMESTAMP`, which `check_invariants.php` rejected: it holds the whole repo to one
+place that may name the database's own clock, and unlike comments it cannot drop a string
+literal. The rule was right and the copy was wrong anyway — an admin reading a Settings tab
+does not need the SQL identifier.
+
+The SQL itself was then audited against 5.7 statically, since nothing here has ever run
+against any MySQL and it was the cheapest way to learn what the rehearsal is walking into.
+It is clean: no 8.0-only construct anywhere, all three catalogue views the gates read behave
+the same, and `schema.sql` says `DEFAULT CHARSET=utf8mb4` with no explicit collation — the
+one spelling that survives both engines, where `utf8mb4_0900_ai_ci` would have failed every
+`CREATE TABLE` outright. One residual needs a query rather than an argument and it is in
+HANDOFF §7: `users.email` is a 1020-byte unique index, which is legal under `DYNAMIC` row
+format and not under `COMPACT`.
+
+47 checks in total, 2273 → 2320. What it cost to find the first 31: running the suite under
+`php -d` and reading which checks cared. None did — which was the answer, not the absence of
+one. What it cost to find the last 16 was somebody pasting a version number this repo had
+already written down.
 
 ---
 

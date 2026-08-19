@@ -29,15 +29,21 @@ edited in place and every change reaches the sign by hand.
   half is that no chrome role is ever drawn on the canvas).
 - **Deep modules**: small interface, substantial implementation. A new query
   means a new method on the module, not a `$pdo` handed to a caller.
-- **A value read from the machine gets a seam beside it that takes the value.** Four files
+- **A value read from the machine gets a seam beside it that takes the value.** Five files
   may read one at all — `server_report.php`, `error_policy.php`, `upload_limits.php`,
-  `alerts.php` — and `check_invariants.php` fails on a fifth (invariant 35). The reason is
-  not tidiness: `ini_get`, `PHP_VERSION`, `PHP_SAPI` and `$_SERVER` have exactly one value
-  on every machine that runs the tests, so a branch chosen by one is asserted in the single
-  configuration no shop is running. `ServerReport` gets this right three times over and
-  says why each time — `phpVersionNote($id)`, `storeZoneNoteFor($stored)`,
-  `UploadLimit::smallestOf($values)` — and §4bg found that the four places it had not were
-  exactly the four with no checks. The seam reaches what no flag can (an unset
+  `alerts.php` and `displays.php` — and `check_invariants.php` fails on a sixth (invariant
+  35). The reason is not tidiness: `ini_get`, `PHP_VERSION`, `PHP_SAPI`, `$_SERVER` and the
+  engine's own `ATTR_SERVER_VERSION` have exactly one value on every machine that runs the
+  tests, so a branch chosen by one is asserted in the single configuration no shop is
+  running. `ServerReport` gets this right three times over and says why each time —
+  `phpVersionNote($id)`, `storeZoneNoteFor($stored)`, `UploadLimit::smallestOf($values)` —
+  and §4bg found that the four readouts where it had not were exactly the four with no
+  checks. **The engine's own row was the fifth**, and the worst kind: the version had been
+  read off that card and written into `HANDOFF.md`, and the row still printed it beside a
+  hardcoded `''` while the row above had three bands and a declared floor. It has
+  `mysqlVersionNote($driver, $version)` now, and the floor is 5.7 because the shop *is*
+  5.7 — the driver is a parameter because the fixture is SQLite, whose version parsed as
+  MySQL is far below any floor. The seam reaches what no flag can (an unset
   `date.timezone` cannot be made with `php -d`); the arms in `selftest_installed.php` prove
   the real read still works, and refuse an arm set to what this machine already holds.
 - **A new schema statement goes into `signageSchemaPlan()`, with its gate.**

@@ -196,11 +196,25 @@ $rules = [
         // an email, with no branch behind it. Listed rather than excused: the point of
         // the rule is that the list is the whole set.
         'name'   => 'every read of the machine is one somebody named',
+        // `ATTR_SERVER_VERSION` and `ATTR_DRIVER_NAME` are here because the engine's
+        // version is a fact about the machine in exactly the sense this rule is about,
+        // and the first draft of the rule missed them — which is how the MySQL row came
+        // to print a number with a hardcoded `''` beside it while the PHP row above had
+        // three bands and a declared floor. No-ops today, since only this module reads
+        // them; the point of a set is that it is the whole set.
         'regex'  => '/ini_get\s*\(|\$_SERVER|\$_ENV|getenv\s*\(|PHP_VERSION|PHP_SAPI'
-                  . '|php_uname\s*\(|phpversion\s*\(|session_get_cookie_params\s*\(/',
+                  . '|php_uname\s*\(|phpversion\s*\(|session_get_cookie_params\s*\('
+                  . '|ATTR_SERVER_VERSION|ATTR_DRIVER_NAME/',
         'in'     => 'lib',
-        'expect' => ['lib/alerts.php', 'lib/error_policy.php', 'lib/server_report.php',
-                     'lib/upload_limits.php'],
+        // displays.php is the fifth, and adding the two PDO attributes above is what
+        // found it: `limitPublishLockWait()` skips a MySQL-only `SET SESSION` on any other
+        // engine, which makes it a branch chosen by the machine **in the publish path** —
+        // the highest-consequence code here. It is the one read on this list that was
+        // already covered the right way before the rule existed: the suite asserts
+        // `checkSame(testIsMysql(), …)`, so the check states that the answer depends on
+        // the engine and is true in both arms rather than pinning either.
+        'expect' => ['lib/alerts.php', 'lib/displays.php', 'lib/error_policy.php',
+                     'lib/server_report.php', 'lib/upload_limits.php'],
         'why'    => 'a value taken from the host is one the suite can only ever see this '
                   . 'container\'s copy of, so the branch behind it is asserted in the one '
                   . 'configuration no shop is running (§4bg)',

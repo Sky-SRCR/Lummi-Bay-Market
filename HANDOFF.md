@@ -109,7 +109,7 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/branding.php` | `BrandingConfig` / `BrandingWrite` — the **only** writer of `branding_config.php`, which every page of the app requires. Renders it, parses it, writes a temporary copy, reads that back byte for byte, and swaps it in with one `rename()`, so a reader gets the whole old file or the whole new one and a failed save leaves the site on exactly what it had |
 | `lib/install_paths.php` | Which install this folder is, and whose credentials it uses. Pure. One account can hold the live app and a rehearsal copy at the same depth, so a single shared credentials path made an unmodified copy connect to the **live** database in silence — the folder's own name selects `private/db_credentials_<folder>.php` when it exists, and the shared file otherwise, so no tracked file has to differ between the two |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **2304 checks** — and the same suite against real MySQL when `SELFTEST_MYSQL_DSN` is set, where it runs 2329 (that figure is the SQLite one plus a count of the engine-only section; see the note above `reportChecks()`). Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **2320 checks** — and the same suite against real MySQL when `SELFTEST_MYSQL_DSN` is set, where it runs 2345 (that figure is the SQLite one plus a count of the engine-only section; see the note above `reportChecks()`). Run before pushing |
 | `tools/selftest_installed.php` | `php tools/selftest_installed.php` — the same suite six more times, on two axes. **What the shop chose** (`branding_config.php`, which is generated and outside the repo, so the plain run has only ever seen a fresh checkout): branded, live-like, and one whose config holds a colour the app cannot read — seven checks turned out to be asserting *this machine's* configuration, two of them that the shop's navigation is the colour the app ships with (§4be). **What the machine was set to** (`php -d`): a generous host, a tight one, and one showing errors — the branches of the four readouts that describe a server, which had one form here and the other form on no machine at all (§4bg). Refuses any arm set to what this machine already holds. About as long as six plain runs |
 | `tools/mutate.php` | `php tools/mutate.php lib/whatever.php` — breaks that file one way at a time and runs the suite each time, to answer whether the checks over it *can* fail (#50, invariant 30, §4aq). Minutes rather than seconds, so it is a tool to run over what you changed rather than a gate. `--list` shows what it would break without running anything |
 | `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits — including the Brand control, which that page *does* get, and the menu that changes it, which it does not, and the Workspace Theme picker, which it gets in full — **71 checks** |
@@ -396,8 +396,11 @@ staleness check, no version history), 0007 (one editor per Display).
   widget. Steps 15–21 need a second account, two browsers, and one unavoidable
   15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 1778 self-test checks against SQLite, 546 node checks over `builder.php`'s and `viewer.php`'s
-  own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
+  `php -l`, 2320 self-test checks against SQLite in six install configurations, 959 node
+  checks over `builder.php`'s and `viewer.php`'s own JavaScript, and 61 invariant checks
+  from BUILD-REFERENCE §5, run rather than read. The SQL has since been audited against the
+  host's MySQL 5.7 statically (§7) and is clean, which narrows but does not close this:
+  a static read is not a run. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare
   `viewer.php` URL shows the notice instead of the sign. Same visit, or closed hours.
@@ -451,8 +454,52 @@ assumed them:
 | Session cookie | HttpOnly yes, Secure yes, SameSite Lax |
 | Largest upload | 50 MB |
 
-Two of those settle standing questions. The PHP version **agrees with the owner's stated
-8.2** (#51, §4k) — that item's deploy-day confirmation step. And `America/Chicago` is not a
+**The rest of the box, from cPanel's server-information panel (2026-08-19).** The MySQL row
+above was read eight days earlier; this is the configuration around it:
+
+| | |
+|-|-|
+| cPanel | 110.0 (build 139) |
+| Apache | 2.4.68 |
+| MySQL | **5.7.23-23** — confirms the runtime card above |
+| OS / kernel | linux x86_64, `4.19.286-203.ELK.el7` — **CentOS 7** |
+| Sendmail | `/usr/sbin/sendmail` |
+| Perl | 5.16.3 |
+
+Two things follow, and neither is a fault to fix today. **MySQL 5.7 reached end of life in
+October 2023 and el7 in June 2024**, so the engine holding every sign's layout is not
+receiving security fixes — a fact for whoever owns the hosting decision, not a deploy step.
+And 5.7 is now the *declared* database floor (`ServerReport::ASSUMED_MYSQL`), for the same
+reason 8.2 is the PHP floor: it is what the machine is, read rather than assumed.
+
+**The SQL was audited against 5.7 statically on 2026-08-19, and it is clean.** Nothing in
+this repo has ever run against any MySQL, so this was the cheapest way to find out what the
+rehearsal is walking into. No 8.0-only construct appears anywhere: no `RENAME COLUMN`, no
+`DROP CONSTRAINT`, no `SKIP LOCKED` or `NOWAIT` beside the publish transaction's `FOR
+UPDATE`, no CTE, no window function, no `JSON_TABLE`, no `CHECK` constraint, no generated
+or descending-index column, and no `ALGORITHM=` clause (`INSTANT` is 8.0.12+). All three
+catalogue views the convergence gates read — `COLUMNS`, `STATISTICS`, `TABLE_CONSTRAINTS` —
+exist and behave the same on 5.7. And `schema.sql` says `DEFAULT CHARSET=utf8mb4` with **no
+explicit collation**, which is the one spelling that survives both engines: had it named
+`utf8mb4_0900_ai_ci`, every `CREATE TABLE` would have failed outright on this server.
+
+**One residual, and it needs a query rather than an argument.** `users.email` is
+`VARCHAR(255)` utf8mb4 with a unique index — 1020 bytes, which is over InnoDB's 767-byte
+limit for `COMPACT`/`REDUNDANT` row format and under the 3072-byte limit for `DYNAMIC`.
+5.7.23 defaults to `DYNAMIC`, so a fresh `CREATE TABLE` is fine; but `users` on the live
+database was created years ago and step 5's convergence adds a column *and* a foreign key
+to it, which can force a rebuild. Ask before deploying, not after:
+
+```sql
+SELECT NAME, ROW_FORMAT FROM information_schema.INNODB_SYS_TABLES WHERE NAME LIKE '%/users';
+SELECT @@innodb_default_row_format, @@innodb_large_prefix, @@innodb_file_format;
+```
+
+`Compact` or `Redundant` in the first result is the one answer that needs a decision before
+the ALTER runs. The rehearsal against a copy would also surface it — this is the faster read.
+
+Two of the runtime rows settle standing questions. The PHP version **agrees with the owner's
+stated 8.2** (#51, §4k) — that item's deploy-day confirmation step. And `America/Chicago` is not a
 fallback: PHP's fallback for an unset `date.timezone` is UTC, so the host sets it, and
 nothing in this repo does (the tracked `.htaccess` sets session flags and no `date.` value).
 §4ap had asserted UTC and is corrected. Before #44 that made every time a person read two

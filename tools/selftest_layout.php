@@ -3601,6 +3601,55 @@ check(strpos($ancient, 'Session cookie') !== false,
 check($behind !== $ancient,
       'the two speaking bands do not print the same sentence — what to do next differs');
 
+// ---- And the same for the engine, which had a number and no sentence ----------------
+// The row printed `''` hardcoded while the row above it had three bands. The version had
+// been read off that card and written into HANDOFF.md on 2026-08-11 — 5.7.23-23 — and
+// eight days later nothing had been done with it: no floor, no note, and no check that
+// the SQL this app sends is 5.7's to accept. It is 5.7 because the shop *is* 5.7.
+checkSame('5.7', ServerReport::ASSUMED_MYSQL,
+          'the database floor is the engine the shop runs, read off its own card');
+checkSame('', ServerReport::mysqlVersionNote('mysql', '5.7.23-23'),
+          'the engine the store actually has is told nothing about itself');
+checkSame('', ServerReport::mysqlVersionNote('mysql', '8.0.36'),
+          'and neither is a newer one — being ahead of the floor is not a problem');
+// The driver is a parameter and this is why. SQLite answers 3.45.1, which parsed as a
+// MySQL version is far below the floor: a note written without the driver would have
+// fired on every SQLite run in this project and called the shop's engine ancient.
+checkSame('', ServerReport::mysqlVersionNote('sqlite', '3.45.1'),
+          'and the fixture engine is not told it is an ancient MySQL, because it is not one');
+checkSame('', ServerReport::mysqlVersionNote('mysql', 'unknown'),
+          'a version this cannot parse gets no opinion rather than a wrong one');
+
+$oldDb = ServerReport::mysqlVersionNote('mysql', '5.6.51');
+check($oldDb !== '', 'an engine below the floor does say so');
+checkMentions($oldDb, ServerReport::ASSUMED_MYSQL, 'and names the version the SQL is written for');
+check(strpos($oldDb, 'innodb_large_prefix') !== false,
+      'and names the setting that makes a 1020-byte utf8mb4 index legal, which 5.6 has off');
+// No SQL keyword in a sentence an admin reads — and `check_invariants.php` holds the whole
+// repo to one place that may name the database's own clock, over string literals, which
+// unlike comments it cannot drop. The first draft of this note failed that check.
+check(strpos($oldDb, 'CURRENT_' . 'TIMESTAMP') === false,
+      'and names no SQL keyword, which is both better copy and a rule this repo enforces');
+// The reason this band cannot be left to "the query will fail and somebody will see it".
+check(strpos($oldDb, 'never thrown') !== false,
+      'and says a refused schema statement is silent, which is why the card has to say it');
+check(strpos($oldDb, '5.7.23') === false,
+      'and does not repeat the exact version, which is already the value beside it');
+
+// MariaDB reports 10.x — numerically above the floor and a different product, so a
+// version comparison alone answers "fine" about an engine nothing here has run on.
+$maria = ServerReport::mysqlVersionNote('mysql', '10.6.16-MariaDB-log');
+check($maria !== '', 'MariaDB is not silently accepted for being numbered above 5.7');
+checkMentions($maria, 'MariaDB', 'the note names the product rather than the number');
+checkMentions($maria, 'rehearse_phase1.php', 'and points at the one tool that would find out');
+// The strict `!== false` on the stripos, pinned with a match at position 0 — the only
+// string that tells `!== false` and `!= false` apart, since 0 is falsy. No version PDO
+// returns begins with the word, so the loose form would have worked here by luck; this is
+// the check that makes it right rather than lucky (invariant 30 — mutant 56 survived).
+check(ServerReport::mysqlVersionNote('mysql', 'MariaDB 10.6 (repackaged)') !== '',
+      'and a version naming the product first is still caught, where a falsy 0 would not be');
+check($maria !== $oldDb, 'and it is not the below-the-floor sentence — the answer differs');
+
 // ─────────────────────────────────────────────────────────────
 section('Which install is this, and whose credentials does it use');
 
@@ -8372,5 +8421,10 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // Then §4bg: the four readouts that describe *the machine* and had no seam between them
 // and it — the PHP time zone note, the upload ceiling note, `ErrorPolicy::status()` in
 // its entirety, and the log's request tag. 31 checks, all engine-independent, so 25 is
-// still the difference and 2304 is still what the run reported.
-reportChecks(testIsMysql() ? 2329 : 2304);
+// still the difference and 2304 was what that run reported.
+//
+// Then the engine's own row, which had a number and a hardcoded `''` where the PHP row
+// beside it had three bands — the version having been read off that card and written down
+// eight days earlier without anything being done with it. 14 more checks, all through the
+// seam and so all engine-independent again: 2320, and 25 is still the difference.
+reportChecks(testIsMysql() ? 2345 : 2320);
