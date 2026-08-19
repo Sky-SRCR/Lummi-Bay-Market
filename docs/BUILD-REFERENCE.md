@@ -7182,8 +7182,8 @@ engine-only section really is 25 checks, and the arithmetic in the paragraph abo
 The MySQL leg went green on 5.7 (§4bj) and that is worth exactly what it says: the app
 works on the engine the shop runs. It says nothing at all about the engine the shop is
 going to run, and that gap is not hypothetical — **MySQL 5.7 left support in October 2023**
-and the live version is 5.7.44. This is the one version on the matrix whose replacement is
-not a question of if.
+and the live version is 5.7.23-23, from 2018 (HANDOFF §7). This is the one version on the
+matrix whose replacement is not a question of if.
 
 Nothing in the app would notice when it happens. `ServerReport::mysqlVersionNote()` is
 silent at and above the floor by design, the same design as the PHP note beside it and for
@@ -7235,13 +7235,25 @@ What the legs themselves said is a reading, not a prediction, and it belongs bes
 when it exists — the run is the authority, exactly as it was for §4bj, where the honest
 expectation was wrong twice in a row about how much was left. **It exists now: all five
 legs completed green on 2026-08-19**, 2362 checks and a clean rehearsal on each, against
-MySQL 5.7.44, 8.0.46 and 8.4.11. Both new engines took the schema, the writes and the
-convergence plan without a single change to the app — which is the answer the two static
+the `mysql:5.7`, `mysql:8.0` and `mysql:8.4` images, which reported 5.7.44, 8.0.46 and
+8.4.11. Both new engines took the schema, the writes and the convergence plan without a
+single change to the app — which is the answer the two static
 checks above predicted and is worth having *from a run* rather than from a reading of the
 release notes, because the two checks above are only the changes somebody thought to look
 up. Nothing was pinned or relaxed to get there, so the two legs mean what they say.
 
-The one thing to hold onto is what a green 8.0 leg *cost*: nothing, this time. That is the
+**And the 5.7 leg is not the shop's 5.7, which is worth saying out loud now that the
+version numbers are observed on both sides.** The image reports 5.7.44 — the final 5.7
+release, October 2023 — and the shop reports 5.7.23-23, from 2018: twenty-one patch
+releases apart. Nothing in the app is known to turn on that gap and nothing found so far
+does, but it is the same shape as the container being 8.4 while the floor is 8.2 (invariant
+31): the gate runs on a neighbour of the thing it speaks for. Pinning the image to
+`mysql:5.7.23` would close it and is not obviously right — a patch release the host is
+twenty-one behind on is also a set of fixes the host will eventually get — so it is recorded
+rather than acted on, and the deployment visit's convergence step against a copy of live
+data (§5) remains the only thing that runs against the *actual* engine.
+
+The last thing to hold onto is what a green 8.0 leg *cost*: nothing, this time. That is the
 argument for adding a leg while the app is known-good on the engine beside it rather than
 on the afternoon a host moves — the same run that would have found a real incompatibility
 here would have found it with a working 5.7 leg next to it to compare against, and no shop
