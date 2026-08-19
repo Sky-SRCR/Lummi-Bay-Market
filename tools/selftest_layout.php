@@ -2641,20 +2641,53 @@ $pdo   = newTestDb();
 $store = newTestDisplayStore($pdo);
 $zoned = makeTestDisplay($pdo, 'zoned', 'Zoned');
 
+// Two questions, and they used to be one check that was both flaky and weak. Comparing
+// takenAtLabel() to labelForEpoch(time()) reads the clock a *second* time, so a claim
+// and an assertion landing either side of a minute failed for a reason that has nothing
+// to do with zones — which is what it did on 2026-08-19, once the MySQL leg was running
+// far enough to reach these lines again and they went from one job a push to six. And it
+// could not fail for the reason it was written for: both sides went through the store's
+// door, so a stamp written in the wrong frame and read in the wrong frame agreed with
+// each other. That cancelling pair is the whole of #44, asserted by a check blind to it.
+//
+// So: what claimLock() *writes* is UTC, measured against a UTC reference and not a label.
+// Two checks and not one, because the first reads through epochOf() and would pass if
+// epochOf() were broken the same way; the second is the half that notices. Removing
+// either leaves the cancelling pair invisible again — which is how it got here.
 $store->claimLock($zoned, 1);
-$held = $store->forId($zoned->id())->lockState();
-checkSame(StoreClock::labelForEpoch(time(), 'g:ia'), $held->takenAtLabel(),
-          'the edit-lock banner says the time it is where the sign is');
-checkMentions($store->forId($zoned->id())->editingSentence(),
-              'since ' . StoreClock::labelForEpoch(time(), 'g:ia'),
-              'and so does the sentence a refused publish prints');
+$takenAt = $pdo->query("SELECT lock_taken_at FROM displays WHERE id = " . $zoned->id())->fetchColumn();
+check(abs(StoreClock::epochOf($takenAt) - time()) <= 5,
+      'claiming an edit lock records the moment in UTC, whatever zone the server is on');
+// This half arrived as `abs(strtotime($takenAt) - time()) > 3600`, which is true on the
+// one machine main runs on and not a property of the rule: `selftest_installed.php`
+// starts this whole suite with `STORE_TIMEZONE` set to `Pacific/Auckland`,
+// `America/Chicago` and `UTC` in turn (§4be), and `config.php` makes the process zone
+// follow it — so in the third arm the two readings genuinely coincide and "hours out" is
+// not true of anything. Asked as the exact property instead, which holds in every arm:
+// render the epoch back in UTC and it is the string that was stored. If `epochOf()` drops
+// its `' UTC'` suffix the epoch is the process zone's, and this says so — in every arm
+// except the one where there is nothing to say, which is the honest limit rather than a
+// check tuned to a host.
+check(gmdate('Y-m-d H:i:s', StoreClock::epochOf($takenAt)) === substr((string)$takenAt, 0, 19),
+      'and epochOf() read it as UTC and not as the process zone — the banner\'s half of #44');
 
-// Fix the stamp to a known instant rather than "now", so the assertion is about the
-// conversion and not about the two calls landing in the same minute.
+// And what the two callers *say* about it is the store's zone, measured against a known
+// instant so the assertion is about the conversion rather than about two calls landing
+// in the same minute.
+//
+// The expected label is computed here rather than taken from `StoreClock::label()`, for
+// the reason #16 gives about the checks above: an expectation built with the same door as
+// the answer cannot see a frame error, because both sides move together. It is computed
+// rather than written as the literal `2:15pm` for the reason above — that literal is right
+// in one arm of four.
 $pdo->prepare("UPDATE displays SET lock_taken_at = ? WHERE id = ?")
     ->execute([$instant, $zoned->id()]);
-checkSame(StoreClock::label($instant, 'g:ia'), $store->forId($zoned->id())->lockState()->takenAtLabel(),
+$onTheFloor = (new DateTime($instant . ' UTC'))
+                  ->setTimezone(new DateTimeZone(STORE_TIMEZONE))->format('g:ia');
+checkSame($onTheFloor, $store->forId($zoned->id())->lockState()->takenAtLabel(),
           'a lock taken at 21:15 UTC is a lock taken at the store\'s own hour on the shop floor');
+checkMentions($store->forId($zoned->id())->editingSentence(), 'since ' . $onTheFloor,
+              'and so does the sentence a refused publish prints');
 
 // ---- The publish stamp was the third clock ---------------------------------------
 // last_published_at was written with CURRENT_TIMESTAMP, which is MySQL's *session*
@@ -8549,4 +8582,15 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // that differ are ones *this* lane deliberately reworded when the publish line moved into
 // the canvas footer and the seed stopped existing. Where the two lanes' work genuinely
 // did not overlap was one file over, in `check_invariants.php`'s fixtures: 94 to 98.
-reportChecks(testIsMysql() ? 2362 : 2337);
+//
+// Then main's #16, which is the one place a merge from it moved this number: +1, for the
+// lock-stamp block it rewrote. That block was flaky on main (two clock reads either side
+// of a minute) and blind on both sides (an expectation built with the same door as the
+// answer, so a stamp written in the wrong frame and read in the wrong frame agreed), and
+// its four checks are better than the two here. Two of them had to be restated to land:
+// they were written against one machine's zone — a literal `2:15pm` and a flat
+// "more than an hour out" — and `selftest_installed.php` runs this suite with
+// `STORE_TIMEZONE` on Auckland, Chicago and UTC in turn (§4be), where both are false. The
+// properties they were reaching for are zone-independent and are asked that way now. 2338,
+// and 25 is still the difference, because nothing here is in the engine-only section.
+reportChecks(testIsMysql() ? 2363 : 2338);

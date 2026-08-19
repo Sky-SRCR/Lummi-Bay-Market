@@ -163,9 +163,18 @@ specific way of going wrong that has now happened at least once.
 
 `check_doc_numbering.php` prints the next free letter, and four branches cut from one
 base all asked it and all got the same answer. Asking is right; asking *at the same
-time* is the failure. So they are allocated in advance. Phase 4 now runs to §4bl, and
-**`4ba` is the next free letter** — ask the tool rather than counting, and if two branches
+time* is the failure. So they are allocated in advance. Phase 4 now runs to §4bn, and
+**`4bo` is the next free letter** — ask the tool rather than counting, and if two branches
 start at once, write the allocation down here before either of them writes prose.
+
+And it happened twice more while this paragraph said otherwise, which is why it is worth
+reading as a live warning rather than a settled lesson. The v2 lane and `main` each claimed
+**`4az`** (v2 step 1 against the CSV import) and each claimed **`4ba`** (v2 step 2 against
+the lock-stamp rewrite), both times having honestly asked the tool in their own tree. Both
+were caught by `check_doc_numbering.php` on the merge and settled by counting citations —
+6 against 2, then 6 against 0 — so `main`'s two write-ups became §4bl and §4bn. What the
+tool cannot do is answer for a tree it has not been shown; it is a gate on the merge, not a
+registry. **The line above is the registry, and it only works if a branch writes to it.**
 
 - ~~**Lane A (#33) wrote `4ao`.**~~ ~~**B (#44) wrote `4ap`.**~~ ~~**C (#50) wrote `4aq`.**~~
 - ~~**The browser pass wrote `4as`–`4ax`, and `4ay` for what the pass says about
