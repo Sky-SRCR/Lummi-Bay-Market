@@ -10,19 +10,28 @@
 // on a guess, and there is no shell on the live host: the only place the answer could
 // appear from inside the app is a page an admin can open. This one.
 //
-// **It has not answered yet, and the answer came from elsewhere.** A branch recorded
-// 8.2 here and raised the rule to match; that was withdrawn, because this card ships
-// with the multi-display build and #46's probe found that build undeployed — `lib/`
-// answers 404 live — so this screen cannot have been the thing that reported it, and
-// Cloudflare hides the version from the response headers too (§4k). The store owner
-// then stated it directly: **PHP 8.2, 2026-08-10**. That is a person, dated, not a
-// reading this code took, which is why it is recorded that way.
+// **The answer came from elsewhere first, and this card was not what reported it.** A
+// branch recorded 8.2 here and raised the rule to match; that was withdrawn, because this
+// card ships with the multi-display build and #46's probe found that build undeployed —
+// `lib/` answered 404 live — so this screen cannot have been the thing that reported it,
+// and Cloudflare hides the version from the response headers too (§4k). The store owner
+// then stated it directly (**PHP 8.2, 2026-08-10**), and on **2026-08-11** it was observed
+// twice in cPanel: 8.2.33 on the runtime card, and `ea-php82` pinned explicitly to the
+// domain against a system default of 8.3. A person and a configuration screen, both dated,
+// neither of them a reading this code took — which is why it is recorded that way.
 //
-// So this card's job changed. It is no longer where the answer will come from — it is
-// what confirms that answer the moment the build is deployed, and what contradicts it
-// if the host is upgraded, downgraded or moved to a different account. That is the
-// only place such a change becomes visible: nothing else here observes the version,
-// and the floor in `ASSUMED_PHP` is now load-bearing rather than cautious.
+// **This card runs in `lbm-test/` and not yet on the sign.** That distinction is the whole
+// of its remaining job: `public_html/lbm/` is still the single-sign app, so the version,
+// the three clocks, the upload ceiling and the converged columns are readable for the
+// rehearsal install and for nothing else. Nothing else here observes any of them, and the
+// floor in `ASSUMED_PHP` is load-bearing rather than cautious — so what this card
+// contradicts is a host upgraded, downgraded or moved to a different account, and it is
+// worth opening after any hosting change rather than only after a deploy.
+//
+// It is also the answer to "which database am I actually looking at", which is why the
+// isolation guarantee in DEPLOY-SKIP §E points here: two installs that walk up to the same
+// `private/` directory behave identically while reading different databases, and this card
+// is the only page that names the one it found.
 //
 // The second half is the same problem wearing different clothes. Invariant 10 says
 // the live database is behind the repo and every schema change is an idempotent
@@ -81,6 +90,12 @@ class ServerReport
      */
     private $server;
 
+    // `?array` rather than `array … = null`: from PHP 8.4 the implicit form is
+    // deprecated and every request that builds this report emits a notice into the
+    // error log. The explicit form is understood back to 7.1, so this costs nothing
+    // below the floor and is one fewer thing between here and the next version.
+    // It is invariant 36 now (§4bh), which is what stops the next one being found by
+    // compiling the tree by hand — and the sentence above is the reason it is a rule.
     public function __construct(PDO $pdo, ?array $server = null)
     {
         $this->pdo    = $pdo;

@@ -27,17 +27,25 @@ them. What each section produced:
 | **J** | Passed. Both of #44's live-only questions answered in the store's zone, and the picker offers region names only. |
 
 **The list below is not spent.** It was written for the rehearsal install, and every step
-of it applies again to the live sign — which is the one thing this pass does not cover
-(see the end). **The deploy has since happened** — v1 is live and driving signs as of
-2026-08-13 — so re-running it there is owed *now*, not after something. It has not been
-done.
+of it applies again to the shop's own sign — which is the one thing this pass does not
+cover (see the end).
+
+**And the deploy has *not* happened, whatever an earlier version of this paragraph said.**
+It claimed v1 was live and driving signs as of 2026-08-13, and that was wrong: the store
+owner meant the live *rehearsal*. `public_html/lbm-test/` is the install that is actually
+running — on the production host, against the copy database — and `public_html/lbm/` is
+still the single-sign app, untouched by any phase of this work. The correction is `0a02b70`
+and `HANDOFF.md` §1 leads with the two-folder table that settles it. The re-walk against
+`lbm/` is therefore **part of the cutover, not a debt standing in front of it** — nothing
+of this build is there to walk yet.
 
 **And v2 has since rewritten most of what it describes.** Five debts have accumulated,
-and they are separate:
+and they are separate — the first of them is the cutover's own step rather than something
+owed today:
 
 | Owed | Why | Where |
 |---|---|---|
-| A re-walk against the **live** install | v1 is live and this pass has only ever been run against `lbm-test/` | this whole list |
+| A walk against `public_html/lbm/`, **after the cutover** | this pass has only ever run against `lbm-test/`, and `lbm/` is still the single-sign app — there is nothing of this build there to walk until the deploy puts it there (`0a02b70`) | this whole list |
 | A re-walk of every step against `lbm-test/` for the **workbench** | step 2 rebuilt the Builder's chrome — three columns, a docked rail, a canvas footer, a new nav — so every screen this pass describes has moved. Nothing in this repo can see a three-column layout fail to be three columns | §4ba |
 | A walk of **Admin Panel → Display Branding**, which this pass has no step for | step 3 replaced a single typography table with a list of Brands, a palette editor, a logo picker and a delete confirm — and the Displays tab gained a Brand dropdown on two forms. The suite reads that file's *source*; nothing renders it | §4bb |
 | A walk of the Builder's **Brand control and palette swatches**, which this pass also has no step for | step 4 put a venue's logo and name at the top of a 178-pixel column, a menu under it, and a row of 17-pixel swatches above four colour pickers. What a suite proves is that switching repaints and writes nothing; what it cannot see is a long venue name truncating, a swatch row pushing a picker off the rail, or a menu opening under the canvas. **Switch a Brand and do not publish, then reload** — the sign must be on the Brand it started on | §4bc |
@@ -359,10 +367,12 @@ section B.
 
 ## What this pass does not cover
 
-- **The live sign.** Passing here says the build runs on this host against a copy of the
-  data. Deploying is still the 22-step visit in
-  [`docs/roadmap-multi-display.md`](roadmap-multi-display.md) plus the rows in
-  `HANDOFF.md` §5.
+- **The live sign.** Passing here says the build runs on this host against a *copy* of the
+  data, in `public_html/lbm-test/`. `public_html/lbm/` is still the single-sign app and the
+  cutover is still the 22-step visit in
+  [`docs/roadmap-multi-display.md`](roadmap-multi-display.md) plus the rows in `HANDOFF.md`
+  §5. **Walk this list again afterwards** — same code, the shop's own data, and §5 says
+  which findings will look like faults on layouts copied from the old sign.
 - **A database that lags the repo.** `_2` is a copy of live and converged on first
   sign-in. A deploy against data that has drifted further is a different rehearsal.
 - **More than one real Screen.** Two TVs polling the same install at once is untested by

@@ -8,16 +8,19 @@ install `lbm-test/` is still standing, which is what makes it available to rehea
 against; see [`roadmap-v2-brands-and-themes.md`](roadmap-v2-brands-and-themes.md),
 whose steps are each deployable on their own precisely because this one was not.
 
-**The deployment visit below has been walked.** It is kept as the record of what was
-done, and because several of its steps — the backup, the `DEPLOY-SKIP.md` reads, the
-convergence check — are the shape every later deploy takes.
+**Since then, and it changes what the visit walks into rather than whether it happens:**
+the build has run in the rehearsal install `lbm-test/` since 2026-08-12, and the browser
+pass over it ([`browser-pass.md`](browser-pass.md), work-lanes lane 0) was walked in full
+on 2026-08-13 — ten sections, seven defects, all fixed, six rows of `HANDOFF.md` §5 that
+each change something a person will see.
 
-**One thing is still owed:** the browser pass ([`browser-pass.md`](browser-pass.md)) was
-walked in full on 2026-08-13 against `lbm-test/` and has *not* been re-walked against
-the live install. Those were always two separate things; the first is closed and the
-second is not. How the code is shaped, and the invariants any later change must
-preserve, are in [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that alongside this
-file.
+**The checklist below is still ahead of us.** `public_html/lbm/` is the single-sign app and
+has not been touched; `lbm-test/` is where everything has been rehearsed. For one commit on
+2026-08-13 this file said the deploy had happened — it had not, and `HANDOFF.md` §1 records
+how the two installs came to be confused, because the mistake is available to anybody who
+reads "live install" as "the sign". How the code is
+shaped, and the invariants any later change must preserve, are in
+[`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that alongside this file.
 
 ## Why
 

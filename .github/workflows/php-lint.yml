@@ -8,12 +8,21 @@ name: PHP lint and self-test
 # What this used to be: `php -l` and the self-test, on PHP 8.2, on SQLite.
 #
 # Decision #51 had two halves. One was "CI pins 8.2 against a 7.1 target". That half
-# is closed: the store owner stated the host runs 8.2 (2026-08-10), the repo's floor is
-# 8.2 on that basis, and this pin now enforces the target instead of accepting
-# everything the target forbids. The version has still never been *observed* — the
-# screen that would report it ships with the undeployed build, and Cloudflare hides it
-# from every response header (BUILD-REFERENCE §4k) — so confirming it is a deploy-day
-# step, and ServerReport::phpVersionNote() is what shouts if the host moves.
+# is closed twice over. The store owner stated the host runs 8.2 (2026-08-10), and on
+# 2026-08-11 it was *observed*: 8.2.33 on cPanel's runtime card, and `ea-php82` pinned
+# explicitly to srcresort.com in MultiPHP Manager against a system default of 8.3
+# (BUILD-REFERENCE §4k, HANDOFF §7). The pin being explicit rather than `inherit` is
+# the part that matters here — the floor does not drift when the host upgrades its
+# default. So this leg tests the version the shop runs, not a version somebody hopes
+# it runs, and ServerReport::phpVersionNote() remains the alarm for the one route left
+# below the floor: a person choosing an older version by hand.
+#
+# This comment said "the version has still never been observed" until 2026-08-13, on
+# the reasoning that the screen reporting it ships with the build that is undeployed on
+# the sign and Cloudflare strips it from every response header. Both true, and neither
+# was the only way to look: cPanel says it to whoever is signed in. Recorded because a
+# stale note in the file that decides the floor is how a pin comes to be treated as a
+# guess.
 #
 # The other half was real. CI ran neither the consistency greps nor the rehearsal,
 # so three of the four things BUILD-REFERENCE §5 asks for before every push were
@@ -40,11 +49,47 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The version the code is *tested* on, not a measurement of the host —
-        # nothing has read the live one yet (#51). Settings → This Server will
-        # report it once the build is deployed, and this is the line to change
-        # if the answer is anything else.
-        php: ['8.2']
+        # The version the code is tested on, and as of 2026-08-11 the version the
+        # host was read to be running: 8.2.33, with ea-php82 pinned explicitly.
+        # That reading came from cPanel, which needs no deploy — Settings → This
+        # Server reports the same figure from inside the app, in lbm-test/ today
+        # and on the sign after the cutover. So this line has a fact to be checked
+        # against rather than an assumption to hold; change it when they disagree.
+        #
+        # Note for anyone running the tools by hand on that host: cPanel Terminal
+        # gives the *system* default PHP, which is 8.3 there, not this domain's pin.
+        # /opt/cpanel/ea-php82/root/usr/bin/php is the one that matches CI.
+        #
+        # 8.3 and 8.4 are here for a different reason than 8.2, and it is worth being
+        # clear which question each leg answers.
+        #
+        # 8.2 is the shop's runtime: this leg is the one that says the sign will work.
+        # It stays first and it stays the version the floor names.
+        #
+        # 8.3 and 8.4 are the versions the sign is *going to* run on, and neither is
+        # far off. PHP 8.2 leaves security support on 2026-12-31, so the pin this repo
+        # relies on stops being a safe place to sit at the end of this year. The host's
+        # system default is already 8.3 (§4k) and this domain is held back from it by
+        # one explicit MultiPHP setting — so "the version changed" is a dropdown away,
+        # not a migration. What made that worth a CI leg rather than a note is that
+        # nothing in the app would say so: ServerReport::phpVersionNote() is silent at
+        # and above the floor by design (a note read every time is a note learned to
+        # skip), so it fires when the host goes *backwards* and never when it moves on.
+        # These two legs are the thing that notices instead.
+        #
+        # They do not raise the floor. Invariant 31 still refuses 8.3+ syntax anywhere
+        # in the tree, and it should: the floor is about what may be written, these
+        # legs are about whether what *is* written still runs. A green 8.4 leg is not
+        # permission to use 8.4 syntax, and the two would disagree loudly if it were.
+        #
+        # One thing these legs catch that the lint step cannot, which is why they are
+        # matrix legs rather than an extra `php -l`: a deprecation is emitted when a
+        # file is compiled, not when it is parsed. `php -l lib/server_report.php` was
+        # clean on 8.4 while the same file, included, emitted "Implicitly marking
+        # parameter $server as nullable is deprecated" on every request that built the
+        # report. The steps that catch that are the ones that actually run the code —
+        # the self-tests and the rehearsal, on each version.
+        php: ['8.2', '8.3', '8.4']
 
     services:
       mysql:

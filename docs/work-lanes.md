@@ -2,12 +2,18 @@
 
 **All four lanes have landed.** #33 as §4ao, #44 as §4ap, #50 as §4aq — and with #50 the
 numbered audit list closed. **Lane 0, the browser pass, was walked on 2026-08-12/13 and
-closed too**: ten sections, seven defects, §4as through §4ax. **And the live deploy has
-happened** — v1 is running and driving signs, confirmed by the store owner on
-2026-08-13, with `lbm-test/` left standing beside it. The 22-step visit in
-[`docs/roadmap-multi-display.md`](roadmap-multi-display.md) is a record now rather than
-a plan. What is still owed is the browser pass against the *live* install, which is not
-a lane either: it is the same list walked somewhere else.
+closed too**: ten sections, seven defects, §4as through §4ax. **The deploy has *not*
+happened**, and this paragraph said it had for several commits — a correction worth leaving
+visible, because it is the same class of mistake this file exists to catch. "Live install"
+was read as "the sign"; the store owner meant the live *rehearsal*.
+`public_html/lbm-test/` is the install that is actually running — production host, copy
+database — and `public_html/lbm/` is still the single-sign app, untouched by any phase of
+this work (`0a02b70`; `HANDOFF.md` §1 leads with the two-folder table). So the 22-step visit
+in [`docs/roadmap-multi-display.md`](roadmap-multi-display.md) is **still a plan**, and the
+browser pass against `lbm/` is a step inside it rather than a debt standing in front of it.
+Nothing in this repo can tell the two folders apart — no page here reads that server — so a
+claim about which one holds what has to come from a shell or a screenshot, which is exactly
+why this one went unchallenged.
 
 Work from here is [`roadmap-v2-brands-and-themes.md`](roadmap-v2-brands-and-themes.md),
 whose five steps are each deployable on their own — so the thing this file is about,
@@ -296,8 +302,10 @@ version of this cost the deferral argument was actually about.
   and a decision the owner has not asked for.
 - ~~**Automating the mutation runs.**~~ **Done in #50** — `tools/mutate.php`, one file at
   a time and deliberately not a gate, because `lib/layout_rules.php` alone is 187 mutants
-  and half an hour of runs. What is *not* done is the sweep: six of twenty-six `lib/`
-  modules, and the remaining twenty are a command each rather than a lane.
+  and half an hour of runs. What is *not* done is the sweep — and how much of it is left is
+  `php tools/mutate.php --swept`, not a number in this file, which held a wrong one until
+  2026-08-13 (§4aq). Whatever it reports, the remainder is a command each rather than a
+  lane.
 - **Deleting the retired branches.** One command, no code, and it needs rights this
   repo's automation does not have — the delete has been attempted and refused with
   `HTTP 403`. `reviewed-decisions.md` holds the shas and, more usefully, the one-liner

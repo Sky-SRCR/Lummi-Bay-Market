@@ -32,22 +32,55 @@ of the system.
 - **Stack:** vanilla PHP (PDO, `ERRMODE_EXCEPTION`, real prepared statements),
   no framework, inline CSS/JS. Uses `interact.js` in the builder for drag/resize.
 
-> **The multi-display build runs in `lbm-test/` as of 2026-08-12, and has never run
-> live.** That first half is new and the sentence above it said "has never run on the
-> server" for two phases. The rehearsal install now signs in, converges the schema
-> against its own database and opens the Builder. The live site is still the
-> single-sign app: nothing in §6 has been deployed there, and deploying it is a
-> scripted 22-step visit — see §7.
+> **The multi-display build runs in `lbm-test/` and has never run live.** Two folders sit
+> side by side on the same account and only one of them has this build:
 >
-> **The rehearsal has now been driven, not just loaded.** The browser pass
-> ([`docs/browser-pass.md`](docs/browser-pass.md), work-lanes lane 0) was walked in full
-> on 2026-08-12/13: all ten sections, seven defects, all seven fixed and re-checked in
-> the browser. Undo, the Viewer, the read-only Builder and both timezone questions came
-> through clean. The fixes are the six §5 rows tagged *browser pass step …*, and every one
-> of them changes something a person will see on the live sign — read those rows before
-> the deploy, not after. **Re-run that list against the live install once it is deployed**;
-> nothing about it was used up by running it here, and `lbm-test/` is a different
-> database with different data.
+> | Folder | What is in it |
+> |---|---|
+> | `public_html/lbm/` | **The sign.** Still the single-sign app, untouched by every phase of this work. Nothing in §6 has been deployed here. |
+> | `public_html/lbm-test/` | **The whole build**, against the copy database `_2`, on the production host. Everything since Phase 1 has been rehearsed and walked here. |
+>
+> `lbm-test/` signed in on 2026-08-12, converged schema against its own database, and had
+> the browser pass walked over it in full on 2026-08-13
+> ([`docs/browser-pass.md`](docs/browser-pass.md), work-lanes lane 0) — ten sections, seven
+> defects, all fixed and re-checked in the browser. Undo, the Viewer, the read-only Builder
+> and both timezone questions came through clean.
+>
+> **This block said "the build is live" for one commit on 2026-08-13. It was wrong**, and
+> the correction is worth more than the claim was: "the six files are on the live install"
+> was read as the live *sign* and meant the live *rehearsal* — the install that is actually
+> running, on the production host, which is exactly what `lbm-test/` is. Nothing in this
+> repo can tell the two apart, because nothing in it reads that server. **So a statement
+> about which folder holds what needs a shell or a screenshot, not a sentence** — and the
+> two commands that settle it in seconds are:
+>
+> ```
+> find "$HOME" -name viewer.php        # every install on the account
+> ls -la "$HOME"/public_html/lbm/lib   # the sign has no lib/ until the cutover
+> ```
+>
+> Paths as of 2026-08-13, from a cPanel Terminal session: the home is **`/home1/silveradmin`**
+> — with a **1** — so the two installs are `/home1/silveradmin/public_html/lbm/` and
+> `…/lbm-test/`.
+>
+> **What is still owed is the cutover itself**, and it is the 22-step visit in
+> [`docs/roadmap-multi-display.md`](roadmap-multi-display.md) plus the §5 rows below, not a
+> file copy. Two things not to shortcut on the way:
+>
+> - **Do not copy this build's files into `lbm/` piecemeal.** `lbm/` has no `lib/`, so a
+>   page from this build lands next to modules that are not there, and the first request
+>   for it is a fatal on a page a customer may be looking at. The visit converges schema on
+>   the *first authenticated request*, which is why its order is a list rather than advice.
+> - **The colour audit is a step of that visit, not a check before it** (roadmap step 4a).
+>   `tools/audit_colors.php` reads `displays`, and `displays` does not exist until
+>   convergence creates it — so run it against the live database *after* the first sign-in,
+>   where it answers the question that matters: whether any stored colour is one this build
+>   will refuse to publish.
+>
+> **And re-run the browser pass after the cutover.** It is not the same walk: same code,
+> the shop's own data. Expect two things §5 warns about — the first press of a layer button
+> on each Display renumbering blocks nobody selected, and every `last_published_at` written
+> before #44 reading shifted until that Display is next published.
 
 ## 2. Git / branch
 

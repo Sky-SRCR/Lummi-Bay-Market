@@ -12,7 +12,7 @@ edited in place and every change reaches the sign by hand.
 | [`CONTEXT.md`](CONTEXT.md) | The domain language. Use these words — Display, Viewer, Screen, screen name tag, canvas, grant, edit lock — in code, comments and UI copy. |
 | [`docs/roadmap-multi-display.md`](docs/roadmap-multi-display.md) | The phased plan and its current status. |
 | [`docs/reviewed-decisions.md`](docs/reviewed-decisions.md) | **The 51-item list from the adversarial audit, with what each was decided to be.** All 50 numbered items are now Done — which closes the audit, not the app: nothing on that list was ever the browser pass. The numbering the owner uses. Two numbering traps are documented there; read them before quoting an issue number. |
-| [`docs/browser-pass.md`](docs/browser-pass.md) | **The only verification in this project that a person does, walked in full on 2026-08-13 against `lbm-test/`.** Its outcome table is at the top: seven defects, §4as–§4ax, five of them things a page did not *say* rather than wrong answers a suite could have caught. Read it before assuming a green gate means a working screen. **Five re-walks are owed and the table at the top names them**: the live install (v1 is live), `lbm-test/` for the step-2 workbench, Display Branding, the Builder's Brand control, and Workspace Themes — the last three of which this pass has no step for at all. It is a list, not a receipt. |
+| [`docs/browser-pass.md`](docs/browser-pass.md) | **The only verification in this project that a person does, walked in full on 2026-08-13 against `lbm-test/`.** Its outcome table is at the top: seven defects, §4as–§4ax, five of them things a page did not *say* rather than wrong answers a suite could have caught. Read it before assuming a green gate means a working screen. **Five re-walks are owed and the table at the top names them**: `public_html/lbm/` *after the cutover* (it is still the single-sign app — the build is **not** live, `0a02b70`), `lbm-test/` for the step-2 workbench, Display Branding, the Builder's Brand control, and Workspace Themes — the last three of which this pass has no step for at all. It is a list, not a receipt. |
 | [`docs/adr/`](docs/adr/) | Decisions with their rejected alternatives. Don't re-litigate one without reading it. |
 | [`HANDOFF.md`](HANDOFF.md) | Deployment facts: live URLs, credentials layout, what is and isn't in the repo. |
 | [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) | **What not to overwrite, upload or delete when files go to the server.** Read before any upload — the repo and the server hold different files, and uploading the tree reverts live branding and restores `setup.php` silently. |
@@ -168,6 +168,7 @@ And one that is not a gate, because it takes minutes rather than seconds:
 
 ```
 php tools/mutate.php lib/whatever.php      # over each lib/ file you changed
+php tools/mutate.php --swept               # instant: what has been swept, what is next
 ```
 
 It breaks that file one way at a time and runs the suite each time, so a check you

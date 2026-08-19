@@ -61,7 +61,28 @@ now answers 404. What the live server said, once asked:
 | `HANDOFF.md`, `README.md`, `CLAUDE.md`, `docs/BUILD-REFERENCE.md` | 404 | Never uploaded. The `.md` deny is a backstop, not a fix for a live exposure. |
 | `.git/config` | 404 | The repository has never been uploaded. |
 | `schema.sql` | 403 | The root `.htaccess` is deployed and its `FilesMatch` blocks work on this host. |
-| `lib/schema.php` | 404 | `lib/` is not on the server yet — the multi-display build is still undeployed. |
+| `lib/schema.php` | 404 | `lib/` is not in `lbm/` — the multi-display build is still undeployed there, confirmed by shell on 2026-08-13. |
+
+### The module folders, checked both ways — 2026-08-13, `lbm-test/`
+
+The one upload mistake that leaves no trace: **many FTP clients skip dotfiles by
+default**, so `lib/` and `tools/` can arrive without the `.htaccess` that is the only
+thing making them unreachable. Asked twice, because the two questions are different — the
+listing proves the file was uploaded, and only a request proves Apache is *reading* it. An
+`.htaccess` in a directory where `AllowOverride` is off sits there being ignored, and no
+file listing can see that.
+
+| Asked | Answer |
+|---|---|
+| `ls -la lbm-test/lib/.htaccess` | present, **360 bytes** — byte-for-byte the repo's copy, so not a stale one from an earlier upload |
+| `ls -la lbm-test/tools/.htaccess` | present, **378 bytes** — same |
+| `GET /lbm-test/lib/schema.php` | **403** |
+| `GET /lbm-test/tools/audit_colors.php` | **403** |
+
+So both folders are denied and the overrides are honoured on this host. A **404** on either
+request would have meant the folder is there and its guard is not; a **200** would have
+meant the guard is there and unread. Re-ask all four after any upload to either install,
+and after the cutover ask them of `lbm/` — where today `lib/` does not exist at all.
 
 **And it will not need deleting by hand again.** `setup.php` now removes itself: at the
 end of a successful setup, and otherwise on the first request that finds it already
@@ -186,7 +207,7 @@ not publish. Nothing else in the app will tell you.
 Run that check **before** signing in a second time, not after — the sign-in that shows
 you the card is also the one that converges schema on whatever database it found.
 
-## After you upload, five checks that catch a mistake from this list
+## After you upload, six checks that catch a mistake from this list
 
 1. **Admin Panel → Settings → This Server** — the site name is the store's, not
    "Store Display System" (A), and the upload limit is what it was (D).
@@ -205,3 +226,10 @@ you the card is also the one that converges schema on whatever database it found
    proves nobody uploaded the docs this time**, which is the right outcome but not a
    test of the rule. Load any page of the app first: a mistake in `.htaccess` is a 500
    on everything, so the app answering at all is what clears that risk (D).
+6. **`<install>/lib/schema.php` must answer 403, and so must a file under `tools/`** —
+   the folders holding every module are unreachable only because each carries its own
+   `.htaccess`, and an FTP client that skips dotfiles uploads the folder without it. A
+   **404** means exactly that; a **200** means the file is there and the directory's
+   `AllowOverride` is not letting Apache read it. Both were 403 on `lbm-test/` on
+   2026-08-13 — see the table above, which also lists the byte sizes worth comparing
+   against, since a listing and a request answer different halves of this.

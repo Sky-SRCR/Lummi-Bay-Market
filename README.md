@@ -186,9 +186,14 @@ module map and the invariants any change has to preserve.
   php tools/selftest_layout.php     # expect "N checks, 0 failed"
   ```
 
-- **PHP 8.2 is the floor** — stated by the store owner, 2026-08-10 (#51, §4k). Nothing
-  here has observed it: the screen that would report it ships with the build #46's probe
-  found undeployed, and Cloudflare hides the version from every header. Modern syntax is
+- **PHP 8.2 is the floor** — stated by the store owner 2026-08-10, and **observed twice on
+  2026-08-11** (#51, §4k): the runtime reports 8.2.33, and cPanel's MultiPHP Manager shows
+  `srcresort.com` pinned explicitly to `ea-php82` against a system default of 8.3. The pin
+  being explicit is what keeps the floor from drifting when the host moves its default.
+  This paragraph said "nothing here has observed it" until 2026-08-13, on the true but
+  incomplete reasoning that the app's own card ships with a build that is undeployed on the
+  live sign and Cloudflare hides the version from every header. cPanel was the third place
+  to look, and it does not need a deploy to answer. Modern syntax is
   allowed, and today no file uses any — which is what keeps the floor one line to lower
   again. Be deliberate about spending it: a declared floor that turns out wrong is a
   parse error, and a parse error in a file a Screen loads is a blank sign in the shop.
