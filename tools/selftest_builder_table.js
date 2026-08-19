@@ -20,12 +20,13 @@
 //                block moved since the last Publish with it. The page refuses
 //                the default for any file drag anywhere, and that is checked
 //                here on a page that may not even edit.
-//   Padding      `readTablePads()` is the same function in builder.php and
-//                viewer.php (invariant 32), and what it is really about is the
-//                tables already on signs: a stored `row_padding: 0` has always
-//                drawn 8px, because the Viewer it was written for skipped a zero.
-//                Reading it as zero now would silently reformat them. There is a
-//                check per stored shape, and the zero one is the load-bearing one.
+//   Editing      An import fills the editor; it does not replace it. Every control
+//                the table already had — the column style dropdowns, the width
+//                boxes, row padding, add and delete row and column, and typing in
+//                a cell — has to still work on the rows that came out of the file,
+//                and that is a different claim from "the rows arrived". A rebuild
+//                that dropped a control would look exactly like a successful
+//                import until somebody tried to fix a price.
 //   Styles       `headers` is not a row of labels — it is which of the seven
 //                column styles each column is drawn in — so a CSV's header row
 //                cannot be copied into it. What is not matched becomes Plain and
@@ -35,6 +36,11 @@
 // The DOM below is the editing suite's, plus a FileReader and a drag event, and
 // with document.addEventListener recording rather than discarding — the drop
 // handlers are the subject here, and a listener that is never run proves nothing.
+// It also parses the small amount of markup builder.php builds as a string, which
+// the other suites do not: a column header cell is `th.innerHTML = '<select …>'`,
+// so a DOM that stores that string and nothing else cannot be asked whether the
+// controls survived an import. Checking the string instead would only say the
+// characters were written, not that getTableEditorData() can still read them.
 //
 // CLI only. Nothing here touches a database or a network.
 
@@ -132,6 +138,50 @@ function findAll(node, sel) {
     return hits;
 }
 
+/**
+ * The little markup builder.php builds by string, as nodes.
+ *
+ * Only the shapes that file really writes: a `<select>` of `<option>`s with one
+ * of them `selected`, a number input, a button with an onclick, and wrapper divs.
+ * It exists for one question this suite has to be able to ask — after a file has
+ * filled the editor, does `getTableEditorData()` still find the column style, the
+ * alignment and the width for every column? — and that question is unanswerable
+ * against a DOM where `innerHTML` is a string nobody parsed.
+ */
+function parseMarkup(html, parent) {
+    const VOID  = ['input', 'br', 'img', 'hr'];
+    const stack = [parent];
+    const tagRe = /<\/?([a-zA-Z0-9]+)((?:\s+[a-zA-Z-]+(?:="[^"]*")?)*)\s*\/?>|([^<]+)/g;
+    let m;
+    while ((m = tagRe.exec(html)) !== null) {
+        if (m[3] !== undefined) { stack[stack.length - 1].textContent += m[3]; continue; }
+        const tag = m[1].toLowerCase();
+        if (m[0].charAt(1) === '/') { if (stack.length > 1) { stack.pop(); } continue; }
+        const node = el(tag);
+        const attrRe = /([a-zA-Z-]+)(?:="([^"]*)")?/g;
+        let a;
+        while ((a = attrRe.exec(m[2] || '')) !== null) {
+            const k = a[1].toLowerCase(), v = a[2] === undefined ? '' : a[2];
+            if      (k === 'class')    { node.className = v; }
+            else if (k === 'id')       { node.id = v; }
+            else if (k === 'value')    { node.value = v; }
+            else if (k === 'type')     { node.type = v; }
+            else if (k === 'selected') { node._selected = true; }
+            else                       { node.setAttribute(k, v); }
+        }
+        stack[stack.length - 1].appendChild(node);
+        if (VOID.indexOf(tag) < 0 && m[0].slice(-2) !== '/>') { stack.push(node); }
+    }
+    // A select answers with the option marked selected, the way a browser's does —
+    // which is what carries a column's style across a rebuild.
+    descendants(parent).forEach(function (n) {
+        if (n.tagName !== 'SELECT') { return; }
+        const opts = n.children.filter(function (c) { return c.tagName === 'OPTION'; });
+        const on   = opts.filter(function (c) { return c._selected; })[0] || opts[0];
+        if (on) { n.value = on.value; }
+    });
+}
+
 function el(tag, className) {
     const node = {
         tagName: String(tag || 'div').toUpperCase(),
@@ -141,11 +191,21 @@ function el(tag, className) {
         style: { fontFamily: '', fontSize: '', color: '', fontWeight: '',
                  fontStyle: '', lineHeight: '', textAlign: '', display: '' },
         dataset: {}, children: [], files: [],
-        value: '', textContent: '', innerHTML: '', checked: false, disabled: false,
+        value: '', textContent: '', checked: false, disabled: false,
         offsetWidth: 0, offsetHeight: 0, clientWidth: 0, clientHeight: 0,
         scrollLeft: 0, scrollTop: 0, parentNode: null, parentElement: null,
         _attrs: {}
     };
+    let html = '';
+    Object.defineProperty(node, 'innerHTML', {
+        get() { return html; },
+        set(v) {
+            html = String(v === null || v === undefined ? '' : v);
+            node.children.length = 0;
+            node.textContent = '';
+            parseMarkup(html, node);
+        }
+    });
     node.classList = {
         add(c)      { if (classesOf(node).indexOf(c) < 0) { node.className = (node.className + ' ' + c).trim(); } },
         remove(c)   { node.className = classesOf(node).filter(function (x) { return x !== c; }).join(' '); },
@@ -337,13 +397,14 @@ section('What the import keeps, because somebody set it by hand');
 // ============================================================
 
 const standing = { valigns: ['middle', 'bottom'], haligns: ['right', 'center'], widths: [30, 70],
-                   pad_top: 4, pad_right: 6, pad_bottom: 4, pad_left: 6 };
+                   row_padding: 14 };
 const again = csvGridToTable(parseCsvGrid('Title,Price\nCoho,18.99'), true, standing);
 checkDeep(['middle', 'bottom'], again.data.valigns, 'a re-import keeps the vertical alignment of each column');
 checkDeep(['right', 'center'],  again.data.haligns, 'and the horizontal');
 checkDeep([30, 70],             again.data.widths,  'and the widths somebody measured');
-checkSame(4, again.data.pad_top,  'and the cell padding, which an import has no opinion about');
-checkSame(6, again.data.pad_left, 'on every side of it');
+checkSame(14, again.data.row_padding, 'and the row padding, which an import has no opinion about');
+checkSame(undefined, csvGridToTable(parseCsvGrid('Title\nCoho'), true, {}).data.row_padding,
+          'and a table that never had one does not gain one from a file');
 
 const grown = csvGridToTable(parseCsvGrid('Title,Price,Notes\nCoho,18.99,fresh'), true, standing);
 checkDeep(['middle', 'bottom', 'top'], grown.data.valigns, 'a column the old table did not have gets the default');
@@ -353,64 +414,6 @@ const ragged = csvGridToTable(parseCsvGrid('Title,Price\nCoho,18.99,extra\nSocke
 checkSame(3, ragged.colCount, 'a row wider than the header row widens the table rather than being cut');
 checkDeep(['Sockeye', '', ''], ragged.data.rows[1], 'and a short row is filled out to match');
 checkDeep(['column 3'], ragged.plain, 'the column nobody named is reported, not quietly styled');
-
-// ============================================================
-section('Cell padding: four sides, and the signs already out there');
-// ============================================================
-
-checkDeep({ top: 8, right: 10, bottom: 8, left: 10 }, readTablePads({}),
-          'a table that has never been given a padding reads as what the Viewer draws');
-checkDeep({ top: 8, right: 10, bottom: 8, left: 10 }, readTablePads(null),
-          'and so does one with no stored data at all');
-checkDeep({ top: 20, right: 10, bottom: 20, left: 10 }, readTablePads({ row_padding: 20 }),
-          'the single number that came before meant top and bottom');
-// The one that would have reformatted every sign in the shop: the old Viewer
-// skipped a stored 0 and drew its 8px, so 0 has never meant "no padding".
-checkDeep({ top: 8, right: 10, bottom: 8, left: 10 }, readTablePads({ row_padding: 0 }),
-          'and a stored zero means the default it has always drawn, not none');
-checkDeep({ top: 0, right: 0, bottom: 0, left: 0 },
-          readTablePads({ pad_top: 0, pad_right: 0, pad_bottom: 0, pad_left: 0 }),
-          'a zero somebody typed into the new boxes is a real zero');
-checkDeep({ top: 1, right: 2, bottom: 3, left: 4 },
-          readTablePads({ pad_top: 1, pad_right: 2, pad_bottom: 3, pad_left: 4 }),
-          'four sides are four answers');
-checkDeep({ top: 8, right: 10, bottom: 8, left: 40 },
-          readTablePads({ pad_left: 40, row_padding: 30 }),
-          'one side named is an answer about that side, and the old number is not re-read over it');
-checkDeep({ top: 120, right: 0, bottom: 8, left: 10 },
-          readTablePads({ pad_top: 500, pad_right: -5 }),
-          'values outside the range are clamped rather than refused');
-checkDeep({ top: 8, right: 10, bottom: 8, left: 10 }, readTablePads({ pad_top: 'wide' }),
-          'and a value that is not a number is not one');
-
-// The modal's own four boxes.
-document.getElementById('table-pad-top').value    = '';
-document.getElementById('table-pad-right').value  = '';
-document.getElementById('table-pad-bottom').value = '';
-document.getElementById('table-pad-left').value   = '';
-showTablePads(readTablePads({ row_padding: 12 }));
-checkSame(12, document.getElementById('table-pad-top').value,    'opening a table fills the boxes from what is stored');
-checkSame(10, document.getElementById('table-pad-right').value,  'including the sides the old number never had');
-checkSame(false, document.getElementById('table-pad-link').checked,
-          'and the "same on all four sides" tick is off when they are not the same');
-
-showTablePads({ top: 5, right: 5, bottom: 5, left: 5 });
-checkSame(true, document.getElementById('table-pad-link').checked, 'and on when they are');
-
-document.getElementById('table-pad-link').checked = true;
-document.getElementById('table-pad-top').value = 9;
-padFieldChanged(document.getElementById('table-pad-top'));
-checkSame(9, document.getElementById('table-pad-left').value, 'with it ticked, one box fills the other three');
-
-document.getElementById('table-pad-link').checked = false;
-document.getElementById('table-pad-top').value = 3;
-padFieldChanged(document.getElementById('table-pad-top'));
-checkSame(9, document.getElementById('table-pad-left').value, 'and with it clear, each side is its own');
-
-document.getElementById('table-pad-right').value = '200';
-document.getElementById('table-pad-bottom').value = 'x';
-checkDeep({ top: 3, right: 120, bottom: 0, left: 9 }, readPadFields(),
-          'what the boxes hold is clamped on the way out, the way the Viewer will clamp it');
 
 // ============================================================
 section('Dropping a file, including where it must not land');
@@ -455,6 +458,21 @@ checkSame(true, fileDrag('drop', document.body, csvFile('x.csv', 'a,b')).prevent
 
 const strayToast = document.getElementById('toast');
 check(/table block/.test(strayToast.textContent), 'a file dropped on no table says where it should have gone');
+checkSame(0, readerCalls.length, 'and nothing is read, because the canvas is not a drop target');
+
+// Nor is anything else standing on it. A file let go over a text block, a picture
+// or bare canvas imports nothing: the only way to act on it would be to guess
+// which table was meant, and a guess here overwrites a price list nobody was
+// looking at.
+const notATable = el('div', 'editable-block root-block');
+notATable.dataset.type = 'text';
+document.getElementById('builder-canvas').appendChild(notATable);
+checkSame(null, csvTargetBlock({ target: notATable }), 'a block that is not a table is not a drop target');
+readerCalls.length = 0;
+fileDrag('drop', notATable, csvFile('prices.csv', 'Title\nCoho'));
+checkSame(0, readerCalls.length, 'so a file let go over one is not read either');
+check(/table block/.test(document.getElementById('toast').textContent),
+      'and the page says where it should have gone rather than picking a table itself');
 
 // ---- Onto a table block ------------------------------------------------------
 
@@ -539,11 +557,116 @@ check(/Dana/.test(document.getElementById('toast').textContent),
 READ_ONLY = false;
 
 // ============================================================
+section('The table is still a table after the file lands');
+// ============================================================
+//
+// An import fills the editor; it does not replace it. Everything below is a
+// control somebody uses on a table they typed by hand, run here on the rows that
+// came out of a file — because "the rows arrived" and "the table still works" are
+// two claims, and a rebuild that dropped a control looks exactly like a good
+// import until somebody tries to fix a price.
+
+READ_ONLY = false;
+document.getElementById('table-csv-has-header').checked = true;
+fileDrag('drop', target, csvFile('prices.csv', 'Title,Price,SKU\nCoho,18.99,44-2\nSockeye,24.99,44-3'));
+
+const head = document.getElementById('table-editor-head');
+const body = document.getElementById('table-editor-body');
+
+let td = getTableEditorData();
+checkDeep(['item_title', 'price', 'free'], td.headers,
+          'every imported column has its style dropdown, holding what the header row matched');
+checkDeep(['top', 'top', 'top'],  td.valigns, 'and its vertical alignment control');
+checkDeep(['left', 'left', 'left'], td.haligns, 'and its horizontal one');
+checkDeep([0, 0, 0], td.widths, 'and its width box, reading auto');
+checkDeep([['Coho', '18.99', '44-2'], ['Sockeye', '24.99', '44-3']], td.rows,
+          'and the rows read back out of the boxes the import put them in');
+checkSame(3, head.querySelectorAll('.del-col-btn').length, 'each column offers to be deleted');
+checkSame(2, body.querySelectorAll('.del-row-td').length, 'and each row');
+
+// Typing over an imported cell — the price in the file was wrong, which is most
+// of why somebody opens this at all.
+body.querySelectorAll('tr')[0].querySelectorAll('td input[type="text"]')[1].value = '19.99';
+head.querySelectorAll('.col-style-sel')[2].value = 'description';
+head.querySelectorAll('.col-width-inp')[0].value = '40';
+document.getElementById('table-row-padding').value = '16';
+td = getTableEditorData();
+checkSame('19.99', td.rows[0][1], 'a price typed over an imported one is what the editor holds');
+checkSame('description', td.headers[2], 'a column the import could not style can be styled by hand');
+checkSame(40, td.widths[0], 'a width set after the import is read');
+checkSame(16, td.row_padding, 'and so is the row padding, which the import left alone');
+
+document.getElementById('table-row-padding').value = '999';
+checkSame(120, getTableEditorData().row_padding, 'clamped the way it always was');
+document.getElementById('table-row-padding').value = '16';
+
+// Add and delete, on the imported table. Each of these rebuilds the editor from
+// what is on screen, so a control that stopped reading would show up here as an
+// edit that vanished rather than as an error.
+addTableRow();
+td = getTableEditorData();
+checkSame(3, td.rows.length, 'a row can be added under the rows that came from the file');
+// A documented survivor (invariant 30): pushing a row of the wrong width here is not
+// visible, because rebuildTableEditor() draws a cell per *header* and pads a short row
+// out. That is the app being right rather than the check being weak — a row narrower
+// than the table cannot reach the screen — so the claim below is what is observable.
+checkDeep(['', '', ''], td.rows[2], 'and it is as wide as the table it joined');
+checkSame('19.99', td.rows[0][1], 'and the correction typed a moment ago survived the rebuild');
+checkSame('description', td.headers[2], 'as did the column style');
+checkSame(40, td.widths[0], 'and the width');
+checkSame(16, td.row_padding, 'and the row padding');
+
+addTableCol();
+td = getTableEditorData();
+checkSame(4, td.headers.length, 'a column can be added too');
+checkSame(4, td.rows[0].length, 'and every row widens with it');
+
+deleteTableCol(3);
+td = getTableEditorData();
+checkSame(3, td.headers.length, 'a column can be deleted');
+checkDeep(['Coho', '19.99', '44-2'], td.rows[0], 'and the rows are as they were');
+
+// Deleting a column with content in it, from the middle — the empty one above cannot
+// tell a delete that took the right cells from one that took none, because a rebuild
+// trims every row to the headers that are left either way.
+deleteTableCol(1);
+td = getTableEditorData();
+checkDeep(['item_title', 'description'], td.headers, 'a column with content can be deleted too');
+checkDeep(['Coho', '44-2'], td.rows[0], 'and it is that column\'s cells that go, not the ones after it');
+checkDeep([40, 0], td.widths, 'and its width goes with it');
+
+deleteTableRow(2);
+checkSame(2, getTableEditorData().rows.length, 'and a row can be deleted');
+
+// The two refusals the editor has always had, still standing after an import.
+rebuildTableEditor({ headers: ['item_title'], rows: [['only']] });
+deleteTableRow(0);
+check(/at least 1 row/.test(document.getElementById('toast').textContent),
+      'the last row is still refused, so a table cannot be emptied by accident');
+deleteTableCol(0);
+check(/at least 1 column/.test(document.getElementById('toast').textContent), 'and the last column');
+checkSame(1, getTableEditorData().rows.length, 'and neither of those refusals changed anything');
+
+// Save Table is what stores it, and that is the only thing that does.
+rebuildTableEditor({ headers: ['item_title', 'price'], rows: [['Coho', '19.99']],
+                     valigns: ['top', 'top'], haligns: ['left', 'right'], widths: [40, 0] });
+document.getElementById('table-row-padding').value = '16';
+saveTable();
+const stored = JSON.parse(target.dataset.tableData);
+checkDeep([['Coho', '19.99']], stored.rows, 'Save Table stores the rows that came from the file and were corrected here');
+checkDeep(['item_title', 'price'], stored.headers, 'with the styles');
+checkDeep(['left', 'right'], stored.haligns, 'the alignments');
+checkDeep([40, 0], stored.widths, 'the widths');
+checkSame(16, stored.row_padding, 'and the one row padding this block has always stored');
+check(!document.getElementById('table-modal-overlay').classList.contains('open'),
+      'and the editor closes over a table that is now the block\'s own');
+
+// ============================================================
 // Result
 // ============================================================
 // The expected total, for the same reason the other five suites carry one:
 // without it, deleting half this file still reports a clean run.
-const expected = 96;
+const expected = 119;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

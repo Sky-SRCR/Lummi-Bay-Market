@@ -560,14 +560,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 .del-col-btn { width:100%; font-size:10px; padding:2px 4px; }
 .del-row-td  { width:32px; text-align:center; background:#0d1b24; }
 
-/* ── Table modal: cell padding and the CSV drop zone ── */
-.pad-grid { display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; }
-.pad-field { display:flex; flex-direction:column; gap:2px; font-size:10px; color:#95a5a6; }
-.pad-field input {
-    width:56px; background:#0d1b24; border:1px solid #2c3e50; color:#ecf0f1;
-    border-radius:3px; padding:3px 5px; font-size:12px;
-}
-.pad-link { display:flex; align-items:center; gap:4px; font-size:11px; color:#bdc3c7; }
+/* ── Table modal: the CSV drop zone ── */
 #table-csv-drop {
     border:2px dashed #4a6278; border-radius:6px; padding:12px 14px; margin-bottom:12px;
     background:#16212b; color:#bdc3c7; font-size:12px; text-align:center; cursor:pointer;
@@ -577,8 +570,9 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 #table-csv-note { font-size:11px; margin-top:6px; min-height:14px; }
 #table-csv-note.bad { color:#e67e22; }
 #table-csv-note.good { color:#7fb069; }
-/* The same dashed answer on the canvas, so a file dragged at a table block lands
-   somewhere that has already said it will take it. */
+/* The same dashed answer on the block itself, so a file dragged at a table lands
+   on something that has already said it will take it. Only a table block ever
+   wears it: the canvas is not a drop target and must not look like one. */
 .editable-block.csv-target { outline:2px dashed #27ae60 !important; outline-offset:-1px; }
 
 /* ── Toast ── */
@@ -1104,28 +1098,12 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
             <button class="btn" style="font-size:12px;padding:5px 10px;" onclick="addTableRow()">+ Add Row</button>
             <button class="btn" style="font-size:12px;padding:5px 10px;" onclick="addTableCol()">+ Add Column</button>
-        </div>
-
-        <!-- Cell padding, one side at a time. The four boxes open on what the sign
-             is really drawing rather than on 0: a table that has never been given a
-             padding is drawn with the Viewer's own 8px/10px, and a box reading 0
-             over a cell with 8px of space in it is the page saying something untrue
-             about the sign. -->
-        <div style="margin-bottom:12px;">
-            <div style="font-size:12px;color:#bdc3c7;margin-bottom:5px;">Cell padding (px)</div>
-            <div class="pad-grid">
-                <label class="pad-field">Top
-                    <input type="number" id="table-pad-top" min="0" max="120" value="8" oninput="padFieldChanged(this)"></label>
-                <label class="pad-field">Right
-                    <input type="number" id="table-pad-right" min="0" max="120" value="10" oninput="padFieldChanged(this)"></label>
-                <label class="pad-field">Bottom
-                    <input type="number" id="table-pad-bottom" min="0" max="120" value="8" oninput="padFieldChanged(this)"></label>
-                <label class="pad-field">Left
-                    <input type="number" id="table-pad-left" min="0" max="120" value="10" oninput="padFieldChanged(this)"></label>
-                <label class="pad-link">
-                    <input type="checkbox" id="table-pad-link" onchange="padLinkChanged()"> Same on all four sides
-                </label>
-            </div>
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#bdc3c7;margin-left:10px;">
+                Row padding
+                <input type="number" id="table-row-padding" min="0" max="120" value="0"
+                       style="width:52px;background:#0d1b24;border:1px solid #2c3e50;color:#ecf0f1;border-radius:3px;padding:2px 4px;font-size:12px;">
+                px
+            </label>
         </div>
 
         <!-- CSV import. The file never leaves this browser: it is read here and
@@ -4488,105 +4466,6 @@ function buildTablePreview(block, data) {
     block.appendChild(preview);
 }
 
-// ---- Cell padding ------------------------------------------------------------
-
-var TABLE_PAD_SIDES = ['top', 'right', 'bottom', 'left'];
-var TABLE_PAD_MAX   = 120;
-
-// ---- SHARED between builder.php and viewer.php ------------------------------
-// The block between this line and its `end of the shared copy` marker is
-// byte-identical in both files, and invariant 32 is the check that keeps it so:
-// the Builder shows the numbers the sign will draw, so the two ends have to agree
-// about what a stored table means before either can be right. Edit one, edit the
-// other, and run `php tools/check_invariants.php`.
-/**
- * The four cell paddings a stored table asks for, in px.
- *
- * Three shapes reach this function and only one of them is what the Builder
- * writes today, because a publish cannot be taken back: every table published
- * before per-side padding existed is still on a sign, and still says what it
- * said then.
- *
- *   pad_top/right/bottom/left  what the modal writes now. A side that is absent
- *                              or unreadable falls back to the Viewer's own
- *                              default rather than to zero — one named side is
- *                              an answer about that side and about nothing else.
- *   row_padding                the single number that came before it, and it
- *                              meant top and bottom only; the sides were left to
- *                              CSS. Read only when no per-side value was named.
- *   neither                    8px and 10px, which is `.table-wrap td` in
- *                              viewer.php. The defaults are written out here
- *                              rather than read from the stylesheet because the
- *                              Builder has no such rule to read and has to show
- *                              the same numbers the sign will draw.
- *
- * `row_padding: 0` is deliberately not "no padding": the old Viewer skipped a
- * zero and drew the 8px default, so a table stored with one has always been an
- * 8px table, and reading it as zero now would silently reformat every sign that
- * never touched the field.
- */
-function readTablePads(data) {
-    var d = data || {};
-    var pads = { top: 8, right: 10, bottom: 8, left: 10 };
-    var named = false;
-    ['top', 'right', 'bottom', 'left'].forEach(function (side) {
-        var raw = d['pad_' + side];
-        if (raw === null || raw === undefined || raw === '') { return; }
-        var v = parseInt(raw, 10);
-        if (isNaN(v)) { return; }
-        pads[side] = Math.max(0, Math.min(120, v));
-        named = true;
-    });
-    if (named) { return pads; }
-    var legacy = parseInt(d.row_padding, 10);
-    if (!isNaN(legacy) && legacy > 0) {
-        pads.top    = Math.max(0, Math.min(120, legacy));
-        pads.bottom = pads.top;
-    }
-    return pads;
-}
-// ---- end of the shared copy -------------------------------------------------
-
-/** One of the four boxes, or null on a read-only page, which has no modal. */
-function padInput(side) { return document.getElementById('table-pad-' + side); }
-
-function showTablePads(pads) {
-    TABLE_PAD_SIDES.forEach(function (side) {
-        var box = padInput(side);
-        if (box) { box.value = pads[side]; }
-    });
-    var link = document.getElementById('table-pad-link');
-    if (link) {
-        link.checked = (pads.top === pads.right && pads.top === pads.bottom && pads.top === pads.left);
-    }
-}
-
-/** What the four boxes hold, clamped the way the Viewer will clamp them. */
-function readPadFields() {
-    var pads = {};
-    TABLE_PAD_SIDES.forEach(function (side) {
-        var box = padInput(side);
-        var v   = box ? parseInt(box.value, 10) : NaN;
-        pads[side] = isNaN(v) ? 0 : Math.max(0, Math.min(TABLE_PAD_MAX, v));
-    });
-    return pads;
-}
-
-/** Typing in one box with "same on all four sides" ticked fills the other three. */
-function padFieldChanged(input) {
-    var link = document.getElementById('table-pad-link');
-    if (!link || !link.checked || !input) { return; }
-    TABLE_PAD_SIDES.forEach(function (side) {
-        var box = padInput(side);
-        if (box && box !== input) { box.value = input.value; }
-    });
-}
-
-function padLinkChanged() {
-    var link = document.getElementById('table-pad-link');
-    if (link && link.checked) { padFieldChanged(padInput('top')); }
-}
-
 // ---- CSV import --------------------------------------------------------------
 //
 // The file is read in this browser and never uploaded: a price list is rows, and
@@ -4724,7 +4603,7 @@ function csvNameList(list) {
  *
  * Alignments and widths are carried across from the table as it stands, so
  * re-importing a corrected price list keeps the layout somebody set up by hand.
- * So is the cell padding, which the import has no opinion about at all.
+ * So is the row padding, which the import has no opinion about at all.
  */
 function csvGridToTable(grid, hasHeader, current) {
     grid    = grid || [];
@@ -4779,9 +4658,6 @@ function csvGridToTable(grid, hasHeader, current) {
             return out;
         })
     };
-    TABLE_PAD_SIDES.forEach(function (side) {
-        if (current['pad_' + side] !== undefined) { data['pad_' + side] = current['pad_' + side]; }
-    });
     if (current.row_padding !== undefined) { data.row_padding = current.row_padding; }
 
     var bytes = utf8Bytes(JSON.stringify(data));
@@ -4932,12 +4808,19 @@ function highlightCsvTarget(block) {
 /**
  * Where a dragged file may be dropped, and what happens everywhere else.
  *
- * The everywhere-else half is the one that matters most and has nothing to do
- * with tables: a file dropped on a page that ignores it is a *navigation*. The
- * browser leaves the Builder and opens the CSV, and every block moved since the
- * last Publish goes with it — no prompt, no undo, and the canvas is only in this
- * tab. So the default is refused for any file drag anywhere on this page, and
- * the drop then decides whether it wanted the file.
+ * Two places take a file and no others: a table block on the canvas, and the drop
+ * area inside Edit Table. **The canvas itself is not one of them** — a file let go
+ * over empty canvas, or over an image or a text block, imports nothing, because
+ * the only way to act on it would be to guess which table was meant and a guess
+ * here overwrites a price list nobody was looking at.
+ *
+ * That still leaves the everywhere-else half, which matters most and has nothing
+ * to do with tables: a file dropped on a page that ignores it is a *navigation*.
+ * The browser leaves the Builder and opens the CSV, and every block moved since
+ * the last Publish goes with it — no prompt, no undo, and the canvas is only in
+ * this tab. So the default is refused for any file drag anywhere on this page —
+ * refusing a navigation is not the same as offering a drop, and only the two
+ * places above ever light up or read anything.
  */
 function setupCsvDrop() {
     document.addEventListener('dragover', function (e) {
@@ -4971,8 +4854,10 @@ function setupCsvDrop() {
         }
         var file = (e.dataTransfer && e.dataTransfer.files) ? e.dataTransfer.files[0] : null;
         if (!file) { return; }
-        // Dropped on the page at large: the navigation is already refused above, and
-        // guessing which table was meant is how the wrong sign gets a price list.
+        // Dropped on the canvas rather than on a table: nothing is imported. The
+        // navigation is already refused above, so the only thing left to do is say
+        // where the file was supposed to go — guessing which table was meant is how
+        // the wrong sign gets a price list.
         if (!inZone && !block) {
             showToast('Drop the file on a table block, or on the drop area inside Edit Table.', true);
             return;
@@ -4997,11 +4882,12 @@ function openTableModal() {
     var valigns = (td.valigns && td.valigns.length === headers.length) ? td.valigns : headers.map(function() { return 'top'; });
     var haligns = (td.haligns && td.haligns.length === headers.length) ? td.haligns : headers.map(function() { return 'left'; });
     var widths  = (td.widths  && td.widths.length  === headers.length) ? td.widths  : headers.map(function() { return 0; });
+    var rowPad  = parseInt(td.row_padding) || 0;
     rows = rows.map(function(r) {
         while (r.length < headers.length) r.push('');
         return r.slice(0, headers.length);
     });
-    showTablePads(readTablePads(td));
+    document.getElementById('table-row-padding').value = rowPad;
     // The file from the last table opened is not this table's file, and the note
     // beside the drop zone is about an import that happened to something else.
     _csvGrid = null; _csvName = ''; _csvGarbled = false;
@@ -5088,21 +4974,12 @@ function getTableEditorData() {
     var valigns = Array.from(head.querySelectorAll('.col-valign-sel')).map(function(s) { return s.value; });
     var haligns = Array.from(head.querySelectorAll('.col-halign-sel')).map(function(s) { return s.value; });
     var widths  = Array.from(head.querySelectorAll('.col-width-inp')).map(function(i) { return Math.min(100, Math.max(0, parseInt(i.value) || 0)); });
-    var pads    = readPadFields();
+    var rowPad  = Math.min(120, Math.max(0, parseInt(document.getElementById('table-row-padding').value) || 0));
     var rows = [];
     document.getElementById('table-editor-body').querySelectorAll('tr').forEach(function(tr) {
         rows.push(Array.from(tr.querySelectorAll('td input[type="text"]')).map(function(inp) { return inp.value; }));
     });
-    return { headers: headers, valigns: valigns, haligns: haligns, widths: widths,
-             pad_top: pads.top, pad_right: pads.right, pad_bottom: pads.bottom, pad_left: pads.left,
-             // The single number this replaced, still written, and read by nothing in
-             // this tree. It is for the half-deployed server: this app is uploaded file
-             // by file by hand (docs/DEPLOY-SKIP.md), so builder.php can reach the shop
-             // an hour before viewer.php does, and until it does the sign is drawn by a
-             // Viewer that has never heard of pad_top. Top and bottom is all that older
-             // Viewer could express — it ignores a zero and draws its 8px default.
-             row_padding: pads.top,
-             rows: rows };
+    return { headers: headers, valigns: valigns, haligns: haligns, widths: widths, row_padding: rowPad, rows: rows };
 }
 
 function addTableRow() {

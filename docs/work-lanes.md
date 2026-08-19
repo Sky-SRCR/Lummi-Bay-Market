@@ -150,11 +150,13 @@ start at once, write the allocation down here before either of them writes prose
 - ~~**Lane A (#33) wrote `4ao`.**~~ ~~**B (#44) wrote `4ap`.**~~ ~~**C (#50) wrote `4aq`.**~~
 - ~~**The browser pass wrote `4as`–`4ax`, and `4ay` for what the pass says about
   itself.**~~
-- ~~**The CSV import and the per-side cell padding wrote `4az`**~~ — cut from
-  `f787aa0` on 2026-08-19, beside an app-completion audit running in another session.
-  Written down here first, which is this item working as designed rather than by luck:
-  the two branches share no application file, and the three files they were always going
-  to collide in are this one, `BUILD-REFERENCE.md` and the invariant list.
+- ~~**The CSV import wrote `4az`**~~ — cut from `f787aa0` on 2026-08-19, beside an
+  app-completion audit running in another session. Written down here first, which is this
+  item working as designed rather than by luck: the two branches share no application
+  file, and the three files they were always going to collide in are this one,
+  `BUILD-REFERENCE.md` and the invariant list. **This branch added no invariant**, so the
+  only one of the three it touches is `BUILD-REFERENCE.md`, in two places that are
+  appends: a new §4 write-up and a line in the §5 gate list.
 
 **This scheme worked exactly as designed, and it is the only one of the four that did.**
 B wrote `4ap` while `4ao` was still unwritten and its push passed, because
@@ -190,13 +192,10 @@ and the reservation only settles who renumbers on the merge.** As settled:
   its line, because the four mechanised greps are rules the *checker* enforces rather than
   invariants a reader has to hold.
 - **#51 took 31** — no file uses PHP newer than the floor, and `php -l` is not what
-  decides that (§4ar).
-- **The CSV/padding branch took 32** — a stored shape has one reader, and a shape that
-  reached a sign is read for good (§4az). **33 is the next free number**, by the rule
-  above rather than by reservation: a branch cut from a base whose list ends at 32 writes
-  33, and a branch cut from one ending at 31 writes 32 and renumbers on the merge, by
-  cost. `invariant 32` appears 6 times across 5 files on this side, which is the number to
-  compare against if a second branch has also written one.
+  decides that (§4ar). **32 is the next free number**, and the CSV branch did not take it:
+  what it added is one node suite and one write-up, and neither is a rule a reader of this
+  tree has to hold in their head. A suite that exists is not an invariant; the gate list
+  in `BUILD-REFERENCE.md` §5 is where a new suite is announced.
 
 B renumbered nothing and A renumbered everything, and the tie was broken by counting:
 `invariant 28` appeared 15 times across 7 files on B's side and 7 times across 6 on A's,

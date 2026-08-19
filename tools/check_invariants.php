@@ -1376,65 +1376,6 @@ foreach ($floorClean as $probe) {
     }
 }
 
-// ---- Both pages read a stored table the same way ---------------------------------
-//
-// Invariant 32. `readTablePads()` decides what a stored table's cell padding means,
-// and two files need that answer for different reasons: viewer.php draws it on the
-// sign, builder.php shows it in the four boxes somebody types into. There is no
-// shared script for a page the Screen loads without auth.php or config.php, so the
-// function is written out twice — which is the shape #44 spent a year in, where the
-// third copy of a rule was the one missing the part that mattered and the two correct
-// copies are exactly what made it invisible.
-//
-// So the copies are compared rather than trusted. Leading whitespace is dropped
-// because one copy sits inside viewer.php's indented block and the other at the left
-// margin; everything else, comments included, has to match — the docblock is where
-// the reason a stored `row_padding: 0` means 8px and not 0 is written down, and a copy
-// that has drifted from it is a copy somebody is about to "correct".
-$sharedOpen  = '---- SHARED between builder.php and viewer.php';
-$sharedClose = '---- end of the shared copy';
-
-/** The shared block, with each line trimmed, or null if this file has no such block. */
-function sharedTableReader($source, $open, $close)
-{
-    $from = strpos($source, $open);
-    $to   = strpos($source, $close);
-    if ($from === false || $to === false || $to <= $from) { return null; }
-    $lines = explode("\n", substr($source, $from, $to - $from));
-    return implode("\n", array_map('trim', $lines));
-}
-
-$sharedCopies = [];
-foreach (['builder.php', 'viewer.php'] as $rel) {
-    $sharedCopies[$rel] = sharedTableReader(file_get_contents($root . '/' . $rel), $sharedOpen, $sharedClose);
-}
-
-$checked++;
-$missing = [];
-foreach ($sharedCopies as $rel => $copy) {
-    if ($copy === null || strpos($copy, 'function readTablePads(') === false) { $missing[] = $rel; }
-}
-if ($missing) {
-    echo "  FAIL both pages carry the shared table-padding reader\n";
-    echo "       not found in: " . implode(', ', $missing) . "\n";
-    $failures[] = 'the shared table-padding reader is missing from ' . implode(', ', $missing);
-} else {
-    echo "  ok   both pages carry the shared table-padding reader\n";
-}
-
-$checked++;
-if (!$missing && $sharedCopies['builder.php'] !== $sharedCopies['viewer.php']) {
-    echo "  FAIL and the two copies are the same code\n";
-    echo "       builder.php and viewer.php have drifted apart — a table would be drawn\n";
-    echo "       on the sign with a padding the Builder never showed\n";
-    $failures[] = 'builder.php and viewer.php disagree about how a stored table is read';
-} elseif (!$missing) {
-    echo "  ok   and the two copies are the same code\n";
-} else {
-    echo "  FAIL and the two copies are the same code\n";
-    $failures[] = 'the two copies could not be compared, because one is missing';
-}
-
 // ---- The instrument itself -------------------------------------------------------
 // Every rule above is read through codeWithoutComments(), so what that function drops
 // decides what all thirty-two of them can see. It gained HTML comments in #50, and the

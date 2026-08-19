@@ -780,60 +780,6 @@ $canvasH = $display->canvasHeight();
         _carouselTimers.push(timer);
     }
 
-    // ---- SHARED between builder.php and viewer.php ------------------------------
-    // The block between this line and its `end of the shared copy` marker is
-    // byte-identical in both files, and invariant 32 is the check that keeps it so:
-    // the Builder shows the numbers the sign will draw, so the two ends have to agree
-    // about what a stored table means before either can be right. Edit one, edit the
-    // other, and run `php tools/check_invariants.php`.
-    /**
-     * The four cell paddings a stored table asks for, in px.
-     *
-     * Three shapes reach this function and only one of them is what the Builder
-     * writes today, because a publish cannot be taken back: every table published
-     * before per-side padding existed is still on a sign, and still says what it
-     * said then.
-     *
-     *   pad_top/right/bottom/left  what the modal writes now. A side that is absent
-     *                              or unreadable falls back to the Viewer's own
-     *                              default rather than to zero — one named side is
-     *                              an answer about that side and about nothing else.
-     *   row_padding                the single number that came before it, and it
-     *                              meant top and bottom only; the sides were left to
-     *                              CSS. Read only when no per-side value was named.
-     *   neither                    8px and 10px, which is `.table-wrap td` in
-     *                              viewer.php. The defaults are written out here
-     *                              rather than read from the stylesheet because the
-     *                              Builder has no such rule to read and has to show
-     *                              the same numbers the sign will draw.
-     *
-     * `row_padding: 0` is deliberately not "no padding": the old Viewer skipped a
-     * zero and drew the 8px default, so a table stored with one has always been an
-     * 8px table, and reading it as zero now would silently reformat every sign that
-     * never touched the field.
-     */
-    function readTablePads(data) {
-        var d = data || {};
-        var pads = { top: 8, right: 10, bottom: 8, left: 10 };
-        var named = false;
-        ['top', 'right', 'bottom', 'left'].forEach(function (side) {
-            var raw = d['pad_' + side];
-            if (raw === null || raw === undefined || raw === '') { return; }
-            var v = parseInt(raw, 10);
-            if (isNaN(v)) { return; }
-            pads[side] = Math.max(0, Math.min(120, v));
-            named = true;
-        });
-        if (named) { return pads; }
-        var legacy = parseInt(d.row_padding, 10);
-        if (!isNaN(legacy) && legacy > 0) {
-            pads.top    = Math.max(0, Math.min(120, legacy));
-            pads.bottom = pads.top;
-        }
-        return pads;
-    }
-    // ---- end of the shared copy -------------------------------------------------
-
     // ── Table ────────────────────────────────────────────────────
     function renderTable(block, content, blockStyles) {
         var data = {};
@@ -843,7 +789,7 @@ $canvasH = $display->canvasHeight();
         var valigns  = data.valigns || [];
         var haligns  = data.haligns || [];
         var widths   = data.widths  || [];
-        var pads     = readTablePads(data);
+        var rowPad   = Math.max(0, parseInt(data.row_padding) || 0);
 
         // The same as the carousel above, and the same answer (#45). An empty table
         // drew "Table — no data" over a grey panel, so the sign carried both a
@@ -888,15 +834,7 @@ $canvasH = $display->canvasHeight();
                 }
                 td.style.verticalAlign = valigns[ci] || 'top';
                 td.style.textAlign     = haligns[ci] || 'left';
-                // All four written every time, so a side set to 0 is drawn as 0. The
-                // single number this replaced could only be *added* to the stylesheet's
-                // 8px/10px, and a zero in it meant "leave the stylesheet alone" — which
-                // is why readTablePads() reads a stored zero as the default rather than
-                // as none, and why a table nobody has touched still comes out at 8/10.
-                td.style.paddingTop    = pads.top    + 'px';
-                td.style.paddingRight  = pads.right  + 'px';
-                td.style.paddingBottom = pads.bottom + 'px';
-                td.style.paddingLeft   = pads.left   + 'px';
+                if (rowPad > 0) { td.style.paddingTop = rowPad + 'px'; td.style.paddingBottom = rowPad + 'px'; }
                 td.textContent = (row[ci] !== undefined && row[ci] !== null) ? row[ci] : '';
                 tr.appendChild(td);
             });

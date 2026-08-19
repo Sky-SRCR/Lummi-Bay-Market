@@ -110,18 +110,6 @@ edited in place and every change reaches the sign by hand.
   rather than trusting the green line. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
   for the reason they always did: they cover a host that moves, and what they prevent
   is silent.
-- **A stored shape is read by one function, and a shape that has been published is
-  read forever.** The table block's cell padding is the case: `readTablePads()` decides
-  what a stored table asks for, and both `builder.php` and `viewer.php` need that answer
-  — one to draw the sign, one to show the numbers somebody is about to type over — so
-  the function is written out twice and `tools/check_invariants.php` compares the copies
-  (invariant 32). There is no shared script to put it in: `viewer.php` is loaded by a
-  Screen with no session and no `config.php`. The half that is easy to lose is the older
-  shape. A single `row_padding` meant top and bottom only, and a stored `0` in it drew
-  the stylesheet's 8px, because the Viewer that read it skipped a zero — so reading that
-  `0` as "no padding" now is not a tidier rule, it is every untouched table in the shop
-  quietly reformatting itself on the next poll.
-
 - **Nothing that has been published can be taken back.** Publishing overwrites; a
   deleted Display, a swept asset row and a saved brand standard are gone. Prefer
   refusing a write to merging one. The **one** exception is the Builder's Undo
