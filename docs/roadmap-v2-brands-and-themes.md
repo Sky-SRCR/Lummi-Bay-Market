@@ -71,7 +71,7 @@ narrows an existing decision, the ADR is named.
 | 7 | The Brand Standards lock refusal **narrows** from "anyone editing anything" to "anyone editing a Display using this Brand", naming the Display and the holder. Narrows ADR-0007's amendment. |
 | 8 | `displays.brand_id` is **`NOT NULL`**. Deleting a Brand in use is **refused**, naming the Displays. Ids are never reused. |
 | 9 | Upgrade **seeds Brand #1** from today's global `block_styles`, named after `SITE_NAME`; every existing Display points at it and no sign moves. Fresh setup cannot finish without a first Brand. |
-| 10 | A Workspace Theme has **12 roles** — 6 chrome, 5 status, 1 canvas-overlay. Status colours and the selection outline/handles **are** themable, at the admin's discretion. |
+| 10 | A Workspace Theme has **13 roles** — 7 chrome, 5 status, 1 canvas-overlay. Status colours and the selection outline/handles **are** themable, at the admin's discretion. *(Planned as 12/6 chrome; step 5 shipped `panel_border` beside `panel`, because a panel that borrows the work area's edge colour disappears against it. The number here is the one `SiteChrome::ROLES` holds — `tools/page_constants.js` reads that list rather than repeating it, and refuses to build a page unless it counts thirteen.)* |
 | 11 | **The canvas is never themable.** `#builder-canvas` and everything drawn on it belong to the Brand. Enforced by a check, not by convention. |
 | 12 | A Workspace Theme applies to **every signed-in page**, not only the Builder. `login.php` and the Viewer are unaffected by construction. Site Branding becomes **the default theme**. |
 | 13 | Admins create themes; everyone selects one. Admins own their own legibility policy — contrast is **warned about, not refused**. |

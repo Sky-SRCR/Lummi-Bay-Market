@@ -48,7 +48,7 @@ rewrites the file.
 `lib/.htaccess` and `tools/.htaccess` must go up *with* their folders or the modules
 and the rehearsal script become readable.
 
-### Known live state — checked 2026-08-07
+### Known live state — probed 2026-08-07, `lib/` row re-confirmed by shell 2026-08-13
 
 The audit framed this group as *re-uploading restored `setup.php`*. It had never been
 deleted at all: it answered **200** with *"Setup is complete. This page is disabled.
