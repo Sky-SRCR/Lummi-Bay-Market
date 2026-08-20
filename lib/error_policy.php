@@ -31,6 +31,10 @@
 // every filesystem call is suppressed and every handler is total.
 
 require_once __DIR__ . '/alerts.php';
+// Where the private directory is, asked rather than counted — `lib/install_paths.php`
+// is the one owner of that question, and this file used to hold a second opinion about
+// it that was wrong everywhere the app is not two levels below the account (§4bn).
+require_once __DIR__ . '/install_paths.php';
 
 class ErrorPolicy
 {
@@ -303,8 +307,17 @@ class ErrorPolicy
         // that private directory is really there — on an install using the
         // fallback placeholders in db_connect.php it is not, and creating a
         // `private/` directory the admin never asked for would be a surprise.
-        $private = dirname($app, 2) . '/private';
-        if (@is_dir($private)) { $candidates[] = $private . '/logs'; }
+        //
+        // Nearest first, and only the nearest one that exists: the same order
+        // `InstallPaths` uses for the credentials, from the same list, so the log
+        // cannot end up beside a different install's password. This was
+        // `dirname($app, 2)`, which found nothing on any layout but
+        // `public_html/lbm/` — and finding nothing here is silent, because the
+        // last-resort branch below works. The log simply moved inside the webroot
+        // and nobody was told (§4bn).
+        foreach (InstallPaths::privateDirCandidates($app) as $private) {
+            if (@is_dir($private)) { $candidates[] = $private . '/logs'; break; }
+        }
         // Last resort: inside the app, where it is reachable by URL unless we say
         // otherwise — so we say otherwise, in the same breath as creating it.
         $candidates[] = $app . '/logs';

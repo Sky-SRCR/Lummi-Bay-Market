@@ -3784,33 +3784,100 @@ checkSame('', InstallPaths::installName('/home/x/..'), 'nor ".." — both match 
 checkSame('', InstallPaths::installName('/home/x/we b'), 'a space is refused rather than escaped');
 checkSame('', InstallPaths::installName('/home/x/a$b'), 'and so is anything else outside the safe set');
 
+// Where the private directory is. This used to be `dirname($appDir, 2)`, which is a
+// fact about `public_html/lbm/` written down as a rule about every install — right
+// for the live sign and wrong for anywhere else a web server can be pointed (§4bn).
+$privDirs = InstallPaths::privateDirCandidates('/home/acct/public_html/lbm');
+checkSame('/home/acct/public_html/private', $privDirs[0],
+          'the nearest ancestor is looked in first');
+checkSame('/home/acct/private', $privDirs[1],
+          'and the account\'s own private directory is next, which is the live install\'s answer unchanged');
+check(!in_array('/home/acct/public_html/lbm/private', $privDirs, true),
+      'the app\'s own directory is never a candidate — a private/ beside the app is inside what the web server serves');
+checkSame($privDirs, InstallPaths::privateDirCandidates('/home/acct/public_html/lbm/'),
+          'and a trailing slash does not shift the whole list by one');
+$flatDirs = InstallPaths::privateDirCandidates('/home/acct/lbm.srcresort.com');
+checkSame('/home/acct/private', $flatDirs[0],
+          'a subdomain docroot one level below the account reaches the same private directory — the layout counting two levels could not see');
+checkSame(3, count($flatDirs),
+          'and the walk is bounded, so it stops rather than climbing the host\'s own directories');
+checkSame(3, count(InstallPaths::privateDirCandidates('/a/b/c/d/e/f')),
+          'three is the bound itself, not wherever the path happens to run out — this one has six levels to give');
+checkSame(['/private'], InstallPaths::privateDirCandidates('/'),
+          'a root directory yields one candidate, not three copies of it');
+checkSame(['/private'], InstallPaths::privateDirCandidates(''),
+          'and so does no directory at all, rather than a relative path built out of dirname(\'\')');
+
+// What this install is called. Two names, because one account can hold two folders
+// with one basename — and while the bare name was all there was, a file written to
+// isolate either of them was read by both.
+checkSame(['public_html-lbm', 'lbm'], InstallPaths::installNames('/home/acct/public_html/lbm'),
+          'the parent folder qualifies the name, and the bare name remains as the fallback');
+checkSame(['lbm.srcresort.com-lbm', 'lbm'], InstallPaths::installNames('/home/acct/lbm.srcresort.com/lbm'),
+          'so two installs both called lbm each have a filename that can only mean one of them');
+checkSame(['lbm'], InstallPaths::installNames('/lbm'),
+          'with no usable parent the bare name is the only one');
+checkSame([], InstallPaths::installNames('/home/x/a$b'),
+          'and a folder outside the safe set names nothing, rather than being escaped into a path');
+
 $cands = InstallPaths::credentialsCandidates('/home/acct/public_html/lbm-test');
-checkSame(2, count($cands), 'a named install has two candidates');
-checkSame('/home/acct/private/db_credentials_lbm-test.php', $cands[0],
-          'its own file is tried first, and lives OUTSIDE the webroot');
-checkSame('/home/acct/private/db_credentials.php', $cands[1],
-          'and the shared file is the fallback, so the live install is unaffected');
+checkSame('/home/acct/public_html/private/db_credentials_public_html-lbm-test.php', $cands[0],
+          'the most specific name in the nearest directory is tried first');
+check(in_array('/home/acct/private/db_credentials_lbm-test.php', $cands, true),
+      'and the path the rehearsal install has always used is still in the list');
+$firstShared = array_search('/home/acct/public_html/private/db_credentials.php', $cands, true);
+$lastNamed   = -1;
+foreach ($cands as $i => $path) { if (strpos($path, 'db_credentials_') !== false) { $lastNamed = $i; } }
+check($firstShared !== false && $lastNamed < $firstShared,
+      'every named file is tried before any shared one, at any depth — a nearer db_credentials.php beating db_credentials_lbm-test.php is this file\'s own defect back again');
 $shared = InstallPaths::credentialsCandidates('/');
 checkSame(1, count($shared), 'an install with no usable name has only the shared candidate');
-check(substr($shared[0], -20) === '/db_credentials.php' || substr($shared[0], -19) === '/db_credentials.php',
+check(substr($shared[0], -19) === '/db_credentials.php',
       'and it is the shared file exactly');
 check(strpos($shared[0], 'db_credentials_') === false,
       'never a per-install name built out of something unexpected');
 
 // The specific file winning is the whole feature, so it is proved against real files
 // rather than inferred from the order of the list.
+//
+// Rooted one directory deeper than it reads: `$instDir` stands in for the account, so
+// all three levels of the walk stay inside the throwaway directory. Rooted at the top
+// of it, the third level is the *temp directory itself*, and a check that reads a file
+// this run never wrote passes for the wrong reason — which is the hazard
+// newTestStateDir() already documents, one level further out.
 $instDir = newTestStateDir();
-mkdir($instDir . '/public_html/lbm-test', 0777, true);
-mkdir($instDir . '/private', 0777, true);
-$appDir = $instDir . '/public_html/lbm-test';
+mkdir($instDir . '/acct/public_html/lbm-test', 0777, true);
+mkdir($instDir . '/acct/private', 0777, true);
+$appDir = $instDir . '/acct/public_html/lbm-test';
 checkSame('', InstallPaths::credentialsFile($appDir),
           'with neither file present it answers empty, so db_connect.php can say which is missing');
-file_put_contents($instDir . '/private/db_credentials.php', "<?php\n");
-checkSame($instDir . '/private/db_credentials.php', InstallPaths::credentialsFile($appDir),
+file_put_contents($instDir . '/acct/private/db_credentials.php', "<?php\n");
+checkSame($instDir . '/acct/private/db_credentials.php', InstallPaths::credentialsFile($appDir),
           'with only the shared file it uses that — an install that predates this change is unchanged');
-file_put_contents($instDir . '/private/db_credentials_lbm-test.php', "<?php\n");
-checkSame($instDir . '/private/db_credentials_lbm-test.php', InstallPaths::credentialsFile($appDir),
+file_put_contents($instDir . '/acct/private/db_credentials_lbm-test.php', "<?php\n");
+checkSame($instDir . '/acct/private/db_credentials_lbm-test.php', InstallPaths::credentialsFile($appDir),
           'and the moment its own file exists that wins, which is what isolates the rehearsal copy');
+
+// The layout that had no answer at all: the app served straight out of a subdomain
+// folder, one level below the account rather than two. It reads the same shared file
+// the live install does, which is what "the depth stopped mattering" has to mean.
+$subApp = $instDir . '/acct/lbm.srcresort.com';
+mkdir($subApp, 0777, true);
+checkSame($instDir . '/acct/private/db_credentials.php', InstallPaths::credentialsFile($subApp),
+          'a flat subdomain docroot finds the account\'s credentials, where counting two levels found a directory above the account');
+
+// And the collision the qualified name exists for. Two installs both called `lbm`,
+// one of them the live sign: the file written for the new one must not be read by it.
+$liveApp = $instDir . '/acct/public_html/lbm';
+$subLbm  = $instDir . '/acct/lbm.srcresort.com/lbm';
+mkdir($liveApp, 0777, true);
+mkdir($subLbm, 0777, true);
+file_put_contents($instDir . '/acct/private/db_credentials_lbm.srcresort.com-lbm.php', "<?php\n");
+checkSame($instDir . '/acct/private/db_credentials_lbm.srcresort.com-lbm.php',
+          InstallPaths::credentialsFile($subLbm),
+          'the new install reads the qualified file written for it');
+checkSame($instDir . '/acct/private/db_credentials.php', InstallPaths::credentialsFile($liveApp),
+          'and the live sign, whose folder has the same name, still reads the shared one — a bare db_credentials_lbm.php would have moved it to another database');
 
 // ─────────────────────────────────────────────────────────────
 section('Convergence asks the catalogue before it alters anything');
@@ -8576,4 +8643,15 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2363 : 2338);
+//
+// **Then §4bn**, where the private directory stopped being counted and started being
+// searched. 16 more, and the shape of them is worth the line: they are what the old
+// eleven could not say, because a pure function given the one layout this account
+// happens to use answers correctly in the only case anybody had thought to pass it.
+// Fourteen are pure — the walk, its bound, the two names, the ordering — and two are real
+// files in a throwaway directory, proving that two installs with one folder name read
+// different credentials. Two of the fourteen are there because the sweep asked for them:
+// the bound was stated by a path that ran out before it, so raising it changed nothing.
+// Engine-independent, all of them, so 25 is still the difference and the MySQL figure
+// below is again a prediction rather than a reading.
+reportChecks(testIsMysql() ? 2379 : 2354);

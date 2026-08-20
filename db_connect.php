@@ -15,8 +15,12 @@
 //   define('DB_USER', 'your_database_user');
 //   define('DB_PASS', 'your_database_password');
 //
-// dirname(__DIR__) points one level above this file's parent
-// folder (i.e. above public_html / www).
+// Where that file is looked for is `lib/install_paths.php`'s
+// decision and not this one's: the nearest `private/` directory
+// above the app — searched, not counted — and a name-specific
+// file before the shared one. The arithmetic that used to live
+// here described `public_html/lbm/` and no other document root
+// (§4bn).
 // ============================================================
 
 // Every entry point includes this file, which makes it the one place that can put

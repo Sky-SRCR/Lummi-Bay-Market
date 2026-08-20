@@ -7484,6 +7484,127 @@ here would have found it with a working 5.7 leg next to it to compare against, a
 waiting.
 
 ---
+### 4bn. The private directory was one install's layout, written down as a rule
+
+The store owner pointed a cPanel subdomain at this app — `lbm.srcresort.com`, a second
+front door on the same account. Two things stopped it, and only the first was about the
+subdomain.
+
+**It never resolved.** `srcresort.com`'s nameservers are Cloudflare's, so the zone cPanel
+edits when it creates a subdomain is not the zone anybody reads: the name answered
+NXDOMAIN, authoritatively, with an SOA rather than a timeout. Nothing in the app was
+involved and nothing in the repo had ever said so, which is why that half is a row in
+HANDOFF §5 and not a paragraph here.
+
+**Then the layout, which is this repo's.** A subdomain's document root is wherever the
+account says — `~/lbm.srcresort.com/`, one level below the home directory rather than the
+two that `public_html/lbm/` sits at. Two lines counted those levels:
+
+```php
+lib/install_paths.php    $private = dirname($appDir, 2) . '/private';
+lib/error_policy.php     $private = dirname($app, 2)    . '/private';
+```
+
+From a docroot one level down, both resolve to `/home1/private` — a directory *above the
+account*, which nobody but the host can create. The credentials lookup then found
+nothing, `db_connect.php` fell through to its `your_database_name` placeholders, and the
+app could not connect at all. That failure is loud. The one beside it is not: `stateDir()`
+only *prefers* the private directory, so failing to find it falls to the last-resort
+branch, and the error log moves inside the webroot with nobody told.
+
+**Why nothing here caught it, which is the part worth keeping.** `credentialsCandidates()`
+was pure on purpose, and the docblock says why in as many words: it takes the directory
+rather than reading `__DIR__` because "the interesting cases are all directories this
+machine is not sitting in." The seam was right. Every argument ever passed through it was
+`public_html/<something>`. So the suite asserted eleven things about one shape and the
+function was never asked the question it existed to answer — the §4bg and §4bi lesson
+(a branch chosen by the machine, asserted in the single configuration nobody is in) with
+the account's own layout in the machine's place. A pure function is not covered by having
+tests; it is covered by having been given the shapes it will meet.
+
+**So the depth is searched.** `privateDirCandidates()` walks up from the app, nearest
+first, and the live install's answer does not move: `public_html/private` is not there, so
+`~/private` is, exactly as before. Three properties, all asserted rather than argued:
+
+- **`$appDir` itself is never a candidate.** A `private/` beside the app is inside what
+  the web server serves, which is the one place the header of that file says credentials
+  must not be — it reads as safe because PHP executes the file and emits nothing, right
+  up until a configuration change stops PHP running and Apache hands it over as text.
+- **The walk stops after three levels.** Above an account is the host's; a file there is
+  not one this account could have put there. It bounds a pointless search rather than
+  protecting anything, since the search ends at the first file that exists.
+- **`ErrorPolicy::stateDir()` asks the same module** instead of holding the second copy of
+  the answer. It takes the nearest private directory that exists, so the log cannot land
+  beside a different install's password. That also splits it the way §4o and §4bi ask for:
+  the *decision* — which directories, in what order — is now a pure function with checks
+  over it, and what stays behind in `stateDir()` is the read of this machine's filesystem,
+  which no suite here can put in another configuration.
+
+**And a second defect fell out of the first.** The install is named by its own folder, and
+the owner's next question was the right one: what makes the file unique? It didn't. On the
+layout being set up, `public_html/lbm/` and `lbm.srcresort.com/lbm/` are two installs with
+one basename, so a `db_credentials_lbm.php` written to isolate the new one would have been
+read by the live sign as well — the live sign quietly changing database, in the act of
+isolating something else. That is precisely the defect `lib/install_paths.php` exists to
+prevent, one level up from where it was fixed. The parent folder now qualifies the name
+and is tried before it: `db_credentials_lbm.srcresort.com-lbm.php`, then
+`db_credentials_lbm.php`. Nobody has to create the qualified file; it is there for whoever
+needs two same-named installs kept apart.
+
+**Not the hostname**, which is what a person naturally reaches for and is wrong twice
+over. A request's `Host` header is chosen by whoever is making the request, so it is not a
+fact about the install at all — and it names a domain, while the thing being told apart is
+a directory: two subdomains can serve one folder and one subdomain can serve several. The
+folder is what the web server decided, which is the same reason `installName()` refuses to
+build a path out of anything else.
+
+**The cost, since this runs on every request.** The list is nine paths where it was two,
+and the live install's answer is the eighth of them — six extra `is_file()` calls that miss,
+on a stat cache, per page load. That is tens of microseconds against a page that opens a
+database connection, and it buys the property that no install has to be at a particular
+depth for its credentials to be found. Worth naming rather than leaving for somebody to
+find in a profile.
+
+**The ordering is the safety property, not the tidy way to build a list.** Every named
+file is tried before any shared one, across all the directories. Sorted the other way —
+nearest directory first, specific before shared within each — a shared `db_credentials.php`
+one directory closer would beat the `db_credentials_lbm-test.php` written to keep the
+rehearsal copy off the live database, which is the original defect reintroduced by the fix
+for this one. There is a check whose whole job is that inequality.
+
+**16 checks**, and the shape of them is the point: fourteen pure — the walk, its bound, the
+two names, the ordering, the shapes that name nothing — and two against real files in a
+throwaway directory, proving that two installs with one folder name read different
+credentials. Two of the fourteen are the sweep's doing rather than the design's: the bound
+of three was stated by a path that ran out at four levels anyway, so `PRIVATE_LEVELS` could
+be raised without a check noticing, and the same mutant killed the off-by-one on the loop
+condition beside it. Three survivors are documented in the docblock instead of being
+checked, because no check can distinguish them — `==` against `===` on two strings out of
+`dirname()`, an `$out = []` that PHP would auto-vivify, and a guard for an empty path that
+today's `dirname('')` already handles. The
+real-file block moved a level deeper into its temp directory as well, because the walk now
+reaches three levels up and the third was `sys_get_temp_dir()` itself; `newTestStateDir()`
+already documents that hazard one level further out, where a stale directory from a
+recycled pid made a check pass for the wrong reason.
+
+**One gap left open, named rather than closed.** The two mutants on the changed line in
+`stateDir()` survive the sweep — and so do the two beside them, on the `LBM_LOG_DIR` guard
+that predates this. That whole candidate loop is unreachable from any suite here: it reads
+`dirname(__DIR__)` and this container's filesystem, where no `private/` exists at any
+level, so the only arm ever exercised is the last-resort one. Closing it means a seam
+through `stateDir()`, which is memoised and called from five places, and that is a
+different change from this one. What this change did do is make the gap smaller: the path
+arithmetic — the part that was actually wrong — is out of that function and under checks,
+and what is left behind it is a read.
+
+**What this does not say.** No browser has been near it. Nothing is installed at
+`lbm.srcresort.com` yet — at the time of writing the name does not resolve and the
+document root holds one file this repo did not write — so what is claimed here is that the
+app can find its credentials from a docroot at any depth an account can produce, and that
+the live install's answer is unchanged. Both are assertions in the suite. Whether a sign
+comes up on that subdomain is a walk somebody owes, and `docs/browser-pass.md` is where it
+goes when it happens.
+
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of

@@ -148,9 +148,9 @@ the repo's, which makes a hand-edit unlikely rather than impossible.
 (`silverad_lummi_market_drive_thru_2`). PHP on this host is 8.2 (#51 — this is where
 that came from).
 
-**The trap this exists to close.** `lbm-test/` sits at the same depth as `lbm/`, and
-credentials are found by walking two folders up to `private/`. Both folders reach the
-*same* file, so an unmodified copy in `lbm-test/` connects to the **live** database —
+**The trap this exists to close.** `lbm-test/` sits beside `lbm/`, and credentials are
+found by walking up to the nearest `private/`. Both folders reach the *same* file, so an
+unmodified copy in `lbm-test/` connects to the **live** database —
 and then behaves perfectly. Signing in converges schema on the live tables. Pressing
 Publish overwrites a real sign. Nothing warns you, because from the app's point of view
 nothing is wrong. There is no undo anywhere here, so the first symptom is a customer
