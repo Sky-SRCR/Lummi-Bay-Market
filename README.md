@@ -56,18 +56,24 @@ picker: a forged request naming an ungranted Display is refused.
 
 ## Setup
 
-**Installing on a new server? Build the package instead of copying the tree.**
+**Installing on a new server? Build the package and upload one file.**
 
 ```bash
 php tools/build_installer.php        # → dist/store-display-system-<commit>.zip
 ```
 
-It holds `app/` — the 48 files that belong in a webroot and nothing else — a
-credentials template for the folder above it, a manifest with a SHA-256 per file, and
-[`INSTALL.md`](INSTALL.md), which is the ten steps and the four checks afterwards. It
-refuses to build a package holding a path no rule classifies, because a `lib/` module
-left out is a blank sign in the shop and a `.md` put in is the live database name served
-to whoever asks (invariant 38, `docs/BUILD-REFERENCE.md` §4bn).
+The zip holds `install.php` — the whole app inside one file — plus the same 49 files
+loose for the manual route, a credentials template, a manifest with a SHA-256 per file,
+and [`INSTALL.md`](INSTALL.md). Upload `install.php` into an empty folder and open it: it
+unpacks the app, writes the database credentials above the webroot, creates the tables,
+converges, makes the first administrator and the venue's Brand, and deletes itself
+(invariant 39, `docs/BUILD-REFERENCE.md` §4bo). The one thing it cannot do on shared
+hosting is create the *database* — cPanel owns that — so it offers, and says what to click
+when it is refused.
+
+The build refuses to write a package holding a path no rule classifies, because a `lib/`
+module left out is a blank sign in the shop and a `.md` put in is the live database name
+served to whoever asks (invariant 38, §4bn).
 
 The rest of this section is the same thing by hand, which is what to read when something
 goes wrong rather than what to follow. For an install that already exists, neither
@@ -111,14 +117,14 @@ transaction, never runs twice at once, and will not retry for five minutes.
 
 ### 3. First-run admin
 
-Visit `setup.php` once to create the first admin account. It **self-disables** as soon
-as any user exists, and then **deletes itself** — at the end of a successful setup, or
-on the first request that finds it already disabled. Nothing to remember afterwards.
+Open `install.php` once. On a folder that already holds the app it skips straight to the
+database and administrator steps, so it is also the manual route's last two steps.
 
-If the page says it *could not* delete itself, the server did not allow the write:
-delete `setup.php` by hand. It never reports success without checking the file is
-really gone, because while it is still being served a restore to an empty database
-turns it back into a public admin-creation form.
+It **self-disables** as soon as any account exists, and then **deletes itself**. If the
+page says it *could not*, the server did not allow the write: delete `install.php` by
+hand. It never reports success without checking the file is really gone, because while it
+is still being served a restore to an empty database turns it back into a public
+admin-creation form. `setup.php` used to be this and is gone — one door (invariant 39).
 
 ### 4. Branding (optional)
 
@@ -130,7 +136,7 @@ writes a temporary copy beside it and renames over it.
 ### 5. Updating an install that already exists
 
 Read [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) first. Both of the steps above
-leave the server holding files the repo cannot supply: `setup.php` is *gone* from the
+leave the server holding files the repo cannot supply: `install.php` is *gone* from the
 server and `branding_config.php` was rewritten there, so uploading the tree over the
 top restores the first-admin form and reverts the branding — including the address
 reset codes and alerts are sent from. `uploads/` and the log folder exist only on the
@@ -167,7 +173,7 @@ browser. Keep those when deploying.
 | `branding_config.php` | Generated brand theme (`BRAND_*`, `SITE_NAME`, mail-from). Written only by `lib/branding.php` |
 | `login.php` / `logout.php` | Auth; account-keyed login lockout |
 | `reset_password.php` | 2-step emailed 6-digit passcode reset (30-min expiry) |
-| `setup.php` | First-run admin creation; self-disables and then deletes itself once an admin exists |
+| `install.php` | The whole install: unpacks the app it carries, writes the credentials above the webroot, builds the tables, converges, creates the first admin and the venue's Brand, deletes itself. The only door that makes an administrator (invariant 39) |
 | `builder.php` | Drag-and-drop canvas editor for one Display — the heart of the app |
 | `admin_panel.php` | Displays, grants, user management, brand standards, work area |
 | `crud.php` | Asset library (text/image/video assets), shared by every Display |

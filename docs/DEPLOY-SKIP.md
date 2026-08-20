@@ -15,13 +15,19 @@ or "make remote match local" — that is the mode that takes `uploads/` with it,
 there is no undo for a store's photographs and videos.
 
 > **This page is about a server that is already running.** A *new* install is the other
-> case and has its own artifact: `php tools/build_installer.php` writes a package holding
-> only the files that belong in a webroot, plus `INSTALL.md`, and it will not build one
-> holding a path no rule classifies (invariant 38, BUILD-REFERENCE §4bn). That package
-> deliberately carries `setup.php` and the repo's default `branding_config.php`, because
-> a fresh install needs both — which is to say it carries exactly the two files group A
-> and group B below say must never go over the top of a working install. **Do not unpack
-> it into `lbm/` or `lbm-test/`.** For an update, this page is still the whole answer.
+> case and has its own artifact: `php tools/build_installer.php` writes a package whose
+> top-level `install.php` carries the whole app inside it — upload that one file into an
+> empty folder and open it (invariant 39, BUILD-REFERENCE §4bo). It will not build a
+> package holding a path no rule classifies (invariant 38, §4bn), and it deliberately
+> carries `install.php` and the repo's default `branding_config.php`, because a fresh
+> install needs both — which is to say it carries exactly the two files group A and group
+> B below say must never go over the top of a working install. **Do not unpack it into
+> `lbm/` or `lbm-test/`.** For an update, this page is still the whole answer.
+>
+> **`setup.php` no longer exists.** `install.php` absorbed it, so where this page says
+> `setup.php` below it is describing what the live server was found holding in August 2026
+> — a record, not an instruction. Every rule about it applies unchanged to `install.php`,
+> which self-disables and deletes itself the same way and for the same reasons.
 
 ## A. Never overwrite — the server's copy is the authority
 
@@ -47,7 +53,7 @@ rewrites the file.
 
 | File | Why |
 |------|-----|
-| `setup.php` | Creates the **first admin account** when the `users` table is empty. It self-disables while it can count users — but point the app at an empty or freshly restored database and it is a public "make yourself an admin" form again. Nothing in `.htaccess` blocks it. **It now deletes itself** once an admin exists, so a re-upload is self-healing on the first request that reaches it — which is a safety net, not permission to upload it. See below. |
+| `install.php` (and `setup.php`, which it replaced) | Creates the **first admin account** when the `users` table is empty. It self-disables while it can count users — but point the app at an empty or freshly restored database and it is a public "make yourself an admin" form again. Nothing in `.htaccess` blocks it. **It now deletes itself** once an admin exists, so a re-upload is self-healing on the first request that reaches it — which is a safety net, not permission to upload it. See below. |
 | `.git/` | Served, if it lands in the webroot. It hands out the entire history of the repo to anyone who asks for it. Upload the working files, never the repository. |
 | `*.md` and `docs/` | `HANDOFF.md` names the live database, the credentials path outside the webroot, and where the error log goes. `.htaccess` now denies `.md` as a backstop, but the rule is belt-and-braces — the reason not to upload them is that they are of no use to the server. |
 | `.github/`, `tools/*.js`, `.gitignore` | Nothing on the server runs them. The node suites need a Node that isn't there. |

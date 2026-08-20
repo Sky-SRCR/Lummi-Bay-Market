@@ -758,6 +758,28 @@ through the app again:
     are the two files `docs/DEPLOY-SKIP.md` says must never go over the top of a working
     server. There is one artifact and it is the one for an empty database.
 
+39. **Creating the first administrator has one door, and nothing that door does is
+    assumed** (§4bo). `install.php` is the whole install — it unpacks the app it carries,
+    writes the credentials above the webroot, builds the tables, names the venue, creates
+    the account, and deletes itself. `setup.php` is **gone**, and `build_installer.php`
+    fails if it comes back: two public "make yourself an administrator" forms is two
+    windows to close, two files to remember, and two pages that have to agree about what
+    "already installed" means. The rest of the invariant is that every step reports what
+    it *checked* rather than what it attempted, because an installer runs once, on a
+    machine nobody is watching, with no undo behind any of it:
+    the self-delete reads the filesystem back rather than trusting `unlink()`; `writeFile()`
+    reads the file back rather than trusting `file_put_contents()`; `applySchemaScript()`
+    reports every statement the engine refused with the engine's own message and **never**
+    goes through `schemaTry()`, whose whole job is to swallow one; every archive entry is
+    checked against its own CRC and against `installerSafeEntryName()` before a byte is
+    written, because a zip is data and an entry called `../../private/db_credentials.php`
+    is a file outside the webroot with somebody else's contents in it. And every *decision*
+    is pure or takes its facts as parameters — invariant 37's seam, and the only reason the
+    suite can ask what the preflight says on PHP 8.0 with no zlib and an unwritable
+    webroot, which is a machine nobody here has. What none of that reaches is the act
+    itself: `tools/rehearse_install.php` builds a database from nothing on CI's real MySQL,
+    on every leg, and the browser half is an owed walk.
+
 
 ---
 
@@ -7624,6 +7646,122 @@ first sign a new store sees carries the previous shop's name. Renaming the const
 reach into the one path that cannot be re-run, so INSTALL.md step 9 says to rename the
 Display instead — and says which two of its fields cannot be changed afterwards.
 
+### 4bo. One file, one folder, and the one thing it cannot do
+
+The owner read §4bn's package and asked the obvious question: *why is it a folder of files
+and a page of instructions, rather than one file you upload and open?* It is the right
+question. The answer turned out to be "it can be one file", with one exception that is
+worth stating before the design, because it is the part nobody can engineer away.
+
+**The database itself.** On cPanel, `CREATE DATABASE` from PHP fails and should. cPanel
+owns database creation: names carry the account prefix, the account-to-database mapping
+lives in cPanel's own records rather than in MySQL, and the user it issues has privileges
+on mapped databases and no global `CREATE`. A database made behind cPanel's back is one it
+does not know about and cannot re-map after a restore. So `Installer::createDatabase()`
+exists, is offered, and succeeds on a server somebody administers themselves — and on a
+shared host it returns the sentence naming the three clicks that do work. Step 1 of
+`INSTALL.md` is those three clicks. Everything after it is the page.
+
+Everything else the question asked for is now one file: `install.php` carries `app/`
+inside it, unpacks it, writes the credentials **above** the webroot, runs `schema.sql`,
+converges, names the venue, creates the administrator, and deletes itself.
+
+**Why the app is inside the file rather than beside it.** Not to save uploads — to close
+the manual route's worst failure, which has nothing to do with the app. Many FTP clients
+skip dotfiles by default, so `lib/.htaccess` does not arrive and every module in `lib/` is
+readable in a browser. A folder listing cannot see that; only a request can, which is why
+`docs/DEPLOY-SKIP.md` has had to ask that question twice, both ways, on a live server. One
+file cannot lose part of itself in transit. The payload is base64 rather than raw bytes
+after `__halt_compiler()`, which would be a third smaller: an FTP client in ASCII mode
+rewrites line endings inside binary it believes is text, and the damage is silent until a
+CRC check on somebody else's server days later. 33% of 460 KB is not worth a class of
+failure nobody could diagnose.
+
+**Why the unpacker is written out in the page.** Because at the moment it runs, `lib/`
+does not exist — nothing can be required. So the zip reader is four functions at the top of
+`install.php`, and the `INSTALLER_INSPECT` guard at the bottom is what lets the suite
+require that page, declare them, and test them without running an installer. It is a zip
+reader rather than a `ZipArchive` call (absent on some hosts) and rather than both, which
+would be two paths one of which is never exercised. `tools/build_installer.php` reads the
+payload back through that same function on every build, so "the archive is fine" is this
+repo's answer rather than the next person's problem.
+
+**`setup.php` is gone.** It did the last of the installer's five jobs, and two public
+first-administrator forms is worse than one — two windows, two files to remember, two
+pages that have to agree about what "already installed" means. Its two best ideas are
+here: `removeSelf()`'s read-back, and its validation order, kept exactly so a person
+filling in the form gets the same first sentence they always would.
+
+**Six things building it found, and not one of them was the thing it was written for.**
+
+`sqlStatements()` **already existed**, in `tools/test_fixture.php`. The fixture builds the
+MySQL database by running `schema.sql`, so it was the only thing in the repo that had ever
+had to read that file — and the installer was about to become the second, with a different
+opinion about how. The fixture's copy was the weaker one: no backtick identifiers, no `#`
+or `/* */` comments, and a doubled `''` inside a string read as the end of it. One
+implementation now, in `lib/schema.php`, which is the only arrangement in which the MySQL
+leg is evidence about the installer at all.
+
+`BrandAdmin` owns its own transaction, and **MySQL has no nested transactions** — so the
+use-case module could not wrap the venue and the account in one, the way invariant 22's
+four siblings do. What replaced it is an ordering, and it is the *opposite* of
+`setup.php`'s: the venue first, the account second, so that a venue failure creates
+nothing and an account failure leaves a renamed Brand and a page that still works.
+`setup.php` had it the other way and its own comment admitted the cost — an account
+created, a Brand that was not, reported as success with a sentence about the Branding tab.
+The account goes last because the account is what switches the installer off.
+
+**`schema.sql` seeds no Display.** It creates nine tables and seeds a Brand;
+`seedLegacyDisplay()` in `signageSchemaPlan()` is what makes the first sign, and that runs
+on the first *authenticated* request. So a brand-new install had no sign at all until
+somebody signed in — which nothing would have reported, because everything present was
+correct. It was found by writing the last screen, the one that prints the address to point
+a television at, and having nothing to put in it. The installer converges before it claims
+to be finished.
+
+**The payload marker was replaced with itself.** `"$APP_PAYLOAD = '';"` in a
+double-quoted PHP string interpolates the variable, so the first draft of three lines
+replaced the empty string with the empty string and wrote a 640 KB installer carrying
+nothing — which would have unpacked cleanly into a folder with one file in it. The marker
+is spelled in single quotes and joined now, and `str_replace`'s count is checked: not one
+substitution is a failed build.
+
+**Two of the checks written for it could only ever pass**, and both went: `token_get_all()`
+always returns an array, and an `eval` of `return true` always evaluates. That is invariant
+30 catching its author in the same afternoon, which is the only rate at which it is cheap.
+What is left in their place is the one that can fail — PHP's own parser, on the credentials
+file this actually writes, with a password holding the two characters that end a
+single-quoted string. `var_export()` is the whole of that, and a parse error there is a
+file outside the webroot that nobody thinks to look at.
+
+**And `install.php` asked `displays` for itself.** One `SELECT tag FROM displays` to print
+the sign's address, and `check_invariants.php` refused it — correctly. It goes through
+`DisplayStore` now. Worth recording because it is the rule working on the newest page in
+the repo, on its first run, over a line that was obviously harmless and was still the
+second reader of that table.
+
+**What now runs, and what still does not.** `tools/rehearse_install.php` builds a database
+from nothing on CI's real MySQL — 33 checks, on every leg: the server, an empty database,
+nine tables from `schema.sql`, convergence seeding one Display with a Brand, convergence
+again seeding no second one, the credentials file written where the app would look for it
+and parseable with an awkward password in it, the administrator, the venue named rather
+than duplicated, and a second first-administrator refused. That is the database half, on
+the engine a shop runs, on every push.
+
+The rest was walked here by hand, once, and it is worth being exact about what that was:
+the self-extracting installer was dropped alone into an empty folder behind `php -S`, and
+it unpacked 48 files including both `.htaccess` files, drew its preflight against this
+container's real PHP, warned about plain HTTP, and reported a refused database connection
+in the engine's own words. What that does **not** cover is the thing §4ay's pass was made
+of: a real host, a real FTP client in the wrong mode, a certificate, a cPanel database
+form, and a person reading ten steps to see whether they are followable. `INSTALL.md` is
+written from the code and from DEPLOY-SKIP's record of what the live server answered, which
+makes it the best-informed guess in the repo and still a guess. It stays an owed walk on
+`docs/browser-pass.md`, and the one thing to carry into it is that the one-file route has a
+window: between the upload and the first request, `install.php` is a page that will unpack
+an app and take a database it is given. It is minutes long, it is the same window
+`setup.php` always had, and it is not zero.
+
 ---
 ## 5. Verification
 
@@ -7740,6 +7878,18 @@ And, with a MySQL to point at — the same suite, with nothing stubbed:
 SELFTEST_MYSQL_DSN='mysql:host=127.0.0.1;dbname=lbm_selftest;charset=utf8mb4' \
 SELFTEST_MYSQL_USER=... SELFTEST_MYSQL_PASS=... php tools/selftest_layout.php
 ```
+
+And, with a throwaway database to point at — the one thing no local gate can ask,
+because `schema.sql` is MySQL-only and an installer's whole job is to run it:
+
+```
+php tools/rehearse_install.php --host=127.0.0.1 --db=throwaway \
+     --user=... --pass=... --confirm-copy
+```
+
+It starts from an empty database and ends with an administrator, a named venue and a
+Display with a tag (§4bo). It refuses without the flag, and refuses again if the database
+it was pointed at holds a layout. CI runs it on every MySQL leg.
 
 On MySQL the fixture is built by running `schema.sql`, the `FOR UPDATE` stub is
 gone, and twenty-three further checks run that SQLite cannot be asked — see §4aa.

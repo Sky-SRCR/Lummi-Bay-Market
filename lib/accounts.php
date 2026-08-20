@@ -403,6 +403,55 @@ class AccountStore
         }
     }
 
+    /**
+     * How many accounts there are at all — the question the installer is asking.
+     *
+     * `-1` when the table is not there, which is a third answer and a necessary one:
+     * "no accounts yet" and "no database yet" send the installer to two different
+     * screens, and a page that read a missing table as an empty one would offer to
+     * create the first administrator into nothing. Every other reader here answers a
+     * question rather than throwing, and this keeps that shape.
+     */
+    public function total()
+    {
+        try {
+            return intval($this->pdo->query("SELECT COUNT(*) FROM users")->fetchColumn());
+        } catch (Throwable $e) {
+            return -1;
+        }
+    }
+
+    /**
+     * Create an administrator, and let a failure out.
+     *
+     * The fourth method here that throws, and the caller is `Installer`, which needs the
+     * failure rather than a `false`: it has just named the venue's Brand and the sentence
+     * it prints says so. Everything else here answers a question, and a question is
+     * better answered "no" than not at all — but "the account was not created" is not an
+     * answer to anything, it is the thing that went wrong.
+     *
+     * It is here rather than on the page for the reason the docblock above gives about
+     * `users` having more than one writer: the ones that are left are on their way here,
+     * not the other way round. `setup.php` wrote this INSERT itself, which is how the
+     * only account-creating statement in the app came to live on a page that deletes
+     * itself.
+     *
+     * The role is fixed rather than a parameter. There is exactly one caller and it is
+     * creating the *first* account, on a database with none: an installer that could be
+     * asked to make a `basic` account would be an installer that can lock somebody out
+     * of the app it just installed.
+     *
+     * @return int the new account's id
+     */
+    public function createAdmin($username, $email, $passwordHash)
+    {
+        $stmt = $this->pdo->prepare(
+            "INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, 'admin')"
+        );
+        $stmt->execute([(string)$username, (string)$email, (string)$passwordHash]);
+        return intval($this->pdo->lastInsertId());
+    }
+
     /** The account holding this username or email, closed or not, or null. */
     public function findByNameOrEmail($username, $email)
     {

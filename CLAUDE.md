@@ -12,10 +12,10 @@ edited in place and every change reaches the sign by hand.
 | [`CONTEXT.md`](CONTEXT.md) | The domain language. Use these words — Display, Viewer, Screen, screen name tag, canvas, grant, edit lock — in code, comments and UI copy. |
 | [`docs/roadmap-multi-display.md`](docs/roadmap-multi-display.md) | The phased plan and its current status. |
 | [`docs/reviewed-decisions.md`](docs/reviewed-decisions.md) | **The 51-item list from the adversarial audit, with what each was decided to be.** All 50 numbered items are now Done — which closes the audit, not the app: nothing on that list was ever the browser pass. The numbering the owner uses. Two numbering traps are documented there; read them before quoting an issue number. |
-| [`docs/browser-pass.md`](docs/browser-pass.md) | **The only verification in this project that a person does, walked in full on 2026-08-13 against `lbm-test/`.** Its outcome table is at the top: seven defects, §4as–§4ax, five of them things a page did not *say* rather than wrong answers a suite could have caught. Read it before assuming a green gate means a working screen. **Six walks are owed and the table at the top names them**: `public_html/lbm/` *after the cutover* (it is still the single-sign app — the build is **not** live, `0a02b70`), `lbm-test/` for the step-2 workbench, Display Branding, the Builder's Brand control, Workspace Themes — three of which this pass has no step for at all — and **installing from the package onto a host with nothing on it**, which nothing in the repo has ever done (§4bn). It is a list, not a receipt. |
+| [`docs/browser-pass.md`](docs/browser-pass.md) | **The only verification in this project that a person does, walked in full on 2026-08-13 against `lbm-test/`.** Its outcome table is at the top: seven defects, §4as–§4ax, five of them things a page did not *say* rather than wrong answers a suite could have caught. Read it before assuming a green gate means a working screen. **Seven walks are owed and the table at the top names them**: `public_html/lbm/` *after the cutover* (it is still the single-sign app — the build is **not** live, `0a02b70`), `lbm-test/` for the step-2 workbench, Display Branding, the Builder's Brand control, Workspace Themes — three of which this pass has no step for at all — and two the installer added: **installing from the package onto a host with nothing on it** (§4bn) and **the one-file `install.php` over a real FTP client** (§4bo) — CI now builds the database half from nothing on every leg, and no machine here has ever met the browser half. It is a list, not a receipt. |
 | [`docs/adr/`](docs/adr/) | Decisions with their rejected alternatives. Don't re-litigate one without reading it. |
 | [`HANDOFF.md`](HANDOFF.md) | Deployment facts: live URLs, credentials layout, what is and isn't in the repo. |
-| [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) | **What not to overwrite, upload or delete when files go to the server.** Read before any upload — the repo and the server hold different files, and uploading the tree reverts live branding and restores `setup.php` silently. |
+| [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) | **What not to overwrite, upload or delete when files go to the server.** Read before any upload — the repo and the server hold different files, and uploading the tree reverts live branding and restores the first-administrator form silently. |
 | [`docs/work-lanes.md`](docs/work-lanes.md) | **What can be worked on at the same time, and what two parallel branches have to agree before they start.** Read before starting a branch beside another one — the collisions are not in the app, they are in the three files every branch touches, and the section letter and invariant number are allocated there rather than discovered. |
 
 ## Conventions
@@ -147,16 +147,29 @@ edited in place and every change reaches the sign by hand.
   compiles the tree in child processes and reports whatever the engine running it has to
   say, which is the half that will know about 8.5 before anybody here does.
 - **A file lands on a shop's server because a rule put it there.** The repo is not a
-  package: 160 tracked paths, 48 of which belong in a webroot. `tools/build_installer.php`
+  package: ~160 tracked paths, 49 of which belong in a webroot. `tools/build_installer.php`
   assembles the installer from the tracked file list and **refuses to write one holding a
   path no rule classifies** (invariant 38) — because both directions are quiet. A `lib/`
   module left out is a fatal on the first page that needs it, which on a Screen is a blank
   sign in the shop; `HANDOFF.md` put in is the live database name answering 200 on any host
   whose `AllowOverride` is off. `docs/DEPLOY-SKIP.md` is still the authority on what belongs
   on a server that is **already running** — the package is for an empty database, and
-  `setup.php` and `branding_config.php` are in it for that reason and are the two files
-  that must never go over the top of a working install. `INSTALL.md` is what ships beside
-  it, and nobody has yet walked it (§4bn).
+  `install.php` and `branding_config.php` are in it for that reason and are the two files
+  that must never go over the top of a working install.
+- **`install.php` is the whole install, and the only door that makes an administrator**
+  (invariant 39, §4bo). It carries `app/` inside itself, unpacks it, writes the credentials
+  above the webroot, runs `schema.sql`, converges, names the venue, creates the account and
+  deletes itself. `setup.php` is gone and `build_installer.php` fails if it returns. Every
+  step reports what it *checked* — the delete reads the filesystem back, the write reads the
+  file back, a refused schema statement is printed with the engine's own message and never
+  swallowed by `schemaTry()`, and every archive entry is checked against its CRC and against
+  `installerSafeEntryName()` before a byte is written. Every *decision* is pure or takes its
+  facts as parameters, which is invariant 37's seam and the only reason a suite can ask what
+  the preflight says on a machine nobody has. The one thing it cannot do is create the
+  database on cPanel, which owns that; it offers, and says plainly what to click when
+  refused. **CI installs from nothing on every MySQL leg** (`tools/rehearse_install.php`);
+  the browser half — an FTP client in the wrong mode, a real certificate, ten steps somebody
+  has to follow — is an owed walk.
 - **Nothing that has been published can be taken back.** Publishing overwrites; a
   deleted Display, a swept asset row and a saved brand standard are gone. Prefer
   refusing a write to merging one. The **one** exception is the Builder's Undo
@@ -178,7 +191,9 @@ php tools/check_invariants.php             # the mechanical half of BUILD-REFERE
 php tools/check_doc_numbering.php          # if a doc gained a section or invariant
 php tools/build_installer.php              # the installer package, assembled — and it
                                            # refuses to write one holding a path no rule
-                                           # classifies (invariant 38, §4bn)
+                                           # classifies (invariant 38, §4bn). It also reads
+                                           # the payload back through install.php's own
+                                           # reader (§4bo)
 node tools/selftest_builder_readonly.js    # if builder.php was touched
 node tools/selftest_builder_uploads.js     # if builder.php was touched
 node tools/selftest_builder_colors.js      # if builder.php was touched

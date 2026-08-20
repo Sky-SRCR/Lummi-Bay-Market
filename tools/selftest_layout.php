@@ -8336,6 +8336,261 @@ checkSame(0, substr_count($panel, 'chooseWorkspaceTheme'),
           'and the panel never chooses a theme for anybody: that write is the account\'s own');
 
 // ─────────────────────────────────────────────────────────────
+section('The installer (§4bo)');
+
+require_once __DIR__ . '/../lib/installer.php';
+
+// `install.php`'s own zip reader and path guard, declared without running an install.
+// Nothing else in the repo defines this constant and a web request cannot, which is what
+// makes the guard a test seam rather than a door.
+define('INSTALLER_INSPECT', true);
+require_once __DIR__ . '/../install.php';
+
+// ---- Splitting a script into statements ----------------------------------------
+// The installer runs `schema.sql` from PHP, which nothing here had ever had to do. Every
+// check below is a shape that file does not have *today* — which is the point: the day
+// somebody writes `COMMENT 'the tag; the address'`, the alternative to these checks is a
+// syntax error halfway through creating the table every sign's layout lives in, on a
+// machine nobody is watching.
+checkSame(['SELECT 1', 'SELECT 2'], sqlStatements('SELECT 1; SELECT 2;'),
+          'two statements are two statements');
+checkSame(["SELECT ';'"], sqlStatements("SELECT ';';"),
+          'a semicolon inside a quoted string is not a statement boundary');
+checkSame(['SELECT 1'], sqlStatements("-- a comment; with a semicolon\nSELECT 1;"),
+          'a `-- ` comment is dropped, semicolon and all');
+checkSame(['SELECT 1--x'], sqlStatements("SELECT 1--x;"),
+          'but `--x` is not a comment to MySQL, so the rest of the line is not dropped');
+checkSame(['SELECT 1'], sqlStatements("# also a comment;\nSELECT 1;"),
+          'and neither spelling of a line comment is missed');
+checkSame(['SELECT 1'], sqlStatements("/* a block;\n   comment */ SELECT 1;"),
+          'a block comment goes too, across lines');
+checkSame(['SELECT `odd;name`'], sqlStatements('SELECT `odd;name`;'),
+          'a backtick identifier can hold a semicolon');
+checkSame(["SELECT 'it''s'"], sqlStatements("SELECT 'it''s';"),
+          'a doubled quote inside a string is that character, not the end of it');
+checkSame(["SELECT 'it\\'s; still'"], sqlStatements("SELECT 'it\\'s; still';"),
+          'and a backslash escapes the next character, so the string does not end early');
+checkSame(['SELECT 1'], sqlStatements('SELECT 1;;  ;'),
+          'stray and trailing semicolons produce no empty statements');
+checkSame([], sqlStatements("-- nothing but a comment\n"),
+          'a script that is only prose is no statements at all');
+
+// The real file, which is the one that has to work. Nine CREATE TABLEs and two SETs.
+$schemaSql = file_get_contents(__DIR__ . '/../schema.sql');
+$schemaStatements = sqlStatements($schemaSql);
+checkSame(9, count(array_filter($schemaStatements, function ($one) {
+              return stripos($one, 'CREATE TABLE') === 0; })),
+          'schema.sql splits into the nine CREATE TABLE statements it holds');
+checkSame(0, count(array_filter($schemaStatements, function ($one) {
+              return strpos($one, '--') === 0 || $one === ''; })),
+          'and no statement is a comment or empty');
+
+// ---- Where an archive may write ------------------------------------------------
+// A zip is data. An unpacker that joins a path out of data onto a directory without
+// looking at it writes wherever the data says — and the entry this refuses,
+// `../../private/db_credentials.php`, is the one that would land a file outside the
+// webroot with an attacker's contents in it.
+checkSame(true,  installerSafeEntryName('lib/schema.php'), 'an ordinary entry is allowed');
+checkSame(false, installerSafeEntryName('../outside.php'), 'a leading ../ is refused');
+checkSame(false, installerSafeEntryName('lib/../../outside.php'),
+          'and so is one buried in the middle, which is the form that reads as harmless');
+checkSame(false, installerSafeEntryName('/etc/passwd'), 'an absolute path is refused');
+checkSame(false, installerSafeEntryName('C:/windows/x'), 'so is a drive letter');
+checkSame(false, installerSafeEntryName('lib\\schema.php'),
+          'a backslash is refused rather than normalised — it is a separator on one host');
+checkSame(false, installerSafeEntryName(''), 'and an empty name names nothing');
+
+// ---- Reading the archive -------------------------------------------------------
+$zipFile = tempnam(sys_get_temp_dir(), 'lbmzip');
+$zip = new ZipArchive();
+$zip->open($zipFile, ZipArchive::CREATE | ZipArchive::OVERWRITE);
+$zip->addFromString('one.php', "<?php\n// one\n");
+$zip->addFromString('lib/.htaccess', "Require all denied\n");
+$zip->close();
+$zipBytes = file_get_contents($zipFile);
+unlink($zipFile);
+
+$entries = installerZipEntries($zipBytes, $zipWhy);
+check(is_array($entries), 'a zip written by ZipArchive is read by the installer\'s reader');
+if (is_array($entries)) {
+    $byName = [];
+    foreach ($entries as $entry) { $byName[$entry['name']] = $entry['data']; }
+    checkSame("<?php\n// one\n", isset($byName['one.php']) ? $byName['one.php'] : '',
+              'and a deflated entry comes back as the bytes that went in');
+    checkSame("Require all denied\n", isset($byName['lib/.htaccess']) ? $byName['lib/.htaccess'] : '',
+              'including a dotfile, which is the whole reason the app travels inside one file');
+}
+
+// A stored entry, built by hand — the method a zip uses for a file too small to compress,
+// and the one path a ZipArchive-built fixture may never take.
+$body   = 'plain';
+$stored = "PK\x03\x04" . pack('vvv', 10, 0, 0) . pack('V', 0)
+        . pack('V', crc32($body)) . pack('VV', strlen($body), strlen($body))
+        . pack('vv', 5, 0) . 'a.txt' . $body;
+$storedEntries = installerZipEntries($stored, $zipWhy);
+checkSame('plain', is_array($storedEntries) ? $storedEntries[0]['data'] : '',
+          'a stored entry is read without being inflated');
+
+// And the failure this exists for: an FTP client in ASCII mode rewrites bytes inside data
+// it believes is text. The archive still inflates often enough to be dangerous; it does
+// not still match its own checksum.
+$broken = $stored;
+$broken[strlen($broken) - 1] = 'X';
+checkSame(null, installerZipEntries($broken, $zipWhy),
+          'a rewritten byte fails the checksum rather than unpacking quietly');
+checkMentions($zipWhy, 'binary mode',
+              'and the sentence names the cause, because that is what a person can act on');
+checkSame(null, installerZipEntries('not a zip at all', $zipWhy),
+          'and something that is not an archive is refused');
+
+// ---- Unpacking ----------------------------------------------------------------
+$into = sys_get_temp_dir() . '/lbm-unpack-' . getmypid();
+@mkdir($into, 0755, true);
+checkSame(2, installerUnpack($entries, $into, $unpackWhy),
+          'unpacking writes every file and counts only the ones it read back');
+checkSame(true, is_file($into . '/lib/.htaccess'),
+          'creating the folders it needs on the way');
+checkSame(0, installerUnpack([['name' => '../escaped.php', 'data' => 'x', 'dir' => false]],
+                             $into, $unpackWhy),
+          'and an entry pointing outside the folder stops the whole unpack, not just itself');
+checkSame(false, is_file(dirname($into) . '/escaped.php'),
+          'so nothing at all is written when one entry is wrong');
+@unlink($into . '/one.php');
+@unlink($into . '/lib/.htaccess');
+@rmdir($into . '/lib');
+@rmdir($into);
+
+// ---- What the installer makes of a machine -------------------------------------
+// Every fact is a parameter (invariant 37), which is the only reason these can be asked:
+// PHP 8.0 with no zlib and an unwritable webroot is a machine nobody here has.
+$goodMachine = ['php' => '8.2.33', 'pdoMysql' => true, 'zlib' => true,
+                'appWritable' => true, 'privateWritable' => true, 'https' => true];
+checkSame(false, Installer::blocked(Installer::preflight($goodMachine)),
+          'a host that can run the app is not blocked');
+checkSame(true, Installer::blocked(Installer::preflight(
+              array_merge($goodMachine, ['php' => '8.1.99']))),
+          'a PHP below the floor stops the install rather than warning about it');
+checkSame(true, Installer::blocked(Installer::preflight(
+              array_merge($goodMachine, ['pdoMysql' => false]))),
+          'and so does a host with no MySQL driver');
+checkSame(true, Installer::blocked(Installer::preflight(
+              array_merge($goodMachine, ['appWritable' => false]))),
+          'and one whose folder cannot be written to');
+checkSame(false, Installer::blocked(Installer::preflight(
+              array_merge($goodMachine, ['privateWritable' => false]))),
+          'but a folder above the webroot that cannot be written is a warning: the install '
+          . 'works, and the page prints the file to place by hand');
+checkSame(false, Installer::blocked(Installer::preflight(
+              array_merge($goodMachine, ['https' => false]))),
+          'and so is plain HTTP — refusing would strand an install on a host mid-certificate');
+checkSame(true, Installer::blocked(Installer::preflight([])),
+          'a preflight handed no facts at all is blocked: an unsupplied fact is not a fact '
+          . 'in this install\'s favour');
+
+$httpWarning = '';
+foreach (Installer::preflight(array_merge($goodMachine, ['https' => false])) as $check) {
+    if ($check->name() === 'HTTPS') { $httpWarning = $check->sentence(); }
+}
+checkMentions($httpWarning, 'in the clear',
+              'and the HTTPS warning says what is at stake rather than only that it is off');
+
+// ---- The privileges report -----------------------------------------------------
+// A report and not a verdict: nothing branches on it, because the engine answers properly
+// a moment later by refusing statements. It exists so a person meeting eleven "command
+// denied" errors has already been told which box to tick (HANDOFF §5).
+checkSame([], Installer::missingPrivileges(['GRANT ALL PRIVILEGES ON `db`.* TO `u`@`h`']),
+          'ALL PRIVILEGES leaves nothing missing');
+checkSame(['DELETE', 'CREATE', 'ALTER', 'INDEX', 'REFERENCES'],
+          Installer::missingPrivileges(['GRANT SELECT, INSERT, UPDATE ON `db`.* TO `u`@`h`']),
+          'a partial grant is reported as the names it does not hold, in the order they '
+          . 'appear on the cPanel form');
+checkSame(Installer::PRIVILEGES, Installer::missingPrivileges(['GRANT USAGE ON *.* TO `u`@`h`']),
+          'USAGE is MySQL\'s word for no privileges and is not read as one');
+checkSame(Installer::PRIVILEGES, Installer::missingPrivileges([]),
+          'and a user whose grants could not be read is reported as holding none, which is '
+          . 'the safe direction for a sentence nobody acts on automatically');
+
+// ---- The credentials file ------------------------------------------------------
+$blank = Installer::credentialsSource(__DIR__ . '/..');
+checkMentions($blank, "define('DB_HOST', 'localhost')",
+              'the blank form carries the four defines with the placeholders db_connect.php '
+              . 'documents');
+checkMentions($blank, 'your_database_password',
+              'and a placeholder obvious enough that a half-filled file is not plausible');
+$filled = Installer::credentialsSource(__DIR__ . '/..', ['host' => 'localhost',
+              'name' => 'shop_signs', 'user' => 'shop_u', 'pass' => "it's \\ odd\"quoted\""]);
+checkMentions($filled, "define('DB_NAME', 'shop_signs')",
+              'a filled-in file holds the values it was given');
+// Both of these could only ever pass — `token_get_all()` always returns an array, and an
+// `eval` of `return true` always evaluates — so they are gone rather than kept as two more
+// `ok` lines (invariant 30). What is left is the one that can fail: PHP's own parser, on
+// the file this actually writes, with a password holding the two characters that end a
+// single-quoted string.
+$tmpCred = tempnam(sys_get_temp_dir(), 'lbmcred');
+file_put_contents($tmpCred, $filled);
+$lint = [];
+exec(escapeshellarg(PHP_BINARY) . ' -l ' . escapeshellarg($tmpCred) . ' 2>&1', $lint, $lintStatus);
+checkSame(0, $lintStatus,
+          'a password holding a quote and a backslash still produces a file PHP can parse — '
+          . 'var_export is the whole of that, and a parse error here is a file outside the '
+          . 'webroot that nobody thinks to look at');
+unlink($tmpCred);
+
+// Where it goes, which is the isolation rule `install_paths.php` exists for.
+$fakeAccount = sys_get_temp_dir() . '/lbm-install-' . getmypid();
+@mkdir($fakeAccount . '/public_html/signs', 0755, true);
+$firstTarget = Installer::credentialsTarget($fakeAccount . '/public_html/signs');
+checkSame($fakeAccount . '/private/db_credentials.php', $firstTarget,
+          'the first install writes the shared credentials file, above the webroot');
+@mkdir($fakeAccount . '/private', 0700, true);
+file_put_contents($firstTarget, "<?php\n");
+checkSame($fakeAccount . '/private/db_credentials_signs-test.php',
+          Installer::credentialsTarget($fakeAccount . '/public_html/signs-test'),
+          'and a second install finds that file already there and writes its own, rather '
+          . 'than overwriting the first one\'s database name with its own');
+@unlink($firstTarget);
+@rmdir($fakeAccount . '/private');
+@rmdir($fakeAccount . '/public_html/signs');
+@rmdir($fakeAccount . '/public_html');
+@rmdir($fakeAccount);
+
+// ---- Writing a file, and reading it back ---------------------------------------
+$writeTarget = sys_get_temp_dir() . '/lbm-write-' . getmypid() . '/nested/file.php';
+checkSame(true, Installer::writeFile($writeTarget, "<?php\n// written\n", $writeWhy),
+          'writeFile creates the folders it needs and reports what it read back');
+checkSame("<?php\n// written\n", file_get_contents($writeTarget),
+          'and the file holds what was handed to it');
+checkSame(false, Installer::writeFile('/proc/lbm-cannot-exist/x', 'x', $writeWhy),
+          'a write it cannot do is reported as a failure rather than as a success');
+check($writeWhy !== '', 'with a sentence naming the path, because that is the actionable part');
+@unlink($writeTarget);
+@rmdir(dirname($writeTarget));
+@rmdir(dirname(dirname($writeTarget)));
+
+// ---- The first administrator ---------------------------------------------------
+// The validation order is setup.php's, kept deliberately: a person filling in a form wants
+// the first thing that is wrong with it, and these checks are what stops that order being
+// rearranged by accident later.
+$installer = new Installer(newTestDb());
+checkMentions($installer->createFirstAdmin('', 'a@b.com', 'longenough', 'longenough', 'Venue')
+                        ->message(), 'Every field',
+              'an empty field is the first thing reported');
+checkMentions($installer->createFirstAdmin('me', 'not-an-email', 'longenough', 'longenough', 'V')
+                        ->message(), 'email address',
+              'then the email, before anything is looked at in the database');
+checkMentions($installer->createFirstAdmin('me', 'a@b.com', 'short', 'short', 'Venue')
+                        ->message(), 'at least ' . Installer::PASSWORD_MIN,
+              'then the password length, naming the number rather than describing it');
+checkMentions($installer->createFirstAdmin('me', 'a@b.com', 'longenough', 'different', 'Venue')
+                        ->message(), 'not the same',
+              'then the confirmation');
+$onSeeded = $installer->createFirstAdmin('me', 'a@b.com', 'longenough', 'longenough', 'Venue');
+checkSame(false, $onSeeded->isOk(),
+          'and a database that already holds accounts has no first administrator to create');
+checkMentions($onSeeded->message(), 'Sign in',
+              'which is a sentence saying what to do instead, not a refusal');
+
+// ─────────────────────────────────────────────────────────────
 // Everything above this line runs on both engines. What follows can only be asked
 // of a real MySQL database, and is skipped entirely on the SQLite default — which
 // is why reportChecks() below is given two numbers.
@@ -8576,4 +8831,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2363 : 2338);
+reportChecks(testIsMysql() ? 2422 : 2397);

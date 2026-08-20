@@ -248,6 +248,20 @@ jobs:
       - name: Installer package
         run: php tools/build_installer.php --out="$RUNNER_TEMP/installer"
 
+      # And the one thing every gate above this line is blind to: building a database
+      # from nothing. `schema.sql` is MySQL-only, so the suite's installer checks are all
+      # of the pure decisions and none of the act — an installer whose database half had
+      # never once run would pass every other step in this file.
+      #
+      # It starts from an empty database and ends with an administrator, a named venue and
+      # a Display with a tag. What it still cannot see is a browser, an FTP client and a
+      # person reading a sentence; those are an owed walk (§4bo).
+      - name: Rehearsal — installing from nothing
+        run: |
+          php tools/rehearse_install.php \
+            --host=127.0.0.1 --port=3306 --db=lbm_install_rehearsal \
+            --user=root --pass=root --confirm-copy
+
       # The numbering the documents run on. Cheap, and it catches a merge failure
       # nothing else here can see: two branches cut from the same base each take
       # the next free section letter, and git can merge two `### 4u.` headings

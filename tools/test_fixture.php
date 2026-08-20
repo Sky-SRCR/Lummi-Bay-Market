@@ -44,6 +44,7 @@ require_once __DIR__ . '/../lib/display_admin.php';
 require_once __DIR__ . '/../lib/brand_admin.php';
 require_once __DIR__ . '/../lib/password_resets.php';
 require_once __DIR__ . '/../lib/server_report.php';
+require_once __DIR__ . '/../lib/schema.php';
 require_once __DIR__ . '/../lib/accounts.php';
 require_once __DIR__ . '/../lib/login_attempt.php';
 require_once __DIR__ . '/../lib/request_scheme.php';
@@ -564,53 +565,16 @@ function testMysqlDsnFor($name)
     return rtrim($dsn, ';') . ';dbname=' . $name;
 }
 
-/**
- * Split a .sql file into executable statements.
- *
- * Naive splitting on ";" is wrong for this file and quietly so: two of the
- * column COMMENTs in schema.sql contain a semicolon ('Owning Display; every
- * query is scoped by this'), so a plain explode cuts a CREATE TABLE in half and
- * the error names a syntax problem that is not there. Quote state is tracked,
- * `--` line comments are dropped, and `\\` escapes inside a string are honoured.
- */
-function sqlStatements($sql)
-{
-    $lines = [];
-    foreach (preg_split('/\R/', $sql) as $line) {
-        if (preg_match('/^\s*--/', $line)) { continue; }
-        $lines[] = $line;
-    }
-    $sql = implode("\n", $lines);
-
-    $statements = [];
-    $current    = '';
-    $inString   = false;
-    $quote      = '';
-
-    for ($i = 0, $n = strlen($sql); $i < $n; $i++) {
-        $c = $sql[$i];
-
-        if ($inString) {
-            $current .= $c;
-            if ($c === '\\' && $i + 1 < $n) { $current .= $sql[++$i]; continue; }
-            if ($c === $quote) { $inString = false; }
-            continue;
-        }
-
-        if ($c === "'" || $c === '"') { $inString = true; $quote = $c; $current .= $c; continue; }
-
-        if ($c === ';') {
-            if (trim($current) !== '') { $statements[] = trim($current); }
-            $current = '';
-            continue;
-        }
-
-        $current .= $c;
-    }
-
-    if (trim($current) !== '') { $statements[] = trim($current); }
-    return $statements;
-}
+// The splitter that used to be here is gone, and it is worth a note rather than a silent
+// deletion. It lived in this file because building the MySQL fixture means running
+// `schema.sql`, and it was the only thing in the repo that had to read that file — until
+// `install.php` had to read it too, on a shop's server, with no second chance. Two
+// implementations of "what are the statements in this file" is the second opinion this
+// repo spends its whole time refusing, and the copy here was the weaker one: no backtick
+// identifiers, no `#` or `/* */` comments, and a doubled `''` inside a string read as the
+// end of it. `sqlStatements()` in `lib/schema.php` is the one now, so the fixture and the
+// installer read `schema.sql` the same way — which is the only arrangement in which the
+// MySQL leg is evidence about the installer at all.
 
 /**
  * What `information_schema` reports for a fully converged live database.

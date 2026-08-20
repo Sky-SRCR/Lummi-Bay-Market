@@ -1548,3 +1548,178 @@ function schemaTry(PDO $pdo, $sql, &$error = null)
         return false;
     }
 }
+
+// ============================================================
+// THE FIRST BUILD — running schema.sql, from PHP
+// ============================================================
+// Everything above this line converges a database that already exists. It cannot build
+// one from nothing and is not meant to: `signageSchemaPlan()` creates `brands`,
+// `workspace_themes`, `displays` and `display_permissions`, and every other statement in
+// it alters a table it expects to find. `users`, `canvas_elements`, `assets`,
+// `block_styles` and `password_resets` are created by `schema.sql` and by nothing else.
+//
+// Until there was an installer, "run schema.sql" meant phpMyAdmin's Import tab or a
+// shell, and the app never had to read that file. Now it does, on the one request in an
+// installation's life where the tables do not exist yet — so the file has to be split
+// into statements, and splitting SQL on `;` is the kind of shortcut that works on every
+// file somebody tests it against.
+//
+// `schema.sql` today holds two things that would break a naive split: `--` comments on
+// their own lines throughout, and `COMMENT '…'` strings on a third of the columns. A
+// semicolon inside either one is a statement boundary to a `explode(';')` and is not one
+// to MySQL. Neither file has such a semicolon *today*, which is exactly why this is
+// written as a scanner rather than a split: the day somebody writes
+// `COMMENT 'the tag; the address'` the failure is a syntax error on a fresh install, on
+// a machine nobody is watching, in the middle of creating the table every sign's layout
+// lives in.
+
+/**
+ * One SQL script, split into the statements it is made of.
+ *
+ * Pure — script in, statements out — which is what lets the suite hand it the shapes a
+ * real file will not have for another year. It tracks the four things that can hold a
+ * semicolon and mean nothing by it: a single-quoted string, a double-quoted string, a
+ * backtick-quoted identifier, and both spellings of comment. Escapes are handled the way
+ * MySQL reads them: a backslash inside a quoted string escapes the next character, and a
+ * doubled quote inside a string of the same kind is that character.
+ *
+ * Comments are dropped rather than carried, so a statement is what the engine is asked
+ * and nothing else — a failure reported with its statement should print the statement
+ * and not the paragraph above it. Trailing whitespace goes with them; an empty statement
+ * (a stray `;`, or a file ending in one) is not returned at all, because `exec('')` is
+ * an error on some engines and a no-op on others and neither is worth the branch.
+ *
+ * `DELIMITER` is deliberately not understood. It is a client instruction rather than SQL
+ * — the server has never heard of it — and it exists for triggers and stored procedures,
+ * neither of which this app has or should have. A script using it would be split wrongly
+ * here, so `applySchemaScript()` refuses one outright rather than half-running it.
+ *
+ * @param string $script the file's contents
+ * @return array statements, in order, each without its trailing semicolon
+ */
+function sqlStatements($script)
+{
+    $script = (string) $script;
+    $length = strlen($script);
+    $out    = [];
+    $buffer = '';
+    $quote  = '';      // the quote character we are inside, or ''
+    $i      = 0;
+
+    while ($i < $length) {
+        $c = $script[$i];
+
+        if ($quote !== '') {
+            $buffer .= $c;
+            if ($c === '\\' && $quote !== '`' && $i + 1 < $length) {
+                // A backslash escapes the next character inside a quoted string — but
+                // never inside a backtick identifier, where MySQL treats it literally.
+                $buffer .= $script[$i + 1];
+                $i += 2;
+                continue;
+            }
+            if ($c === $quote) {
+                // A doubled quote is that character, not the end of the string.
+                if ($i + 1 < $length && $script[$i + 1] === $quote) {
+                    $buffer .= $script[$i + 1];
+                    $i += 2;
+                    continue;
+                }
+                $quote = '';
+            }
+            $i++;
+            continue;
+        }
+
+        // `-- ` and `#` run to the end of the line. MySQL requires whitespace after the
+        // two dashes; `--x` is not a comment to it, and a rule that dropped the rest of
+        // the line would silently delete SQL.
+        if ($c === '-' && $i + 2 < $length && $script[$i + 1] === '-'
+            && ($script[$i + 2] === ' ' || $script[$i + 2] === "\t" || $script[$i + 2] === "\n"
+                || $script[$i + 2] === "\r")) {
+            $end = strcspn($script, "\n", $i);
+            $i  += $end;
+            continue;
+        }
+        if ($c === '#') {
+            $end = strcspn($script, "\n", $i);
+            $i  += $end;
+            continue;
+        }
+        if ($c === '/' && $i + 1 < $length && $script[$i + 1] === '*') {
+            $close = strpos($script, '*/', $i + 2);
+            $i = ($close === false) ? $length : $close + 2;
+            continue;
+        }
+
+        if ($c === "'" || $c === '"' || $c === '`') {
+            $quote   = $c;
+            $buffer .= $c;
+            $i++;
+            continue;
+        }
+
+        if ($c === ';') {
+            $statement = trim($buffer);
+            if ($statement !== '') { $out[] = $statement; }
+            $buffer = '';
+            $i++;
+            continue;
+        }
+
+        $buffer .= $c;
+        $i++;
+    }
+
+    $statement = trim($buffer);
+    if ($statement !== '') { $out[] = $statement; }
+    return $out;
+}
+
+/**
+ * Build a database from a script, and say which statements the engine refused.
+ *
+ * **Not `schemaTry()`, and the difference is the whole point.** Convergence swallows a
+ * refusal because the request that triggered it is somebody looking at a page, and the
+ * statement will be re-attempted on the next one. This runs once, on an empty database,
+ * with an installer waiting for an answer — so a refusal here is the answer, and every
+ * one of them is carried back with the database's own message and the statement that
+ * drew it. A `CREATE TABLE` the user has no privilege for is the case this exists to
+ * report: HANDOFF §5 records an install presenting as *"Base table or view not found"*
+ * when the real fault was a `CREATE` the user could not issue, and the whole reason that
+ * was hard to read is that nothing had printed the refusal.
+ *
+ * Statements are run in order and a failure does not stop the run. That is deliberate:
+ * `schema.sql` creates nine tables and the foreign keys between them, so one refusal
+ * usually causes several more, and a run that stopped at the first would report one
+ * problem out of a set that is one problem. The installer prints them all and refuses to
+ * continue, rather than continuing to the first admin over half a schema.
+ *
+ * @param string $script the contents of schema.sql
+ * @param array  $failures out: one ['statement' => …, 'error' => …] per refusal
+ * @return bool true when the engine accepted every statement
+ */
+function applySchemaScript(PDO $pdo, $script, array &$failures = [])
+{
+    $failures = [];
+
+    // A client instruction this does not implement, refused rather than mis-split. See
+    // sqlStatements(): the server has never heard of DELIMITER, and a script needing it
+    // is a script with a stored procedure in it, which this app does not have.
+    if (preg_match('/^\s*DELIMITER\b/mi', (string) $script)) {
+        $failures[] = ['statement' => 'DELIMITER',
+                       'error'     => 'this script sets a custom statement delimiter, which the '
+                                    . 'installer does not read. Import it with phpMyAdmin or the '
+                                    . 'mysql client instead.'];
+        return false;
+    }
+
+    foreach (sqlStatements($script) as $statement) {
+        try {
+            $pdo->exec($statement);
+        } catch (Throwable $e) {
+            $failures[] = ['statement' => $statement, 'error' => $e->getMessage()];
+        }
+    }
+    return !$failures;
+}

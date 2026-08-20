@@ -69,6 +69,19 @@ $root = dirname(__DIR__);
 // stale in silence, because the real file is outside the repo where nothing can see it.
 require_once $root . '/lib/install_paths.php';
 
+// And the module that decides what goes *in* that file, so the blank form in the package
+// and the filled-in one the installer writes are one piece of text with one set of
+// comments. Two copies of the file a person edits by hand is two things to change and one
+// chance to forget, and the forgotten copy would be the one they are looking at.
+require_once $root . '/lib/installer.php';
+
+// `install.php`'s own zip reader, declared without running the installer — which is what
+// the INSTALLER_INSPECT guard at the bottom of that file is for. The payload built below
+// is read back through the very function that will read it on a shop's server, so "the
+// archive is fine" is this build's answer rather than the next person's problem.
+define('INSTALLER_INSPECT', true);
+require_once $root . '/install.php';
+
 /** The name a store sees, which is nobody's venue until they set one up. */
 define('PACKAGE_SLUG', 'store-display-system');
 
@@ -647,25 +660,34 @@ if ($oneFirst[0] !== $twoFirst[0]) {
         'two installs share a first credentials candidate');
 }
 
-// ---- And that every one of them ran -------------------------------------------
-// The same anchor as `check_invariants.php` and `selftest_layout.php`, for the same
-// reason: a gate that prints "clean" whether it ran four checks or twenty-eight is a
-// gate whose coverage can shrink without anybody reading a diff. `check_invariants.php`
-// was found without one (section 4bi) and the rehearsal printed clean over 59 checks or
-// 7 (section 4bk). Update the number on purpose.
-$expectedChecks = 33;
+// ---- One door, and it is in the package ----------------------------------------
+// `setup.php` was the first-admin form and `install.php` has absorbed it. Two public
+// "make yourself an administrator" pages is two windows to close, two files to remember
+// and two pages that have to agree about what "already installed" means — so this is a
+// rule and not a tidy-up, and the way it comes back is somebody restoring a file from
+// history because a doc still mentions it.
 $checked++;
-if ($checked === $expectedChecks) {
-    ok("this build ran every check it is supposed to ($checked)");
+if (!isset($plan['place']['setup.php']) && !isset($plan['omit']['setup.php'])) {
+    ok('setup.php is gone: there is one first-administrator door and install.php is it');
 } else {
-    bad('this build did not run every check it is supposed to', $failures,
-        'the build ran every check it is supposed to — expected ' . $expectedChecks
-        . ', ran ' . $checked);
-    echo "       expected $expectedChecks, ran $checked\n";
+    bad('setup.php is back in the tree, so the app has two public first-administrator '
+        . 'forms', $failures, 'setup.php is back');
 }
 
-echo "\n$checked checks, " . count($failures) . " failed\n";
+$checked++;
+if (isset($plan['place']['install.php']) && $plan['place']['install.php'] === 'app/install.php') {
+    ok('install.php ships into app/, so the manual route has an installer too');
+} else {
+    bad('install.php is not shipped into app/, so a package unpacked by hand has no way '
+        . 'to create its first administrator', $failures, 'install.php is not in app/');
+}
+
+// ---- Nothing is assembled over a plan that does not hold ----------------------
+// The checks below this line are about the artifact rather than the rules, so they can
+// only run once it exists. These are the ones that decide whether it is worth building
+// at all.
 if ($failures) {
+    echo "\n$checked checks, " . count($failures) . " failed\n";
     foreach ($failures as $f) { echo "  FAILED: $f\n"; }
     echo "\nNo package written. A package this cannot account for is worse than none:\n";
     echo "it looks finished.\n";
@@ -736,68 +758,142 @@ foreach ($plan['place'] as $repoPath => $packagePath) {
 }
 
 // ---- The one file the package supplies that the repo does not ------------------
-// The credentials, outside the webroot, with the placeholders `db_connect.php` already
-// documents — the same words, so a file half filled in is obvious rather than plausible.
-// It is shipped under its own folder and not under `app/` because that is the whole
-// point of it: the two destinations in this package are two different folders on the
-// server, and one of them is not reachable by a browser.
-//
-// Every name in it comes from `InstallPaths`. Spelling them here would be a second
-// opinion about where credentials live, in a file nobody would think to check when the
-// module changed — and the failure mode is an install that cannot connect, or worse, one
-// that connects to the wrong database because its per-folder file is named something the
-// app no longer looks for.
+// The credentials, outside the webroot, as blanks to fill in — for anyone taking the
+// manual route rather than letting `install.php` write it. The text is
+// `Installer::credentialsSource()`'s, which is what the installer writes with real values
+// in it, so the two cannot drift apart. It is shipped under its own folder and not under
+// `app/` because that is the whole point of it: the two destinations in this package are
+// two different folders on the server, and one of them is not reachable by a browser.
 list($privateDir, $sharedName, $exampleName) = credentialsNaming('signs-test');
 
-$credentials = <<<'CREDENTIALS'
-<?php
-// ============================================================
-// DATABASE CREDENTIALS — this file goes OUTSIDE the webroot
-// ============================================================
-// Put it at:
-//
-//   /home/YOUR_ACCOUNT/{PRIVATE}/{SHARED}
-//
-// which is one level ABOVE public_html, so no browser request can reach it. The app
-// walks up two folders from its own directory to find it, so an install at
-// public_html/signs/ looks in /home/YOUR_ACCOUNT/{PRIVATE}/.
-//
-// Fill in all four. Leaving a placeholder is not a half-working install — the app
-// refuses to connect and says so.
-// ============================================================
-
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'your_database_name');
-define('DB_USER', 'your_database_user');
-define('DB_PASS', 'your_database_password');
-
-// -- A second copy of the app, for rehearsing on a duplicate database ----------
-//
-// Two installs on one account walk up to this same file, so an unmodified copy in a
-// second folder connects to the FIRST one's database — and then behaves perfectly.
-// Signing in converges schema on the live tables; pressing Publish overwrites a real
-// sign. Nothing warns you, because from the app's point of view nothing is wrong.
-//
-// So a second install gets a file of its own, named after its folder, and nothing in
-// the app tree changes:
-//
-//   /home/YOUR_ACCOUNT/{PRIVATE}/{EXAMPLE}      <- for an install at public_html/signs-test/
-//
-// The name-specific file is looked for first; absent one, this shared file is used.
-//
-// Then check it worked, before signing in a second time: Admin Panel -> Settings ->
-// This Server names the install folder and the database it reached. If the database
-// is the live one, stop and do not publish. Nothing else in the app will tell you.
-CREDENTIALS;
-
-$credentials = str_replace(
-    ['{PRIVATE}', '{SHARED}', '{EXAMPLE}'],
-    [$privateDir, $sharedName, $exampleName],
-    $credentials
-);
-
 ensureDir($stage . '/' . $privateDir);
-file_put_contents($stage . '/' . $privateDir . '/' . $sharedName, $credentials . "\n");
+file_put_contents($stage . '/' . $privateDir . '/' . $sharedName,
+                  Installer::credentialsSource($root));
+
+// ---- And the one file that carries the rest of them ----------------------------
+// The self-extracting copy, at the package root: `install.php` with the app inside it.
+// One file to upload, which is one file that cannot lose part of itself in transit — the
+// manual route's worst failure is an FTP client skipping `lib/.htaccess`, and a folder
+// listing cannot see that it did.
+//
+// The payload holds `app/`'s files minus `install.php` itself: the installer is already
+// on the server by the time it runs, and it deletes itself at the end rather than
+// unpacking a second copy of itself over the top.
+$payloadZip = $outDir . '/' . $name . '-payload.zip';
+if (file_exists($payloadZip)) { unlink($payloadZip); }
+
+$payloadFiles = [];
+foreach ($manifest as $packagePath => $facts) {
+    $inside = substr($packagePath, 4);           // strip 'app/'
+    if ($inside === 'install.php') { continue; }
+    $payloadFiles[$inside] = $stage . '/' . $packagePath;
+}
+ksort($payloadFiles);
+
+$pz = new ZipArchive();
+if ($pz->open($payloadZip, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+    echo "Could not open $payloadZip for writing\n";
+    exit(1);
+}
+foreach ($payloadFiles as $inside => $onDisk) { $pz->addFile($onDisk, $inside); }
+$pz->close();
+
+$payloadBinary = (string) file_get_contents($payloadZip);
+unlink($payloadZip);
+
+// The marker is spelled in single quotes and joined, never interpolated: a `$` inside a
+// double-quoted string is a variable, and the first draft of these three lines replaced
+// the empty string with the empty string and wrote a 460 KB installer carrying nothing.
+$marker          = '$APP_PAYLOAD';
+$installerSource = (string) file_get_contents($root . '/install.php');
+$carrying        = str_replace($marker . " = '';",
+                               $marker . " = '" . base64_encode($payloadBinary) . "';",
+                               $installerSource, $swapped);
+if ($swapped !== 1) {
+    echo "install.php no longer holds exactly one empty payload line to fill in.\n";
+    exit(1);
+}
+file_put_contents($stage . '/install.php', $carrying);
+
+// ---- The archive, read back by the code that will read it on the server --------
+// Not "the zip was written". `installerZipEntries()` is the function `install.php` runs
+// on somebody else's host, with no second chance and nobody watching, so the build runs
+// it here — on the bytes it just produced — and compares every entry against the file on
+// disk. A payload that cannot be read is a package that installs nothing, and the only
+// place that is cheap to find out is here.
+$readBack = installerZipEntries($payloadBinary, $zipWhy);
+$checked++;
+if ($readBack === null) {
+    bad('the payload cannot be read by the reader that will have to read it: ' . $zipWhy,
+        $failures, 'the payload is unreadable');
+} else {
+    $names = [];
+    $wrong = [];
+    foreach ($readBack as $entry) {
+        if ($entry['dir']) { continue; }
+        $names[] = $entry['name'];
+        if (!isset($payloadFiles[$entry['name']])) {
+            $wrong[] = $entry['name'] . ' is in the archive and not in the package';
+            continue;
+        }
+        if ($entry['data'] !== file_get_contents($payloadFiles[$entry['name']])) {
+            $wrong[] = $entry['name'] . ' reads back as different bytes';
+        }
+    }
+    sort($names);
+    $want = array_keys($payloadFiles);
+    sort($want);
+    if (!$wrong && $names === $want) {
+        ok('the payload reads back through install.php\'s own reader as the '
+           . count($want) . ' files it was built from');
+    } else {
+        bad('the payload does not read back as what went into it', $failures,
+            'the payload does not round-trip');
+        foreach ($wrong as $line) { echo "       + $line\n"; }
+        foreach (array_diff($want, $names) as $missing) {
+            echo "       + $missing is in the package and not in the archive\n";
+        }
+    }
+}
+
+// And that the carrying copy is the tracked file plus a payload, and nothing else. The
+// self-extracting installer is generated, so it is the one file in the package nobody
+// reviews — this is what holds it to being the reviewed one with a string in it.
+$checked++;
+if (strlen($carrying) > strlen($installerSource)
+    && str_replace($marker . " = '" . base64_encode($payloadBinary) . "';",
+                   $marker . " = '';", $carrying) === $installerSource) {
+    ok('the self-extracting installer is the tracked install.php and one filled-in line');
+} else {
+    bad('the self-extracting installer differs from install.php by more than its payload',
+        $failures, 'the carrying installer is not the tracked one');
+}
+
+// ---- And that every one of them ran -------------------------------------------
+// The same anchor as `check_invariants.php` and `selftest_layout.php`, for the same
+// reason: a gate that prints "clean" whether it ran four checks or twenty-eight is a
+// gate whose coverage can shrink without anybody reading a diff. `check_invariants.php`
+// was found without one (section 4bi) and the rehearsal printed clean over 59 checks or
+// 7 (section 4bk). Update the number on purpose.
+$expectedChecks = 37;
+$checked++;
+if ($checked === $expectedChecks) {
+    ok("this build ran every check it is supposed to ($checked)");
+} else {
+    bad('this build did not run every check it is supposed to', $failures,
+        'the build ran every check it is supposed to — expected ' . $expectedChecks
+        . ', ran ' . $checked);
+    echo "       expected $expectedChecks, ran $checked\n";
+}
+
+echo "\n$checked checks, " . count($failures) . " failed\n";
+if ($failures) {
+    foreach ($failures as $f) { echo "  FAILED: $f\n"; }
+    echo "\nThe package was assembled and is being removed: a package that failed a check\n";
+    echo "and is left on disk is one somebody uploads.\n";
+    removeTree($stage);
+    exit(1);
+}
 
 // ---- What was built, so an upload can be checked against it --------------------
 $built = gmdate('Y-m-d H:i:s') . ' UTC';
