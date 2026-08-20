@@ -12,7 +12,7 @@ edited in place and every change reaches the sign by hand.
 | [`CONTEXT.md`](CONTEXT.md) | The domain language. Use these words — Display, Viewer, Screen, screen name tag, canvas, grant, edit lock — in code, comments and UI copy. |
 | [`docs/roadmap-multi-display.md`](docs/roadmap-multi-display.md) | The phased plan and its current status. |
 | [`docs/reviewed-decisions.md`](docs/reviewed-decisions.md) | **The 51-item list from the adversarial audit, with what each was decided to be.** All 50 numbered items are now Done — which closes the audit, not the app: nothing on that list was ever the browser pass. The numbering the owner uses. Two numbering traps are documented there; read them before quoting an issue number. |
-| [`docs/browser-pass.md`](docs/browser-pass.md) | **The only verification in this project that a person does, walked in full on 2026-08-13 against `lbm-test/`.** Its outcome table is at the top: seven defects, §4as–§4ax, five of them things a page did not *say* rather than wrong answers a suite could have caught. Read it before assuming a green gate means a working screen. **Five re-walks are owed and the table at the top names them**: `public_html/lbm/` *after the cutover* (it is still the single-sign app — the build is **not** live, `0a02b70`), `lbm-test/` for the step-2 workbench, Display Branding, the Builder's Brand control, and Workspace Themes — the last three of which this pass has no step for at all. It is a list, not a receipt. |
+| [`docs/browser-pass.md`](docs/browser-pass.md) | **The only verification in this project that a person does, walked in full on 2026-08-13 against `lbm-test/`.** Its outcome table is at the top: seven defects, §4as–§4ax, five of them things a page did not *say* rather than wrong answers a suite could have caught. Read it before assuming a green gate means a working screen. **Six walks are owed and the table at the top names them**: `public_html/lbm/` *after the cutover* (it is still the single-sign app — the build is **not** live, `0a02b70`), `lbm-test/` for the step-2 workbench, Display Branding, the Builder's Brand control, Workspace Themes — three of which this pass has no step for at all — and **installing from the package onto a host with nothing on it**, which nothing in the repo has ever done (§4bn). It is a list, not a receipt. |
 | [`docs/adr/`](docs/adr/) | Decisions with their rejected alternatives. Don't re-litigate one without reading it. |
 | [`HANDOFF.md`](HANDOFF.md) | Deployment facts: live URLs, credentials layout, what is and isn't in the repo. |
 | [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) | **What not to overwrite, upload or delete when files go to the server.** Read before any upload — the repo and the server hold different files, and uploading the tree reverts live branding and restores `setup.php` silently. |
@@ -146,6 +146,17 @@ edited in place and every change reaches the sign by hand.
   of the tokens and knows that one shape at the floor, and `tools/check_deprecations.php`
   compiles the tree in child processes and reports whatever the engine running it has to
   say, which is the half that will know about 8.5 before anybody here does.
+- **A file lands on a shop's server because a rule put it there.** The repo is not a
+  package: 160 tracked paths, 48 of which belong in a webroot. `tools/build_installer.php`
+  assembles the installer from the tracked file list and **refuses to write one holding a
+  path no rule classifies** (invariant 38) — because both directions are quiet. A `lib/`
+  module left out is a fatal on the first page that needs it, which on a Screen is a blank
+  sign in the shop; `HANDOFF.md` put in is the live database name answering 200 on any host
+  whose `AllowOverride` is off. `docs/DEPLOY-SKIP.md` is still the authority on what belongs
+  on a server that is **already running** — the package is for an empty database, and
+  `setup.php` and `branding_config.php` are in it for that reason and are the two files
+  that must never go over the top of a working install. `INSTALL.md` is what ships beside
+  it, and nobody has yet walked it (§4bn).
 - **Nothing that has been published can be taken back.** Publishing overwrites; a
   deleted Display, a swept asset row and a saved brand standard are gone. Prefer
   refusing a write to merging one. The **one** exception is the Builder's Undo
@@ -165,6 +176,9 @@ php tools/selftest_installed.php           # the same suite as a real install on
                                            # machine was set to (§4bg, §4bi)
 php tools/check_invariants.php             # the mechanical half of BUILD-REFERENCE §5
 php tools/check_doc_numbering.php          # if a doc gained a section or invariant
+php tools/build_installer.php              # the installer package, assembled — and it
+                                           # refuses to write one holding a path no rule
+                                           # classifies (invariant 38, §4bn)
 node tools/selftest_builder_readonly.js    # if builder.php was touched
 node tools/selftest_builder_uploads.js     # if builder.php was touched
 node tools/selftest_builder_colors.js      # if builder.php was touched

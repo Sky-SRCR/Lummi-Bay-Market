@@ -56,6 +56,23 @@ picker: a forged request naming an ungranted Display is refused.
 
 ## Setup
 
+**Installing on a new server? Build the package instead of copying the tree.**
+
+```bash
+php tools/build_installer.php        # → dist/store-display-system-<commit>.zip
+```
+
+It holds `app/` — the 48 files that belong in a webroot and nothing else — a
+credentials template for the folder above it, a manifest with a SHA-256 per file, and
+[`INSTALL.md`](INSTALL.md), which is the ten steps and the four checks afterwards. It
+refuses to build a package holding a path no rule classifies, because a `lib/` module
+left out is a blank sign in the shop and a `.md` put in is the live database name served
+to whoever asks (invariant 38, `docs/BUILD-REFERENCE.md` §4bn).
+
+The rest of this section is the same thing by hand, which is what to read when something
+goes wrong rather than what to follow. For an install that already exists, neither
+applies — [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) does.
+
 ### 1. Database credentials (outside the webroot)
 
 `db_connect.php` loads credentials from `../../private/db_credentials.php`

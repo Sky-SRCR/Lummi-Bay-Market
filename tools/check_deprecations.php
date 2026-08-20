@@ -188,7 +188,11 @@ function phpFiles($root)
     foreach ($it as $file) {
         if (!$file->isFile() || strtolower($file->getExtension()) !== 'php') { continue; }
         $rel = str_replace($root . '/', '', $file->getPathname());
-        if (strpos($rel, 'vendor/') === 0 || strpos($rel, '.git/') === 0) { continue; }
+        // dist/ is a built installer package — a copy of most of this tree, so
+        // compiling it means compiling every module twice and reporting each
+        // deprecation under a path nobody edits (invariant 38).
+        if (strpos($rel, 'vendor/') === 0 || strpos($rel, '.git/') === 0
+            || strpos($rel, 'dist/') === 0) { continue; }
         $found[] = $rel;
     }
     sort($found);

@@ -449,6 +449,13 @@ function phpFilesUnder($root, $sub, array $skip = [])
     // Always: this file quotes every pattern it tests for.
     $skip[] = 'tools/check_invariants.php';
     $skip[] = 'vendor/';
+    // The built installer package, which is a *copy* of most of this tree
+    // (`tools/build_installer.php`, invariant 38). Not skipping it fails twenty of the
+    // rules below at once and every one of them reads as a real defect: `dist/…/app/lib/
+    // displays.php` is a second writer of `displays` as far as a set-of-files rule can
+    // tell, and the fix would look like weakening the rule. Git-ignored, so it is only
+    // ever here between a build and a `rm`.
+    $skip[] = 'dist/';
 
     $base  = $sub === '' ? $root : $root . '/' . $sub;
     $found = [];

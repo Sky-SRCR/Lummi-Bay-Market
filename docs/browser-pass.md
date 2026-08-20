@@ -39,7 +39,7 @@ and `HANDOFF.md` §1 leads with the two-folder table that settles it. The re-wal
 `lbm/` is therefore **part of the cutover, not a debt standing in front of it** — nothing
 of this build is there to walk yet.
 
-**And v2 has since rewritten most of what it describes.** Five debts have accumulated,
+**And v2 has since rewritten most of what it describes.** Six debts have accumulated,
 and they are separate — the first of them is the cutover's own step rather than something
 owed today:
 
@@ -50,9 +50,10 @@ owed today:
 | A walk of **Admin Panel → Display Branding**, which this pass has no step for | step 3 replaced a single typography table with a list of Brands, a palette editor, a logo picker and a delete confirm — and the Displays tab gained a Brand dropdown on two forms. The suite reads that file's *source*; nothing renders it | §4bd |
 | A walk of the Builder's **Brand control and palette swatches**, which this pass also has no step for | step 4 put a venue's logo and name at the top of a 178-pixel column, a menu under it, and a row of 17-pixel swatches above four colour pickers. What a suite proves is that switching repaints and writes nothing; what it cannot see is a long venue name truncating, a swatch row pushing a picker off the rail, or a menu opening under the canvas. **Switch a Brand and do not publish, then reload** — the sign must be on the Brand it started on | §4be |
 | A walk of **Workspace Themes** — the gear's picker, and Site Branding's theme form | step 5 gave the application colours of its own. A suite can prove that switching sets thirteen custom properties and loses no unpublished work; it cannot see whether a light theme leaves white-on-dark text unreadable, whether the picker card fits inside the gear menu at 1080p, or whether the contrast warning wraps. **Make a theme with a light work area, choose it, and read every banner in the Builder.** Then make one whose thirteen colours are identical and check you can still find the gear and get back to the store default | §4bf |
+| A walk of **installing from the package**, on a host with nothing on it | `tools/build_installer.php` and `INSTALL.md` are ten steps and four checks written from the code and from DEPLOY-SKIP's record of what the live server answered — the best-informed guess in the repo, and still a guess. Every check in the builder is over a file list and a token stream; not one of them has created a database, uploaded a folder or loaded a page. **Unpack it into an empty folder against an empty database and walk INSTALL.md exactly as written**, then run its four checks. The interesting failures are the ones §4ay's pass was made of: a step that does not say what a person needs to know at the moment they need it | §4bn |
 
-The last three are the gap worth naming precisely, because it is the shape five of this
-pass's seven defects had: the panel's checks are `checkMentions()` over
+The three Brand and Theme rows are the gap worth naming precisely, because it is the
+shape five of this pass's seven defects had: the panel's checks are `checkMentions()` over
 `admin_panel.php`'s text. A variable that is never assigned, a form field that posts
 under the wrong name, a swatch drawn in a colour the CSSOM discards — all of them pass a
 grep and none of them survive a person opening the page.

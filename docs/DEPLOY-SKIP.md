@@ -14,6 +14,15 @@ it announces itself. The app comes up looking fine.
 or "make remote match local" — that is the mode that takes `uploads/` with it, and
 there is no undo for a store's photographs and videos.
 
+> **This page is about a server that is already running.** A *new* install is the other
+> case and has its own artifact: `php tools/build_installer.php` writes a package holding
+> only the files that belong in a webroot, plus `INSTALL.md`, and it will not build one
+> holding a path no rule classifies (invariant 38, BUILD-REFERENCE §4bn). That package
+> deliberately carries `setup.php` and the repo's default `branding_config.php`, because
+> a fresh install needs both — which is to say it carries exactly the two files group A
+> and group B below say must never go over the top of a working install. **Do not unpack
+> it into `lbm/` or `lbm-test/`.** For an update, this page is still the whole answer.
+
 ## A. Never overwrite — the server's copy is the authority
 
 | File | What the repo's copy costs you |

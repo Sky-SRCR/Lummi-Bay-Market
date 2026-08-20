@@ -734,6 +734,30 @@ through the app again:
     they refuse an arm set to what this machine already holds, because that one would agree
     with the plain run and say so in green.
 
+38. **The installer package is assembled from the tracked file list, and nothing in it
+    is there by accident** (§4bn). `tools/build_installer.php` puts every tracked path
+    under exactly one rule — into `app/`, which becomes the webroot; to the package
+    root, which is `INSTALL.md` and the two files describing the build; or omitted with
+    the reason written down — and **refuses to write a package holding a path no rule
+    classifies**. Both directions of getting this wrong are quiet, which is why it is a
+    rule rather than a habit: a `lib/` module left out is a fatal on the first page that
+    needs it, and on a Screen that is a blank sign in the shop; `HANDOFF.md` put in is
+    the live database name and the credentials path served as 200 on any host whose
+    `AllowOverride` is off. The `.md` deny in the root `.htaccess` is the backstop and
+    has never been the plan. Held four ways, and the second and third exist because the
+    first is a glob: a path under no rule is **unclassified** and fails loudly; a rule
+    matching nothing is **stale**, the shape a rename leaves; `forbiddenInWebroot()`
+    asserts over the finished plan rather than over the rules, so reordering them —
+    a one-line diff that would carry every `.md` in the repo into `app/` — fails even
+    though every path is still classified; and every static `require` in a shipped file
+    must name a file the package also ships. It spells no credential filename of its
+    own: `InstallPaths::credentialsCandidates()` is asked, because the file the template
+    becomes lives outside the repo where nothing else could notice the two disagreeing.
+    The one thing it does *not* decide is an update to a running install — `setup.php`
+    and `branding_config.php` are in the package because a fresh install needs both, and
+    are the two files `docs/DEPLOY-SKIP.md` says must never go over the top of a working
+    server. There is one artifact and it is the one for an empty database.
+
 
 ---
 
@@ -7483,6 +7507,123 @@ on the afternoon a host moves — the same run that would have found a real inco
 here would have found it with a working 5.7 leg next to it to compare against, and no shop
 waiting.
 
+### 4bn. A repo is not a package, and the list saying so was in somebody's head
+
+The store owner asked for the installer: the thing you download, unpack and put on a
+server. There has never been one. What there has been is `docs/DEPLOY-SKIP.md` — an
+accurate, long, careful page about which of these files belong on a server — and a person
+reading it while dragging folders in an FTP client. That works, and it keeps working
+right up until the tree gains a file.
+
+**Both directions of getting it wrong are quiet, and that is the whole reason this is a
+gate rather than a script.**
+
+- **A file left out.** `lib/` is one module per table and every page requires several. A
+  module that misses the upload is a fatal on the first page that needs it — and on a
+  Screen, a fatal is a blank television in the shop, discovered by whoever is standing in
+  front of it. Nothing in the package can tell you: a folder listing shows the files that
+  arrived.
+- **A file put in.** `HANDOFF.md` names the live database, the credentials path outside
+  the webroot, and where the error log goes. The root `.htaccess` denies `.md` and that
+  deny has never been the plan — it is the backstop for the upload that forgets. On a host
+  whose `AllowOverride` is off, the backstop is not there either, and the file answers
+  200 to whoever asked for it.
+
+So `tools/build_installer.php` decides it once, from `git ls-files`, and **refuses to
+write a package holding a path no rule classifies**. 160 tracked paths; 48 of them belong
+on a server. `composer.json` appearing at the root next month is a failing build naming
+the path, rather than a file that either shipped or did not depending on which glob
+somebody happened to write first.
+
+Four assertions, and the second and third exist because the first is a glob:
+
+| | What it catches |
+|---|---|
+| **unclassified** | a path under no rule at all — loud, at build time, by name |
+| **stale** | a rule matching nothing, which is the shape a rename leaves behind. The same reason `$notGates` in `check_invariants.php` is held to existing |
+| `forbiddenInWebroot()` | asserted over the *finished plan* rather than over the rules. Moving the documentation rule above `INSTALL.md` is a one-line diff that carries every `.md` in the repo into `app/` while every path stays classified and every rule stays matched |
+| the require graph | every static `require` in a shipped file names a file the package also ships. `__DIR__ . '/…'`, a bare relative name and a `../` all resolve; a variable path does not and is left alone, because `db_connect.php` finds its credentials through `InstallPaths` precisely so that file can live where the package cannot reach |
+
+That last one passes trivially on this tree — `lib/` and the page scripts are the whole of
+it — and is written for the day something reaches outside it. It is the one check here
+that reads code rather than paths, and it is the one that would catch the failure a glob
+cannot see: not a file forgotten, but a new dependency pointing somewhere the package
+does not go.
+
+**Three things it found, and none of them were the thing it was written for.**
+
+The staleness rule failed on its first run, against its own author: `INSTALL.md` had
+been written and not yet `git add`ed, so the tracked list did not have it, so the rule
+naming it matched nothing. That is invariant 30's grade of evidence without a synthetic
+probe — the check was *seen* to fail, on the real tree, for the real reason. It is also
+the design working: the tracked list is the authority precisely so that an untracked
+scratch file, a half-finished module or a `.env` somebody left beside `config.php` cannot
+ship. The cost is that a new file has to be tracked before it is packaged, which is the
+right way round.
+
+Then `dist/` — a package is a **copy of most of this tree**, sitting inside it — and
+`check_invariants.php` reported **twenty failures at once**. Every one of them read like a
+real defect and none of them was: `dist/…/app/lib/displays.php` is a second writer of
+`displays` as far as a set-of-files rule can tell, a second `json_encode`, a second
+`htmlspecialchars`, a second reader of a stored moment. Twenty rules, each correct, each
+answering about a file nobody edits. The dangerous part is what the fix looks like from
+inside: the shortest path to green is to loosen a rule. Both tree walkers skip `dist/`
+now, beside the `vendor/` they already skipped, and the reason is in a comment in each —
+because the *next* thing to put a copy of the tree in the working directory will do this
+again, and a person reading twenty failures needs to reach that sentence before they
+reach the rules.
+
+Third, the tool wrote the string `db_credentials.php` into the template it generates, and
+the credentials rule refused it — correctly, and the refusal was better than the code. The
+fix is not an exemption: it asks `InstallPaths::credentialsCandidates()` for both the
+shared name and the per-folder one, so the package's template is named whatever the app
+actually looks for. That matters more here than anywhere else the rule applies, because
+the file this becomes is **outside the repo**: two spellings disagreeing produce an
+install that cannot connect, or — for the per-folder name — a rehearsal copy silently
+reading the live database, which is the trap `install_paths.php` exists for. Two checks
+came out of that: the shared candidate must be looked for *above* the webroot, which is
+the picture INSTALL.md draws in step 2, and two installs at the same depth must be offered
+different first candidates, which is the thing the template explains how to use.
+
+**Two decisions worth naming, because both went against something written down.**
+
+`tools/` is **not** in the package, and DEPLOY-SKIP's group B excludes only the `.js`
+half. The live install has carried the PHP tools since it was built. But they assert about
+a checkout rather than an install, none of them could run on a shared host with no shell,
+`mutate.php` rewrites source files one line at a time on purpose, and
+`selftest_layout.php` alone is 543 KB — larger than the biggest page in the app. Shipping
+them doubled the download and put 870 KB of development machinery in a shop's webroot.
+The live server carries them because it grew that way, which is a fact about that server
+and not an argument for a new one. The cost is one sentence: `ServerReport`'s MariaDB note
+names `tools/rehearse_phase1.php`, and INSTALL.md now says where to get it.
+
+And there is **one artifact, for an empty database.** `setup.php` and
+`branding_config.php` are in it because a fresh install needs both — the first admin has
+to be created, and `config.php` loads the generated settings file — and they are exactly
+the two files DEPLOY-SKIP says must never go over the top of a running install. A second
+package with those two dropped was the obvious next thing to build and is the wrong thing:
+two artifacts that differ by two files, told apart by their filenames, handed to somebody
+at a server. INSTALL.md's last section says which this is and what to skip for an update.
+
+**What this does not cover, and it is the important part.** Nobody has installed from this
+package. Every check here is over a file list and a token stream; not one of them has
+created a database, uploaded a folder, or loaded a page. `INSTALL.md` is ten steps and
+four checks written from the code and from DEPLOY-SKIP's own record of what the live
+server answered — which makes it the best-informed guess in the repo and still a guess.
+The first person to walk it will find something, the way §4ay's browser pass found seven
+defects of which five were things a page did not *say*. It belongs on `docs/browser-pass.md`
+as an owed walk, on a host with no install on it, and until somebody does it the honest
+claim is the one this paragraph makes: the package can account for its contents, and
+nothing has yet accounted for the instructions.
+
+One smaller thing the writing found, left as documentation rather than a change: a fresh
+install seeds one Display, tagged `drive-thru` and titled **Drive-Thru**, because
+`seedLegacyDisplay()` is what a database with an empty `displays` table gets and
+`LEGACY_DISPLAY_TAG` is what the live install's `display_id` backfill points at. So the
+first sign a new store sees carries the previous shop's name. Renaming the constant would
+reach into the one path that cannot be re-run, so INSTALL.md step 9 says to rename the
+Display instead — and says which two of its fields cannot be changed afterwards.
+
 ---
 ## 5. Verification
 
@@ -7537,6 +7678,12 @@ php tools/selftest_installed.php         # the same suite as a real install on a
                                          # host, a tight one, one showing errors — because
                                          # the four readouts that describe a server had
                                          # one form here and the other on none (§4bi)
+php tools/build_installer.php             # assembles the installer package, and refuses
+                                         # to write one it cannot account for: every
+                                         # tracked path shipped, omitted with a reason,
+                                         # or a failing build (invariant 38, section 4bn).
+                                         # A gate before it is an artifact — the zip lands
+                                         # in dist/, which the two tree walkers skip
 node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
                                          # that has only what a read-only page emits
 node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an

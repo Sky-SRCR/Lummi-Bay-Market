@@ -233,6 +233,21 @@ jobs:
             --host=127.0.0.1 --port=3306 --db=lbm_rehearsal \
             --user=root --pass=root --confirm-copy
 
+      # The installer package, assembled from the tracked file list — which is a gate
+      # before it is an artifact. It refuses to build a package holding a path no rule
+      # classifies, so a file added at the root next month is a red line here rather
+      # than a file that either shipped or did not depending on which glob somebody
+      # wrote first. Both directions are quiet in the same way: a module left out is a
+      # fatal on the first page that needs it, and on a Screen that is a blank sign;
+      # a doc put in is HANDOFF.md served on any host whose AllowOverride is off,
+      # naming the live database.
+      #
+      # Every leg, not one. It reads the tree rather than the machine, so the five legs
+      # ask it the same question — but it is also the step that proves `require` targets
+      # still resolve inside the package, and it costs under a second.
+      - name: Installer package
+        run: php tools/build_installer.php --out="$RUNNER_TEMP/installer"
+
       # The numbering the documents run on. Cheap, and it catches a merge failure
       # nothing else here can see: two branches cut from the same base each take
       # the next free section letter, and git can merge two `### 4u.` headings

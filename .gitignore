@@ -26,3 +26,7 @@ Thumbs.db
 # holds the alert rate-limiter's stamps as well as the log itself.
 *.log
 logs/
+
+# Built installer packages. `php tools/build_installer.php` writes here; the
+# package is assembled from the tracked file list, so it is never itself tracked.
+dist/
