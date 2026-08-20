@@ -574,10 +574,32 @@ function installerPreflight($appDir)
 
 function installerDatabaseForm()
 {
+    // The privileges are named *here*, on the screen where somebody realises they have to
+    // go back to the control panel — not only in INSTALL.md, which they read before they
+    // had a database to have got wrong. Five of the seven defects the browser pass found
+    // were things a page did not say rather than wrong answers, and this is that shape: the
+    // fact was written down, in the document, one step earlier than it is needed.
     echo '<h2>The database</h2>'
        . '<p>Create the database and its user in your host&rsquo;s control panel first, then '
        . 'type them here. On cPanel that is <strong>MySQL Databases</strong>, and the names '
        . 'carry your account prefix — type the full name.</p>'
+       . '<p>When you add the user to the database, tick these '
+       . intval(count(Installer::PRIVILEGES)) . ' and nothing else:</p><p>';
+    // A loop rather than an `implode` with markup in it: the escaping door takes the whole
+    // value, never part of one, so a separator carrying `<code>` would be escaped into
+    // text. Cheaper to write than to explain, and it is the rule that stops a page
+    // deciding for itself which half of a string is safe.
+    foreach (Installer::PRIVILEGES as $privilege) {
+        echo '<code>' . Markup::text($privilege) . '</code> ';
+    }
+    echo '</p><p>Not <em>All Privileges</em> — <code>DROP</code>, <code>TRUNCATE</code> '
+       . 'and <code>LOCK TABLES</code> appear in no statement this app issues, and in an app '
+       . 'where nothing published can be taken back, a privilege it never uses is only '
+       . 'risk.</p>'
+       . '<p>The one to be sure of is <code>ALTER</code>. Without <code>CREATE</code> this '
+       . 'page stops and says so; without <code>ALTER</code> the tables are made, the app '
+       . 'loads, and the column every query is scoped by is missing — nothing crashes. '
+       . 'This page reads your privileges back and names any it cannot see.</p>'
        . '<form method="post"><input type="hidden" name="step" value="database">'
        . '<label>Host<input name="host" value="localhost" required></label>'
        . '<label>Database name<input name="name" required autofocus></label>'

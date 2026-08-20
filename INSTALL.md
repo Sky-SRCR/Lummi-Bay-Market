@@ -24,7 +24,7 @@ administer yourself it will offer to create the database too, and succeed.
 | | |
 |---|---|
 | **PHP 8.2 or newer** | With `pdo_mysql`. On cPanel this is **MultiPHP Manager** — set the domain explicitly rather than leaving it on "inherit", so the version does not move when the host changes its default. The installer checks this before it does anything. |
-| **MySQL 5.7 or newer** | And a database user with `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES` on it. Not `ALL PRIVILEGES`: `DROP`, `TRUNCATE` and `LOCK TABLES` appear in no statement this app issues, and in an app with no undo a privilege it never uses is only risk. MariaDB is *untested* — nothing in this project has ever run on it. |
+| **MySQL 5.7 or newer** | And a database user holding eight privileges on it — `SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES` — and deliberately not *All Privileges*. Step 1 has the grid to tick and what each one costs if you miss it. MariaDB is *untested*: nothing in this project has ever run on it. |
 | **HTTPS working on the domain** | The app's own `.htaccess` redirects every plain-HTTP request to HTTPS once it is in place. Install the certificate first if you can: the installer warns rather than refusing, because a host mid-certificate should not be stranded, but the database password you type crosses the network in the clear until it is done. |
 | **`AllowOverride` on** | Two `.htaccess` files carry the security headers and make the module folder unreachable. Almost every shared host allows this; if yours does not, check 3 at the end is the one that fails, and it is the one that matters. |
 | **A way to upload one file** | FTP, SFTP, or cPanel's File Manager. Nothing needs a shell. |
@@ -61,9 +61,52 @@ in transit.
 
 ### 1. Create the database — in cPanel, not here
 
-cPanel → **MySQL Databases**. Create a database, create a user, and add the user to the
-database. Write down all four values: host (`localhost` on almost every shared host), the
-full database name **including the account prefix**, the user name, the password.
+cPanel → **MySQL Databases**. Three things, in this order:
+
+1. **Create New Database.** The name gets your account prefix — `youracct_signs`. Write the
+   whole thing down, prefix included; that is what you type into the installer.
+2. **Add New User.** Any name (it gets the prefix too) and a password you have written down.
+3. **Add User To Database** → pick both → **Add**. That opens the privileges grid, and
+   which boxes you tick is the part worth getting right.
+
+#### The eight privileges to tick
+
+| | |
+|---|---|
+| `SELECT` `INSERT` `UPDATE` `DELETE` | reading and writing the layout, the accounts, the assets |
+| `CREATE` | the nine tables, on the install |
+| `ALTER` `INDEX` `REFERENCES` | the columns, keys and foreign keys the app adds to a database as it converges — there is no migration tool here, so the app brings its own schema up to date on a signed-in page load |
+
+**Not "ALL PRIVILEGES".** `DROP`, `TRUNCATE`, `LOCK TABLES`, `CREATE TEMPORARY TABLES`,
+`EVENT`, `TRIGGER` and the routine privileges appear in **no statement this app ever
+issues**. In an app where nothing published can be taken back, a privilege it never uses
+is only risk. Leave them unticked.
+
+If you tick "ALL PRIVILEGES" anyway, nothing breaks and the install works. It is a
+narrower blast radius you are giving up, not a feature.
+
+#### What each one costs if you miss it
+
+This matters more than it looks, because a missing privilege does **not** announce itself
+as a permissions problem:
+
+- **No `CREATE`** — the installer prints the engine's refusal and stops. Loud, and the
+  easy case.
+- **No `ALTER`** — and this is the bad one. The tables get created, the app **loads**, and
+  the column every query is scoped by is missing. Nothing crashes. Settings → Database
+  Structure reads *"Nothing is scoped to a Display. Do not publish."* if you get that far.
+  A crash would have been kinder.
+- **No `REFERENCES`** — the foreign keys are refused, so deleting a display stops taking
+  its layout with it and the database stops enforcing what the app assumes.
+
+The installer reads your user's privileges before it creates anything and names any of the
+eight it cannot see, so you get told rather than having to work it out from eleven
+"command denied" errors. It is a report and not a gate — a role or a wildcard grant can
+make `SHOW GRANTS` unreadable — so the engine's own refusals are the real answer, and they
+are printed in full.
+
+Then write down all four values: host (`localhost` on almost every shared host), the full
+database name **including the prefix**, the user name, the password.
 
 Nothing else in this install is done by hand.
 
