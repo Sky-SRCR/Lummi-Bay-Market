@@ -2,15 +2,25 @@
 require_once 'auth.php';
 require_once 'db_connect.php';
 require_once __DIR__ . '/lib/upload_limits.php';
+// What this employee's screen is painted in (v2 step 5) — never a sign.
+require_once __DIR__ . '/lib/schema.php';
+require_once __DIR__ . '/lib/workspace_themes.php';
 requireCurrentAccount($pdo);
 $me      = currentUser();
 $isAdmin = isAdmin();
 
+// Signed-in page, so convergence is allowed here (invariant 7), and it has to come
+// before the theme is read: the column this asks for is one the plan adds.
+ensureSignageSchema($pdo);
+SiteChrome::wear((new WorkspaceThemeStore($pdo))->forAccount($me['id']));
+
 // The BRAND_* constants this page's CSS reads are defined by config.php, which
 // auth.php requires above — one list of eight names and defaults, in lib/branding.php.
-// The four that are colours are then read back through Brand::, not escaped: they
-// land in the <style> block below, where there is no delimiter for an entity to
-// neutralise and a value that is not a colour is CSS.
+// Since step 5 they are the store default for four of the thirteen chrome roles, and
+// this page reaches every role as `var(--…)` against the one `:root` block below. That
+// block is the only place a colour is printed, and printed colours are validated rather
+// than escaped: a `<style>` has no delimiter for an entity to neutralise, and a value
+// that is not a colour is simply more CSS.
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -18,24 +28,35 @@ $isAdmin = isAdmin();
 <meta charset="UTF-8">
 <title>Help &amp; User Guide — <?= Markup::text(SITE_NAME) ?></title>
 <style>
+/* The Workspace Theme's thirteen roles (v2 step 5). One echo, validated, and
+   `var(--…)` below — see SiteChrome::styleVariables(). No canvas on this page, so every
+   role here is chrome. */
+:root {
+<?= SiteChrome::styleVariables() ?>
+}
 * { box-sizing: border-box; margin: 0; padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 
-body { background: #1e2b38; color: #d0d8e0; min-height: 100vh; }
+/* This page was written in its own slightly different blues — #1e2b38 for the body
+   against the Builder's #2c3e50, and #2c3e50 for its dividers against the Builder's
+   #34495e. Nobody wrote down why, and a theme cannot paint "almost the work area", so
+   the surfaces are the roles now. That and the Display picker's notice are the only two
+   places step 5 deliberately changes how an unthemed install looks. */
+body { background: var(--work-area); color: #d0d8e0; min-height: 100vh; }
 
 /* ── Nav ── */
 #top-nav {
-    background: <?= Brand::navBg() ?>;
+    background: var(--nav-bg);
     padding: 0 20px; display: flex; align-items: center; gap: 14px;
-    height: 46px; border-bottom: 1px solid <?= Brand::navBorder() ?>;
+    height: 46px; border-bottom: 1px solid var(--nav-border);
     position: sticky; top: 0; z-index: 100;
 }
 #top-nav .brand { font-weight: bold; font-size: 14px;
-                  color: <?= Brand::text() ?>; margin-right: auto; }
+                  color: var(--nav-text); margin-right: auto; }
 #top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px;
              padding: 5px 9px; border-radius: 3px; }
-#top-nav a:hover { background: #2c3e50; color: #fff; }
-#top-nav a.active { background: <?= Brand::accent() ?>; color: #fff; }
+#top-nav a:hover { background: var(--work-area); color: #fff; }
+#top-nav a.active { background: var(--accent); color: #fff; }
 .role-tag { background: <?= $isAdmin ? '#e74c3c' : '#3498db' ?>; color: #fff;
             font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
             text-transform: uppercase; margin-left: 4px; }
@@ -45,8 +66,8 @@ body { background: #1e2b38; color: #d0d8e0; min-height: 100vh; }
 
 /* ── Sidebar ── */
 #sidebar {
-    width: 240px; flex-shrink: 0; background: #1a252f;
-    border-right: 1px solid #2c3e50; padding: 20px 0;
+    width: 240px; flex-shrink: 0; background: var(--panel);
+    border-right: 1px solid var(--panel-border); padding: 20px 0;
     position: sticky; top: 46px; height: calc(100vh - 46px); overflow-y: auto;
 }
 #sidebar h2 { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px;
@@ -55,7 +76,7 @@ body { background: #1e2b38; color: #d0d8e0; min-height: 100vh; }
 #sidebar a { display: block; padding: 6px 20px; font-size: 13px; color: #bdc3c7;
              text-decoration: none; border-left: 3px solid transparent;
              transition: all .15s; }
-#sidebar a:hover { background: #22303f; color: #fff; border-left-color: #3498db; }
+#sidebar a:hover { background: #22303f; color: #fff; border-left-color: var(--accent); }
 #sidebar a.section-link { font-weight: 600; color: #d0d8e0; }
 #sidebar a.sub-link { padding-left: 32px; font-size: 12px; }
 
@@ -68,10 +89,10 @@ h1.page-title { font-size: 26px; color: #fff; margin-bottom: 6px; }
 /* Sections */
 .help-section { margin-bottom: 52px; }
 .help-section h2 {
-    font-size: 18px; color: #fff; border-bottom: 2px solid #2c3e50;
+    font-size: 18px; color: #fff; border-bottom: 2px solid var(--panel-border);
     padding-bottom: 10px; margin-bottom: 20px;
 }
-.help-section h3 { font-size: 14px; color: <?= Brand::accent() ?>;
+.help-section h3 { font-size: 14px; color: var(--accent);
                    margin: 24px 0 8px; text-transform: uppercase; letter-spacing: .8px; }
 .help-section p { font-size: 14px; line-height: 1.7; color: #c0cad4; margin-bottom: 10px; }
 .help-section ul, .help-section ol { padding-left: 20px; margin-bottom: 10px; }
@@ -99,7 +120,7 @@ kbd {
 .steps li { counter-increment: step; display: flex; gap: 12px; margin-bottom: 10px; }
 .steps li::before {
     content: counter(step); min-width: 24px; height: 24px; border-radius: 50%;
-    background: <?= Brand::accent() ?>; color: #fff; font-size: 12px;
+    background: var(--accent); color: #fff; font-size: 12px;
     font-weight: bold; display: flex; align-items: center; justify-content: center;
     flex-shrink: 0; margin-top: 2px;
 }
@@ -125,7 +146,7 @@ table.fit-table tr:last-child td { border-bottom: none; }
 table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: nowrap; }
 
 /* Back to top */
-.back-top { font-size: 12px; color: #3498db; text-decoration: none; float: right; }
+.back-top { font-size: 12px; color: var(--accent); text-decoration: none; float: right; }
 .back-top:hover { text-decoration: underline; }
 </style>
 </head>
@@ -133,8 +154,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
 <!-- ── Nav ── -->
 <div id="top-nav">
-    <?php if (Brand::logo()): ?>
-        <img src="<?= Markup::text(Brand::logo()) ?>" alt="Logo"
+    <?php if (SiteChrome::logo()): ?>
+        <img src="<?= Markup::text(SiteChrome::logo()) ?>" alt="Logo"
              style="max-height:32px; max-width:120px; object-fit:contain;">
     <?php else: ?>
         <span class="brand"><?= Markup::text(SITE_NAME) ?></span>
@@ -169,7 +190,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <a href="#builder-intro" class="section-link">Builder Overview</a>
     <a href="#adding-blocks" class="sub-link">Adding Content</a>
     <a href="#moving"        class="sub-link">Moving &amp; Resizing</a>
-    <a href="#inspector"     class="sub-link">Inspector Panel</a>
+    <a href="#inspector"     class="sub-link">Properties Panel</a>
     <a href="#multiselect"   class="sub-link">Multi-Select &amp; Align</a>
     <a href="#locking"       class="sub-link">Locking Blocks</a>
     <a href="#undo"          class="sub-link">Undoing a Change</a>
@@ -185,8 +206,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
     <h2>Other Pages</h2>
     <a href="#assets"        class="section-link">Asset Library</a>
-    <a href="#branding"      class="section-link">Brand Standards</a>
-    <a href="#setup-brand"   class="section-link">Store Branding</a>
+    <a href="#branding"      class="section-link">Brands &amp; Brand Standards</a>
+    <a href="#setup-brand"   class="section-link">Site Branding &amp; Themes</a>
     <?php if ($isAdmin): ?>
     <a href="#admin"         class="section-link">Admin Panel</a>
     <?php endif; ?>
@@ -227,7 +248,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li>Create and move <strong>Sections</strong> (the purple-bordered layout containers)</li>
         <li>Add any block type: Image, Carousel, Marquee, Video</li>
         <li>Edit font styles, block dimensions, canvas background</li>
-        <li>Manage Brand Standards via the Branding page (global font/color styles for branded blocks)</li>
+        <li>Create brands and manage their Brand Standards via the Display Branding page (font/colour styles for branded blocks, one set per brand)</li>
         <li>Delete blocks, manage accounts, configure store branding</li>
         <li>Publish the layout to the display</li>
     </ul>
@@ -320,14 +341,21 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h2>Builder Overview</h2>
     <a href="#" class="back-top">↑ Top</a>
     <p>The Builder is the main design tool, and it edits <strong>one display at a time</strong>. The display's title, its screen name tag, and its size are shown in the top-left of the nav bar — for example <strong>Drive-Thru</strong> · <code>drive-thru</code> · 1920 × 1080. The canvas is that display's size, so what you arrange is exactly what its screen shows. Everything is positioned absolutely, using X and Y coordinates from the top-left corner of the canvas.</p>
-    <p>The interface has three main areas:</p>
+    <p>Under the nav bar the screen is three columns:</p>
     <ul>
-        <li><strong>Top control bar</strong> — buttons for adding content, changing the background, zoom, and publishing</li>
-        <li><strong>Canvas (centre)</strong> — the design area where you place and arrange content blocks</li>
-        <li><strong>Inspector panel (right)</strong> — appears when a block is selected; shows position, size, and content options</li>
+        <li><strong>Palette (left)</strong> — the blocks you can add, grouped by what they are: Layout, Text, Media, and Brand. Above the rule at the top of it are the things that are about <em>which</em> sign you are on rather than what is on it: the brand this display wears, and <strong>⇄ Switch sign</strong>.</li>
+        <li><strong>Canvas (centre)</strong> — the design area where you place and arrange content blocks, with a thin footer under it carrying the zoom controls and who last published this display.</li>
+        <li><strong>Properties (right)</strong> — the controls for whichever block is selected. It stays on screen with nothing selected and says so, rather than appearing and disappearing.</li>
     </ul>
-    <p>If you can edit more than one display, <strong>Switch display ⇄</strong> in the nav bar lists the ones available to you; going straight to <code>builder.php</code> with no display named shows the same list.</p>
-    <div class="tip"><strong>Tip:</strong> A canvas is usually bigger than the window it is being edited in — a portrait screen especially. Use the <strong>Zoom</strong> buttons in the control bar: <strong>Fit</strong> shows the whole canvas at once, <strong>100%</strong> is actual size, and <strong>−</strong> / <strong>+</strong> step between them. The percentage next to them is the current zoom. The Builder opens at Fit. Use these rather than your browser's own zoom, so the X and Y numbers in the Inspector keep matching what you see.</div>
+    <p>The nav bar itself holds, left to right: the store name, which display this is, <strong>View ↗</strong> to open its Viewer in a new tab, then <strong>↺ Undo</strong> and <strong>✓ Publish</strong>, then your username, <strong>Sign Out</strong>, and a <strong>⚙</strong> gear. The gear is where the Asset Library, the Admin Panel and this Help live, along with which kind of account you are signed in as — and your <strong>Workspace Theme</strong>, which is the set of colours <em>this application</em> is drawn in. Picking one changes the screen straight away and does not reload the page, so it is safe to do with unpublished work on the canvas. It changes nothing about any display.</p>
+    <p>If you can edit more than one display, <strong>⇄ Switch sign</strong> at the top of the palette lists the ones available to you; going straight to <code>builder.php</code> with no display named shows the same list.</p>
+
+    <h3>Which brand this sign is wearing</h3>
+    <p>At the very top of the palette, under <em>Brand</em>, is the venue this display belongs to — its logo and its name, for example <strong>Salmon House</strong>. That is where the typography of the branded text blocks comes from, the palette offered above every colour picker, and the logo the <strong>Venue Logo</strong> item places.</p>
+    <p>Admins see a <strong>▾</strong> beside the name and can pick a different brand from the list. Everyone else, and anyone looking at a display somebody else is editing, sees the name and logo without the chevron — you can always tell which venue you are building for, and only an admin editing that display can move it to another one.</p>
+    <div class="note"><strong>Choosing a brand changes nothing until you publish.</strong> The canvas repaints straight away, so you can see the venue's typography and palette on this layout before committing to it — but nothing is saved, and the screens keep showing what they were showing. <strong>✓ Publish</strong> is what moves the display onto that brand. Reload the page without publishing and it is back on the brand it was on. The canvas background does not change either way: a brand's default background is what a <em>new</em> display starts from, and this display's background stays its own.</div>
+    <div class="tip"><strong>Tip:</strong> Switching brand is the fastest way to see whether a layout would work on another venue's boards — the prices and headings take that venue's font, size and colour immediately. Nothing is at stake while you look, because nothing has been written.</div>
+    <div class="tip"><strong>Tip:</strong> A canvas is usually bigger than the window it is being edited in — a portrait screen especially. Use the <strong>Zoom</strong> buttons in the canvas footer: <strong>Fit</strong> shows the whole canvas at once, <strong>100%</strong> is actual size, and <strong>−</strong> / <strong>+</strong> step between them. The percentage next to them is the current zoom. The Builder opens at Fit. Use these rather than your browser's own zoom, so the X and Y numbers in the properties panel keep matching what you see.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -338,7 +366,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h3>For Admins — Add a Section first</h3>
     <p>Sections are the structural containers (purple border) that organise your layout. Content blocks live <em>inside</em> sections.</p>
     <ol class="steps">
-        <li><span>Click <strong>+ Section</strong> in the control bar. A purple-bordered rectangle appears.</span></li>
+        <li><span>Click <strong>Section</strong> under <em>Layout</em> in the palette on the left. A purple-bordered rectangle appears.</span></li>
         <li><span>Drag it to where you want it on the canvas.</span></li>
         <li><span>Resize it by dragging any edge or corner.</span></li>
         <li><span>Click the section to target it, then add blocks inside it.</span></li>
@@ -348,26 +376,28 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <p>You cannot create sections. An admin must create them. To add content:</p>
     <ol class="steps">
         <li><span>Click on a section (purple border) — its border turns orange when targeted.</span></li>
-        <li><span>The banner at the top shows "Section selected — now add a block."</span></li>
-        <li><span>Click any block type button to add it inside that section.</span></li>
+        <li><span>The note at the foot of the palette confirms which section your next block will land in.</span></li>
+        <li><span>Click any block in the palette to add it inside that section.</span></li>
     </ol>
 
     <h3>Block types available to all users</h3>
     <ul>
-        <li><strong>+ Section Header</strong> — Large styled heading (uses brand font/colour)</li>
-        <li><strong>+ Item Title</strong> — Product or menu item name (uses brand font/colour)</li>
-        <li><strong>+ Price</strong> — Price display block (uses brand font/colour)</li>
-        <li><strong>+ Description</strong> — Smaller description text (uses brand font/colour)</li>
-        <li><strong>+ Image</strong> — Displays a still image (upload in the inspector)</li>
+        <li><strong>Section Header</strong> — Large styled heading (uses brand font/colour)</li>
+        <li><strong>Item Title</strong> — Product or menu item name (uses brand font/colour)</li>
+        <li><strong>Price</strong> — Price display block (uses brand font/colour)</li>
+        <li><strong>Description</strong> — Smaller description text (uses brand font/colour)</li>
+        <li><strong>Image</strong> — Displays a still image (upload in the properties panel)</li>
     </ul>
 
     <h3>Admin-only block types</h3>
     <ul>
-        <li><strong>+ Image</strong> — Image block with fit-mode options</li>
-        <li><strong>+ Video</strong> — Auto-playing looped video (MP4, WebM, OGV — max 50 MB)</li>
-        <li><strong>+ Carousel</strong> — Slideshow of images with optional titles/prices</li>
-        <li><strong>+ Marquee</strong> — Scrolling ticker text across the bottom or anywhere</li>
+        <li><strong>Image</strong> — Image block with fit-mode options</li>
+        <li><strong>Video</strong> — Auto-playing looped video (MP4, WebM, OGV — max 50 MB)</li>
+        <li><strong>Carousel</strong> — Slideshow of images with optional titles/prices</li>
+        <li><strong>Marquee</strong> — Scrolling ticker text across the bottom or anywhere</li>
+        <li><strong>Venue Logo</strong> (under <em>Brand</em>) — an image block already linked to this brand's logo. It appears only when the brand has a logo set; if the brand points at a picture that has since been removed from the Asset Library, the palette says so instead.</li>
     </ul>
+    <div class="note"><strong>The logo is placed, never drawn automatically.</strong> Screens do not add a logo of their own — where it belongs and how big it should be are different answers on a landscape menu board and a portrait specials board, so it is a block you position like any other.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -376,15 +406,15 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <a href="#" class="back-top">↑ Top</a>
 
     <h3>Moving a block</h3>
-    <p>Click and drag the <strong>centre area</strong> of any block to move it. The cursor changes to a move arrow (<span style="font-size:16px;">✥</span>) when dragging is available. The X and Y position fields in the Inspector update live as you drag.</p>
+    <p>Click and drag the <strong>centre area</strong> of any block to move it. The cursor changes to a move arrow (<span style="font-size:16px;">✥</span>) when dragging is available. The X and Y position fields in the properties panel update live as you drag.</p>
 
     <h3>Resizing a block</h3>
     <p>Hover near any <strong>edge or corner</strong> of a selected block. The cursor changes to a resize arrow. Drag to change the size. While resizing, a dark badge shows the current dimensions (e.g. <kbd>420 × 180 px</kbd>) floating in the centre of the block.</p>
 
-    <div class="tip"><strong>Tip:</strong> Use the <strong>W</strong> and <strong>H</strong> fields in the Inspector to type an exact pixel size. This is the easiest way to make two blocks exactly the same width or height — read the size from one, type it into the other.</div>
+    <div class="tip"><strong>Tip:</strong> Use the <strong>W</strong> and <strong>H</strong> fields in the properties panel to type an exact pixel size. This is the easiest way to make two blocks exactly the same width or height — read the size from one, type it into the other.</div>
 
     <h3>Typing exact position or size</h3>
-    <p>With any block selected, the Inspector panel (right side) shows four editable number fields:</p>
+    <p>With any block selected, the properties panel on the right shows four editable number fields:</p>
     <ul>
         <li><strong>X</strong> — distance from the left edge of the canvas (in pixels)</li>
         <li><strong>Y</strong> — distance from the top edge of the canvas (in pixels)</li>
@@ -398,9 +428,9 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
 <!-- ════════════════════════════════════════════════════════ -->
 <div class="help-section" id="inspector">
-    <h2>Inspector Panel</h2>
+    <h2>Properties Panel</h2>
     <a href="#" class="back-top">↑ Top</a>
-    <p>Click any block to select it (red outline). The Inspector panel opens on the right side of the screen showing controls specific to that block type.</p>
+    <p>Click any block to select it (red outline). The properties panel on the right fills in with the controls for that block type. It is a fixed column rather than a floating window &mdash; it does not move, and it cannot be dragged. With nothing selected it stays where it is and says so; for admins it also carries the <strong>Canvas Background</strong>, which belongs to the canvas rather than to any block.</p>
 
     <h3>All blocks</h3>
     <ul>
@@ -411,11 +441,15 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Delete Block</strong> — removes the block from the canvas. <strong>↺ Undo</strong> or Ctrl+Z brings it back if you have not reloaded the page; once you Publish, it is gone from the display</li>
     </ul>
 
+    <h3>Picking a colour: the brand's palette</h3>
+    <p>Wherever the properties panel lets you choose a colour — the canvas background, a free text block's colour, and a marquee's text and background — a small row of swatches labelled <strong>Brand</strong> sits above the colour picker. Those are the venue's palette. Clicking one fills the picker under it, exactly as if you had chosen that colour by hand.</p>
+    <div class="note"><strong>The palette is an offer, not a rule.</strong> Nothing is recoloured because a brand has a palette, and a block with a colour of its own keeps it until somebody changes it. A brand with no palette set shows no swatch row at all — that is normal, not a fault. Picking a brand's swatch on a marquee background also unticks <strong>Transparent</strong>, since a transparent marquee ignores its background colour.</div>
+
     <h3>Branded text blocks (Section Header / Item Title / Price / Description)</h3>
     <ul>
         <li>Shows a purple "Brand Style Applied" badge — font and colour come from Brand Standards</li>
         <li>Double-click the block to edit the text content (all users can do this)</li>
-        <li>To change the font or colour for ALL blocks of this type at once, use <strong>Brand Standards</strong> (admin only)</li>
+        <li>To change the font or colour for ALL blocks of this type at once — on every display wearing this display's brand — use <strong>Brand Standards</strong> (admin only)</li>
     </ul>
 
     <h3>Image blocks</h3>
@@ -443,7 +477,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>Background Color</strong> — the bar's background. Tick <strong>Transparent</strong> to let whatever is behind the block show through; your colour is remembered while it is ticked, so unticking gives it straight back.</li>
     </ul>
 
-    <div class="tip"><strong>Alignment tip:</strong> The Inspector shows a reminder: Shift+click a second block to enter multi-select mode and reveal the alignment toolbar above the canvas.</div>
+    <div class="tip"><strong>Alignment tip:</strong> The <strong>Arrange</strong> group in the properties panel has two rows of arrows. With one block selected the first row lines it up inside its section; Shift+click a second block and the second row lines the selected blocks up with each other. The line under them says which one you are about to use.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -454,7 +488,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h3>Selecting multiple blocks</h3>
     <ol class="steps">
         <li><span>Click the first block (red outline — single select).</span></li>
-        <li><span>Hold <kbd>Shift</kbd> and click a second block. Both turn orange — the alignment toolbar appears above the canvas.</span></li>
+        <li><span>Hold <kbd>Shift</kbd> and click a second block. Both turn orange, and the <strong>Arrange</strong> group in the properties panel says how many are selected.</span></li>
         <li><span>Continue <kbd>Shift</kbd>-clicking to add more blocks to the selection.</span></li>
         <li><span><kbd>Shift</kbd>-click an orange block again to remove it from the selection.</span></li>
         <li><span>Click any block <em>without</em> Shift (or click the canvas background) to clear multi-select and go back to single-select.</span></li>
@@ -462,8 +496,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
     <div class="note"><strong>Note:</strong> Sections cannot be multi-selected. Only content blocks (text, image, video, etc.) can be shift-selected.</div>
 
-    <h3>Alignment toolbar</h3>
-    <p>When 2 or more blocks are selected the alignment bar appears between the top control bar and the canvas:</p>
+    <h3>Arrange</h3>
+    <p>With 2 or more blocks selected, the second row of arrows in <strong>Arrange</strong> lines them up with each other:</p>
     <ul>
         <li><strong>◀ Left</strong> — align all left edges to the leftmost block's left edge</li>
         <li><strong>Right ▶</strong> — align all right edges to the rightmost block's right edge</li>
@@ -483,13 +517,13 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <p>Any block can be locked to prevent accidental changes during editing.</p>
     <ol class="steps">
         <li><span>Click the block to select it.</span></li>
-        <li><span>In the Inspector, tick <strong>Lock this block</strong>.</span></li>
+        <li><span>In the properties panel, tick <strong>Lock this block</strong>.</span></li>
         <li><span>A 🔒 icon appears on the block.</span></li>
         <li><span>To unlock, select the block and un-tick the checkbox.</span></li>
     </ol>
     <p>A locked block cannot be <strong>moved</strong>, <strong>resized</strong> or
        <strong>deleted</strong> — by dragging it, by its resize handles, by typing in the
-       Inspector's X / Y / W / H boxes, by the Align buttons, by the Delete Block button, or
+       panel's X / Y / W / H boxes, by the Arrange buttons, by the Delete Block button, or
        by the Delete key. Each of those says the block is locked rather than doing nothing
        visible. The layer buttons refuse it too, since which layer a block paints on is
        where it sits in front of or behind the others.</p>
@@ -511,7 +545,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 <div class="help-section" id="undo">
     <h2>Undoing a Change</h2>
     <a href="#" class="back-top">↑ Top</a>
-    <p>The <strong>↺ Undo</strong> button in the top control bar takes back your last change to
+    <p>The <strong>↺ Undo</strong> button in the nav bar takes back your last change to
        the canvas. <strong>Ctrl+Z</strong> (⌘Z on a Mac) does the same thing.</p>
     <p>One press takes back one finished change — a block moved, a block resized, a block
        added or deleted, a colour chosen, or a piece of text edited and clicked away from.
@@ -543,7 +577,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <p>Publishing saves the current canvas to the database and makes it live on the display.</p>
     <ol class="steps">
         <li><span>Finish making your changes on the canvas.</span></li>
-        <li><span>Click the <strong>✓ Publish</strong> button (top-right of the control bar).</span></li>
+        <li><span>Click the <strong>✓ Publish</strong> button in the nav bar.</span></li>
         <li><span>A success message appears. The display viewer will show the new layout within 30 seconds.</span></li>
     </ol>
     <div class="note"><strong>Important:</strong> Unpublished changes exist only in your browser tab. If you close the tab or navigate away <em>without</em> publishing, your changes are lost. Always publish before leaving the builder.</div>
@@ -569,7 +603,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <ul>
         <li>Drag the section's border or label to move it on the canvas</li>
         <li>Drag any edge to resize the section</li>
-        <li>Sections can have a <strong>background image</strong> — set it in the Inspector when the section is selected</li>
+        <li>Sections can have a <strong>background image</strong> — set it in the properties panel when the section is selected</li>
         <li>Click a section to target it (orange border) before adding blocks to it</li>
         <li>Child blocks inside a section cannot be dragged outside the section's boundary</li>
     </ul>
@@ -582,27 +616,27 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <a href="#" class="back-top">↑ Top</a>
 
     <h3>Branded Text Blocks</h3>
-    <p>These four types use store-wide font and colour settings defined in Brand Standards (set on the Branding page):</p>
+    <p>These four types use the font and colour settings defined in the display's brand, in Brand Standards (set on the Display Branding page):</p>
     <ul>
         <li><strong>Section Header</strong> — Large heading. Default: Arial 36px bold white.</li>
         <li><strong>Item Title</strong> — Product name. Default: Arial 24px bold light-grey.</li>
         <li><strong>Price</strong> — Price. Default: Arial 30px bold orange (#f39c12).</li>
         <li><strong>Description</strong> — Detail text. Default: Arial 14px regular grey.</li>
     </ul>
-    <p>To edit the text: double-click the block and type. To change the style for <em>all</em> blocks of that type, go to Brand Standards (admin only).</p>
-    <div class="tip"><strong>Tip:</strong> Consistent use of branded text blocks means you can restyle your entire display (e.g. change all prices to green) in seconds from the Brand Standards screen.</div>
+    <p>To edit the text: double-click the block and type. To change the style for <em>all</em> blocks of that type on every display wearing this brand, go to Brand Standards (admin only).</p>
+    <div class="tip"><strong>Tip:</strong> Consistent use of branded text blocks means you can restyle a whole venue (e.g. change all prices to green) in seconds from the Brand Standards screen — every display wearing that brand at once.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
 <div class="help-section" id="image-blocks">
     <h2>Image Blocks</h2>
     <a href="#" class="back-top">↑ Top</a>
-    <p>Image blocks display a still image. After adding an image block to the canvas, select it and use the Inspector to upload a photo.</p>
+    <p>Image blocks display a still image. After adding an image block to the canvas, select it and use the properties panel to upload a photo.</p>
 
     <h3>Uploading an image</h3>
     <ol class="steps">
-        <li><span>Click <strong>+ Image</strong> in the control bar.</span></li>
-        <li><span>Click the block to select it — the Inspector panel opens on the right.</span></li>
+        <li><span>Click <strong>Image</strong> under <em>Media</em> in the palette.</span></li>
+        <li><span>Click the block to select it — the properties panel on the right fills in with its controls.</span></li>
         <li><span>Under <strong>Upload Image</strong>, click the file picker and choose an image (JPG, PNG, GIF, WEBP — max <?= Markup::text(UploadLimit::describe()) ?>).</span></li>
         <li><span>The image appears in the block immediately.</span></li>
         <li><span>Choose an <strong>Image Fit</strong> mode (see below).</span></li>
@@ -648,8 +682,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <div class="admin-only"><strong>Admin only.</strong></div>
     <p>Video blocks auto-play, loop continuously, and are always muted (required for auto-play in modern browsers).</p>
     <ol class="steps">
-        <li><span>Click <strong>+ Video</strong> in the control bar.</span></li>
-        <li><span>Select the block and click <strong>Upload Video</strong> in the Inspector.</span></li>
+        <li><span>Click <strong>Video</strong> under <em>Media</em> in the palette.</span></li>
+        <li><span>Select the block and click <strong>Upload Video</strong> in the properties panel.</span></li>
         <li><span>Choose an MP4, WebM, or OGV file (max <?= Markup::text(UploadLimit::describe()) ?>).</span></li>
         <li><span>The video begins playing in the builder preview.</span></li>
         <li><span>Resize the block to fit your layout. Publish when ready.</span></li>
@@ -674,8 +708,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
     <h3>Setting up a carousel</h3>
     <ol class="steps">
-        <li><span>Click <strong>+ Carousel</strong> in the control bar.</span></li>
-        <li><span>Select the block and set the <strong>Interval</strong> (seconds per slide) in the Inspector.</span></li>
+        <li><span>Click <strong>Carousel</strong> under <em>Media</em> in the palette.</span></li>
+        <li><span>Select the block and set the <strong>Interval</strong> (seconds per slide) in the properties panel.</span></li>
         <li><span>Click <strong>Edit Slides</strong> to open the slide editor.</span></li>
         <li><span>For each slide: upload an image, enter an optional title and price.</span></li>
         <li><span>Use the <strong>Remove</strong> button to delete a slide. Add more with <strong>Add Slide</strong>.</span></li>
@@ -696,8 +730,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
     <h3>Setting up a marquee</h3>
     <ol class="steps">
-        <li><span>Click <strong>+ Marquee</strong> in the control bar.</span></li>
-        <li><span>Select the block. In the Inspector, type the scrolling message in the <strong>Marquee Text</strong> box.</span></li>
+        <li><span>Click <strong>Marquee</strong> under <em>Media</em> in the palette.</span></li>
+        <li><span>Select the block. In the properties panel, type the scrolling message in the <strong>Marquee Text</strong> box.</span></li>
         <li><span>Adjust the <strong>Scroll Speed</strong> slider (pixels per second — higher = faster).</span></li>
         <li><span>Set the text colour, size, weight, and background colour — or tick <strong>Transparent</strong> for no bar behind the text. The colour you picked is kept while Transparent is ticked, so you can switch back without choosing it again.</span></li>
         <li><span>Resize the block to span the width you want (commonly full-screen width).</span></li>
@@ -711,7 +745,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 <div class="help-section" id="assets">
     <h2>Asset Library</h2>
     <a href="#" class="back-top">↑ Top</a>
-    <p>The Asset Library (<a href="crud.php" style="color:#3498db;">Assets</a> in the nav) is a central pool of reusable content items — text snippets, images, and video paths. Linking a canvas block to an asset means the block's content comes from the asset and updates everywhere the asset is used.</p>
+    <p>The Asset Library (behind the <strong>⚙</strong> gear in the Builder's nav bar) is a central pool of reusable content items — text snippets, images, and video paths. Linking a canvas block to an asset means the block's content comes from the asset and updates everywhere the asset is used.</p>
 
     <h3>Adding an asset</h3>
     <ol class="steps">
@@ -723,7 +757,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h3>Linking an asset to a block</h3>
     <ol class="steps">
         <li><span>Select a block on the canvas.</span></li>
-        <li><span>In the Inspector, find the <strong>Link DB Asset</strong> dropdown.</span></li>
+        <li><span>In the properties panel, find the <strong>Link DB Asset</strong> dropdown.</span></li>
         <li><span>Choose an asset from the list. The block's content is replaced by the asset's content.</span></li>
         <li><span>Publish. From now on, updating the asset in the Asset Library will update all linked blocks on the next Publish.</span></li>
     </ol>
@@ -763,20 +797,21 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
 
 <!-- ════════════════════════════════════════════════════════ -->
 <div class="help-section" id="branding">
-    <h2>Brand Standards</h2>
+    <h2>Brands &amp; Brand Standards</h2>
     <a href="#" class="back-top">↑ Top</a>
     <div class="admin-only"><strong>Admin only.</strong></div>
-    <p>Brand Standards define the default font family, size, colour, weight, and line height for each of the six branded text block types: Section Header, Item Title, Item Title 2, Price, Price 2, and Description.</p>
+    <p>A <strong>brand</strong> is one venue's look: its typography, its palette, its logo and the canvas background its screens start from. Every display wears exactly one, and several displays can share it — so a restaurant with three boards has one red, edited once.</p>
+    <p>Brand Standards define the default font family, size, colour, weight, and line height for each of the six branded text block types: Section Header, Item Title, Item Title 2, Price, Price 2, and Description — <em>per brand</em>.</p>
 
     <h3>Changing brand styles</h3>
     <ol class="steps">
-        <li><span>Go to <strong>Branding</strong> (top nav → Branding) and scroll to the Brand Standards section.</span></li>
+        <li><span>Go to <strong>Display Branding</strong> (Admin Panel → Display Branding) and open the brand you want to change.</span></li>
         <li><span>A table shows each block type's current settings, with a live preview. Edit any field.</span></li>
         <li><span>Click <strong>Save Brand Standards</strong>.</span></li>
     </ol>
 
-    <div class="note"><strong>Note:</strong> Brand Standards only affect <em>branded</em> text blocks — not free text blocks, where you set the font yourself in the Inspector.</div>
-    <div class="tip"><strong>These reach the screens on their own.</strong> Every screen reads this typography each time it polls, so a saved change appears within 30 seconds on <em>every</em> display, with no publishing needed. That also makes it the one change you can make without opening the Builder. Because it lands on every sign at once, it is refused while <em>anyone</em> is editing <em>any</em> display — the message names who, and you can save once they are finished or once their editing lock lapses after 15 idle minutes.</div>
+    <div class="note"><strong>Note:</strong> Brand Standards only affect <em>branded</em> text blocks — not free text blocks, where you set the font yourself in the properties panel. A brand's <strong>palette</strong> is different again: it is offered as swatches wherever you pick a colour, and never enforced, so a block with its own colour keeps it.</div>
+    <div class="tip"><strong>These reach the screens on their own.</strong> Every screen reads this typography each time it polls, so a saved change appears within 30 seconds on every display <em>wearing that brand</em>, with no publishing needed. That also makes it the one change you can make without opening the Builder. Because it lands on those signs at once, it is refused while anyone is editing <em>a display that wears this brand</em> — the message names who and which display, and you can save once they are finished or once their editing lock lapses after 15 idle minutes. Somebody working on a display wearing a different brand does not block you.</div>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -784,7 +819,11 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <h2>Store Branding</h2>
     <a href="#" class="back-top">↑ Top</a>
     <div class="admin-only"><strong>Admin only.</strong></div>
-    <p>Store Branding (<a href="setup_branding.php" style="color:#3498db;">Branding</a> in the nav) controls the visual theme of the builder itself — the nav bar colours and the store logo shown in the top-left.</p>
+    <p>Site Branding (the <strong>Site Branding</strong> tab of the <a href="admin_panel.php?tab=branding">Admin Panel</a>)
+       controls how <em>this application</em> looks to everybody who has not chosen otherwise —
+       the nav bar colours and the store logo shown in the top-left. It is not a display's
+       colours: those belong to the display's <strong>Brand</strong>, on the Display Branding
+       tab, and nothing on this tab reaches a screen in the shop.</p>
     <ul>
         <li><strong>Logo</strong> — PNG, JPG, GIF, or WEBP (max 2 MB). Displayed in the nav bar.</li>
         <li><strong>Nav Background</strong> — colour of the top navigation bar</li>
@@ -797,7 +836,35 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
        completed — a full disk, a folder the server cannot write — it is refused
        outright and the site keeps the settings it had; the message on screen says
        which of the two it was. A save either happens completely or not at all, so
-       there is no state where the theme is half changed.</p>
+       there is no state where it is half changed.</p>
+
+    <h3>Workspace Themes</h3>
+    <p>Site Branding is the <strong>store default</strong>. A <strong>Workspace Theme</strong> is
+       an alternative set of the same colours that any one person can choose for themselves,
+       from the gear menu in the Builder. Admins make them, on the same tab, and everybody
+       can pick one.</p>
+    <ul>
+        <li><strong>Thirteen colours.</strong> The nav bar and its border and text, the accent,
+            the work area behind a canvas, the side panels and their borders, five status
+            colours for the banners the Builder shows, and the outline drawn around a block
+            you have selected.</li>
+        <li><strong>Never the canvas.</strong> What a display's canvas shows is what the sign
+            shows, so its colours are the Brand's. The only thing a theme paints over a canvas
+            is the selection outline and the resize handles, which nobody in the shop sees.</li>
+        <li><strong>Contrast is a warning, not a refusal.</strong> If the nav text would be hard
+            to read on the nav background the form says so and still lets you save it. It is
+            your screen.</li>
+        <li><strong>"Store default" is always on the picker</strong>, including when it is the
+            one already ticked — so there is no theme you can choose and not get back out of.</li>
+        <li><strong>A theme somebody is using cannot be deleted.</strong> The Admin Panel refuses
+            it and names who is on it; they can move themselves to the store default from the
+            gear menu.</li>
+    </ul>
+    <p>Choosing a theme writes nothing to any display and does not reload the Builder, so it
+       cannot lose work that has not been published. If the choice cannot be saved — the
+       server is unreachable, the theme was deleted a moment ago — the page goes back to the
+       theme you were actually on and says so, rather than showing you one you are not
+       wearing.</p>
 </div>
 
 <!-- ════════════════════════════════════════════════════════ -->
@@ -822,7 +889,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     </ul>
 
     <h3>Work Area tab</h3>
-    <p>Lists the published elements of one display — choose which with the <strong>Display</strong> selector at the top — so you can hide or delete a single block without opening the Builder. <strong>Hide</strong> takes it off that screen within 30 seconds while keeping it in the layout, ready to un-hide — here, or from the block's own <strong>Hide from the screens</strong> box in the Builder's Inspector, which takes effect at the next publish instead. <strong>Delete</strong> removes it for good. Neither needs a publish, and both mean that any Builder tab opened before the change has to reload before it can publish.</p>
+    <p>Lists the published elements of one display — choose which with the <strong>Display</strong> selector at the top — so you can hide or delete a single block without opening the Builder. <strong>Hide</strong> takes it off that screen within 30 seconds while keeping it in the layout, ready to un-hide — here, or from the block's own <strong>Hide from the screens</strong> box in the Builder's properties panel, which takes effect at the next publish instead. <strong>Delete</strong> removes it for good. Neither needs a publish, and both mean that any Builder tab opened before the change has to reload before it can publish.</p>
 
     <h3>Users tab</h3>
     <ul>
@@ -950,16 +1017,16 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li>Double-click text block — enters text editing mode</li>
         <li>Drag block centre — moves the block</li>
         <li>Drag block edge/corner — resizes the block</li>
-        <li><kbd>Tab</kbd> / <kbd>Enter</kbd> in Inspector number field — applies the typed value</li>
+        <li><kbd>Tab</kbd> / <kbd>Enter</kbd> in a properties-panel number field — applies the typed value</li>
         <li><kbd>F11</kbd> — full-screen browser (for viewer screen)</li>
     </ul>
 
     <h3>Common tasks at a glance</h3>
     <ul>
         <li><strong>Change a price</strong> → double-click the Price block, edit text, Publish</li>
-        <li><strong>Swap an image</strong> → click the image block, Upload Image in Inspector, Publish</li>
-        <li><strong>Make two boxes the same width</strong> → click first block, note W value in Inspector; click second block, type same W value, press Tab</li>
-        <li><strong>Align a row of labels</strong> → Shift+click all blocks, click ▲ Top in alignment bar, Publish</li>
+        <li><strong>Swap an image</strong> → click the image block, Upload Image in the properties panel, Publish</li>
+        <li><strong>Make two boxes the same width</strong> → click first block, note W value in the properties panel; click second block, type same W value, press Tab</li>
+        <li><strong>Align a row of labels</strong> → Shift+click all blocks, click ▲ in the second row of Arrange, Publish</li>
         <li><strong>Add a new product</strong> → click a section, add Item Title + Price + Description blocks, fill in text, Publish</li>
         <li><strong>Change all prices to a new colour</strong> → Brand Standards → change Price font colour → Save. No publishing needed; every screen picks it up within 30 seconds</li>
         <li><strong>Update a display remotely</strong> → make changes in the Builder, click Publish — that display's screen updates within 30 seconds</li>
@@ -975,8 +1042,8 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
         <li><strong>A display says somebody is editing it and they are not here</strong> — this clears itself. A lock is dropped fifteen minutes after that person's last click, and immediately if their account has been suspended or closed. An admin can also take it over from the Builder without waiting</li>
         <li><strong>Publish was refused</strong> — either the display changed since you opened it (reload and re-apply your changes, or the message names who published) or somebody else holds it now. Nothing was saved either way, and what is on your screen is still there</li>
         <li><strong>Wrong display in the Builder</strong> — use <strong>Switch display ⇄</strong> in the nav bar</li>
-        <li><strong>Block won't move</strong> — check if the 🔒 lock icon is showing; deselect and re-click the block, then untick Lock in the Inspector</li>
-        <li><strong>Image looks stretched</strong> — select the image block, change Image Fit to <em>Cover</em> or <em>Contain</em> in the Inspector</li>
+        <li><strong>Block won't move</strong> — check if the 🔒 lock icon is showing; deselect and re-click the block, then untick Lock in the properties panel</li>
+        <li><strong>Image looks stretched</strong> — select the image block, change Image Fit to <em>Cover</em> or <em>Contain</em> in the properties panel</li>
         <li><strong>Shift+click not working</strong> — make sure you click the block itself (not its text inner area); click a block normally first, then Shift+click the next</li>
         <li><strong>Can't add a block (basic user)</strong> — you must click a section (purple border) first to target it before adding any blocks</li>
         <li><strong>Forgot password</strong> — use the Forgot Password link on the login page; check spam/junk if the email doesn't arrive</li>
@@ -1009,9 +1076,9 @@ function onScroll() {
         // nothing, so an entity stays an entity and a backslash stays a backslash —
         // and a value ending in one escapes the quote that was supposed to close this
         // string. HttpReply::jsValue() produces the literal, quotes included (#15).
-        // Brand::accent() answers a colour or the documented default, so this is the
+        // SiteChrome::accent() answers a colour or the documented default, so this is the
         // only place the value is asked about and the only place it is escaped.
-        a.style.borderLeftColor = (target === active) ? <?= HttpReply::jsValue(Brand::accent()) ?> : 'transparent';
+        a.style.borderLeftColor = (target === active) ? <?= HttpReply::jsValue(SiteChrome::accent()) ?> : 'transparent';
         a.style.color = (target === active) ? '#fff' : '';
         a.style.background = (target === active) ? '#22303f' : '';
     });

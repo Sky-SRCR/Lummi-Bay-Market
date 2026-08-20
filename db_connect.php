@@ -35,18 +35,18 @@ require_once __DIR__ . '/lib/markup.php';
 
 // The other half of that rule, for the values escaping cannot help with. The store's
 // own colours go into a `<style>` block, where there is no delimiter to escape and a
-// value that is not a colour is CSS. `lib/brand.php` reads them, so no page carries
+// value that is not a colour is CSS. `lib/site_chrome.php` reads them, so no page carries
 // its own copy of the defaults.
 //
 // It does *not* load `branding_config.php`. It did on the branch this came from, which
 // predates §4y: since that write-up `lib/branding.php` is the only file in the app
 // that spells the name, `config.php` brings the eight constants into being through it,
 // and a consistency grep in BUILD-REFERENCE §5 holds it to that. Two readers is one
-// more than the invariant allows, and the second one is redundant anyway — `Brand::`
+// more than the invariant allows, and the second one is redundant anyway — `SiteChrome::`
 // reads constants, and by the time any page renders a stylesheet `config.php` has
 // defined them. Absent constants still answer the documented default, which is what
 // `tools/audit_colors.php` relies on when it runs with no app around it.
-require_once __DIR__ . '/lib/brand.php';
+require_once __DIR__ . '/lib/site_chrome.php';
 
 // Which credentials this install uses, and why it is not simply one shared path:
 // two copies of this app in two folders on one account walk up to the same place, so

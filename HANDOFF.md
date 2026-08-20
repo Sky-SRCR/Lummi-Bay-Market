@@ -135,25 +135,29 @@ it is the standing contract, with the invariants and where later work attaches.
 | `lib/login_attempt.php` | `LoginAttempt` — what a refused sign-in is allowed to say, and in what order the questions are asked (ADR-0008). Every question that does not depend on the password is answered first, so no sentence and no counter can tell a guesser the password was right. Holds no PDO: it decides, `AccountStore` writes |
 | `lib/request_scheme.php` | `RequestScheme` — is the browser's own leg of this request HTTPS, and may the session cookie therefore claim `Secure` (ADR-0009). Asserting it over plain HTTP made every sign-in loop back to a blank form in silence. Also the scheme the viewer address is built from, which had its own copy of the question and got it wrong behind a proxy |
 | `lib/markup.php` | `Markup::text()` — the only `htmlspecialchars` in the app, with both flags named rather than defaulted (the default changed in PHP 8.1). `Markup::jsInAttr()` for a value used as JavaScript inside an attribute, which HTML escaping does **not** make safe |
-| `lib/brand.php` | The store's own colours, read through `Color::read()` rather than escaped — they land in a `<style>` block, where there is no delimiter for an entity to neutralise and a value that is not a colour is CSS. Also holds the defaults, which four pages used to carry a copy of each, and reads the generated config through `BrandingConfig`, which owns it |
+| `lib/site_chrome.php` | The store's own colours, read through `Color::read()` rather than escaped — they land in a `<style>` block, where there is no delimiter for an entity to neutralise and a value that is not a colour is CSS. Also holds the defaults, which four pages used to carry a copy of each, and reads the generated config through `BrandingConfig`, which owns it |
 | `lib/error_policy.php` | The error policy, set in code: errors off, logging on, the three handlers, and the notice a Screen / an endpoint / a person gets when something breaks. `report()` is for a problem the app survived, and throttles the log as well as the email when the problem repeats on its own |
 | `lib/alerts.php` | `AlertMailer` — one email per problem per hour to admins, rate-limited and addressed from files rather than the database |
 | `lib/assets.php` | `AssetLibrary` — the **only** SQL against `assets`. Publishing no longer shares a row between signs; pooled rows carry a marker so the ones nothing uses can be tidied and the ones a person made never can |
 | `lib/branding.php` | `BrandingConfig` / `BrandingWrite` — the **only** writer of `branding_config.php`, which every page of the app requires. Renders it, parses it, writes a temporary copy, reads that back byte for byte, and swaps it in with one `rename()`, so a reader gets the whole old file or the whole new one and a failed save leaves the site on exactly what it had |
 | `lib/install_paths.php` | Which install this folder is, and whose credentials it uses. Pure. One account can hold the live app and a rehearsal copy at the same depth, so a single shared credentials path made an unmodified copy connect to the **live** database in silence — the folder's own name selects `private/db_credentials_<folder>.php` when it exists, and the shared file otherwise, so no tracked file has to differ between the two |
 | `lib/upload_limits.php` | `UploadLimit` — how big a file can actually reach this server (the smallest of 50 MB, `upload_max_filesize`, `post_max_size`), and the detection of a request body PHP silently threw away |
-| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **1778 checks** — and the same suite against real MySQL when `SELFTEST_MYSQL_DSN` is set, where it runs 1801. Run before pushing |
+| `tools/selftest_layout.php` | `php tools/selftest_layout.php` — real modules, in-memory SQLite, **2338 checks** — and the same suite against real MySQL when `SELFTEST_MYSQL_DSN` is set, where it runs 2363 (that figure is the SQLite one plus a count of the engine-only section; see the note above `reportChecks()`). Run before pushing |
+| `tools/selftest_installed.php` | `php tools/selftest_installed.php` — the same suite six more times, on two axes. **What the shop chose** (`branding_config.php`, which is generated and outside the repo, so the plain run has only ever seen a fresh checkout): branded, live-like, and one whose config holds a colour the app cannot read — seven checks turned out to be asserting *this machine's* configuration, two of them that the shop's navigation is the colour the app ships with (§4bg). **What the machine was set to** (`php -d`): a generous host, a tight one, and one showing errors — the branches of the four readouts that describe a server, which had one form here and the other form on no machine at all (§4bi). Refuses any arm set to what this machine already holds. About as long as six plain runs |
 | `tools/mutate.php` | `php tools/mutate.php lib/whatever.php` — breaks that file one way at a time and runs the suite each time, to answer whether the checks over it *can* fail (#50, invariant 30, §4aq). Minutes rather than seconds, so it is a tool to run over what you changed rather than a gate. `--list` shows what it would break without running anything |
-| `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits, **45 checks** |
-| `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit, and that each of the page's two opening reads reports its own failure rather than sharing one sentence, and that Publish cannot be fired twice), **93 checks** |
-| `tools/selftest_builder_colors.js` | `node tools/selftest_builder_colors.js` — the same JS again with the inspector open on stored values the CSSOM cannot parse, which it discards without saying so; the publish payload used to turn that silence into black, **43 checks** |
-| `tools/selftest_builder_editing.js` | `node tools/selftest_builder_editing.js` — the same JS under the third premise, an admin having an ordinary good day: the six inspector controls that quietly did less than they claimed (#42), and every canvas change committing its undo step, **86 checks** |
-| `tools/selftest_builder_undo.js` | `node tools/selftest_builder_undo.js` — the same JS under the fifth premise, an admin who wants the last thing they did back: the canvas round-tripped through snapshot and restore as whole strings, so a rebuild that drops a field this suite never thought to name still fails, plus every mutating control driven to prove it leaves exactly one step, **110 checks**. Undo is the one thing in this app that can be taken back (ADR-0010) |
-| `tools/selftest_viewer.js` | `node tools/selftest_viewer.js` — `viewer.php`'s own JS: the poll loop against a `fetch` the test controls, and every renderer given a block with nothing in it. The page that runs unattended on a television, where a throw is a blank sign, **169 checks** |
-| `tools/check_invariants.php` | `php tools/check_invariants.php` — the mechanical greps from BUILD-REFERENCE §5, run as pass/fail against the whole file set rather than a count, with comments dropped so prose about a rule does not fail it. **22 checks.** Prints what it deliberately does not cover on every run |
-| `tools/check_doc_numbering.php` | `php tools/check_doc_numbering.php` — no two write-ups share a number, no citation dangles, the invariants run unbroken, and **the next free section letter**, which is the question every branch cut from the same base has to answer. **6 checks** |
+| `tools/selftest_builder_readonly.js` | `node tools/selftest_builder_readonly.js` — builder.php's own JS against a DOM holding only what a read-only page emits — including the Brand control, which that page *does* get, and the menu that changes it, which it does not, and the Workspace Theme picker, which it gets in full — **71 checks** |
+| `tools/selftest_builder_uploads.js` | `node tools/selftest_builder_uploads.js` — the same JS as an admin who can edit, driving a stubbed `XMLHttpRequest` through every way an upload can end (and what it does when it loses the display mid-edit, and that each of the page's two opening reads reports its own failure rather than sharing one sentence, and that Publish cannot be fired twice, and the three bands of the edit lock's idle warning, which no suite could reach while the page's timings were zero), **110 checks** |
+| `tools/selftest_builder_colors.js` | `node tools/selftest_builder_colors.js` — the same JS again with the inspector open on stored values the CSSOM cannot parse, which it discards without saying so; the publish payload used to turn that silence into black, **47 checks** |
+| `tools/selftest_builder_editing.js` | `node tools/selftest_builder_editing.js` — the same JS under the premise of an admin having an ordinary good day: the six inspector controls that quietly did less than they claimed (#42), and every canvas change committing its undo step, **182 checks** |
+| `tools/selftest_builder_undo.js` | `node tools/selftest_builder_undo.js` — the same JS under the premise of an admin who wants the last thing they did back: the canvas round-tripped through snapshot and restore as whole strings, so a rebuild that drops a field this suite never thought to name still fails, plus every mutating control driven to prove it leaves exactly one step, **139 checks**. Undo is the one thing in this app that can be taken back (ADR-0010) |
+| `tools/selftest_builder_brands.js` | `node tools/selftest_builder_brands.js` — the same JS under the premise of an admin deciding which venue a sign belongs to: picking a Brand repaints the canvas, sends **no request at all**, and records no undo step, while Publish is what writes it; the palette is offered above all four colour controls and enforced nowhere, and Venue Logo drops a block already linked to the brand's library row, **121 checks** |
+| `tools/selftest_builder_theme.js` | `node tools/selftest_builder_theme.js` — the same JS under the premise of somebody changing a setting about *themselves* while unpublished work sits on the canvas: choosing a Workspace Theme sets thirteen CSS custom properties and touches nothing else, holds the canvas nodes by identity, and moves neither the undo stack nor its baseline. It also drives the save that fails — the paint happens before the round trip, so a swallowed failure would leave the screen showing a theme the account is not on — and both the reply that says no and the request that never arrives, **110 checks** |
+| `tools/selftest_viewer.js` | `node tools/selftest_viewer.js` — `viewer.php`'s own JS: the poll loop against a `fetch` the test controls, and every renderer given a block with nothing in it. The page that runs unattended on a television, where a throw is a blank sign, and the fit-to-Screen letterbox that was being computed from a canvas 0 pixels wide, **179 checks** |
+| `tools/page_constants.js` | Not run on its own. The one place that says what the server puts on a page — the twenty-one values `builder.php` interpolates and the three `viewer.php` does — so a node suite that does not override one is running the page rather than a version of it where that value is the literal 0. Refuses a constant the page has that nothing here names, and an override for a constant the page does not have (§4bh) |
+| `tools/check_invariants.php` | `php tools/check_invariants.php` — the mechanical greps from BUILD-REFERENCE §5, run as pass/fail against the whole file set rather than a count, with comments dropped so prose about a rule does not fail it. **106 checks**, anchored — a rule deleted from the list is a failure, not a smaller green number (§4bi). Prints what it deliberately does not cover on every run |
+| `tools/check_doc_numbering.php` | `php tools/check_doc_numbering.php` — no two write-ups share a number, no citation dangles, the invariants run unbroken, and **the next free section letter**, which is the question every branch cut from the same base has to answer. **6 checks**, anchored (§4bi) |
 | `tools/audit_colors.php` | `php tools/audit_colors.php` — **read-only, and the one tool here that is safe to point at the live database.** Reports every stored colour the app cannot read: the element colours that make a Display refuse to publish, and the backgrounds and Brand Standards rows that quietly render in a colour nobody chose, and the brand colours in `branding_config.php`, which no sign uses and which are reported under a heading that says so. It changes nothing; a person picks the colour. Exit 0 clean, 1 with findings, 2 if it could not look |
-| `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data. It also publishes every element type and block subtype the schema allows and reads them back, checks that a deleted Display really cascades, and prints which of the five page-added columns landed |
+| `tools/rehearse_phase1.php` | Rehearses schema convergence, scoping, grants and the lock against a **copy** of live data. It also publishes every element type and block subtype the schema allows and reads them back, checks that a deleted Display really cascades, and prints which of the five page-added columns landed. **59 checks on a database built from `schema.sql`, 68 on one with accounts and a second Brand**, anchored — eleven of them sit behind a fact about the data rather than a branch of the code, so the anchor is a sum of declared terms and the ones a database cannot be asked are *printed* rather than passed over (§4bi). Five have therefore never run on CI: `schema.sql` seeds no accounts, so the edit lock and the grant are asked of nobody, and a copy of live data is the only run that reaches them |
 | `config.php` | Brings the eight branding constants (`BRAND_*`, `SITE_NAME`, `MAIL_FROM`, `MAIL_FROM_NAME`) into being through `lib/branding.php`. The one place that loads `branding_config.php` |
 | `db_connect.php` | PDO `$pdo`; loads creds from `../../private/db_credentials.php` |
 | `auth.php` | `session_start` with the cookie attributes `RequestScheme` decides, in both the pre-7.3 and 7.3+ forms; `requireLogin/requireAdmin/isAdmin/currentUser`; `csrfToken()/verifyCsrf()`. It no longer adds the login-lockout columns — those are gated entries in `signageSchemaPlan()` |
@@ -164,7 +168,7 @@ it is the standing contract, with the invariants and where later work attaches.
 | `reset_password.php` | 2-step emailed 6-digit passcode reset (30-min expiry) |
 | `setup.php` | First-run admin creation; self-disables once a user exists and then **deletes itself** — at the end of a successful setup, or on the first request that finds it disabled. It reads the answer back from disk, so it never claims to have gone while it is still being served |
 | `setup_branding.php` | Redirect shim → `admin_panel.php?tab=branding` |
-| `builder.php` | ~3050-line canvas editor for one Display, mostly inline JS. The heart of the app. Also the read-only mode and the lock heartbeat |
+| `builder.php` | ~5500-line canvas editor for one Display, mostly inline JS. The heart of the app. Also the read-only mode, the lock heartbeat, and the Brand a sign wears — staged there and written by Publish |
 | `admin_panel.php` | Six tabs: User Management, **Displays** (+ the grant matrix), Display Branding, Site Branding, Settings, Work Area |
 | `crud.php` | Asset Library (text/image/video), shared by every Display |
 | `api.php` | JSON API: `get_layout` (public), `get_editor_layout`, `get_assets`, `upload_file`, `upload_video`, `publish`, `hold_lock`, `lock_state`, `release_lock`, `take_over_lock`, `save_brand_styles`, `get_canvas_elements`, `set_element_hidden`, `delete_canvas_element` |
@@ -382,6 +386,7 @@ to do" — they are here because they will be noticed and are not faults.
 | **#38** · §4v | **Nothing to do.** Any login lockout in force at the moment of the deploy is released — the store is west of UTC. | `locked_until` moved to UTC and old rows read earlier from here. Bounded: a lockout is never more than 15 minutes out, and the failure counter beside it is untouched. §4v has the east-of-UTC case, which does not apply to this store. |
 | **#38** · §4u | **Nothing new to do** — step 4 of the checklist already covers it. The three lockout columns are now added by schema convergence on the first authenticated request rather than by `login.php`. On this installation they are already there. | `ensureLockoutColumns()` was the one piece of DDL in the app a bot could reach with no account. |
 | **#46** · §4z | **Upload by [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md), not by dragging the tree over.** Four things on the server are not in the repo or differ from it, and a mirroring client reverts or deletes them silently. Do not upload the repo's `branding_config.php` or `setup.php`; do not let the client delete `uploads/` or the log folder. That file also lists the five checks to run afterwards. | The step that needed these facts did not carry them — every one was already in this repo, in a file the person at the FTP client was not reading. |
+| **v2 step 3** · §4bd | **Rehearse against a copy of live data first — this one re-keys a table.** `php tools/rehearse_phase1.php --host=… --db=COPY --user=… --pass=… --confirm-copy`, and read the *Brands* heading it prints. Then, at deploy: expect one new Brand named after `SITE_NAME`, every existing display already wearing it, and every sign rendering exactly as before. Nothing to click. Two privileges matter that the row above does not stress: convergence now issues `DROP PRIMARY KEY, ADD PRIMARY KEY` on `block_styles`, which needs **ALTER** and **INDEX** — a user without them leaves the table on the old key, and Settings → Database Structure says so in as many words. | ADR-0011: one set of Brand Standards for the whole property becomes one per venue. `block_styles` is re-keyed on `(brand_id, block_type)` and `displays.brand_id` is `NOT NULL`, both converged in place on a live database. The upgrade moves nothing on any sign — the existing standards *become* the first Brand's — but it is the only statement in the plan that replaces structure rather than adding to it, and a second `DROP PRIMARY KEY` rebuilds the table rather than failing harmlessly, which is why its gate reads the key's columns. Admin Panel → Display Branding is now a list of brands; the Displays tab shows and sets which one each sign wears. |
 | **#33** · §4ao | **Nothing to do**, unless an account is meant to be adding to the library without holding a sign — check the grant matrix if so. An account with no display assigned now sees the Asset Library with an explanation where the add form was, and its uploads from the Builder are refused. Since the browser pass (§4av) the Builder no longer *offers* that account the link either — the page still answers with its explanation if they reach it by hand, which is what keeps the refusal the check. Admins are unaffected, including on an installation with no Displays yet. | The library is shared by every sign and `uploads/` sits behind it, so neither is scoped to a Display and neither went through the check every other write does. A grant is what makes the library somebody's — a Display merely being switched off does not take it away. |
 | **#44** · §4ap | **Check it once, and read the card under it.** The store's time zone is a setting — Admin Panel → **Settings** → Store Time Zone — and every time on every page is drawn in it. The default is `America/Los_Angeles`, so a deploy that never touches it is already right for this store. Then read the three time-zone rows on **Settings → This Server**: the one to look at is the **database's session zone**, which nothing had ever shown. Anything other than a zero offset means the host refused the app's request for UTC. | `db_connect.php` now asks every connection for `+00:00`, suppressed rather than fatal, because a protection that cannot apply is reported and not applied — and that card is the only place it is reported. What a refusal costs is bounded: a creation date reading a few hours out. Separately, `last_published_at` is a DATETIME already written in the old frame, so one sentence per Display reads wrong until its next publish. |
 | **#46** · §4z | **Nothing to do**, twice over. `setup.php` deletes itself the moment the first admin exists, so the old "remember to delete it" step is no longer a step — it only needs *not re-uploading*. And `.htaccess` now denies `.md`, so a docs file that reaches the server is unreadable rather than serving `HANDOFF.md` and the paths in it. | Both are backstops for the upload that forgets, not instructions. A host that forbids the self-delete says so on the page instead of alerting. |
@@ -424,8 +429,11 @@ staleness check, no version history), 0007 (one editor per Display).
   widget. Steps 15–21 need a second account, two browsers, and one unavoidable
   15-minute wait.
 - **Nothing here has run against MySQL or in a browser.** Verification so far is
-  `php -l`, 1778 self-test checks against SQLite, 546 node checks over `builder.php`'s and `viewer.php`'s
-  own JavaScript, and the invariant greps in BUILD-REFERENCE §5. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
+  `php -l`, 2320 self-test checks against SQLite in six install configurations, 959 node
+  checks over `builder.php`'s and `viewer.php`'s own JavaScript, and 61 invariant checks
+  from BUILD-REFERENCE §5, run rather than read. The SQL has since been audited against the
+  host's MySQL 5.7 statically (§7) and is clean, which narrows but does not close this:
+  a static read is not a run. `php tools/rehearse_phase1.php --host=… --user=… --pass=… --db=<copy> --confirm-copy`
   is the tool for the MySQL half; expect "Rehearsal clean."
 - **The cutover window.** Between deploying and re-pointing the screen, the bare
   `viewer.php` URL shows the notice instead of the sign. Same visit, or closed hours.
@@ -455,9 +463,14 @@ all got the same answer. Two things it corrected the hard way:
   the same base and both wrote invariant 28 — correctly, because the checker requires the
   list to run unbroken from 1, so neither could have written 29. #44 kept 28 and #33
   renumbered to 29. The rule is that every branch writes the next free number *in its own
-  tree* and the reservation only settles who renumbers at the merge. **31 is next, and
-  `4ar` is the next free letter** — written without a `§` on purpose, since a citation of
+  tree* and the reservation only settles who renumbers at the merge. **38 is next, and
+  `4bn` is the next free letter** — written without a `§` on purpose, since a citation of
   a write-up nobody has written is what `check_doc_numbering.php` fails on, and it does.
+  Which side renumbers is decided by cost while both are unmerged, and by publication
+  once one of them has landed: this branch moved six numbers on 2026-08-19 against
+  `main`'s two, the more expensive half by a factor of two, because a number on `main` is
+  an address that a merge commit and a pull request body already quote
+  ([`docs/work-lanes.md`](docs/work-lanes.md) item 2a).
 - **The count line does not conflict when it should.** Both branches wrote the same wrong
   total against a base that could only see its own item close, and git merged it clean.
   Recount from the table with the one-liner in item 4 on every merge.
@@ -479,8 +492,52 @@ assumed them:
 | Session cookie | HttpOnly yes, Secure yes, SameSite Lax |
 | Largest upload | 50 MB |
 
-Two of those settle standing questions. The PHP version **agrees with the owner's stated
-8.2** (#51, §4k) — that item's deploy-day confirmation step. And `America/Chicago` is not a
+**The rest of the box, from cPanel's server-information panel (2026-08-19).** The MySQL row
+above was read eight days earlier; this is the configuration around it:
+
+| | |
+|-|-|
+| cPanel | 110.0 (build 139) |
+| Apache | 2.4.68 |
+| MySQL | **5.7.23-23** — confirms the runtime card above |
+| OS / kernel | linux x86_64, `4.19.286-203.ELK.el7` — **CentOS 7** |
+| Sendmail | `/usr/sbin/sendmail` |
+| Perl | 5.16.3 |
+
+Two things follow, and neither is a fault to fix today. **MySQL 5.7 reached end of life in
+October 2023 and el7 in June 2024**, so the engine holding every sign's layout is not
+receiving security fixes — a fact for whoever owns the hosting decision, not a deploy step.
+And 5.7 is now the *declared* database floor (`ServerReport::ASSUMED_MYSQL`), for the same
+reason 8.2 is the PHP floor: it is what the machine is, read rather than assumed.
+
+**The SQL was audited against 5.7 statically on 2026-08-19, and it is clean.** Nothing in
+this repo has ever run against any MySQL, so this was the cheapest way to find out what the
+rehearsal is walking into. No 8.0-only construct appears anywhere: no `RENAME COLUMN`, no
+`DROP CONSTRAINT`, no `SKIP LOCKED` or `NOWAIT` beside the publish transaction's `FOR
+UPDATE`, no CTE, no window function, no `JSON_TABLE`, no `CHECK` constraint, no generated
+or descending-index column, and no `ALGORITHM=` clause (`INSTANT` is 8.0.12+). All three
+catalogue views the convergence gates read — `COLUMNS`, `STATISTICS`, `TABLE_CONSTRAINTS` —
+exist and behave the same on 5.7. And `schema.sql` says `DEFAULT CHARSET=utf8mb4` with **no
+explicit collation**, which is the one spelling that survives both engines: had it named
+`utf8mb4_0900_ai_ci`, every `CREATE TABLE` would have failed outright on this server.
+
+**One residual, and it needs a query rather than an argument.** `users.email` is
+`VARCHAR(255)` utf8mb4 with a unique index — 1020 bytes, which is over InnoDB's 767-byte
+limit for `COMPACT`/`REDUNDANT` row format and under the 3072-byte limit for `DYNAMIC`.
+5.7.23 defaults to `DYNAMIC`, so a fresh `CREATE TABLE` is fine; but `users` on the live
+database was created years ago and step 5's convergence adds a column *and* a foreign key
+to it, which can force a rebuild. Ask before deploying, not after:
+
+```sql
+SELECT NAME, ROW_FORMAT FROM information_schema.INNODB_SYS_TABLES WHERE NAME LIKE '%/users';
+SELECT @@innodb_default_row_format, @@innodb_large_prefix, @@innodb_file_format;
+```
+
+`Compact` or `Redundant` in the first result is the one answer that needs a decision before
+the ALTER runs. The rehearsal against a copy would also surface it — this is the faster read.
+
+Two of the runtime rows settle standing questions. The PHP version **agrees with the owner's
+stated 8.2** (#51, §4k) — that item's deploy-day confirmation step. And `America/Chicago` is not a
 fallback: PHP's fallback for an unset `date.timezone` is UTC, so the host sets it, and
 nothing in this repo does (the tracked `.htaccess` sets session flags and no `date.` value).
 §4ap had asserted UTC and is corrected. Before #44 that made every time a person read two
@@ -548,9 +605,10 @@ one failure the floor exists to prevent. Nothing mechanical enforces it yet.
   form behind a version check. Both are free, and both are what stops a move to a
   different host from silently dropping HttpOnly and Secure off the sign-in cookie.
 - Before pushing: `php -l` every touched file, then `php tools/selftest_layout.php`,
-  then all five builder node suites (`tools/selftest_builder_readonly.js`,
+  then all seven builder node suites (`tools/selftest_builder_readonly.js`,
   `tools/selftest_builder_uploads.js`, `tools/selftest_builder_colors.js`,
-  `tools/selftest_builder_editing.js` and `tools/selftest_builder_undo.js`) if
+  `tools/selftest_builder_editing.js`, `tools/selftest_builder_undo.js`,
+  `tools/selftest_builder_brands.js` and `tools/selftest_builder_theme.js`) if
   `builder.php` was touched, and `tools/selftest_viewer.js` if `viewer.php` was. A self-test
   failure is a release blocker, not a broken test.
 - **Nothing that has been published can be taken back.** Publishing overwrites.

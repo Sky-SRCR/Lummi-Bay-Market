@@ -58,6 +58,12 @@ require_once __DIR__ . '/../lib/displays.php';
 require_once __DIR__ . '/../lib/layout_store.php';
 require_once __DIR__ . '/../lib/grants.php';
 require_once __DIR__ . '/../lib/brand_styles.php';
+// Named explicitly although layout_store.php already reaches it: this file reads as a
+// checklist of what it touches, and `brands` is one of the tables it now writes through.
+require_once __DIR__ . '/../lib/brands.php';
+// For `SiteChrome::ROLES` — the thirteen chrome roles the `workspace_themes` columns are
+// checked against below, rather than against a list written out again here.
+require_once __DIR__ . '/../lib/workspace_themes.php';
 
 // ---- Arguments --------------------------------------------------------------
 
@@ -97,10 +103,12 @@ $pdo = new PDO(
     ]
 );
 
-$failures = [];
+$failures   = [];
+$checkCount = 0;
 function report($ok, $label)
 {
-    global $failures;
+    global $failures, $checkCount;
+    $checkCount++;
     echo ($ok ? "  ok   " : "  FAIL ") . $label . "\n";
     if (!$ok) { $failures[] = $label; }
 }
@@ -220,24 +228,75 @@ if ($hasGrants) {
     report($accountRule === 'CASCADE', "and so does a deleted account (ON DELETE $accountRule)");
 }
 
+// ---- brands: the identity every sign wears (ADR-0011) -----------------------
+// The riskiest part of this migration, and the part no self-test can reach: it
+// re-keys a table in place on a database that is driving signs. Everything below is
+// asked of the real catalogue after convergence has run.
+heading('Brands, and the re-key that has to happen exactly once');
+
+$hasBrands = false;
+try {
+    $pdo->query("SELECT 1 FROM brands LIMIT 1");
+    $hasBrands = true;
+} catch (Exception $e) {}
+report($hasBrands, 'the brands table exists');
+
+$brandRows = [];
+if ($hasBrands) {
+    $brandRows = $pdo->query("SELECT id, name FROM brands ORDER BY id ASC")->fetchAll();
+    report(count($brandRows) > 0,
+        'at least one Brand exists for every sign to wear (' . count($brandRows) . ')');
+    if ($brandRows) {
+        echo "  brand 1 is \"" . $brandRows[0]['name'] . "\" — the name an admin sees first\n";
+    }
+}
+
+// The re-key itself. `block_styles` was keyed on block_type alone; a database where
+// this did not land has one set of standards for the whole property, and the second
+// Brand an admin creates cannot have its own — the insert collides on the old key.
+$bsKey = [];
+foreach ($pdo->query("SHOW KEYS FROM block_styles WHERE Key_name = 'PRIMARY'")->fetchAll() as $k) {
+    $bsKey[intval($k['Seq_in_index'])] = $k['Column_name'];
+}
+ksort($bsKey);
+$bsKey = array_values($bsKey);
+report($bsKey === ['brand_id', 'block_type'],
+    'block_styles is keyed on (brand_id, block_type) (' . implode(', ', $bsKey) . ')');
+
+$bsCols = [];
+foreach ($pdo->query("SHOW COLUMNS FROM block_styles")->fetchAll() as $c) { $bsCols[$c['Field']] = $c; }
+report(isset($bsCols['brand_id']), 'block_styles.brand_id exists');
+report(isset($bsCols['brand_id']) && $bsCols['brand_id']['Null'] === 'NO',
+    'and is NOT NULL, so no set of standards belongs to no Brand');
+
+// The backfill, checked as rows rather than as structure. A row left unbranded is
+// invisible to every scoped read — the venue's typography would simply stop applying.
+$orphanStyles = intval($pdo->query(
+    "SELECT COUNT(*) FROM block_styles bs LEFT JOIN brands b ON bs.brand_id = b.id
+      WHERE b.id IS NULL")->fetchColumn());
+report($orphanStyles === 0, "no set of standards points at a Brand that is gone (found $orphanStyles)");
+
 // ---- block_styles: the rows Brand Standards edits ---------------------------
 // Seeding them is a *step*, and a step's failure is reported but not fatal, so this
 // is the only place that says whether the rows are really there on this database. A
 // missing row makes the Brand Standards form a silent no-op: it saves with
-// UPDATE … WHERE block_type = ?, so the field reverts on reload and nothing says why.
-$styled = [];
-try {
-    foreach ($pdo->query("SELECT block_type FROM block_styles")->fetchAll() as $row) {
-        $styled[] = $row['block_type'];
+// UPDATE … WHERE brand_id = ? AND block_type = ?, so the field reverts on reload and
+// nothing says why. Asked per Brand, because that is what the key is now.
+foreach ($brandRows as $brandRow) {
+    $styled = [];
+    try {
+        $q = $pdo->prepare("SELECT block_type FROM block_styles WHERE brand_id = ?");
+        $q->execute([$brandRow['id']]);
+        foreach ($q->fetchAll() as $row) { $styled[] = $row['block_type']; }
+    } catch (Exception $e) {
+        // No table. The report below names every type as missing, which is the truth.
     }
-} catch (Exception $e) {
-    // No table. The report below names every type as missing, which is the truth.
+    $missingStyles = array_values(array_diff(BrandStyles::types(), $styled));
+    report(count($missingStyles) === 0,
+        'every branded block type has a typography row for "' . $brandRow['name'] . '" ('
+        . (count($missingStyles) ? 'missing: ' . implode(', ', $missingStyles) : 'all '
+          . count(BrandStyles::types()) . ' present') . ')');
 }
-$missingStyles = array_values(array_diff(BrandStyles::types(), $styled));
-report(count($missingStyles) === 0,
-    'every branded block type has a typography row ('
-    . (count($missingStyles) ? 'missing: ' . implode(', ', $missingStyles) : 'all '
-      . count(BrandStyles::types()) . ' present') . ')');
 
 // The edit-lock columns. lock_taken_at arrives after `displays` already exists on
 // any database that converged for an earlier phase, so it is added by its own
@@ -248,7 +307,96 @@ foreach ($pdo->query("SHOW COLUMNS FROM displays")->fetchAll() as $c) {
 }
 report(isset($dcols['lock_holder_id']),   'displays.lock_holder_id exists');
 report(isset($dcols['lock_taken_at']),    'displays.lock_taken_at exists');
+
+// The other half of the Brand migration, and the one that can empty a shop: a sign
+// with no Brand renders its branded blocks from its own stored typography, which
+// invariant 34 has just stopped publish writing — so an unbranded Display is a sign
+// whose prices go 16px Arial black on the next publish. Added nullable, backfilled,
+// then tightened, and it is the tighten that proves the backfill left nothing behind.
+report(isset($dcols['brand_id']), 'displays.brand_id exists');
+report(isset($dcols['brand_id']) && $dcols['brand_id']['Null'] === 'NO',
+    'and is NOT NULL, so no sign is left without an identity');
+
+$unbranded = intval($pdo->query(
+    "SELECT COUNT(*) FROM displays d LEFT JOIN brands b ON d.brand_id = b.id
+      WHERE b.id IS NULL")->fetchColumn());
+report($unbranded === 0, "every sign wears a Brand that exists (found $unbranded that do not)");
+
+// RESTRICT, not CASCADE or SET NULL. Deleting a Brand three signs wear must be
+// refused rather than quietly repainting or destroying them — there is no undo.
+$brandRule = deleteRule($pdo, $opts['db'], 'displays', 'brand_id');
+report($brandRule === 'RESTRICT' || $brandRule === 'NO ACTION',
+    "a Brand in use cannot be deleted out from under its signs (ON DELETE $brandRule)");
 report(isset($dcols['lock_activity_at']), 'displays.lock_activity_at exists');
+
+// ---- workspace_themes: what the application is painted in (v2 step 5) -------
+// The safest table in this plan and still worth rehearsing, because two of its three
+// statements are the ones only MySQL performs: a `KEY` on `users` and a foreign key with
+// no `ON DELETE` clause. The SQLite suite cannot ask about either — it declares no
+// foreign keys at all, on purpose — so this is the only place the RESTRICT that stops a
+// theme being deleted out from under somebody is ever observed.
+$hasThemes = true;
+try {
+    $pdo->query("SELECT 1 FROM workspace_themes LIMIT 1");
+} catch (Throwable $e) {
+    $hasThemes = false;
+}
+report($hasThemes, 'the workspace_themes table exists');
+
+if ($hasThemes) {
+    // Thirteen colour columns, each NOT NULL with a default, so a theme is never half a
+    // set of colours. Asked against `SiteChrome::ROLES` rather than a list here, which is
+    // the same rule the plan's CREATE TABLE is held to by the self-test.
+    $tcols = [];
+    foreach ($pdo->query("SHOW COLUMNS FROM workspace_themes")->fetchAll() as $c) {
+        $tcols[$c['Field']] = $c;
+    }
+    $missingRoles = $nullableRoles = [];
+    foreach (array_keys(SiteChrome::ROLES) as $role) {
+        if (!isset($tcols[$role]))                 { $missingRoles[]  = $role; continue; }
+        if ($tcols[$role]['Null'] !== 'NO')        { $nullableRoles[] = $role; }
+    }
+    report(count($missingRoles) === 0,
+        'every chrome role has a column' . ($missingRoles ? ': missing ' . implode(', ', $missingRoles) : ''));
+    report(count($nullableRoles) === 0,
+        'and none of them is nullable' . ($nullableRoles ? ': ' . implode(', ', $nullableRoles) : ''));
+
+    // No seed, deliberately: the store default is `branding_config.php` plus the
+    // documented defaults, not a copy of them in a row. So an empty table on a database
+    // that has just converged is the *expected* state, and this reports the count rather
+    // than judging it — a shop that has made themes is equally correct.
+    $themeCount = intval($pdo->query("SELECT COUNT(*) FROM workspace_themes")->fetchColumn());
+    echo "  ----   $themeCount workspace theme" . ($themeCount === 1 ? '' : 's')
+       . " on this database; convergence seeds none, so zero is the expected state\n";
+}
+
+$ucols = [];
+foreach ($pdo->query("SHOW COLUMNS FROM users")->fetchAll() as $c) { $ucols[$c['Field']] = $c; }
+report(isset($ucols['workspace_theme_id']), 'users.workspace_theme_id exists');
+report(isset($ucols['workspace_theme_id']) && $ucols['workspace_theme_id']['Null'] === 'YES',
+    'and is nullable, because null is the answer "use the store default" rather than a gap');
+
+$themeIndexed = false;
+foreach ($pdo->query("SHOW KEYS FROM users")->fetchAll() as $k) {
+    if ($k['Column_name'] === 'workspace_theme_id') { $themeIndexed = true; }
+}
+report($themeIndexed, 'and indexed, because every signed-in page load reads through it');
+
+if ($hasThemes) {
+    // RESTRICT rather than SET NULL, for the reason `displays.brand_id` is: moving three
+    // people back to the store default on one click, without telling them, is the merge
+    // invariant 5 exists to prevent. The app refuses it first and names them; this is the
+    // half that covers a database this app is not the only thing writing to.
+    $themeRule = deleteRule($pdo, $opts['db'], 'users', 'workspace_theme_id');
+    report($themeRule === 'RESTRICT' || $themeRule === 'NO ACTION',
+        "a theme somebody is wearing cannot be deleted out from under them (ON DELETE $themeRule)");
+
+    $orphanChoice = intval($pdo->query(
+        "SELECT COUNT(*) FROM users u LEFT JOIN workspace_themes t ON u.workspace_theme_id = t.id
+          WHERE u.workspace_theme_id IS NOT NULL AND t.id IS NULL")->fetchColumn());
+    report($orphanChoice === 0,
+        "nobody is pointed at a theme that is gone (found $orphanChoice)");
+}
 
 $store  = new DisplayStore($pdo);
 $legacy = $store->forTag(LEGACY_DISPLAY_TAG);
@@ -303,8 +451,8 @@ report(count($leftDdl) === 0,
 foreach ($leftDdl as $why) { echo "  still wanted: $why\n"; }
 
 // Two steps have to remain: no catalogue can answer "are there any rows".
-report($steps === ['seed_block_styles', 'seed_legacy_display'],
-    'and only the two row counts remain (' . implode(', ', $steps) . ')');
+report($steps === ['seed_first_brand', 'seed_block_styles', 'seed_legacy_display'],
+    'and only the three row counts remain (' . implode(', ', $steps) . ')');
 
 // ---- The premise invariant 21 rests on --------------------------------------
 
@@ -349,7 +497,7 @@ $tagB   = 'rehearsal-b-' . $suffix;
 
 // Direct inserts: DisplayStore::create() arrives in Phase 3, and this tool
 // switches to it then.
-$mk = $pdo->prepare("INSERT INTO displays (tag,title,canvas_width,canvas_height) VALUES (?,?,?,?)");
+$mk = $pdo->prepare("INSERT INTO displays (tag,title,canvas_width,canvas_height,brand_id) VALUES (?,?,?,?,1)");
 $mk->execute([$tagA, 'Rehearsal A', 1920, 1080]);
 $mk->execute([$tagB, 'Rehearsal B', 1080, 1920]);
 
@@ -414,7 +562,7 @@ function rehearsalElementCount()
 function rehearsalPublish(LayoutStore $layouts, Display $d, $text, $stamp)
 {
     return $layouts->publish($d, new PublishRequest(
-        rehearsalLayout($text), Background::unchanged(), 0, true, $stamp
+        rehearsalLayout($text), Background::unchanged(), BrandChoice::unchanged(), 0, true, $stamp
     ));
 }
 
@@ -461,6 +609,42 @@ report(!$legacy || $countFor($legacy->id()) === $legacyCountBefore,
 $stale = rehearsalPublish($layouts, $a, 'A three', '0');
 report($stale->kind() === 'stale', 'a stale publish to A is refused');
 report($countFor($a->id()) === $expect, 'and wrote nothing');
+
+// ---- The Brand a publish carries (v2 step 4) -------------------------------------
+// `brand_id` is `NOT NULL` with a foreign key, and a publish is now one of the two
+// things that writes it. Both of those are MySQL facts that SQLite's fixture states
+// differently, and the suite's MySQL arm is the one that does not run where this repo
+// is developed — so this tool is where `applyBrand()`'s UPDATE meets a real engine.
+// A refusal is checked too, because an id naming nothing is exactly what
+// `displays_ibfk_3` would turn into an exception if the check above it ever went away.
+$brandsHere = new BrandStore($pdo);
+$brandList  = $brandsHere->all();
+$a          = $store->forTag($tagA);
+if (count($brandList) > 1) {
+    $away = null;
+    foreach ($brandList as $candidate) {
+        if ($candidate->id() !== $a->brandId()) { $away = $candidate; break; }
+    }
+    $moved = $layouts->publish($a, new PublishRequest(
+        rehearsalLayout('A brand'), Background::unchanged(), BrandChoice::brand($away->id()),
+        0, true, $a->layoutStamp()));
+    report($moved->isOk(), 'a publish carrying a Brand succeeds');
+    report($store->forTag($tagA)->brandId() === $away->id(),
+        'and the throwaway sign wears "' . $away->name() . '" afterwards');
+} else {
+    // Printed rather than reported. A `report(true, …)` here would be a green line that
+    // cannot go red, which is what #50 is about — and it would read as coverage of the
+    // statement above it, which on this database nothing exercised.
+    echo "  ----   only one Brand on this database, so nothing was published onto a second\n";
+}
+
+$a       = $store->forTag($tagA);
+$noBrand = $layouts->publish($a, new PublishRequest(
+    rehearsalLayout('A ghost'), Background::unchanged(), BrandChoice::brand(999999),
+    0, true, $a->layoutStamp()));
+report($noBrand->kind() === 'invalid', 'a publish naming a Brand that does not exist is refused');
+report($countFor($a->id()) === $expect, 'and wrote no layout either');
+report(!$pdo->inTransaction(), 'and left no transaction open');
 
 // A grant on a throwaway Display, so the cleanup below can show whether a deleted
 // Display really takes its grants with it on this engine. Uses any existing
@@ -581,6 +765,87 @@ echo "  longer from the admin panel's own ALTER — both are gated plan entries 
 echo "  On a database missing them the first sign-in has no lockout, and the Builder\n";
 echo "  it lands on adds them (BUILD-REFERENCE 4v). password_resets is the one that\n";
 echo "  still converges from an unauthenticated page, deliberately.\n";
+
+// ---- Did it ask everything it has? -----------------------------------------
+// Until this section landed, deleting half this file printed "Rehearsal clean." and
+// exited 0. That is the third failure mode `reportChecks()` was written for in
+// `tools/test_fixture.php` — "193 checks, 0 failed" over a suite that had stopped
+// running half its assertions — and this file was the last gate here without the
+// answer to it. It is also the worst place to be missing one: this is the only gate
+// that runs *nowhere but CI*, so a section that stopped being asked would go unread
+// on every developer machine as well.
+//
+// The number cannot be a literal the way `reportChecks(2337)` is, because eleven of
+// the `report()` calls above sit behind a fact about the database rather than behind
+// a branch of the code: a copy of live data has accounts and several Brands, and a
+// database built from `schema.sql` has one Brand and nobody at all. So the anchor is
+// an expression — and every term in it is declared *here*, at the bottom, rather than
+// beside the block it counts. That placement is the whole mechanism. Deleting a block
+// above leaves its term behind, the sum stops matching, and the run fails; a term
+// written next to its own block would be deleted along with it and the anchor would
+// agree with the smaller file.
+//
+// The 48 is what the run reported minus the eleven conditional terms below, and it is
+// the number to change when a check is added — on purpose, which is the point of an
+// anchor.
+//
+// One thing writing it down immediately made visible, which is the argument for
+// anchors in one paragraph: **five of these checks have never run on CI.** A database
+// built from `schema.sql` seeds no accounts, so the edit lock and the grant are asked
+// of nothing — and their own comments say they are here because MySQL is the only
+// engine that can answer for the claim's bound `DATETIME` comparison and the holder
+// name's second `LEFT JOIN`. Today the only run that reaches them is a deploy-day run
+// against a copy of live data. Nothing was hiding that; nothing was saying it either,
+// which is §4bf's whole shape. The rows below are printed rather than passed over in
+// silence for that reason.
+$checkGroups = [
+    // what                                                     how many   asked here
+    ['asked of every database',                                        48, true],
+    ['the two grant foreign keys and their delete rules',               4,  $hasGrants],
+    ['a Brand exists for every sign to wear',                           1,  $hasBrands],
+    ['a typography row for each Brand',                count($brandRows), true],
+    ['a column per chrome role, none of them nullable',                 2,  $hasThemes],
+    ['the theme delete rule, and nobody left pointing at one',          2,  $hasThemes],
+    ['the drive-thru Display, and its backfilled elements',             1,  (bool) $legacy],
+    ['a publish carrying a second Brand',                               2,  count($brandList) > 1],
+    ['a grant stored and read back',                                    1,  $hasGrants && $anAccount],
+    ['the edit lock taken, named, and released',                        3,  (bool) $accounts],
+    ['a second account refused a lock somebody holds',                  1,  count($accounts) > 1],
+    ['the grants a deleted Display took with it',                       1,  $grantedA],
+];
+
+heading('Every check this rehearsal has');
+
+$expected = 0;
+$notAsked = [];
+foreach ($checkGroups as $group) {
+    list($what, $howMany, $askedHere) = $group;
+    if ($askedHere) {
+        $expected += $howMany;
+        continue;
+    }
+    $notAsked[] = $howMany . ' — ' . $what;
+}
+
+// Not through report(): this is the summary of the count, so counting it would make
+// the printed total one more than the number of ok/FAIL lines above it, and that
+// total is the one thing here somebody can check by hand.
+if ($checkCount === $expected) {
+    echo "  ok   $checkCount checks, which is every one this database can be asked\n";
+} else {
+    echo "  FAIL this rehearsal did not ask every check it has\n";
+    echo "       expected $expected, asked $checkCount\n";
+    $failures[] = 'the rehearsal asked every check it has — expected ' . $expected
+                . ', asked ' . $checkCount;
+}
+foreach ($notAsked as $line) {
+    echo "  ----   not asked of this database: $line\n";
+}
+if ($notAsked) {
+    echo "  ----   Not a failure: a database without accounts or a second Brand cannot\n";
+    echo "         be asked these. It is printed because a check nobody runs and a\n";
+    echo "         check nobody knows is not running are two different problems.\n";
+}
 
 echo "\n" . (count($failures) ? count($failures) . " FAILED\n" : "Rehearsal clean.\n");
 exit(count($failures) ? 1 : 0);

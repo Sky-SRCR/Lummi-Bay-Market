@@ -527,7 +527,8 @@ through the app again:
     as one token and 8.2 as four — matching only the 8.4 shape would have gone quietly
     blind in CI, which is the machine pinned to the floor, and would have looked exactly
     like a pass.
-32. **No check writes a value the engine the shop runs would refuse.** SQLite takes a
+32. **No check writes a value the engine the shop runs would refuse** (§4bk, §4bl).
+    SQLite takes a
     word in a `DATETIME`, a non-member in an `ENUM`, and a string wider than the column,
     and the check that reads each one back passes. MySQL's strict mode throws on all
     three — and a throw mid-run **ends the job**, which takes down the step underneath:
@@ -568,8 +569,16 @@ through the app again:
     one that stays SQLite: MySQL forbids a trigger writing to its own table (1442), so
     it cannot build the interleaving at all, while what is under test is a `catch` in
     PHP that is identical on both.
+    Both rounds of this landed on the audit branch as well, against a larger suite and so
+    with different numbers: the first four writes took that arm from ~100 checks to 1383,
+    where four more of the same class were waiting behind them. Worth keeping both sets of
+    figures rather than reconciling them — they are observations of two different arms, and
+    the thing they agree on is the shape. **The arm went green on 2026-08-19**, after eight
+    days dead, with a clean rehearsal on three PHP versions. That is the state the rule
+    needed and did not have while it was being written: one that would go red if it were
+    broken.
 33. **No parameter is implicitly nullable, and `php -l` is not what decides that
-    either** (#10). `array $x = null` is deprecated from PHP 8.4, and the explicit form
+    either** (#10, §4bj). `array $x = null` is deprecated from PHP 8.4, and the explicit form
     `?array $x = null` is understood back to 7.1 — so the fix costs nothing at the floor
     and there is no trade to weigh. What makes it an invariant rather than a tidy-up is
     what could not see it. Five were in this tree; one was `ServerReport::__construct()`,
@@ -610,6 +619,121 @@ through the app again:
     matters: a line about a file names the file and a line number, so it can never equal
     one produced with no file in hand, and that was checked with a real deprecation and
     the noise present together.
+34. **Publish never writes what a Brand paints** (ADR-0011). A branded text block's
+    typography lives in `block_styles`; both renderers read it from there and neither
+    ever looks at the element's own six `font_*` columns. The Builder nevertheless
+    paints the standard onto the node's inline style — it has to, or the block would
+    not look like what it will become — and `serializeBlock()` read that inline style
+    straight back out, so **every publish since those columns existed baked the shared
+    standard into every branded element's own row.** Invisible while one set of
+    standards reached every sign, because the values were identical everywhere and
+    nothing read them. Two live faults once several Brands exist: a block whose subtype
+    is changed to `free` a month later inherits whichever Brand was selected at its last
+    publish, from a venue it may never have belonged to, with nothing saying so; and the
+    undo snapshot — which serializes through the same function — moves when a Brand is
+    merely *picked*, so the next real edit pushes a step recording a difference nobody
+    made. That second one is invariant 27 the other way round, and it is why this
+    landed on its own and before the feature that would activate it.
+    The rule holds at both ends and they are not the same rule twice. The browser stops
+    *sending* the six, which is what makes the snapshot stable — a server cannot fix an
+    undo history that never leaves the tab. `LayoutStore` stops *storing* them
+    whatever it is sent, which is what makes the row right for a Builder tab loaded
+    before this landed; that is an ordinary thing to happen on the afternoon of a
+    deploy, so it is ignored rather than refused. `BrandStyles::paints()` is the one
+    place the question is asked, because the two ends disagreeing is worse than either
+    being wrong: keeping the Brand's values is the fossil, and stripping values a
+    renderer is still going to read is a blank price on a wall. That second case is
+    real — a half-seeded install has no row for a type, both renderers fall back to the
+    element's own columns, and `paints()` answers `false` for exactly that reason.
+    Both of `LayoutStore`'s writers ask it. `copyLayout()` is the one that looks like an
+    exception and is not: a copy is a new row, and copying a fossil faithfully puts it
+    on a sign that never had one.
+    Two more doors joined it with v2 step 4, and both are the same question asked
+    somewhere new. On the server, a publish that *changes* the Brand writes its rows from
+    a **re-read** Display: `paints()` has to be asked with the standards of the Brand the
+    rows will be read under, and the Display the method was handed is still wearing the
+    one before. In the browser, a Brand switch repaints by way of `snapshotCanvas()` and
+    `restoreCanvas()` rather than by re-applying styles over the existing nodes — which
+    is not a convenience but the only thing that can work: this invariant is why a
+    branded block's own six fields are *not* on the node, so `applyTextStyles()` needs an
+    element to fall back to and only the serializer can produce one. Both ends therefore
+    keep asking exactly once, in the same two functions, which is the property this rule
+    has always been about.
+35. **Nothing outside `lib/brands.php` writes `brands`** (ADR-0011), and no page decides
+    what a Brand *is*. A Brand is the identity several signs read their typography,
+    palette, logo and default canvas background from, so a second writer is a venue
+    repainted by a page that did not know it was the one deciding — and repainted
+    within thirty seconds, on every screen wearing it, with no publish and no undo.
+    `BrandStore` owns every statement against the table; `lib/schema.php` creates it and
+    seeds the first Brand, the same exception `displays` has for the same reason.
+    `BrandAdmin` is deliberately **not** on the list, and that is the sharper half of
+    the rule: creating a Brand spans two tables — the row, and the six `block_styles`
+    rows without which its whole typography form is an `UPDATE` that matches nothing and
+    reports success — so it holds the transaction, composes `BrandStore` with
+    `BrandStyles`, and writes no SQL of its own. If it ever appears in this rule's
+    output it has started reaching past the module that owns the table, which is the
+    shape `DisplayAdmin`, `AccountAdmin` and `PasswordResetCompletion` all avoid.
+    Two consequences worth stating because neither is obvious from the table. **A Brand
+    in use is never reassigned**, only refused, naming the Displays — moving three
+    boards in a restaurant onto some other identity on one click is the merge invariant 5
+    exists to prevent, and `displays.brand_id`'s foreign key carries no `ON DELETE`
+    clause so the database says the same thing to anything reaching it another way. And
+    **the lock refusal narrows rather than widens**: Brand Standards used to be refused
+    while *anyone* was editing *anything*, which was airtight when one table reached
+    every sign and is simply false now, so it asks
+    `DisplayStore::editedByAnyoneElseUsingBrand()` instead. That is the one place this
+    work makes the app less restrictive, and it is a rule getting *more* correct rather
+    than being relaxed.
+36. **Nothing outside `lib/workspace_themes.php` writes `workspace_themes`, and no chrome
+    role is drawn on the canvas** (v2 roadmap decisions 10 and 11). Two halves of one
+    rule, because the second is the only thing keeping the first from being a table like
+    any other. A Workspace Theme is what an *employee's screen* is painted in and reaches
+    no sign — the other of `CONTEXT.md`'s two nouns, never one word with Brand — so its
+    danger is not what it writes but where it is read: what a canvas shows is what a sign
+    shows, and a theme colour reaching a block would make the Builder a preview of
+    something no Screen renders. Invisible, too, because the person who set the theme is
+    the person looking at the canvas. So every role is drawn as a `var(--…)` custom
+    property, `tools/check_invariants.php` refuses one inside any rule that paints the
+    canvas, and it refuses `--selection` — the outline and handles, which *are* a theme's
+    (decision 10) — anywhere else, since a role that may only be used in one place is a
+    fact only if the other places are checked too.
+    The write half has the usual exceptions and one that is not usual. `lib/schema.php`
+    creates the table, as it does for `brands` and `displays`. **`AccountStore` writes the
+    *choice*** — `users.workspace_theme_id` — and that is not a second writer of this
+    table but the correct home for a fact about an account; this module reads it back,
+    joined, because the read is on the path every signed-in page load takes.
+    And there is deliberately **no use-case module**: a theme is one row with no second
+    table to be half of, which is exactly what `BrandAdmin` exists for and why the
+    absence is worth stating rather than looking like an oversight.
+    Two consequences. **Resolution happens in one place** — `SiteChrome::stored()` layers
+    a worn theme over `branding_config.php` over the documented defaults, in that order,
+    and the reads that are about the *store's* colours rather than this reader's go
+    through `configColor()`; without that split the Branding form shows an admin their own
+    theme as "what is there now" and saves it over the shop's. **And a theme somebody is
+    wearing is refused rather than reassigned**, naming them, with `users_ibfk_1` carrying
+    no `ON DELETE` clause so the database says the same thing to anything reaching it
+    another way. The same shape as a Brand in use, for the same reason.
+37. **Every read of the machine is one somebody named, and every branch behind one has a
+    seam that takes the value** (§4bi). Five files in `lib/` may touch `ini_get`,
+    `$_SERVER`, `PHP_VERSION`, `PHP_SAPI`, `phpversion()`, `session_get_cookie_params()` or
+    the engine's own `ATTR_SERVER_VERSION` / `ATTR_DRIVER_NAME` — `server_report.php`,
+    `error_policy.php`, `upload_limits.php`, `alerts.php` and `displays.php` — and
+    `tools/check_invariants.php` fails when a sixth appears. Not a ban: this app reports on
+    its own host, so somebody has to read it. The rule is that a value taken from the
+    machine has exactly *one* value on every machine that runs the tests, and whatever the
+    shop's server holds everywhere else — so a branch chosen by one is a branch the suite
+    asserts in the single configuration no shop is running, in green, for as long as it
+    exists. `ServerReport` had already applied the fix three times and said why each time
+    (`phpVersionNote($id)`, `storeZoneNoteFor($stored)`, `UploadLimit::smallestOf($values)`
+    — "unreachable on whatever machine happens to run the test"); the four places it had
+    not were exactly the four with no checks, one of which — `ErrorPolicy::status()`, the
+    whole Settings-tab readout of what happens when something breaks — had none at all.
+    The seam is the half that reaches what no flag can produce (an unset `date.timezone`
+    cannot be made with `php -d`; PHP rejects the empty value at startup). The arms in
+    `tools/selftest_installed.php` are the half that proves the real reads still work, and
+    they refuse an arm set to what this machine already holds, because that one would agree
+    with the plain run and say so in green.
+
 
 ---
 
@@ -3883,7 +4007,7 @@ things:**
 | a door | `Markup::text()`, `Markup::jsInAttr()`, `HttpReply::jsValue()` — the three functions that exist to answer this |
 | a literal | a quoted string or a number, written in the source |
 | a safe call | `count`, `intval`, `intdiv`, `floatval`, `number_format`, `urlencode`, `rawurlencode`, and `date()` with a literal format — each returns only digits, or only characters no parser is looking for, whatever it is handed |
-| a colour | `Brand::navBg()` and its three siblings, which return `#rrggbb` because `Color::read()` decided (§4ai) |
+| a colour | `SiteChrome::navBg()` and its three siblings, which return `#rrggbb` because `Color::read()` decided (§4ai) |
 | a number | a class constant whose declaration in `lib/` is a numeric literal — **resolved**, not assumed, so `Foo::BAR = 'x <b>'` does not pass |
 
 and a ternary is safe when both branches are, a concatenation when every piece is.
@@ -3908,7 +4032,7 @@ well as this one — different questions about the same line, and both have to h
 
 **Verified by injection, twenty times.** Ten shapes that must fail — `<?= $u['name'] ?>`,
 `$x . $y`, `date($fmt)`, `strtoupper($x)`, an unknown class constant, a ternary with
-one unsafe branch, `Brand::logo()` (a path, not a colour), `$a ?: 'fallback'` (the
+one unsafe branch, `SiteChrome::logo()` (a path, not a colour), `$a ?: 'fallback'` (the
 Elvis form echoes its condition), `'a' . $b . 'c'`, and `Markup::text($a) . $b` — and
 ten that must pass, including a parenthesised nested ternary that a first version got
 wrong and now does not.
@@ -3936,14 +4060,14 @@ a new one. There is no delimiter for an entity to neutralise. What is needed the
 not "make these characters inert" but **"this is a colour"** — and `lib/color.php`
 already knew how to decide that (§4ac).
 
-`lib/brand.php` is the reader. `Brand::accent()` answers `#rrggbb` or the documented
+`lib/site_chrome.php` is the reader. `SiteChrome::accent()` answers `#rrggbb` or the documented
 default, `Color::read()` having decided which; `tools/check_invariants.php` holds the
 `BRAND_*` constants to that one file, so a page naming one is a page that has gone
 back to interpolating whatever is in the config.
 
 **It also collected the defaults, which had been written out four times** — once each
 in `login.php`, `help.php`, `builder.php` and `admin_panel.php`, agreeing only because
-nobody had yet had a reason to change one. Those four blocks are gone; `Brand::load()`
+nobody had yet had a reason to change one. Those four blocks are gone; `SiteChrome::load()`
 reads the config file, and `db_connect.php` calls it beside `lib/markup.php` for the
 same reason it requires that: a page that forgot would be a fatal error on a live
 screen.
@@ -3967,7 +4091,7 @@ uses** and a finding that read like the others would send somebody to the shop f
 over a navigation bar; and the Branding tab opens with a notice naming each field and
 quoting what is stored.
 
-`Brand::pick()` and `Brand::unreadable()` are pure, taking the stored value rather
+`SiteChrome::pick()` and `SiteChrome::unreadable()` are pure, taking the stored value rather
 than reading it, for the reason `layout_rules.php` is (§4o): `define()` cannot be
 undone, so a rule reachable only through the constants could only ever be tested with
 the one value the machine running the suite happens to hold.
@@ -4758,7 +4882,7 @@ control three inches above the card that reports the server's clock and the data
 which is where somebody who has noticed a wrong time will actually be looking.
 
 `StoreClock` in `lib/store_clock.php` is what the string means, and it is shaped like
-`lib/brand.php` on purpose — same problem, same file, same one-way door for a bad
+`lib/site_chrome.php` on purpose — same problem, same file, same one-way door for a bad
 value:
 
 - **A fixed offset is not a timezone.** `+08:00` and `PST` both construct a perfectly
@@ -6013,7 +6137,6 @@ rather than running it, and no suite renders a pixel. **So this pass is repeatab
 retired.** `browser-pass.md` carries its outcome at the top and stays as the list, because
 the live sign is a second install with its own data, and every step applies there again.
 
----
 
 ### 4az. A price list somebody else wrote
 
@@ -6148,20 +6271,1244 @@ failing at anything else. The flake is what got it read.
 
 ---
 
+### 4bb. The publish had been writing the Brand into every branded block for a year
+
+The first step of v2 ([`roadmap-v2-brands-and-themes.md`](roadmap-v2-brands-and-themes.md)),
+and it is a bug fix that landed on its own, before the feature that would have made it
+visible. Nobody reported it. Nothing was wrong on any sign, and nothing would have been
+for as long as the store had one set of Brand Standards.
+
+**What it was.** `applyTextStyles()` paints Brand Standards onto a branded text block's
+inline style, because a price has to *look* like a price while somebody is laying it out.
+`serializeBlock()` then read `block.style.fontFamily` and its five neighbours straight
+back out and put them in the publish payload, and `LayoutStore::insertContent()` stored
+them in the element's own `font_*` columns. So every publish, going back to the day those
+columns existed, copied the shared standard onto every branded row. Both renderers ignore
+those columns for a branded subtype — that is the whole point of the subtype — so the
+values sat there unread, identical everywhere, indistinguishable from the defaults.
+
+**Why it was invisible, and why it stopped being.** One set of standards reaching every
+sign means the baked value and the live value are always the same value. ADR-0011 makes
+Brands per-venue, and the moment there are two the copy is a *fossil*: change a block from
+`price` to `free` a month later and it renders whatever venue's typography happened to be
+selected at its last publish, with nothing on the block or in the Builder saying where
+that came from. This is the same shape as several of §4ab's coercions — a value the app
+was writing down without anybody having decided it should — and the same shape as §4at,
+where a fixture could not show the fault because the fixture's data was too tidy. Here
+the *installation* was too tidy.
+
+**The second fault is the one that made this land first.** `snapshotCanvas()` serializes
+through `serializeBlock()`. So the undo snapshot carried the Brand too, and picking a
+different Brand — which changes no element, moves nothing, types nothing — would have
+changed the string every undo step is measured against. The next real edit would push a
+step recording a difference nobody made, and an Undo would hand somebody typography they
+had never chosen. That is **invariant 27 the other way round**: 27 says a function that
+changes the canvas must commit a step, and this is a step committed for something that
+was not a change. It could not be fixed after Brands shipped without also unpicking
+whatever histories had been built on top of it, and it cannot be fixed on the server at
+all, because an undo history never leaves the tab.
+
+**The fix is at both ends and they are not the same fix twice.** The browser stops
+*sending* the six fields, which is what makes the snapshot stable. `LayoutStore` stops
+*storing* them whatever it is sent, which is what makes the row right for a Builder tab
+that was loaded before the deploy — an ordinary thing to happen on the afternoon of one.
+That case is **ignored rather than refused**: the person publishing did not know they
+were sending a field, and refusing their work over it would be this app inventing a
+problem for them.
+
+**One condition, asked in one place, because the two ways of getting it wrong point in
+opposite directions.** Keeping the Brand's values is the fossil; stripping values a
+renderer is still going to read is a blank price on a wall at 1080p. Those are not
+symmetric — the second one is on a sign in a shop. So `BrandStyles::paints()` is the only
+place the question is asked on the server, and in the browser `applyTextStyles()` decides
+it once, at the moment the paint happens, and records the answer on the node for
+`serializeBlock()` to read. A second copy of `sub !== 'free' && blockStyles[sub]`
+somewhere else would be a second thing to keep in step, and the day the two disagreed the
+sign would go blank. **The condition includes "and a standard is actually stored for this
+type"**, which is not defensive padding: a half-seeded install has no row, both renderers
+already fall back to the element's own columns for it, and `rehearse_phase1.php` exists
+partly to look for exactly that.
+
+**`copyLayout()` is the writer that looks like an exception and is not.** It copies rows
+verbatim, and copying a pre-fix row faithfully would carry a fossil onto a sign that never
+had one. It asks the same question, so invariant 34 holds for every row the module writes
+rather than for the rows one of its two writers happened to write.
+
+**One thing narrowed as a side effect, and it narrowed the right way.** #41's rule — a
+colour nobody can read is published as stored rather than replaced with black — now only
+applies to a block that owns its colour. An unreadable colour on a *branded* block is the
+Brand's, one row in `block_styles`, which `ColorAudit` was already auditing directly.
+Before, that one bad value was copied onto every price on every sign and reported as
+though there were eleven separate faults; now it is reported once, where it can be fixed.
+
+**What the suites had to be taught, and the check that was quietly proved wrong.** The
+layout suite's own baseline layout uses a `price` block, and one check on it — *"the clamp
+reaches the column, which is the half a pure function cannot prove"* — went red
+immediately. It would have gone **green again on its own** if the fix had been written
+slightly differently: the stored line height became 1.40, which is both the clamp's
+default and the value a branded block now stores, so the check would have passed while
+proving that the value never arrived rather than that it was clamped. It was moved onto a
+`free` block. That is the failure mode invariant 30 is about, caught by arithmetic rather
+than by a mutation run, and it is worth noticing that the check *did* fail first — a
+version of this fix that stored the payload's clamped value instead of the default would
+have left it silently vacuous.
+
+Mutation over `lib/brand_styles.php` kills the new condition at the `assertion` grade in
+both directions, with three equivalent survivors (`!==` → `!=` between two non-numeric
+string literals, which cannot differ) and one honest `fatal`: the `is_string` guard is the
+module's own door, `LayoutRules` refuses a non-word `block_subtype` long before publish
+reaches it, and removing the guard throws on an array offset rather than answering wrongly.
+That grade is recorded rather than engineered away.
+
+### 4bc. The panel that looked like a window, and the arithmetic behind it
+
+v2 step 2. No schema, no new data, no behaviour a server can see — the Builder's
+chrome, rebuilt as option B. It is in §4 rather than in the roadmap alone because
+the thing that started it was reported as a matter of taste and turned out to be a
+number.
+
+**The report.** *"The block properties window appears to overlay a top div. It gives
+a false feeling of the capability to drag the properties box around the screen."*
+That is a design complaint, and it was right, but the overlap it points at is not a
+design decision anybody made. `#inspector` was `position: fixed; right: 16px; top:
+100px`. Above it sat a stack of up to five full-width bars — nav, lock banner or one
+of the holder's four, the turned-off notice, the control bar, the align bar — whose
+combined height depended on which of them were showing, and on a 1080p window with
+the control bar wrapped to two lines it exceeded 100px. So the panel landed on the
+bar above it. **And the two things that made it worst arrived together**:
+`showInspector()` calls `updateAlignBar()`, so selecting a block revealed the align
+bar and the panel in the same event, and the panel's `top` had been chosen against a
+page that did not have one.
+
+**Why "looks draggable" follows from that, rather than being a separate problem.** A
+panel that is the only positioned thing on the page, that overlaps its neighbours,
+and that appears and disappears, has every property a window has except the one that
+would make it usable. Every fix short of the structural one is a better number for
+`top`, which is the same defect one window size later.
+
+**The fix is that there is nothing positioned any more.** `#workbench` is a flex row
+and the three columns are its children; a sibling cannot overlap a sibling. What that
+bought beyond the report:
+
+- **The rail stops disappearing.** `deselectAll()` used to set
+  `inspector.style.display = 'none'`, and it runs on every click on empty canvas — so
+  a 290px panel came off the screen and the canvas reflowed under the pointer,
+  repeatedly. It now swaps between two states and never moves.
+- **The resting state is not a placeholder.** For an admin it carries the canvas
+  background, which is a property of the canvas rather than of any block and had no
+  home once the control bar went. The left column is *what you can put on the sign*,
+  and a background is not something you put on.
+- **The stack of bars is gone as a category.** Four of the five were horizontal
+  strips competing for the same vertical space; `#align-bar` is the one that retired
+  outright, into an *Arrange* group in the rail beside the block it acts on.
+
+**One control had no home at all and nobody had noticed.** The zoom buttons lived in
+the control bar, and neither option B as pitched nor the nav sketch had a slot for
+them — an omission in the mockup rather than a decision, found while moving the
+publish line. That is what produced the canvas footer, which is where they belonged
+anyway: zoom is a property of how you are looking at the canvas, so it sits with the
+canvas. The publish line sits at the other end of the same strip, and it is drawn for
+**read-only Builders too**, which is the case it was originally written for.
+
+**The left column's rule is a boundary in the markup, not only a line.** Everything
+below it is an editing control and is not emitted for a read-only Builder; the block
+above it always is. `Switch display` has always sat outside the read-only branch —
+somebody looking at a sign they cannot edit still has to be able to leave it — and
+when the Brand control lands (step 4) the same will be true of knowing which venue
+you are looking at. So a read-only Builder now keeps a left column carrying those two
+things, which is more than it had.
+
+**Three checks were about the old chrome, and rewriting a check is where #50 lives.**
+Each was hand-mutated first and seen to fail before the new form was kept:
+
+| Was | Now |
+|---|---|
+| `emittedOnlyWhenEditable('<div id="align-bar">')` | the rail's own gate, plus *the align bar is gone rather than hidden* — asked of `id="align-bar"` and the lookup, because the prose explaining the retirement mentions the name several times |
+| `PRESENT` holding `control-bar` | the three ids a read-only page really gets: `palette`, `canvas-column`, `canvas-footer`, and `pub-state` inside it |
+| `inspector.style.display === 'none'` | the rail is in exactly one of its two states, and **the rail itself is never shown or hidden by either** — which is the property the display check was standing in for, and one the old code could not have had |
+
+The last row is the interesting one. The old assertion tested the mechanism; the new
+one tests the intent, and it can fail in a way the old one could not: a rail saying
+*"nothing selected"* above a populated set of block controls is a state the old code
+had no way to reach and the new code does.
+
+**What is still owed.** The browser pass describes every page this touched, and it
+gets re-walked — five of its seven defects were things a page did not *say*, which is
+the category no harness here is pointed at, and this step rewrote most of the saying.
+`interact.js` is still driven by nothing, and a CSS rule that does not apply at 1080p
+is invisible to all six suites. **A green gate is not a working screen**, and that
+sentence is load-bearing for this step in particular: nothing in this repo can see a
+three-column layout fail to be three columns.
+
+---
+
+### 4bd. The word Brand went back to what it means, and a key changed under a live table
+
+v2 step 3, and the high-risk one: it re-keys a table on a database that is driving
+signs. ADR-0011 reversed roadmap decision C — one set of Brand Standards for the whole
+installation becomes one per **Brand**, a named reusable identity that several Displays
+share. `block_styles` is keyed on `(brand_id, block_type)`, `displays.brand_id` is
+`NOT NULL`, and a `brands` table carries the palette, the logo asset and the default
+canvas background.
+
+**The name had to be freed first, and that landed as its own commit.** `lib/brand.php`
+held a class called `Brand` whose contents were the *navigation bar's* colours —
+which `CONTEXT.md` calls a Workspace Theme, and which never reaches a Screen. The
+vocabulary file has been unambiguous about this since it was written; the class simply
+predated it. It is `SiteChrome`, in `lib/site_chrome.php`, and not `WorkspaceTheme`,
+because a Workspace Theme is per-person and chosen and this is still one set of colours
+for the whole install read out of a generated file — step 5 is what turns it into the
+other, and it keeps these four method names when it does, so every call site survives
+that change too. 65 references across 16 files, no behaviour change, gated on its own.
+Doing it inside the schema commit would have made the risky diff unreadable.
+
+**The gate on the re-key reads the key's columns, not whether a key exists.** This is
+the only statement convergence issues that *replaces* structure rather than adding to
+it, and the difference matters twice over. Every table has a `PRIMARY`, so a gate built
+on `hasIndex()` would answer the same before and after — the statement would either
+never run or run on every request. And unlike a duplicate `ADD COLUMN`, which fails
+harmlessly, a second `DROP PRIMARY KEY, ADD PRIMARY KEY` does not fail at all: it
+rebuilds the table. So `SchemaFacts` learned `indexColumns()` and `needsPrimaryKey()`,
+and `readSchemaFacts()` orders by `SEQ_IN_INDEX`, because `(brand_id, block_type)` and
+`(block_type, brand_id)` are different keys and a set comparison would call the re-key
+already done. An index recorded without its columns answers **null** — "I did not
+look" — and not an empty list, which is the same three-valued discipline the rest of
+that file already had.
+
+The order is add-nullable, backfill, tighten, re-key, and the tighten is written out
+rather than left to MySQL's silent conversion of a nullable column into a `PRIMARY KEY`
+member. Relying on that would work and would leave the `MODIFY` in the plan on the next
+request as well, since both gates were decided from one catalogue read taken before
+either ran — and an `ALTER` that "does nothing" takes the same metadata lock as one
+that does (§4o).
+
+**Two things the plan did not mention, found by building it.**
+
+The first is that `seedBlockStyles()` had never run in a test. It was a single
+`INSERT IGNORE`, which SQLite rejects — and the suite's default engine is SQLite, so a
+`true` return could only ever mean "the count found all six and the statement was never
+sent". The inserting half was unreachable from the one engine that runs by default, and
+the SQLite check was *written that way on purpose*, using the rejection as its witness.
+Re-keying forced the statement to name a `brand_id`, and the replacement computes the
+absent `(Brand, type)` pairs and sends plain `INSERT`s, which both engines run. The
+suite now watches it seed for real, including seeding a second Brand — which on the old
+key would have been six duplicate-key failures. That is #11's rule collecting another
+one: a statement only one engine can execute is a statement the fixture cannot test.
+
+The second is not about this feature at all. The fixture's temp-directory cleanup was
+one level deep, and the install-paths section writes `private/db_credentials.php` — a
+file inside a subdirectory. `rmdir` on a non-empty `private/` failed, so `rmdir` on the
+parent failed too, and **every run of the suite since had left a directory in `/tmp`**.
+429 had accumulated. The directory name is keyed on the process id, a container reuses
+those freely, and one run inherited an older run's credentials file whole and failed a
+check that had nothing to do with the change under test. It is worth stating which way
+that fails: this time it produced a false *failure*, which is the harmless direction. A
+check that reads a file some earlier run wrote can pass for the wrong reason just as
+easily, and nothing would have said so. Cleanup is recursive now and the directory is
+emptied before use.
+
+**Where the risk actually sits, and what does not cover it.** The re-key statement
+itself is MySQL-only, so no suite in this container executes it — and this container has
+no MySQL server, so the layout suite's MySQL arm did not run either and its expected
+check count is derived rather than observed. `tools/rehearse_phase1.php` is what covers
+the statement, and it grew the checks to do it: the primary key's columns read back out
+of `SHOW KEYS`, both backfills asked as rows rather than as structure, `brand_id`
+`NOT NULL` on both tables, and the `RESTRICT` rule on `displays_ibfk_3`. That tool runs
+against a copy of live data, by a person, and **it has not been run** — the rehearsal is
+step 3's stated gate and it is owed before this goes near the shop. So is the browser
+pass, which §4bc already owed and which this step adds a rewritten Display Branding tab
+to.
+
+**A note on what the mutation runs found**, since invariant 30 is the reason to do them:
+the first run over `lib/brands.php` survived on nearly every accessor, because the
+module had no section in the suite at all — the Brand tests written at that point were
+about `BrandStyles` and `DisplayStore`. Writing that section then found two real
+defects that no gate had: `BrandAdmin::create()` refused a Brand created from a name
+alone, because an absent background was being read as an unreadable one rather than as
+"none supplied" (#21's line, in the direction that refuses a legitimate save); and the
+duplicate-name refusal quoted the name that had just been *typed* rather than the name
+of the Brand actually holding it — so somebody typing `salmon house` was told the clash
+was with `salmon house`, a string that appears nowhere in the list they were about to
+go and look at. `otherBrandNamed()` answers the Brand rather than a boolean for exactly
+that reason: a predicate can only echo its input back.
+
+Six more survivors turned into checks: `destroy()` carried a dead clause refusing an
+empty typed name, which `strcasecmp` already refused (removed, not decorated —
+§4bb's dead clause was the one that could still be wrong); `wornBySentence()`
+truncates at six signs and says "and N more", and no test had ever had more than one
+wearer; `forId()`'s `isIdLike` guard, reached straight from `$_POST['b_id']` on the
+save and delete forms; `NAME_MAX` and `PALETTE_SLOTS` asserted as literals, because a
+check written as `str_repeat('a', NAME_MAX)` moves with the constant and passes just
+as happily at a width the column does not have; and `otherBrandNamed()`'s default
+`exceptId` and its `cleanName()` call, neither of which anything had exercised — the
+second meaning untrimmed input was a way past the clash check.
+
+The last one is the most useful and was the least obvious. Every literal in
+`BrandStyles::STARTING_POINTS` survived, because nothing asserted what a new Brand
+*starts as*. That list has three writers — `seedFor()`, convergence's step, and
+`schema.sql`, which cannot call PHP and therefore holds a copy — and the docblock
+claims they are one list. They now are: the suite parses `schema.sql`'s seed and
+compares it field by field, and the check was hand-mutated (a `30` to a `31`) and seen
+to fail before it was kept. A drift there is silent and permanent — a fresh install
+would start its first Brand somewhere every later Brand does not, both sets render
+fine, and only their disagreement is wrong.
+
+**The final counts, and what they are not.** `brands` 64/100 killed, `brand_admin`
+54/87, `brand_styles` 64/95. The remaining survivors are dominated by `===` → `==` on
+comparisons where both sides are already strings, and by threshold literals inside
+clamps whose *return* values are separately asserted — equivalent mutants, not gaps.
+Two are worth naming rather than chasing: `forId()`'s `if ($id <= 0)` survives because
+the query below it finds nothing for 0 anyway, so the guard saves a round trip rather
+than changing an answer; and `logoAssetId()`'s `&&` survives because `SELECT *` always
+returns the column, so the `isset()` half can never be the deciding one. Both are
+worth keeping and neither is testable without making the code worse, which is what
+invariant 30 means by a reason to write down.
+
+### 4be. A venue you can look at before you commit to it
+
+v2 step 4. Step 3 gave a Display a Brand and gave an admin a page to edit Brands on;
+this is the Builder learning to say which venue it is building for, and letting an admin
+put the sign on another one. Four surfaces and one write: the control at the top of the
+left column, the palette offered above every colour picker, the Venue Logo item, and
+Publish.
+
+**Picking a Brand writes nothing, and that is the feature.** The canvas repaints in the
+browser and the choice rides out with the next Publish, on the path the canvas
+background already takes (decision 6). A Brand assignment reaches every block on the
+sign and there is no undo behind a publish, so the person gets to *look* at it before it
+is true. The suite's first section proves this by counting requests: zero. A version
+that saved as you picked would be indistinguishable on screen and would change every
+board in the venue the moment somebody browsed the menu.
+
+**Five things the plan got wrong or did not anticipate.**
+
+The plan listed the colour controls the palette appears above as "marquee text and
+background, section, free text, canvas background". **There is no section colour
+control.** A section carries a background *image* — a path with a `|fit` suffix — and
+nothing else; it has never had a colour of its own. So there are four, not five, and the
+suite drives its list from the four ids rather than from the plan's sentence.
+
+The plan said "repaints the canvas in the browser" and left the mechanism open. It has
+to be **`restoreCanvas(snapshotCanvas())`**, the pair the undo history already uses, and
+the reason is invariant 34: a branded block's own six typography fields are not on the
+node, because publish deliberately stopped carrying them. So a repaint cannot be a walk
+over the blocks re-applying styles — `applyTextStyles()` needs the *element* to fall back
+to, and the only thing that can produce one is the serializer. Going through the pair
+also keeps `renderBlock()` the one place that knows how an element becomes a node, which
+is what that invariant's comment asks for in so many words. What it costs is the
+selection: a switch puts the rail back to its resting state. That is arguably right —
+the swatches under it have just changed — and it is the price of not having a second
+renderer.
+
+The plan did not mention that **the publish has to re-read the Display**.
+`insertContent()` decides whether a column is the Brand's to paint by asking
+`BrandStyles::paints()` with the standards of `$display->brandId()`, and on the one
+publish that *changes* the Brand, the Display it was handed is wearing the old one. The
+rows are about to be read under the new Brand, so that is the Brand that has to decide —
+which is the rule `copyLayout()` already states one method over about a duplicate's
+target, arriving by the door that had not needed it. Left alone it is invariant 34's
+fossil with a new entrance, and the observable difference is exactly one field: a `price`
+block publishing onto a Brand with no `price` standard keeps its own size, and onto one
+that has it stores the documented default. The suite checks both directions, because a
+check in one direction alone passes on a Brand nobody was painting with. Both were then
+*seen* to fail: the fix is one identifier, so it was hand-mutated back —
+`replaceWholeLayout($display, …)` in place of `$wearing` — and the two checks failed with
+`expected 48, got 16` and `expected 16, got 48` before it was restored. That is invariant
+30's grade `assertion` obtained by hand, on a line `tools/mutate.php` has no mutation for:
+swapping one variable for another in scope is not on its list, and a check nothing can
+break is #50's whole complaint.
+
+The plan did not anticipate **the state where there is no Brand at all**. A database
+whose convergence has not run has `displays.brand_id` at 0, and there the page draws no
+control (an empty box captioned *Brand* reads as something that failed to load) and sends
+**no `brand_id` at all**. Sending 0 would be an id naming nothing, `BrandChoice` would
+rightly refuse it, and a lagging schema would become a sign nobody can publish to —
+invariant 10 as a live consequence rather than a caution. An absent field means "leave
+the Brand alone", which is exactly what that page has to say.
+
+And the plan said nothing about **the Brand's default canvas background**, which the
+Builder deliberately does not apply. It is what a *new* Display starts from; this
+Display's background is its own. Left unsaid that is the first question somebody asks
+when a venue's colours appear and the canvas behind them does not change, so the toast
+says it, and so does `help.php`. Five of the browser pass's seven defects were things a
+page did not *say*; this is the same category, caught before rather than after.
+
+**The read-only guarantee needed the walker taught one more derived variable.**
+`$canPickBrand = $isAdmin && !$readOnly && $wearing !== null`, and
+`selftest_builder_readonly.js` decides what a read-only page can emit by substituting
+`$readOnly` and `$isAdmin` and enumerating everything else — so a *derived* condition
+would have been tried both ways, one of those ways would have said yes, and the walker
+would have believed a read-only page can emit the Brand menu. Substituted to `false`,
+with a check pinning the derivation in the source, exactly as `$undoSteps` was handled in
+§4bc. The control itself is the one entry that *joins* `PRESENT` as a feature rather than
+leaving it as a leftover: somebody who cannot edit still needs to know which venue they
+are looking at. Its read-only branch carries no ids, so `#brand-name` cannot resolve on a
+page that draws a different one — two copies would make every lookup of it depend on
+which branch the page took.
+
+**A swatch has to run the handler the picker would have run.** Setting `.value` from
+script fires no `input` event, so a swatch that only filled the control would move the
+control and nothing on the canvas. The four targets are a table naming the row, the
+picker, what to run, and whether it counts as an undo step — the canvas background does
+not, matching ADR-0010's decision that the history leaves the background alone. The
+marquee background's entry also unticks **Transparent**, because a transparent marquee
+ignores its background colour: without that line, picking the venue's red would do
+nothing and say nothing, which is the same defect wearing a checkbox. And the colours are
+read through `readHex()` again on this side before they become CSS: the server already
+answered `Color::read()` for them, but a value the CSSOM discards is not a swatch, it is
+a grey box that does nothing — #41's shape, one control along.
+
+**A number this container cannot check, and it was wrong.** Found while raising it:
+§4bd added two checks to the layout suite's MySQL-only section and moved that arm's
+expected count by three, so from step 3 until this step the MySQL run expected one check
+more than the suite contains. Nothing here could see it — there is no MySQL server in
+this container and that arm never runs — and the comment directly above the line warns
+about this exact mistake ("a sum is a prediction that can be checked in one command;
+check it"). It is no longer a delta: the MySQL figure is the SQLite figure plus a *count*
+of that section, which is straight-line code with no loop and no conditional, so both
+halves can be verified by reading rather than by running.
+
+**The seventh harness.** `tools/selftest_builder_brands.js`, 121 checks, under the
+premise of an admin who may switch: the switch sends no request, repaints the branded
+block and leaves the block that owns its typography alone, records no undo step, and
+leaves nothing for the next commit to mistake for an edit. Two additions to the DOM stub
+were needed and both are load-bearing: `classList.toggle`, which both of this page's
+menus use, and kept `document` listeners, so a click somewhere else on the page can be
+fired — a menu that opens and cannot be closed is a real defect and an invisible one to a
+stub that drops the handler. The read-only and basic-account cases went to the suite that
+owns that premise rather than growing a fourth premise here.
+
+**What the mutation runs found.** `lib/brands.php` 86 of 127 killed, 62 of those by an
+assertion; `lib/layout_store.php` 232 of 334, 148 by an assertion. Both figures are from a
+run over the code as it was finally committed, which is not the same as the run that did
+the work — the two that found something were over the version *before* the `isAdmin()` fix
+above, and the fix is in these numbers rather than being what they found.
+`BrandChoice`'s own survivors are the `===` → `==` family on comparisons where
+both operands are already strings, plus one worth naming: the `intval($id) <= 0` half of
+`brand()` survives on its own, because `isIdLike` has already refused everything that is
+not a whole number and the only values left for it to catch are `0` and negatives — both
+of which `problemWith()` then refuses again by the same test. Two agreements about the
+same thing, which is deliberate here (the factory's filter and the reader's guard) and
+therefore not a gap. No new invariant: step 4's guarantees are the behaviour of one page
+and are held by a suite, not by a rule that spans files.
+
+**Still owed, and this step does not close it.** The browser pass has no step for the
+Builder's Brand control, which is now the fourth thing on its debt table — and it is the
+category that table exists for. Nothing in this repo can see a swatch row land on top of
+a picker at 1080p, or a venue's name truncate in a 178-pixel column.
+
+---
+
+### 4bf. The application gets colours of its own, and they never reach a sign
+
+*(v2 roadmap step 5, 2026-08-14. It is invariant 36.)*
+
+The last step of the v2 plan, and the second of `CONTEXT.md`'s two nouns: a **Brand** is
+what a customer sees on a TV, a **Workspace Theme** is what an employee's screen is
+painted in. `workspace_themes` holds thirteen colour columns and `users.workspace_theme_id`
+says which one an account chose; the Builder's gear picks, the Admin Panel's Site Branding
+tab makes them, and nothing anywhere reaches a Screen.
+
+**Thirteen roles, not the twelve the plan named.** The six chrome roles it listed omit the
+**navigation border**, which is one of the four colours a shop can already set from Site
+Branding. A theme that could not hold it would repaint the live nav the moment anybody
+chose one — decision 9's "no sign moves" has an application-side twin, and this is it.
+
+**There is no seeded row, and this is the change from the plan that mattered most.** It
+said today's `branding_config.php` values "become a seeded theme named Store default". A
+seeded row is a *copy* of that file, and the first Site Branding edit makes the copy
+disagree with it while still being called the default — the two-readers defect
+`SiteChrome::load()`'s docblock already refuses for the file itself, one layer out. So the
+store default is not a row at all: it is the file plus the documented defaults, answered
+by `SiteChrome` when no theme is worn, and `users.workspace_theme_id IS NULL` is how an
+account says it wants that. Convergence therefore inserts nothing, backfills nothing, and
+cannot repaint anybody — which is what makes this the low-risk step the plan called it,
+rather than a migration that touches every account row.
+
+**The layered read had to split in two, and that one was a defect a day from shipping.**
+`SiteChrome::role()` answers the worn theme first, then the config, then the documented
+default — and three callers want the config *as configured* rather than as painted: `all()`,
+`unreadable()`, and the Branding form, which fills its four `type=color` inputs from it.
+Through the layered read, an admin wearing a theme would have opened the Branding tab,
+been shown their own theme's colours as "what is there now", and saved them over the
+shop's on the next click. #21's shape exactly: the wrong value, stored, with a green
+message. `configColor()` is the door those three take.
+
+**Why the roles are CSS custom properties.** Not a style preference. The picker lives in
+the Builder's gear, on a page that can be holding an hour of unpublished layout, and the
+obvious implementation — post the choice, let the page come back painted — throws that
+work away. A setting about a menu bar must not be able to do that. So the thirteen are
+declared once per page in a `:root` block and used as `var(--…)` everywhere, and switching
+theme is thirteen `setProperty()` calls with the canvas, the undo history and the edit
+lock untouched. Three other things fell out of it: one validated echo per page instead of
+the hundred-odd the alternative needed, a live preview in the admin form that costs
+nothing, and — the one that matters for invariant 36 — decision 11 became *checkable*,
+because a `var(--…)` in a stylesheet is something a check can find and a hex literal is
+not.
+
+**The canvas check fails three ways and each was seen to.** A theme role inside a rule
+that paints the canvas; `--selection` used anywhere that is not the selection outline or a
+resize handle; and the canvas-selector list going stale so the rule silently checks
+nothing. The third found a real defect in the check itself: the text before a rule's `{`
+carries the comment above it, and the comments above those very rules name `.selected` and
+`.rh` — so the check could have been satisfied by its own documentation. Comments are
+stripped first now. Its limit is stated where the others are, at the bottom of
+`check_invariants.php`: it classifies a rule by a *list* of canvas selectors, so a
+genuinely new one has to be added by whoever writes it, and what stops the list rotting in
+silence is its own count assertion.
+
+**The picker renders un-themed, and so does the way to it.** Decision 14 says the control
+for changing your theme must not be drawn in your theme, and every colour in `#theme-pick`
+is a literal. But a picker you cannot reach is not legible either, and the way to it is a
+grey glyph on a themed nav bar — so `$gearNeedsChip` asks `Color::hardToRead()` at render
+and the gear wears a fixed chip exactly when it would otherwise vanish. Today's nav is
+dark and the glyph is light, so nobody who has never made a theme sees any change. That is
+`RequestScheme::isSecure()`'s shape: a protection that cannot apply is reported rather than
+applied flat.
+
+**A closed account had to let go of its theme.** Found by asking what
+`accountsUsing()` would say about somebody who can never sign in again: a closed account
+keeps its `workspace_theme_id`, so `users_ibfk_1` refuses that theme's deletion for ever
+and the Admin Panel's refusal names a person who will never use it. That is the edit
+lock's rule one table further out — *a change to what somebody may reach frees what they
+are holding* — and `AccountAdmin::close()` now clears it inside the same transaction that
+revokes the grants and releases the locks. Closure and not suspension: a suspended account
+is coming back and keeps its choice, which is the distinction `markClosed()` exists to
+draw.
+
+**One rule is now written in two languages, deliberately.** The contrast warning has to
+appear while somebody drags a colour picker, which cannot ask the server per frame. Only
+the *arithmetic* is duplicated — WCAG's luminance formula — while the threshold and the
+words are printed from `Color::READABLE_RATIO`. And the two copies are not checked against
+each other: both are checked against the standard's fixed points, 21:1 for black on white
+and 1:1 for a colour on itself, in `selftest_layout.php` and `selftest_builder_theme.js`.
+A formula from a standard is a safer thing to write twice than a decision would be.
+
+**Three visible changes on an install with no theme, all deliberate.** The Display
+picker's notice was its own dark red beside the off banner's, two banners meaning the same
+thing in two colours with no reason written down. The Help page was drawn in its own
+slightly different blues, and a theme cannot paint "almost the work area". And **two pages'
+navs ignored Site Branding entirely** — the Admin Panel's and the Asset Library's, both
+hardcoded, so a shop that set its own navigation colour got it on the Builder, the Help
+page and the sign-in page and a stock `#1a252f` on those two; they reach the roles now, so
+those bars will change to match the rest of the app on a shop that has customised it. The
+Asset Library was the one page this step almost missed: it is signed-in, reachable from the
+gear, and decision 12 says a theme applies to every signed-in page, so a themed Builder
+beside an unthemed library would have been the plan's own promise broken in the one place
+nobody looks.
+
+**What a theme does not paint, and why the Admin Panel wears fewer roles.** That page is a
+light document — white cards on `#f0f2f5` — and only its nav bar and its buttons are
+chrome in the sense the roles name; `--work-area` is the dark space behind a canvas, and
+mapping the panel's paper onto it would turn the Admin Panel black. So the roles reach
+every signed-in page and how much of a page they paint depends on how much of it is
+chrome. The hairline borders and glows beside a themed surface stay literal too: a shadow
+cannot be derived from a custom property without `color-mix()`, and thirteen roles is a
+theme that paints surfaces, not a full restyle.
+
+**The eighth harness.** `tools/selftest_builder_theme.js`, 110 checks, under a premise no
+other suite holds: an unsaved layout on screen while somebody changes a setting about
+themselves. It holds the canvas nodes by identity across a switch, watches the undo
+baseline not move, and drives both failure paths — a reply that says no and a request that
+never arrives — because the paint happens before the round trip, so a swallowed failure
+leaves the screen showing a theme the account is not on. `selftest_builder_readonly.js`
+gained the other half: the picker reaches a read-only Builder in full, which is the
+distinction between the two nouns in one assertion.
+
+**What the mutation runs found.** Over the code as finally committed: `lib/workspace_themes.php`
+56 of 65 killed, 27 of those by an assertion; `lib/site_chrome.php` 26 of 36, 13 by an
+assertion; `lib/color.php` 32 of 39, 22; `lib/picker_name.php` 22 of 27, 18; and
+`lib/accounts.php` 156 of 241, 130 — that last file because this step put a method in it
+and one line inside `close()`'s transaction, and that line is killed by an assertion
+rather than by the harness noticing something moved. Measured, for the reason §4be's
+paragraph now says out loud.
+
+The runs *during* the work found four things, and all four are fixed inside those figures
+rather than being what they report. `WorkspaceTheme::colors()` was dead — five mutants
+lived inside it because nothing called it, and it is deleted rather than covered, which is
+why that file has 65 mutants and not 70. Two id guards were being asked about rows that
+did not exist, so `forId('1abc')` and `forAccount('2abc')` answering null was not the
+guard's doing and the checks could not have failed. The `array_key_exists` guard in
+`colorFor()` had nothing asking it for a role the row has no column for, which is the
+whole case it exists for. And `storeColors()` — the value behind "use the store default" —
+had never been executed on the PHP side at all.
+
+The runs *after* them asked for eleven more checks, which is the suite moving from 2257 to
+2268. Five are contrast, and they are the sharpest thing the tool has found here: every
+fixed point this step had written was black, white, grey, or a colour on itself, and a
+grey is precisely the input a mix-up of channels cannot change — so both substring offsets
+and both weightings in `luminance()` could be moved and the whole suite still passed. Red,
+green and blue on white are 4.00, 1.37 and 8.59, three numbers that agree with only one
+reading of the bytes, and two of them straddle the threshold in opposite directions. Three
+are a blank-named row, inserted in SQL because no form can make one: `clashIn()`'s empty-name
+guard exists so an unvalidated name does not match it, and until now nothing had put such a
+row in front of it to match. One calls `clashIn()` with two arguments — both stores hand it
+three, so its own default was reached from nowhere, and a default of 1 rather than 0 would
+have excused the first row anybody ever made from every clash check in the app. Two tell
+`SiteChrome::unreadable()` about a colour defined as blank rather than not defined, which is
+`=== null` sitting one character from `== null`, and the difference is whether the person who
+emptied that line is ever told.
+
+What lived is four families, all of them named before this step. `===` → `==` and `!==` → `!=`
+where PHP 8 already guarantees both operands' type. `$out = [];` deleted in front of an
+append, which PHP auto-vivifies, so the line declares a type rather than doing anything.
+`intval($id) <= 0` behind an `isIdLike()` that has already refused everything except zero
+and negatives — §4be's two agreements about the same thing. And three in `site_chrome.php`
+— `load()`'s body, `logo()`'s `&&`, and `FIELDS[$key][0]` read as `[1]` — which all survived
+because the process running the suite already has the branding constants defined: the
+failure CLAUDE.md names as an absent-setting check running where the setting was present.
+Killing those needs a subprocess, which this suite has machinery for and that paragraph
+declined to spend on them. The paragraph below then spent it for a different reason and
+took the third one with it: a process where `BRAND_NAV_BG` is a dark red is a process where
+reading the *label* out of `FIELDS` instead of the constant's name paints the wrong colour.
+One check answering two questions is the usual shape of this — the other two are still
+alive, and still worth a subprocess apiece the day anything near them moves.
+
+**And one survivor was a question rather than a family, which the owner then answered.**
+As first built, `stored()` handed a worn theme's value back exactly as stored, so an
+unreadable one was refused a layer later by `pick()` — which answers the **documented**
+default, not the colour the shop put in `branding_config.php`. For the four config-backed
+roles those are two different colours on any install that has branded its nav, so a theme
+with one bad value took the shop's colour off the page rather than falling through to it.
+The file argued for that at the time: an almost-right screen is harder to notice than an
+obviously default one. The owner decided the other way, and the deciding argument is the
+better one — "use the store default" means `branding_config.php` in every other sentence of
+this step, and a phrase cannot mean two things one method apart.
+
+So `SiteChrome::themeColor($role, $stored)` is now the seam: the theme's value when this app
+can read it, otherwise whatever the store default paints for that role, which for the nine
+roles with no config line *is* the documented default. `role()` calls it when a theme is
+worn and `configColor()` when one is not, and the two other places that resolve a theme
+that is **not** the one being worn go through the same method rather than a second copy of
+the layering — `toClientArray()`, so a theme the picker switches to paints what wearing it
+paints, and the panel's swatch row, so the square in the list is the colour the page will
+take. The theme form's inputs come from it too, which means a new theme now starts from the
+shop's colours instead of the shipped ones: the first thing an admin changes is one square
+of their own shop rather than thirteen back to it. Nothing became a silent substitute —
+`WorkspaceTheme::unreadable()` still names every value that could not be used, the table
+still prints that list, and its sentence now says *store* default because that is what is
+drawn.
+
+**And it took three checks, two of them in a subprocess, because the suite could not see
+the difference at all.** This container has no `branding_config.php` — it is server-side and
+deliberately outside the repo — so the shop's colour and the shipped one are the same string
+here and a fallback to either passed. That is exactly why the mutation run that moved this
+line lived. The fix is `inFreshProcess()`, the machinery `StoreClock`'s absent-setting branch
+already used: one process with `BRAND_NAV_BG` defined to a dark red and a theme storing
+`darkblue`, which must paint the red; one with nothing defined at all, which must paint the
+slate the app ships with. A layering no process here could distinguish is a layering the
+next person can change without anything noticing — twice, now.
+
+**No ADR, and that is a decision rather than an omission.** An ADR here would record
+"typography and colour belong to a Brand" 's mirror image — the application's own colours
+belong to a person — and ADR-0011 already draws the line this sits on the other side of.
+What an ADR is *for* is the rejected alternatives, and the two that mattered are above:
+the seeded "Store default" row, and the picker that posts and reloads. Both are recorded
+with what they would have cost, which is the same service, in the file the roadmap's step
+already points at. Invariant 36 is where the rule itself lives, because it is a rule that
+spans files rather than a decision somebody might re-open.
+
+**Still owed, and this step does not close it.** The browser pass now has *five* things on
+its debt table: nothing in this repo can see whether a light theme leaves the Builder's
+white-on-dark text unreadable, whether the picker card sits where the gear menu can show
+it at 1080p, or whether the contrast warning wraps.
+
+### 4bg. The suite had only ever run on an install nobody has
+
+§4bf ends on a fallback that no check in this repo could see, because this container has
+no `branding_config.php` and so the shop's colour and the shipped one are the same string
+here. Two `inFreshProcess()` checks closed that one line. The question worth asking next
+was how big the hole around it was, and it is answerable in ten seconds: define the ten
+names the generated file defines, then load the suite.
+
+**Of 2271 checks, seven noticed — and all seven noticed by failing.** Two said the shop's
+navigation is `#1a252f`, which is the colour the app ships with and not the colour any
+branded install holds. Five said the clock is in `America/Los_Angeles`, which is the
+setting's default and not the zone the live host was observed on (§4ap). Nothing else in
+the file changed its answer at all. So the state of it was: one configuration exercised,
+the app's other configuration — the one every shop is actually running — never, and
+seven checks that would have failed on the live install, on the very run somebody makes
+to convince themselves a deployment went well. `tools/` **is** uploaded (`DEPLOY-SKIP` §B
+puts it behind an `.htaccess`, not off the server), so that run is a real one.
+
+**None of the seven was wrong about the app.** Each was written as a literal where it
+meant "the store's own", which is the same slip §4bf's fallback was: a phrase that means
+`branding_config.php` everywhere else, spelled as `DEFAULTS` because on this machine
+those agree. The fix is to say the thing — `SiteChrome::configColor()` rather than
+`SiteChrome::DEFAULTS`, `StoreClock::zone()` rather than the zone this checkout defaults
+to — and where that would have made a check compare a function with itself, to move the
+literal into a process that has been *told* what the setting is. The clock arithmetic
+keeps its fixed point (2:15pm, five lines up, where the zone is an argument); what the
+caller checks now assert is that the caller went through the door at all, which a bare
+`strtotime()` still fails by the hours the check above it measures. Two new checks carry
+what the rewrites gave up: `apply()` in a process pinned to Auckland, and the Branding
+form reading the shop's own colour while the page around it wears a theme — the save that
+would otherwise overwrite the shop's file with somebody's night shift.
+
+One more check changed for a different reason. `checkSame([], SiteChrome::unreadable())`
+asserted an empty list, which is a property of *this checkout's* config being clean rather
+than of the seam: it passed on a machine with nothing wrong, while the theme it was worn
+with had nothing wrong either. It now wears a theme holding a colour this app cannot read
+and asserts that value is not in what the audit reports. That is the sentence it was
+always meant to be, and it holds on a damaged install too — which matters, because a
+suite that goes red on the customer's data rather than on the code is a red line people
+learn to skip.
+
+**`tools/selftest_installed.php` is what keeps this from happening a third time.** It runs
+the same suite three more times, one subprocess per configuration because a `define()`
+cannot be undone: *branded* (all ten settings changed, a zone eleven hours away), *live-like*
+(only the zone, because most installs have edited one setting and not ten), and *damaged*
+(a colour in the config that this app cannot read). It asserts its own arms against
+`BrandingConfig::DEFAULTS` before it runs anything, since an arm that accidentally *is* the
+default configuration would prove nothing and report it in green. Put the two literals back
+and it fails all three arms, naming the check and both colours — which is invariant 30's
+discipline applied to a harness rather than to a line: it was watched failing before it was
+believed.
+
+What it does not cover is the shape of the same problem one level out. This suite has now
+been run in four configurations and two engines, and every one of them is still a process
+on a machine with no shop attached: `php -l` here is 8.4 against an 8.2 floor, the MySQL arm
+needs a server this container has never had, and the five browser walks are still owed. A
+configuration you can define is the cheap half.
+
+### 4bh. And the node suites were running a page where every server value was zero
+
+The same question, asked of the other eight harnesses. They cannot run PHP, so each one
+stripped `<?= … ?>` to the literal `0` and then wrote a handful of the page constants
+back by hand. `0` parses everywhere the page interpolates a value, which is what made
+that work — and is exactly what made it silent. Twenty-one values reach `builder.php`'s
+JavaScript and three reach `viewer.php`'s; what a suite did not think to write back was
+zero, and nothing said so.
+
+**Measured the same way: set all twenty-one to what a real page carries, re-run all
+eight, and not one check changes.** So unlike §4bg's seven, none of these was *wrong* —
+but none was seen either, and two of the zeroes were doing damage that a passing run
+could not show.
+
+`LOCK_LAPSE_SECONDS` and `LOCK_WARN_SECONDS` were 0 in all eight. The idle warning is
+drawn when `idle >= WARN && idle < LAPSE`, which with both at zero is false for every
+idle there has ever been. The bar that tells somebody their edit lock is about to lapse,
+and the countdown inside it, were not untested — untested is a thing a person can notice
+— but **unreachable**, which nobody can. `selftest_builder_uploads.js` now drives all
+three bands and the `Math.max(1, …)` floor, which is the only arithmetic on that line and
+the one read at the worst moment: five seconds left rounds to zero minutes, and "0
+minutes left" beside a lock that is still yours reads as too late to save anything.
+
+`CANVAS_W` and `CANVAS_H` were 0 in `selftest_viewer.js`. `scaleToFit()` divides the
+window by them, so the one piece of geometry a customer looks at computed `1920 / 0`,
+set `scale(Infinity)` and NaN margins on every run of that suite, threw nothing, and was
+asserted by nobody. It now has the two shapes that matter: a 4:3 Screen showing a 16:9
+sign, where `Math.min` letterboxes and the band is split evenly, and a short wide one,
+where it pillarboxes — both, because a `min` written as `max` gets one of them right.
+
+**`tools/page_constants.js` is where the silence became a declaration.** One value per
+constant, chosen as what the page really carries, with the empty ones empty *in type*
+(`BRANDS` is `[]`, not `0`, because the page iterates it). The thirteen chrome-role names
+are read out of `lib/site_chrome.php` rather than copied, so a fourteenth role appears
+there the day it appears here. And it refuses two things that used to pass unnoticed: a
+constant the page interpolates that nothing names — add one to `builder.php` and every
+suite fails until this file says what it is — and an override for a constant the page
+does not have. `selftest_builder_readonly.js` had already worried about the second, for
+one name, with one line: `check(/var CAN_PICK_BRAND = false;/…)`. It is the same failure
+as the `lock-holder` entry that sat in that suite's PRESENT list for months pointing at
+nothing, and it is now checked for all eight, in that suite, because
+`check_invariants.php` reads PHP and these are JavaScript.
+
+That last clause held for the *contents* of a suite and was read, once, as covering the
+**list** of them too. It does not: this check counts `selftest_*.js` files on disk, so a
+ninth suite added without a step in `php-lint.yml` passed here and ran nowhere. The merge
+with `main` is what surfaced it — the node job's comment said six against a step list of
+eight, its third such correction and every one a merge — and the half that was missing is
+not JavaScript at all but YAML, which `check_invariants.php` can read perfectly well. It
+holds the two lists to each other now, in both directions and with the workflow's comments
+stripped, because that file's own YAML names tools it does not run.
+
+**Four of the eight also had no count anchor**, which is the third of the three ways
+`selftest_layout.php`'s own header says a suite reports "0 failed" while broken: delete
+half of `selftest_viewer.js` and it printed a clean run and exited 0. All eight carry one
+now.
+
+What this did *not* find is a wrong answer, and that is worth saying plainly rather than
+letting the section imply otherwise. The eight suites were right about everything they
+asserted. The finding is narrower and duller: they were asserting it about a page nobody
+would ever load, and two things a person does — running out of time on a lock, watching a
+sign on a differently shaped television — were on the other side of that difference.
+
+### 4bi. And the whole suite was running on one server, describing servers
+
+The third time the same question was asked, and the one where the answer was already
+written down in the file it was asked about.
+
+§4bg found the suite running in a `branding_config.php` no shop has. §4bh found the node
+suites running a page where every server value was `0`. Both are the same shape: the
+configuration the tests run in is not the configuration the app ships into. The dimension
+neither pass touched is the **machine** — this container's PHP, its `php.ini`, and a
+request that is never a request.
+
+Which matters here more than it would in most apps, because this one has a Settings tab
+whose entire job is to describe the machine it is running on.
+
+**`ServerReport` already knew the rule and had applied it three times.** Each of these is
+public, pure, and takes the value rather than reading it, and each says in its own
+docblock why:
+
+| seam | takes | because |
+|---|---|---|
+| `phpVersionNote($id)` | a version id | "two of the three cases are unreachable on whatever machine happens to run the test" |
+| `storeZoneNoteFor($stored)` | the stored setting | "a `define()` cannot be undone and a running installation is not in that state" |
+| `UploadLimit::smallestOf($values)` | ini values | "PHP_INI_PERDIR — they cannot be set at runtime, so the interesting cases are unreachable through `bytes()`" |
+
+The reasoning is correct and it is stated three times. It was never carried to the
+neighbours — and **the four places it was not applied are exactly the four with no
+checks.** Not approximately: exactly.
+
+- **The PHP time zone note.** Spelled inline as `ini_get('date.timezone') === ''`. The
+  speaking branch fires on a host whose php.ini has no such line — and `php -d
+  date.timezone=` does not reproduce that, PHP rejects the empty value at startup and
+  substitutes UTC. So that sentence was unreachable by any means, on any machine, and the
+  silent branch was the only one this suite could ever produce.
+- **The upload ceiling note.** Inline against the two PHP_INI_PERDIR settings. It had one
+  form here — the one naming `2M`, forever — and nothing asserted it. It is the sentence
+  that tells an admin whose rule refused their video and which two settings to go and
+  edit, so getting the names wrong in it would have been invisible.
+- **`ErrorPolicy::status()` — the entire Settings-tab readout of what happens when
+  something breaks — had no check of any kind.** `admin_panel.php` prints it through the
+  same `[value, note]` loop as `ServerReport::runtime()`; `runtime()` has a check that
+  every fact in it is a printable pair, so the panel cannot be handed an object.
+  `status()` did not, and nothing had ever called it. That is the worst of the four, and
+  the reason is in its own docblock: every part of what it reports fails *silently by
+  design*. An unwritable directory means no log. No recipients means no alert. Both look
+  exactly like nothing having gone wrong. The readout is the only way to see the
+  difference, and it was the one thing here nobody had looked at.
+- **The log's request tag**, which is the one that turned out to be an actual defect
+  rather than an untested branch. `whichRequest()` read `$_SERVER['SCRIPT_NAME']` with a
+  `?? 'cli'` fallback written for the command line — and never once reached it. PHP sets
+  `SCRIPT_NAME` on the CLI too, to the script path, and under `php -r` to the literal
+  string **"Standard input code"**. So every tool in this repo tagged its JSON-failure log
+  lines with a filename, and the six arms of `selftest_installed.php` tagged theirs
+  `json-reply|…|Standard input code` — PHP's own internal English, arriving in a log a
+  person reads to find out which page broke. `PHP_SAPI` is what actually answers the
+  question the fallback was asking.
+
+**The fix is the two halves the last two passes each used one of.** The seams —
+`phpZoneNoteFor()`, `uploadCeilingNoteFor()`, `requestNameFor()` — are what reaches cases
+no flag can produce. The arms are what proves the *real* reads still work: three more in
+`selftest_installed.php`, on a second axis, because an install is two things and only one
+of them is in `branding_config.php`. A generous host (64M/128M, where the app's own 50 MB
+ceiling binds and the note falls silent), a tight one (1M/1M, so the sentence is produced
+twice with different numbers rather than once with the only pair this container can make),
+and one showing errors. Both axes validate themselves before running: an arm set to what
+this machine already holds is refused with a sentence, because it would agree with the
+plain run and say so in green.
+
+That the axis works was **watched, not assumed**. Three checks asserting this container —
+that the largest file is 2 MB, that errors are off, that the process zone is UTC — pass
+the plain run and are each caught by exactly the arm built for them.
+
+**And the gate**, which is the PHP half of what `page_constants.js` does for the node
+suites: `check_invariants.php` now holds the whole set of places `lib/` reads the machine
+— four files, listed — and fails when a fifth appears. Not a ban; this app reports on its
+own host and somebody has to read it. It is a rule that the list is short, named, and
+grows on purpose, because a new read landing quietly is a branch the suite will assert
+about this container for as long as it exists, in green.
+
+**And the same count-anchor hole §4bh found in the node suites was here too**, which is
+worth its own paragraph because it is now three passes in a row. `check_invariants.php`,
+`check_doc_numbering.php` and `selftest_installed.php` all reported a number and anchored
+none of it. Delete the rule that keeps `json_encode` in a single module — one of the most
+load-bearing lines in the repo, the one standing between a bad byte and a sign keeping its
+old layout for good — and the checker printed `60 consistency checks, 0 failed` and exited
+0. A checker whose own coverage can shrink in silence is the failure it exists to prevent,
+wearing its uniform. All three are anchored now, and each was watched failing.
+
+**And there was a fourth, which this pass did not sweep for and the next one found.**
+`tools/rehearse_phase1.php` reported nothing at all — no count, anchored or otherwise —
+so deleting half of it printed `Rehearsal clean.` and exited 0. The sweep above went
+looking for tools that *printed a number and anchored none of it*, and a tool printing no
+number was outside the shape it was looking for. That is the same mistake as §4bh's, one
+level up: a search written from the last defect's silhouette rather than from what it was
+for. And the rehearsal is the worst of the four to have missed, because it is the only
+gate here that runs **nowhere but CI** — nothing on a developer machine would ever have
+shown the smaller green number.
+
+Its anchor could not be `reportChecks(59)`, and the reason is worth writing down because
+it will come up again: eleven of its `report()` calls sit behind a fact about *the
+database* rather than a branch of the code. A copy of live data has accounts and several
+Brands; a database built from `schema.sql` has one Brand and nobody at all. So the number
+is a sum of declared terms — 48 asked of every database, plus each conditional group with
+its own count — and every term is declared **at the bottom of the file, beside the
+anchor**, never next to the block it counts. That placement is the whole mechanism:
+deleting a block leaves its term behind and the sum stops matching, where a term written
+beside its own block would be deleted along with it and the anchor would cheerfully agree
+with the smaller file. Watched failing three ways — one check deleted, a whole conditional
+block deleted, and a check added without the number moving — and the three states of the
+sum were read off real runs rather than added up on paper: 59 on `schema.sql`, 65 once the
+database has accounts, 68 once it has a second Brand.
+
+**And writing it down immediately answered a question nobody had asked: five of those
+checks have never run on CI.** `schema.sql` seeds no accounts, so `$accounts` is empty and
+`$anAccount` is 0 — which means the edit lock being taken, its holder's name coming back
+from the second `LEFT JOIN`, a second account being refused, the lock being released, and
+the grant surviving to the cascade check are all skipped, on every leg, every run. Their
+own comments say they are here *because* MySQL is the only engine that can answer for the
+bound `DATETIME` comparison and the holder-name join. So the one place they run is a
+deploy-day run against a copy of live data. Nothing was hiding that and nothing was saying
+it either, which is §4bh in one sentence — so the anchor prints the groups it could not
+ask, with their counts. Seeding two accounts into the CI database would make them run; the
+run that proved the terms locally did exactly that and came back clean, which is a reason
+to think it would work and not a reason to think it has been done.
+
+`selftest_installed.php` got a second one of a different kind: each arm must print exactly
+one summary line. Its filter reads two shapes out of somebody else's output, and "found
+neither" and "found nothing wrong" print identically — a distinction that has already been
+wrong once here, when the first version matched `" checks, "` as a substring and printed a
+check's own sentence as a summary.
+
+**A postscript that arrived four days later, and is the same finding wearing a worse face.**
+The owner sent the server's information panel. Its MySQL row read `5.7.23-23` — which this
+repo already knew: it had been read off this very card on 2026-08-11 and written into
+`HANDOFF.md`, in a table whose own sentence calls itself "the first time anything in this
+project has read these rather than assumed them". The rows either side of it each settled a
+standing question and got follow-through: a declared PHP floor observed twice, a corrected
+§4ap, an invariant. **The engine row got recorded and then nothing.** It printed the number
+beside a hardcoded `''` for eight days while the row above it carried three bands and a
+floor.
+
+So it now has `mysqlVersionNote($driver, $version)`, and 5.7 is the declared database floor
+for the same reason 8.2 is the PHP one: it is what the machine is, read rather than assumed.
+The driver is a parameter and not an afterthought — the fixture is **SQLite**, whose
+`ATTR_SERVER_VERSION` is `3.45.1`, which parsed as a MySQL version is far below any floor. A
+note written without it would have fired on every SQLite run in the project and told the
+reader the shop's engine was ancient.
+
+Two things fell out of writing it. Extending invariant 37's regex to cover
+`ATTR_SERVER_VERSION` and `ATTR_DRIVER_NAME` — engine facts are machine facts — immediately
+failed on a **fifth** file the rule had not known about: `DisplayStore::limitPublishLockWait()`
+branches on the driver to skip a MySQL-only `SET SESSION`, in the publish path. It turned out
+to be the one read on that list already covered the right way before the rule existed, with
+`checkSame(testIsMysql(), …)` — a check that asserts the answer *depends* on the engine and
+is true in both arms rather than pinning either. And the first draft of the note said
+`CURRENT_TIMESTAMP`, which `check_invariants.php` rejected: it holds the whole repo to one
+place that may name the database's own clock, and unlike comments it cannot drop a string
+literal. The rule was right and the copy was wrong anyway — an admin reading a Settings tab
+does not need the SQL identifier.
+
+The SQL itself was then audited against 5.7 statically, since nothing here has ever run
+against any MySQL and it was the cheapest way to learn what the rehearsal is walking into.
+It is clean: no 8.0-only construct anywhere, all three catalogue views the gates read behave
+the same, and `schema.sql` says `DEFAULT CHARSET=utf8mb4` with no explicit collation — the
+one spelling that survives both engines, where `utf8mb4_0900_ai_ci` would have failed every
+`CREATE TABLE` outright. One residual needs a query rather than an argument and it is in
+HANDOFF §7: `users.email` is a 1020-byte unique index, which is legal under `DYNAMIC` row
+format and not under `COMPACT`.
+
+47 checks in total, 2273 → 2320. What it cost to find the first 31: running the suite under
+`php -d` and reading which checks cared. None did — which was the answer, not the absence of
+one. What it cost to find the last 16 was somebody pasting a version number this repo had
+already written down.
+
+### 4bj. A deprecation the lint, the suite and the new CI legs all agreed to ignore
+
+Found by looking sideways at another branch rather than at the code, which is worth
+recording because it is not how any of the last three were found.
+
+`claude/project-hosting-options-4goiyv` has PR #10 open — *"Make the tree 8.4-clean, and
+test 8.3/8.4 in CI"* — and its own write-up makes an argument this repo had not: **PHP 8.2
+leaves security support on 2026-12-31**, the host's system default is already 8.3, and this
+domain is held off it by one explicit MultiPHP setting. So "the version moved" is a dropdown
+away, and `phpVersionNote()` is silent at and above the floor *by design* — it fires when a
+host goes backwards and never when it moves on.
+
+Its five signature fixes turn out to be **already present on this branch**, from `362f9c7`.
+What it could not fix is the one that mattered: `lib/site_chrome.php` does not exist on
+`main` at all — it is step 5, unmerged — and `SiteChrome::wear(WorkspaceTheme $theme = null)`
+is the implicit-nullable form 8.4 deprecates, called on **every signed-in page load**.
+
+**Three things were unable to see it, and the third is the one worth keeping.**
+
+- `php -l` is clean on both spellings, on every version. Already known (invariant 31).
+- The deprecation is emitted when a file is *compiled*, not parsed — so it fires at
+  `require` time, before any handler the self-test installs exists. The suite's "no PHP
+  diagnostics during the run" check is downstream of the event.
+- **This container's `error_reporting` is 22527, which excludes `E_DEPRECATED`** (`E_ALL`
+  is 30719 here). So the suite runs green at 2320/0 **on PHP 8.4** while the notice is
+  being emitted, and I watched both halves happen. `ErrorPolicy::install()` does set
+  `E_ALL` — on a real request, which is the one place nobody is watching a console.
+
+That third one also means **PR #10's new 8.3 and 8.4 legs would have gone green over this.**
+Adding a CI leg for a version is not the same as adding a check for what that version says,
+and the gap between those two is a whole class of defect: anything the newer engine only
+*warns* about. On the shop's 8.2 none of this is live; the day the host moves, it is a line
+in the error log on every request — the log that alerts admins and rotates at a size cap.
+
+So invariant 33, and it is deliberately a separate rule from 31 rather than an extension of
+it, because the consequences are not the same shape: 31's is a parse error and a blank sign,
+36's is a silent per-request notice. The detector reads real tokens and **only inside
+parameter lists**, which is the whole difficulty — a scan of every `$x = null` reports
+`private static $bytes = null;`, and `UploadLimit` and `ServerReport` both have exactly
+that. Eleven probes, four positive and seven negative, and the negative half carries the
+weight: every one is a shape a naive scan really does hit, and the first two of them are
+live code in this repo.
+
+61 → 73 invariant checks. The fix is one character.
+
+---
+
+### 4bk. Eight days of a green suite over a gate that had already died
+
+`selftest_layout.php` ends with `2320 checks, 0 failed` and always did. The MySQL arm of
+CI had not reached the end of the file since **2026-08-11**, and nothing in this repo said
+so — not the suite, not the consistency checks, not `HANDOFF.md`, which describes that arm
+as the answer to *"does this work on MySQL"*.
+
+Four writes, all the same shape. The suite proves a reader degrades gracefully when the
+stored value is one it cannot use, and to do that it has to get the bad value into the
+column first:
+
+| Written | Column | MySQL |
+|---|---|---|
+| `bg_type = 'nonsense'` | `brands.bg_type` `ENUM('color','image')` | 1265, data truncated |
+| `last_published_at = 'nonsense'` | `displays.last_published_at` `DATETIME` | 1292, incorrect datetime |
+| `nav_bg = 'darkblue'` | `workspace_themes.nav_bg` `VARCHAR(7)` | 1406, too long |
+| `status_warn = 'chartreuse'` | same, in the colour audit | 1406, too long |
+
+SQLite stores all four. Every local gate is green over all four. On MySQL the first one
+reached is an uncaught `PDOException`, so the job stops — **and the step under it is the
+rehearsal against real MySQL**, the one thing that exercises the publish transaction's
+`SELECT … FOR UPDATE` and convergence against a real catalogue. One bad literal in a test
+took out the only coverage the app's most dangerous path has.
+
+**The fix is not a guard.** A value the column cannot hold does not belong in a column.
+Two of the four were about a *reader* — `Brand::backgroundType()` and
+`Display::lastPublishDescription()` — and both readers take a row, so they are handed one.
+The other two are genuinely about a stored value, and there the correction is smaller and
+more interesting: **the value has to fit.** `'darkblue'` is eight characters in a
+`VARCHAR(7)`; not even somebody in a database client — which is how that check's own
+comment describes the state it builds — could have put it there. `'gold'` and `'tomato'`
+are the same defect a person would actually meet.
+
+**And the reader was wrong about the case that survives.** Ask which unreadable stamp MySQL
+*can* hold, and the answer is the zero date: strict mode refuses a string that is not a
+datetime, but a host running without it, or a dump from one, leaves `0000-00-00 00:00:00`
+— and `strtotime()` reads that as a real moment in year zero rather than failing. So
+`StoreClock::epochOf()`, the one place in the repo that reads a stamp, answered
+`-62169984000`, and the canvas footer answered *"is what I'm looking at live?"* with
+**`sky, 11/29/-1 4:07pm`** — printed by the suite while the guard was mutated out, which is
+how that sentence is quoted here. That is the half-written sentence the whole seam exists
+to prevent, in the one form the engine can actually produce. One line, matched on the zero
+date rather than on an epoch floor: a stamp genuinely older than 1970 is not something this
+app can write, and a floor would be a second rule to be wrong about.
+
+So invariant 32, and a detector, because this class is invisible to everything else here:
+`php -l` sees a string, the suite sees green, and the container has no MySQL server to
+disagree — the same three-way blindness §4bj had, one layer down. It reads `schema.sql`
+rather than `lib/schema.php`, because schema.sql is the file that builds the fixture the
+engine will answer from. Eleven probes, and the negative half is again where the care is:
+an ENUM match that respected lettercase would condemn `role = 'Admin'`, which MySQL has
+accepted since it was written in August 2026 and stores as `admin` through the column's
+case-insensitive collation. Its own first draft is worth recording too — `\b` after a
+closing parenthesis is not a word boundary, so the ENUM and `VARCHAR` halves of the
+schema-reading pattern matched **nothing at all** while the date half worked. It printed
+`ok` over the two column kinds that had broken CI. Seen to fail is not a formality.
+
+73 → 86 consistency checks; 2320 → 2323 suite checks. What this still cannot say is
+whether the MySQL arm now *finishes*: it has been dead for eight days and roughly 500 of
+the suite's checks — every one steps 1 to 5 added — have never run against that engine at
+all. This container has no MySQL, so the run is the only place that answer exists.
+
+### 4bl. The run answers, and there were four more of the same thing behind them
+
+§4bk ends by saying the only place the answer exists is the run. The run came back: the
+MySQL leg reached **check 1383** instead of dying in the first hundred, and then failed
+four more times. Every one of them is the same defect as the four before it — the suite
+asserting something that is only true where nothing enforces the schema — and every one
+of them had been sitting behind a fatal that stopped the run before it got there. That is
+the part worth keeping: fixing the visible four did not fix the class, it *revealed* the
+class. A dead gate hides its own remaining work, and the count of what is wrong behind it
+is not knowable until it runs.
+
+**One was a fatal, and it is the reason there is a second detector.** A value MySQL
+refuses is one statement failing; SQL in the wrong *dialect* throws where no check is
+looking, so the suite ends without reporting and the rehearsal step under it never
+starts. Three tables the suite builds by hand were written in SQLite:
+`AUTOINCREMENT`, which MySQL spells `AUTO_INCREMENT`, and — found by reading rather than
+by CI — `type TEXT NOT NULL DEFAULT 'text'`, which is valid SQLite and rejected outright
+by MySQL, since InnoDB allows no default on a `TEXT` column. Both spellings now live in
+`test_fixture.php` beside the rest of what that file knows about the difference between
+the engines: `createNullableDisplayIdElements()` and `createLegacyCanvasSettings()`, so a
+test says which state it wants and not how to spell it. A fourth — the deploy-day race —
+moved to `newSqliteTestDb()`, because MySQL cannot express that state at all: a trigger
+there may not write to the table it is defined on, and that write is the half which has to
+survive the failure. What is under test is a `catch` block in PHP; only one engine can
+build the interleaving that reaches it.
+
+**Two were readouts asserted off the machine, which §4bi had already named as a class.**
+`ServerReport`'s *Database time zone* row had its note spelled inline, so the two forms it
+can take were the two engines — and the suite could only ever assert whichever one it was
+started on. It is `dbZoneNoteFor($zone)` now, the fifth seam of exactly this shape on that
+card. Writing it turned up a false alarm the row had been giving all along: `SYSTEM (UTC)`
+means the `SET time_zone` did not take *and* the host was already on UTC, so the stamps are
+in UTC regardless — and the note said dates may read hours out, which is the sentence
+somebody acts on. A protection that turns out not to have been needed is not a problem to
+report. The predicate unwraps `SYSTEM (x)` and asks again; an abbreviation like `GMT` is
+left warning rather than added on the strength of what it looks like, because a wrong entry
+there is silence about stamps that really are out.
+
+**One was a state the shop's engine cannot hold, and the ENUM was right.** The suite wrote
+`role = 'Admin'` and asserted the reader answered `basic`. MySQL matches an ENUM assignment
+against its members through the column's collation, so `'Admin'` *stores as* `admin` — the
+row the check was about cannot exist there, and the check built the opposite of what it
+asserted. Handed to `LoginOutcome::ok()` as a row, it covers the normalisation in code,
+which is what has to hold: a lagging install has its `canvas_elements` ENUMs widened at
+runtime, so what type a column *is* is not something this app gets to assume. Note the
+edge this sits on — §4bk's detector was deliberately built to *permit* `role = 'Admin'`,
+because MySQL accepts it. That was correct. Accepting a write and storing what was written
+are different questions, and only the second one a check can assert.
+
+**And one found a defect that was not in the app at all.** The suite pooled a `carousel`
+row into the asset library and asserted it was ordinary. `assets.type` is
+`ENUM('text','image','video')` and refuses it — and the right answer turned out to be that
+the schema is correct: `builder.php` marks `carousel`, `table` and `marquee` `pool: false`,
+because what those carry is the block's own settings rather than a piece of content anybody
+would reuse. Two comments said otherwise — `AssetLibrary::contentFor()`'s docblock ("the
+JSON a pooled carousel, table or marquee row carries") and the Library edit form's third
+branch in `crud.php`, which named all three. Both were describing a design the `pool: false`
+decision had superseded, and the third branch they were explaining is real and reachable
+and is for **`video`**: the one type in the library nobody can create by hand, since the add
+form offers two and the third arrives when a publish pools a video block carrying its own
+path. So the block now tests `video`, which is also the only way to assert that the image
+allow-list is type-scoped — no `.mp4` could pass it. Two comments corrected, no code
+changed, and the agreement they had drifted from is now read out of `schema.sql` and
+`builder.php` rather than restated: a block type added to the Builder's poolable set and
+not to the column is a publish whose "save to library" silently does nothing, and neither
+side says a word.
+
+86 → 94 consistency checks; 2323 → 2336 suite checks, 2348 → 2361 on MySQL. The dialect
+detector reads the *handle* rather than only the SQL, which is what makes it usable — a
+test that genuinely needs SQLite says `newSqliteTestDb()` and is believed. Seen to fail
+against the real statement, not just its probes: restoring the `CREATE TABLE` that ended
+the run names both problems on it, including the `TEXT DEFAULT` one CI never got far
+enough to reach.
+
+**The run then answered it: `2361 checks, 0 failed` on MySQL, `Rehearsal clean.`, and all
+three PHP legs green** (run 32286293398, head `9befaf6`, 2026-08-19 18:16 UTC). That is the
+first time since 2026-08-11 that either step has completed, and the ~950 checks past check
+1383 — every one steps 1 to 5 added — have now executed against the engine the shop runs.
+
+One detail from it is worth keeping, because it is the only part of this that was a
+prediction rather than a reading: the MySQL anchor was raised to 2361 from 2348 by adding
+13 to a number this container could not verify, and 2361 is what the leg reported. The
+engine-only section really is 25 checks, and the arithmetic in the paragraph above
+`reportChecks()` is load-bearing rather than commentary.
+
+### 4bm. Two more engines, and what green on 5.7 was never going to say
+
+The MySQL leg went green on 5.7 (§4bl) and that is worth exactly what it says: the app
+works on the engine the shop runs. It says nothing at all about the engine the shop is
+going to run, and that gap is not hypothetical — **MySQL 5.7 left support in October 2023**
+and the live version is 5.7.23-23, from 2018 (HANDOFF §7). This is the one version on the
+matrix whose replacement is not a question of if.
+
+Nothing in the app would notice when it happens. `ServerReport::mysqlVersionNote()` is
+silent at and above the floor by design, the same design as the PHP note beside it and for
+the same reason — a note read every time is a note learned to skip — so it fires when a
+host goes *backwards* and never when it moves on. §4bj made that observation about PHP and
+answered it with two matrix legs. This is the identical hole one layer down, answered the
+same way.
+
+**Two axes, deliberately not their product.** A full cross of three PHP versions and three
+engines is nine jobs, and most of them are combinations nobody will ever be in: "PHP 8.4 on
+MySQL 5.7" is not a question anybody here has. The rule that keeps the list honest is that
+every leg has to have a question somebody can state, so they are enumerated rather than
+multiplied — PHP moves against the engine the shop has, and the engine moves against the
+PHP the shop has:
+
+| PHP | MySQL | The question it answers |
+|---|---|---|
+| 8.2 | 5.7 | The shop, today. This leg is the one that says the sign works. |
+| 8.3 | 5.7 | After the MultiPHP pin moves — a dropdown, not a migration (§4k). |
+| 8.4 | 5.7 | And after it moves again. |
+| 8.2 | 8.0 | Where a host upgrading off 5.7 lands. |
+| 8.2 | 8.4 | The current LTS, which is where it then stays. |
+
+**Left on each image's default authentication plugin, on purpose.** 8.0 and 8.4 default to
+`caching_sha2_password` where 5.7 defaults to `mysql_native_password`, and that is exactly
+what a host handing the app a newer engine will hand it. Pinning the new legs back to the
+old plugin would make them pass by testing a configuration nobody will be in — which is the
+§4bg mistake in another costume, and this file has now made that one twice.
+
+**These legs do not move the schema's target.** Same rule as the PHP legs, and it is worth
+restating because the two are easy to conflate: a green 8.4 leg says what *is* written still
+runs, not that 8.0-only SQL may now be written. `schema.sql` is verified against 5.7 and
+stays that way.
+
+Two behaviour changes were checked before adding the legs, because both would have been
+found *by* the legs as a puzzle rather than as an answer:
+
+- **`explicit_defaults_for_timestamp` defaults to ON from 8.0.** A `TIMESTAMP NOT NULL`
+  with no default then gets no auto-initialisation, and an `INSERT` omitting it is error
+  1364 under strict mode rather than the current time. Every `TIMESTAMP` in `schema.sql`
+  declares its default explicitly, so the flag changes nothing here.
+- **`INT(11)` reports as `int` in 8.0's `information_schema`**, the display width dropped.
+  If a convergence gate compared an integer `COLUMN_TYPE` this would be an `ALTER` re-running
+  on every signed-in page load — the exact failure the gating rule exists to prevent. There
+  are two `needsColumnType()` calls in the whole plan and both are on ENUMs, whose reported
+  spelling is unchanged.
+
+What the legs themselves said is a reading, not a prediction, and it belongs beside them
+when it exists — the run is the authority, exactly as it was for §4bl, where the honest
+expectation was wrong twice in a row about how much was left. **It exists now: all five
+legs completed green on 2026-08-19**, 2362 checks and a clean rehearsal on each, against
+the `mysql:5.7`, `mysql:8.0` and `mysql:8.4` images, which reported 5.7.44, 8.0.46 and
+8.4.11. Both new engines took the schema, the writes and the convergence plan without a
+single change to the app — which is the answer the two static
+checks above predicted and is worth having *from a run* rather than from a reading of the
+release notes, because the two checks above are only the changes somebody thought to look
+up. Nothing was pinned or relaxed to get there, so the two legs mean what they say.
+
+**And the 5.7 leg is not the shop's 5.7, which is worth saying out loud now that the
+version numbers are observed on both sides.** The image reports 5.7.44 — the final 5.7
+release, October 2023 — and the shop reports 5.7.23-23, from 2018: twenty-one patch
+releases apart. Nothing in the app is known to turn on that gap and nothing found so far
+does, but it is the same shape as the container being 8.4 while the floor is 8.2 (invariant
+31): the gate runs on a neighbour of the thing it speaks for. Pinning the image to
+`mysql:5.7.23` would close it and is not obviously right — a patch release the host is
+twenty-one behind on is also a set of fixes the host will eventually get — so it is recorded
+rather than acted on, and the deployment visit's convergence step against a copy of live
+data (§5) remains the only thing that runs against the *actual* engine.
+
+The last thing to hold onto is what a green 8.0 leg *cost*: nothing, this time. That is the
+argument for adding a leg while the app is known-good on the engine beside it rather than
+on the afternoon a host moves — the same run that would have found a real incompatibility
+here would have found it with a working 5.7 leg next to it to compare against, and no shop
+waiting.
+
+---
 ## 5. Verification
 
 There is no deploy pipeline — every change reaches the sign by hand — but as of
 #48 and #51 CI runs everything below except the two things that need a browser or
-a copy of live data. It runs on five PHP × MySQL legs — 8.2, 8.3 and 8.4 against
-MySQL 5.7, and 8.2 against MySQL 8.0 and 8.4 — with SQLite in every one of them, and
-a sixth job for the six node suites. The legs are listed rather than multiplied
-because a leg is supposed to be a question somebody can name. 8.2 is the shop's
-runtime and stays first; 8.3 and 8.4 are where the MultiPHP pin goes next; the MySQL
-axis is the same question one layer down. That 8.2 is also the repo's declared
-floor — the store owner stated the host runs it (§4k) — so it enforces the target
-rather than merely accepting everything the target forbids. As of 2026-08-11 it is
-**observed** rather than stated: 8.2.33 on the runtime card and `ea-php82` pinned to
-`srcresort.com` in cPanel (HANDOFF §7). **CI is therefore the only place the gate below runs at the floor**, and
+a copy of live data. It runs against SQLite and a real MySQL service, over five
+combinations — PHP 8.2, 8.3 and 8.4 on MySQL 5.7, plus MySQL 8.0 and 8.4 on PHP 8.2
+(§4bm). Deliberately not the product of the two axes: PHP moves against the engine
+the shop has, the engine moves against the PHP the shop has, and a leg nobody can
+name a question for is not worth its minutes. The node suites are a sixth job rather
+than a step on each leg — they run no PHP, so a version matrix would ask them the same
+question five times. **"Runs" is a claim with a date on it, and this paragraph was
+wrong about it for eight days**: the MySQL arm had not reached the end of the suite
+since 2026-08-11, and neither it nor the rehearsal step underneath it had completed
+a run (§4bk). Invariant 32 is what a local gate can say about that arm; whether it
+finishes is only ever answered by the run. As of §4bl the leg reaches check 1383 rather
+than the first hundred, four more defects of the same class have been fixed behind the
+fatal that was hiding them, **and on 2026-08-19 the whole gate completed green for the
+first time since 11 August** — 2361 checks on MySQL and a clean rehearsal, on 8.2, 8.3 and
+8.4. The two engine legs were added the same day and completed green on the first run
+(§4bm), so the figure above is now 2362 across all five. The claim has a date again. Keep
+giving it one. That 8.2 is now also the repo's declared floor — the store owner
+stated the host runs it (§4k) — so the pin enforces the target rather than merely
+accepting everything the target forbids. As of 2026-08-11 it is **observed** rather than
+stated: 8.2.33 on the runtime card and `ea-php82` pinned to `srcresort.com` in cPanel
+(HANDOFF §7). **CI is therefore the only place the gate below runs at the floor**, and
 that is not a detail — this container is 8.4, so `php -l` here cannot fail on syntax the
 shop cannot parse (invariant 31). Run the suite locally before every push anyway; the
 loop is faster than a push.
@@ -6181,6 +7528,15 @@ php tools/check_invariants.php           # the greps below, run rather than read
                                          # syntax check, which is what covers the hole
                                          # `php -l` leaves on the line above
 php tools/selftest_layout.php            # the real modules, in-memory SQLite
+php tools/selftest_installed.php         # the same suite as a real install on a real
+                                         # server, on two axes. What the shop chose —
+                                         # branded, live-like, damaged — because the plain
+                                         # run has only ever seen a checkout with no
+                                         # `branding_config.php`, which is no shop (§4bg).
+                                         # And what the machine was set to — a generous
+                                         # host, a tight one, one showing errors — because
+                                         # the four readouts that describe a server had
+                                         # one form here and the other on none (§4bi)
 node tools/selftest_builder_readonly.js  # builder.php's own JS, run against a DOM
                                          # that has only what a read-only page emits
 node tools/selftest_builder_uploads.js   # the same JS under the opposite premise — an
@@ -6204,6 +7560,14 @@ node tools/selftest_builder_table.js     # and under the fifth: the data is not 
                                          # style for, the drop that must not navigate the
                                          # tab away from an unpublished canvas, and every
                                          # editing control still working afterwards (§4az)
+node tools/selftest_builder_brands.js    # and under the sixth: an admin deciding which
+                                         # venue this sign belongs to. The switch repaints
+                                         # and sends nothing, the palette is offered and
+                                         # enforced nowhere, and Publish is what writes it
+node tools/selftest_builder_theme.js     # and under the seventh: somebody changing a setting
+                                         # about *themselves* with unpublished work on the
+                                         # canvas. Holds the canvas nodes by identity across
+                                         # the switch, and drives the save that fails
 node tools/selftest_viewer.js            # viewer.php's poll loop, against a fetch this
                                          # test controls: the sign must not blank for one
                                          # dropped packet, and must not stay up for an
@@ -6294,7 +7658,7 @@ If a real 5.7 is genuinely out of reach, a fork still answers *does this leg rea
 end*; say which engine the number came from, and treat CI as the one that decides.
 
 **Observed on this tree, 2026-08-19**, against MySQL 5.7.44 installed exactly as above:
-the SQLite leg reports `1822 checks, 0 failed` and the MySQL leg `1845 checks, 0 failed`.
+the SQLite leg reports `2338 checks, 0 failed` and the MySQL leg `2363 checks, 0 failed`.
 The difference is 23, which is the figure §4aa states — the same claim, taken off a
 server rather than restated. Read those as a measurement of a tree on a date, not as an
 anchor to hold to: the suite grows, and a count quoted from memory after it has is how a
@@ -6624,6 +7988,18 @@ grep -rn "applyHiddenLook\|hidden-badge" --include=*.php .  # builder.php only, 
                                               # defect back: a section faded with nothing saying why.
                                               # The three preview builders name .hidden-badge only to
                                               # avoid clearing it when they redraw
+grep -rn "BRAND_ID\|CAN_PICK_BRAND\|switchBrand\|PALETTE_TARGETS\|var BRANDS" --include=*.php .
+                                              # builder.php only, 18 hits. The Brand a sign wears is
+                                              # *staged* in that page and written by the publish that
+                                              # carries it (§4be), so these are page state and nothing
+                                              # else may hold an opinion about them. A `BRAND_ID` on
+                                              # another page would be a second answer to "which venue
+                                              # is this", and the two would differ the moment somebody
+                                              # picked one without publishing. `var BRANDS` and not
+                                              # `BRANDS`, because lib/brands.php and lib/brand_admin.php
+                                              # both open with the word as a banner — and `BRAND_*` with
+                                              # the underscore is a different rule two entries above,
+                                              # about the nav bar's colours (see CONTEXT.md)
 grep -rn "fmtCmd\|savedRange\|trackSelection\|FONT_FAMILIES\|wysiwyg\|fmt-btn" --include=*.php .
                                               # must be empty. The remains of a format bar ADR-0002
                                               # settled against — including a `selectionchange`
@@ -6645,7 +8021,7 @@ grep -rn "htmlspecialchars(" --include=*.php . # lib/markup.php, which names bot
                                               # §4ah
 grep -rn "BRAND_NAV_BG\|BRAND_NAV_BORDER\|BRAND_ACCENT\|BRAND_TEXT" --include=*.php .
                                               # branding_config.php is the file; admin_panel.php writes
-                                              # it; lib/brand.php is the only reader. A page naming one
+                                              # it; lib/site_chrome.php is the only reader. A page naming one
                                               # is a page interpolating whatever the config holds into
                                               # its own <style> block, where escaping is not what makes
                                               # a value safe — §4ai

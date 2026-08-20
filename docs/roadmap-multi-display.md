@@ -1,8 +1,14 @@
 # Roadmap — Multi-Display Support
 
-Status: **All six phases built on `claude/app-update-planning-1pjqfr`, not yet
-deployed** — open as [PR #3](https://github.com/Sky-SRCR/Lummi-Bay-Market/pull/3).
-The build is finished; what is left is the deployment visit below.
+Status: **Built and merged; not deployed.** All six phases were built on
+`claude/app-update-planning-1pjqfr` and merged as
+[PR #3](https://github.com/Sky-SRCR/Lummi-Bay-Market/pull/3). What the store owner
+confirmed on 2026-08-13 was the *rehearsal* install driving a screen, not the shop's
+sign — `public_html/lbm/` is still the single-sign app, so the deployment visit below
+is the whole of what is left. The rehearsal install `lbm-test/` is still standing,
+which is what makes it available to rehearse against; see
+[`roadmap-v2-brands-and-themes.md`](roadmap-v2-brands-and-themes.md), whose steps are
+each deployable on their own precisely because this one is not.
 
 **Since then, and it changes what the visit walks into rather than whether it happens:**
 the build has run in the rehearsal install `lbm-test/` since 2026-08-12, and the browser
@@ -11,10 +17,12 @@ on 2026-08-13 — ten sections, seven defects, all fixed, six rows of `HANDOFF.m
 each change something a person will see.
 
 **The checklist below is still ahead of us.** `public_html/lbm/` is the single-sign app and
-has not been touched; `lbm-test/` is where everything has been rehearsed. For one commit on
-2026-08-13 this file said the deploy had happened — it had not, and `HANDOFF.md` §1 records
-how the two installs came to be confused, because the mistake is available to anybody who
-reads "live install" as "the sign". How the code is
+has not been touched; `lbm-test/` is where everything has been rehearsed. Twice this file
+has said the deploy had happened — once on 2026-08-13, retracted in `0a02b70`, and again
+through the merge at `9e34a90`, which took that correction into these paragraphs and left
+the status header above them saying the opposite. It had not happened either time, and
+`HANDOFF.md` §1 records how the two installs came to be confused, because the mistake is
+available to anybody who reads "live install" as "the sign". How the code is
 shaped, and the invariants any later change must preserve, are in
 [`BUILD-REFERENCE.md`](BUILD-REFERENCE.md) — read that alongside this file.
 
@@ -334,6 +342,14 @@ part of every snapshot — three places said to publish afterwards.
 that is where anything a later change needs at deploy time is recorded, and at the
 time of writing one of its rows is a permission that has to be right before branding
 can be edited at all.
+
+There is also a **walk sheet** derived from this list, HANDOFF §5 and
+[`DEPLOY-SKIP.md`](DEPLOY-SKIP.md) — [`deploy-visit-sheet.md`](deploy-visit-sheet.md). It owns no content and this list
+wins wherever they differ; what it adds is the three things prose cannot hold in one
+hand at a sign: the 22 steps broken into the 89 separate things that must actually be
+true, the sentence each one should produce quoted verbatim from the source, and an
+order that starts step 20's fifteen-minute wait at step 15 instead of standing still
+for it.
 
 In order, on the one visit:
 

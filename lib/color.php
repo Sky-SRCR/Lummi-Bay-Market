@@ -69,6 +69,78 @@ class Color
     }
 
     /**
+     * The ratio below which this app calls two colours hard to read against each
+     * other.
+     *
+     * 4.5:1 is WCAG 2.1's AA threshold for text at ordinary sizes, which is what
+     * every string in this application's chrome is. It is a **warning** threshold and
+     * never a refusal: decision 13 of the v2 roadmap gives an admin their own
+     * legibility policy, and a rule that refused would be the enforced palette
+     * ADR-0011 rejected wearing different clothes.
+     */
+    const READABLE_RATIO = 4.5;
+
+    /**
+     * How much these two colours stand apart, as WCAG's contrast ratio: 1.0 for two
+     * identical colours, 21.0 for black on white.
+     *
+     * Throws rather than answering for a value that is not a colour, and that is the
+     * same choice `SiteChrome::pick()` makes about an unknown role: both arguments
+     * here have already been through `read()` at every call site — the theme form
+     * refuses the save and names the field, exactly as the Branding form has since
+     * #21 — so a non-colour arriving is a programming error, and an answer would be a
+     * number somebody would then draw a warning from. `0.0` would read as "no
+     * contrast at all", which is a sentence about the colours rather than about the
+     * call.
+     *
+     * @param mixed $one `#rrggbb`
+     * @param mixed $two `#rrggbb`
+     * @return float between 1.0 and 21.0
+     */
+    public static function contrastRatio($one, $two)
+    {
+        $a = self::luminance($one);
+        $b = self::luminance($two);
+        $light = max($a, $b);
+        $dark  = min($a, $b);
+        return ($light + 0.05) / ($dark + 0.05);
+    }
+
+    /**
+     * Would text in the first colour be hard to read on the second?
+     *
+     * The predicate the theme form warns through, so the threshold is named once and
+     * the form does not carry a number of its own. Symmetric, because the ratio is.
+     */
+    public static function hardToRead($text, $background)
+    {
+        return self::contrastRatio($text, $background) < self::READABLE_RATIO;
+    }
+
+    /**
+     * WCAG relative luminance, 0.0 for black and 1.0 for white.
+     *
+     * The channel transform is the standard's own: sRGB values are gamma-encoded, so
+     * averaging the bytes would call `#808080` half as bright as white when a person
+     * sees it as about a fifth. Private because a luminance is not something this app
+     * has any other use for — the ratio is the question.
+     */
+    private static function luminance($value)
+    {
+        $hex = self::read($value);
+        if ($hex === '') {
+            throw new InvalidArgumentException(
+                'Not a colour, so it has no contrast: ' . self::describe($value) . '.');
+        }
+        $channels = [];
+        foreach ([1, 3, 5] as $at) {
+            $c = hexdec(substr($hex, $at, 2)) / 255;
+            $channels[] = $c <= 0.03928 ? $c / 12.92 : pow(($c + 0.055) / 1.055, 2.4);
+        }
+        return 0.2126 * $channels[0] + 0.7152 * $channels[1] + 0.0722 * $channels[2];
+    }
+
+    /**
      * The submitted value as a refusal message can safely quote it.
      *
      * A refusal has to name what was wrong or the admin cannot tell a typo from a

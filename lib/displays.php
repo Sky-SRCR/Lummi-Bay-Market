@@ -382,6 +382,23 @@ class Display
     public function backgroundValue() { return (string)$this->row['bg_val']; }
 
     /**
+     * The Brand this sign wears (ADR-0011). Never 0 on a converged database —
+     * `brand_id` is NOT NULL — but read defensively, because a Display read on a
+     * database where that ALTER has not applied yet has no such key at all, and the
+     * page that would have thrown here is the Builder.
+     *
+     * A 0 means "no Brand", which `BrandStyles::all(0)` answers with no rows, which
+     * `paints()` reads as "the block's own values are load-bearing". That is the same
+     * chain a half-seeded install already went through, and it renders a sign rather
+     * than blanking one.
+     */
+    public function brandId()
+    {
+        return isset($this->row['brand_id']) && $this->row['brand_id']
+             ? intval($this->row['brand_id']) : 0;
+    }
+
+    /**
      * Same canvas shape, to the pixel.
      *
      * The one rule ADR-0004 turns on: a layout may be duplicated only between
@@ -480,8 +497,16 @@ class Display
     }
 
     /**
-     * "sky, Aug 5 at 2:04pm" — the material for a refused-publish message. Empty when
+     * "sky, 8/5/26 2:04pm" — the material for a refused-publish message. Empty when
      * never published.
+     *
+     * The format was `M j \a\t g:ia` — "Aug 5 at 2:04pm" — and lost its year, which
+     * is the one part a person reading *"is what I'm looking at live?"* cannot infer.
+     * A sign published last August and left alone reads as published this August. It
+     * is also now drawn in a footer strip beside the zoom controls rather than in a
+     * bar of its own, so the shorter form is what fits. Changed here and therefore in
+     * all three places that print it — the Builder, the Admin Panel's Displays tab,
+     * and a refused publish — which is why the format lives in one method.
      *
      * This line was `date('M j \a\t g:ia', strtotime($at))`, and it was wrong twice
      * over in a way neither half could show on its own (#44). `strtotime()` with no
@@ -497,7 +522,7 @@ class Display
         $at = $this->lastPublishedAt();
         if (!$at) { return ''; }
         $who  = $this->lastPublishedByName() !== '' ? $this->lastPublishedByName() : 'someone else';
-        $when = StoreClock::label($at, 'M j \a\t g:ia');
+        $when = StoreClock::label($at, 'n/j/y g:ia');
         return $when === '' ? $who : $who . ', ' . $when;
     }
 
@@ -520,6 +545,12 @@ class Display
             'bg_val'        => $this->backgroundValue(),
             'is_active'     => $this->isActive() ? 1 : 0,
             'layout_stamp'  => $this->layoutStamp(),
+            // Which Brand, not what it holds: the standards themselves already reach
+            // both clients under the snapshot's `block_styles` key, and the Builder's
+            // Brand control (step 4) needs to know which one is selected. An id is
+            // also all a Screen could want with it, which is nothing — this array is
+            // the public `get_layout` payload, and it carries no name and no palette.
+            'brand_id'      => $this->brandId(),
         ];
     }
 }
@@ -605,24 +636,43 @@ class DisplayStore
     }
 
     /**
-     * The first Display someone other than this account is editing right now, or
-     * null if nobody is.
+     * Every Display wearing this Brand, oldest first.
      *
-     * Brand Standards is the one edit that is not scoped to a Display: the six
-     * branded block types are shared by every sign, and their typography is part of
-     * every snapshot, so a change reaches every Screen on the next 30-second poll
-     * with no publish at all. A single Display's lock therefore cannot guard it —
-     * but any held lock is somebody sizing blocks against the typography that is
-     * about to change under them, and they would never be told.
+     * What makes "a Brand in use cannot be deleted" a sentence naming the signs
+     * rather than a foreign-key error naming a constraint (ADR-0011).
+     */
+    public function usingBrand($brandId)
+    {
+        $out = [];
+        foreach ($this->rows("WHERE d.brand_id = ? ORDER BY d.id ASC", [intval($brandId)]) as $row) {
+            $out[] = new Display($row);
+        }
+        return $out;
+    }
+
+    /**
+     * The first Display *wearing this Brand* that someone other than this account is
+     * editing right now, or null if nobody is.
      *
-     * So the answer is "refuse while anyone else is editing anything". Lapsed locks
-     * are free and do not block, which is why this asks LockState rather than
-     * testing the column: a Builder left open on a back-office monitor stops
+     * Editing a Brand is not scoped to one Display: its typography is part of every
+     * snapshot of every sign wearing it, so a change reaches those Screens on the next
+     * 30-second poll with no publish at all. One Display's lock cannot guard that —
+     * but a lock held on a sign *using this Brand* is somebody sizing blocks against
+     * typography that is about to change under them, and they would never be told.
+     *
+     * This used to ask about **every** Display, because there was one set of standards
+     * and it reached every sign. ADR-0011 narrows it, and this is the one place this
+     * work makes the app less restrictive rather than more: an account editing a
+     * casino floor board cannot be affected by the Salmon House red changing, and
+     * refusing them was a rule that had simply outlived its reason.
+     *
+     * Lapsed locks are free and do not block, which is why this asks LockState rather
+     * than testing the column: a Builder left open on a back-office monitor stops
      * counting after the idle window, same as everywhere else.
      */
-    public function editedByAnyoneElse($accountId)
+    public function editedByAnyoneElseUsingBrand($accountId, $brandId)
     {
-        foreach ($this->all() as $display) {
+        foreach ($this->usingBrand($brandId) as $display) {
             if ($display->lockState()->heldByOther($accountId)) { return $display; }
         }
         return null;
@@ -733,6 +783,47 @@ class DisplayStore
     }
 
     /**
+     * Apply a Brand intent. Only ever reached for an admin publish.
+     *
+     * The Brand a sign wears is staged in the Builder and written here, beside the
+     * background, by the publish that carries it (decision 6) — which is why this is a
+     * statement of its own on the same path rather than a field of `updateDetails()`:
+     * that method is the Admin Panel's whole-form save, and a publish is not a save of
+     * the Display's reference details.
+     *
+     * `BrandChoice::INVALID` — something that is not an id — and a Brand that has been
+     * deleted both fall through to the same nothing as `unchanged`. Neither should ever
+     * arrive: `LayoutStore::publish()` refuses the whole publish before this is called,
+     * so the caller is never told a Brand was set that was not. This is the write side
+     * agreeing with the read side rather than a second policy, for the same reason
+     * `applyBackground()` above answers INVALID with a no-op.
+     *
+     * Not defended against here, on purpose: whether that Brand still exists. Only the
+     * database can answer it, `displays_ibfk_3` answers it from underneath, and a
+     * SELECT in this method would be a second opinion about the read the caller already
+     * did under the publish's row lock — where the answer cannot change between the
+     * asking and the writing, which is the only place it is worth asking at all.
+     *
+     * The parameter's type is declared without this file requiring `brands.php`, which
+     * requires *this* one: a caller holding a BrandChoice has loaded that file by
+     * definition, and a `require_once` back the other way would be a cycle whose
+     * resolution depended on which of the two a page happened to name first.
+     */
+    public function applyBrand(Display $display, BrandChoice $brand)
+    {
+        switch ($brand->kind()) {
+            case 'brand':
+                $this->pdo->prepare("UPDATE displays SET brand_id = ? WHERE id = ?")
+                          ->execute([$brand->id(), $display->id()]);
+                break;
+            case 'unchanged':
+            case BrandChoice::INVALID:
+            default:
+                break;
+        }
+    }
+
+    /**
      * Advance the stamp, record who published and when, and return the new stamp.
      *
      * The moment is bound as a PHP-formatted UTC string, for the reason the lock
@@ -796,8 +887,8 @@ class DisplayStore
     public function insert(array $fields)
     {
         $this->pdo->prepare(
-            "INSERT INTO displays (tag, title, location, canvas_width, canvas_height, bg_type, bg_val, is_active)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO displays (tag, title, location, canvas_width, canvas_height, bg_type, bg_val, is_active, brand_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )->execute([
             self::normalizeTag($fields['tag']),
             (string)$fields['title'],
@@ -807,25 +898,39 @@ class DisplayStore
             ($fields['bg_type'] ?? 'color') === 'image' ? 'image' : 'color',
             (string)($fields['bg_val'] ?? '#1a1a2e'),
             !empty($fields['is_active']) ? 1 : 0,
+            // NOT NULL, and deliberately not defaulted here: which Brand a sign wears
+            // is a decision, and a store with three venues in it has no sensible
+            // "obvious" one. DisplayAdmin refuses a create that names no Brand, which
+            // is what makes this a validated field rather than a silent fallback to
+            // whichever Brand happened to be created first.
+            intval($fields['brand_id'] ?? 0),
         ]);
         return $this->forId($this->pdo->lastInsertId());
     }
 
     /**
-     * Change the reference details and the screen name tag.
+     * Change the reference details, the screen name tag and the Brand this sign wears.
      *
      * Canvas dimensions are deliberately absent: they are fixed at creation
      * (ADR-0004), and the way to not offer a resize is to have no statement that
      * can perform one.
+     *
+     * The Brand is here rather than in a method of its own because it arrives on the
+     * same form as the rest and every field on that form is written: an update that
+     * wrote only what differed could not tell a field somebody cleared from one the
+     * form never carried, which is the silence the grant matrix learned to declare
+     * its way out of. DisplayAdmin refuses the whole save when `brand_id` names no
+     * Brand, so this is never reached with a value the NOT NULL column would refuse.
      */
     public function updateDetails(Display $display, array $fields)
     {
         $this->pdo->prepare(
-            "UPDATE displays SET tag = ?, title = ?, location = ? WHERE id = ?"
+            "UPDATE displays SET tag = ?, title = ?, location = ?, brand_id = ? WHERE id = ?"
         )->execute([
             self::normalizeTag($fields['tag']),
             (string)$fields['title'],
             isset($fields['location']) && $fields['location'] !== '' ? (string)$fields['location'] : null,
+            intval($fields['brand_id'] ?? 0),
             $display->id(),
         ]);
         return $this->forId($display->id());

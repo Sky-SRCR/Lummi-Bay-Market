@@ -35,6 +35,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { buildPageJs } = require('./page_constants');
 
 const BUILDER = path.join(__dirname, '..', 'builder.php');
 
@@ -194,17 +195,14 @@ global.fetch = function (url, opts) {
 // ---- The page's own JavaScript ----------------------------------------------
 
 const php = fs.readFileSync(BUILDER, 'utf8');
-let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
-            .match(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)
-            .map(function (b) { return b.replace(/^<script\b[^>]*>/i, '').replace(/<\/script>$/i, ''); })
-            .join('\n');
-
 // An admin, holding the lock, on a real Display.
-js = js.replace(/^var READ_ONLY\s*=.*$/m, 'var READ_ONLY = false;')
-       .replace(/^var IS_ADMIN\s*=.*$/m,  'var IS_ADMIN = true;')
-       .replace(/^var DISPLAY_TAG\s*=.*$/m, "var DISPLAY_TAG = 'deli';")
-       .replace(/^var DISPLAY_ID\s*=.*$/m,  'var DISPLAY_ID = 4;')
-       .replace(/^var UPLOAD_MAX_BYTES\s*=.*$/m, 'var UPLOAD_MAX_BYTES = 8388608;');
+let js = buildPageJs(BUILDER, {
+    READ_ONLY:        false,
+    IS_ADMIN:         true,
+    DISPLAY_TAG:      'deli',
+    DISPLAY_ID:       4,
+    UPLOAD_MAX_BYTES: 8388608,
+});
 
 eval(js);   // eslint-disable-line no-eval — the point is to run the page's own code
 
@@ -338,6 +336,41 @@ sent = JSON.parse(published.layout_data);
 checkSame('#abcdef', sent[0].font_color, 'and a real stored colour survives the round trip unchanged');
 
 // ─────────────────────────────────────────────────────────────
+section('An unreadable colour on a branded block is the Brand\'s, and is reported once');
+// ─────────────────────────────────────────────────────────────
+// #41 is about a colour the *block* owns. On a branded block the colour comes from
+// `block_styles`, and publish stopped carrying the six fields the Brand owns at all
+// (invariant 34) — so a brand colour nobody can read is now one row, audited where
+// it can be fixed, instead of the same fault copied onto every price on every sign
+// and reported as though there were eleven of them.
+//
+// The block still has to *render*, and it still has to remember what it could not
+// read, because the inspector's note is drawn from that. Only the publish changed.
+
+canvasBlocks.length = 0;
+blockStyles = {
+    price: { font_family: 'Georgia', font_size: 48, font_color: 'puce',
+             font_weight: 'bold', font_style: 'normal', line_height: 1.1 }
+};
+const branded = textBlock('br1');
+branded.dataset.subtype = 'price';
+applyTextStyles(branded, { block_subtype: 'price' });
+canvasBlocks.push(branded);
+
+checkSame('rgb(0, 0, 0)', branded.style.color, 'the block still renders, in the default');
+checkSame('puce', branded.dataset.colorUnread, 'and still remembers the value nobody could read');
+
+published = null;
+endPublish();   // release the in-flight guard (§4ak): no reply is delivered here
+publishCanvas();
+sent = JSON.parse(published.layout_data);
+checkSame(1, sent.length, 'the branded block is published');
+checkSame(undefined, sent[0].font_color,
+          'and carries no colour at all — the Brand\'s bad value is not copied onto it');
+
+blockStyles = {};
+
+// ─────────────────────────────────────────────────────────────
 section('And the inspector says so, rather than showing black and looking deliberate');
 
 const noteEl = document.getElementById('font-color-unread');
@@ -376,6 +409,15 @@ try { showUnreadableColor(bad); } catch (e) { threw = true; }
 checkSame(false, threw, 'and with no inspector on the page at all, it does nothing rather than throw');
 
 // ─────────────────────────────────────────────────────────────
+// Anchored, for the reason `selftest_layout.php` anchors its own: without a number
+// here, deleting half this file still reports a clean run. Four of the eight node
+// suites carried one and four did not (§4bh).
+const expected = 47;
+if (checks !== expected) {
+    fails.push('the suite ran every check it is supposed to — expected '
+               + expected + ', ran ' + checks);
+}
+
 console.log('\n' + checks + ' checks, ' + fails.length + ' failed');
 if (fails.length) {
     fails.forEach(function (f) { console.log('  FAILED: ' + f); });

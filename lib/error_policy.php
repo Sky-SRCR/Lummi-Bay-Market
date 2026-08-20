@@ -394,7 +394,36 @@ class ErrorPolicy
     /** What the log says a request was. No query string: it can carry a passcode. */
     public static function whichRequest()
     {
-        $script = isset($_SERVER['SCRIPT_NAME']) ? basename($_SERVER['SCRIPT_NAME']) : 'cli';
+        return self::requestNameFor(PHP_SAPI, isset($_SERVER['SCRIPT_NAME'])
+                                                ? $_SERVER['SCRIPT_NAME'] : '');
+    }
+
+    /**
+     * The same answer, over a SAPI and a script name handed in.
+     *
+     * Seamed for the reason `ServerReport::phpVersionNote()` is — one process is only
+     * ever one of these — and it found something while being seamed. The `'cli'`
+     * fallback here was written for the command line and was never once reached
+     * there: PHP sets `$_SERVER['SCRIPT_NAME']` on the CLI too, to the script's path,
+     * and under `php -r` it sets it to the literal string **"Standard input code"**.
+     * So every tool in this repo that produced a JSON reply tagged its log line
+     * `json-reply|…|selftest_layout.php`, and every arm of `selftest_installed.php`
+     * tagged theirs `json-reply|…|Standard input code` — a phrase from PHP's own
+     * internals, in a log a person reads to find out which page broke. The SAPI is what
+     * actually answers the question the fallback was asking.
+     *
+     * One SAPI name, not a list of the CLI-ish ones: `phpdbg` and the rest are real, and
+     * a clause for a SAPI this app is never run under is a line no check here could ever
+     * observe (invariant 30). It falls through to the page branch and names the script,
+     * which is not wrong — just not special-cased on speculation.
+     *
+     * The empty case stays: a web SAPI with no `SCRIPT_NAME` is a host doing something
+     * unusual, and a bare `|` at the end of a log line says less than a word does.
+     */
+    public static function requestNameFor($sapi, $scriptName)
+    {
+        if ($sapi === 'cli') { return 'cli'; }
+        $script = basename((string)$scriptName);
         return $script === '' ? 'cli' : $script;
     }
 

@@ -94,9 +94,9 @@ _Avoid_: ban, block, suspension
 
 **Text block**:
 A canvas element that displays words. Its content is **plain text** — styling
-(font, size, colour, weight, alignment) comes from Brand Standards and the
-block's own properties, never from markup inside the text. See
-docs/adr/0002.
+(font, size, colour, weight, alignment) comes from the Brand Standards of the
+Display's Brand and from the block's own properties, never from markup inside
+the text. See docs/adr/0002.
 _Avoid_: label, caption, rich text
 
 **Asset**:
@@ -118,3 +118,68 @@ Asset a person made, renamed or uploaded, even when nothing uses it. Changes
 nothing on any sign — which is why it needs no publish and no confirmation
 beyond the count.
 _Avoid_: clean up, garbage collect, prune, purge
+
+### Branding & appearance
+
+Two words that must never merge. A **Brand** is what a customer sees on a TV; a
+**Workspace Theme** is what an employee sees while working. Nothing named
+"theme" ever reaches a Screen.
+
+**Brand**:
+A named visual identity for signs — one venue's typography, colours, logo and
+default canvas background. Reusable: every Display carries exactly one, and the
+several Displays of a single venue share it, so the identity is edited in one
+place rather than copied.
+_Avoid_: theme, skin, style set, template, brand standard
+
+**Editing a Brand** and **assigning** one are different acts, and only one of
+them can be looked at first. Editing is immediate: a saved change to a Brand
+reaches every Screen wearing it within thirty seconds, with no publish and no
+undo. Assigning is **staged in the Builder** — picking a venue there repaints
+the canvas in the browser and is written by Publish — and immediate from the
+Admin Panel, which turns Displays off and deletes them from the same page.
+_Avoid_: applying a brand, switching branding, brand preview mode
+
+**Brand Standards**:
+The typography half of a Brand — one setting per branded block type, applied to
+every block of that type on any Display using that Brand. A block cannot
+override them, which is what makes a price on one sign look like a price on the
+next.
+_Avoid_: block styles, global fonts, defaults
+
+**Brand palette**:
+The colours a Brand carries — up to six, in the order they are shown — offered
+as swatches wherever a colour is picked for a Display. Offered and never
+enforced: a block with its own colour keeps it. Deliberately an ordered list
+rather than named roles, because a role ("this is the heading colour") is an
+instruction, and an enforced palette is the option ADR-0011 rejected.
+_Avoid_: theme colours, colour scheme, swatch set
+
+**Workspace Theme**:
+The appearance of the application itself for one signed-in person — navigation,
+panels, work area, status colours and the canvas selection outline. Created by
+an admin, chosen by anyone, and never visible on a Screen or on the sign-in
+page. It never paints the canvas, which is a picture of the sign rather than
+part of the application.
+_Avoid_: builder theme, brand, skin, dark mode, colour preference
+
+**The store default**:
+What the application looks like to everybody who has not chosen a theme — Site
+Branding's four colours plus the documented defaults for the other nine roles.
+It is not a theme and deliberately not a row in the themes table: a copy of the
+Site Branding file would disagree with it the first time somebody edited one.
+Say "the store default", never "the default theme", and note that it is always
+on the picker — including for somebody already on it, because a preference you
+cannot reverse is not a preference. It is also what a theme falls back to one
+role at a time: a value nobody can read leaves the store default in that place,
+not the colour the app ships with, so the phrase means the same thing wherever
+it is used.
+_Avoid_: default theme, base theme, no theme, factory colours
+
+**Chrome role**:
+One of the thirteen things a Workspace Theme names a colour for. A role is a
+place in the application — the navigation background, the work area, the panel
+border, the outline around a selected block — never a mood or a shade. Two of
+them are worth keeping apart in speech: the **work area** is the dark space a
+canvas sits on, and the **canvas** is the sign itself and belongs to the Brand.
+_Avoid_: theme slot, variable, token, colour name

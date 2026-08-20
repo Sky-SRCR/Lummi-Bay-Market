@@ -110,13 +110,17 @@ jobs:
         # against the PHP the shop has.
         #
         # The MySQL axis exists for the same reason the 8.3 and 8.4 legs above do, one
-        # layer down. 5.7 is what the shop runs — 5.7.23-23, per HANDOFF §7 — and it is
-        # also **eight years old and out of support since October 2023**, so this is the
-        # one version on this list whose replacement is not a question of if. Note that
-        # the image is not the shop's build: `mysql:5.7` resolves to 5.7.44, the final
-        # 5.7 release, twenty-one patch releases ahead of what the sign actually talks
-        # to. The gate runs on a neighbour of the thing it speaks for — the same shape
-        # as this container being PHP 8.4 while the floor is 8.2.
+        # layer down. 5.7 is what the shop runs and is the declared floor
+        # (`ServerReport::mysqlVersionNote()`), and it is also **eight years old and
+        # out of support since October 2023** — so this is the one version on this list
+        # whose replacement is not a question of if. Nothing in the app would notice:
+        # the version note, like the PHP one, is silent at and above the floor by
+        # design, so it fires when a host goes backwards and never when it moves on.
+        # And the image is not the shop's build: `mysql:5.7` resolves to 5.7.44, the
+        # final 5.7 release, against the sign's 5.7.23-23 from 2018 — twenty-one patch
+        # releases apart (HANDOFF §7, §4bm). The gate runs on a neighbour of the thing
+        # it speaks for, the same shape as this container being PHP 8.4 while the floor
+        # is 8.2.
         #
         # 8.0 is where a host upgrading from 5.7 lands, and 8.4 is the current LTS —
         # the two ends of where the engine can go. Both are paired with 8.2, the shop's
@@ -196,6 +200,14 @@ jobs:
       - name: Layout self-test — SQLite
         run: php tools/selftest_layout.php
 
+      # And the same suite as a real install on a real server, on two axes. A checkout
+      # has no `branding_config.php` — it is generated and deliberately outside the repo
+      # — so every run above this line is the one configuration no shop is in (§4bg).
+      # The second axis is the machine: the four readouts that describe a host each had
+      # one form on whatever ran the suite and the other form on nothing (§4bi).
+      - name: Layout self-test — as a real install on a real server
+        run: php tools/selftest_installed.php
+
       # The same suite against the engine the app runs on, where the publish
       # transaction's `SELECT … FOR UPDATE` is the real statement rather than the
       # stub SQLite needs (#48).
@@ -235,13 +247,29 @@ jobs:
         run: php tools/check_doc_numbering.php
 
   # builder.php is ~3400 lines of inline JavaScript that `php -l` cannot see, and
-  # viewer.php is the page that runs unattended on a television. These six suites
+  # viewer.php is the page that runs unattended on a television. These eight suites
   # run that JavaScript, each under a premise the others cannot hold: a DOM holding
   # only what a read-only page emits, a stubbed XMLHttpRequest driven through every
   # way an upload ends, a colour the CSSOM discards in silence, an admin working the
   # controls the inspector puts on a block, an admin taking back the last thing they
-  # did, and a Screen whose server has stopped answering. Their own job because
-  # they are the same JavaScript whichever PHP is installed.
+  # did, an admin deciding which venue a sign belongs to, somebody changing a setting
+  # about *themselves* with unpublished work on the canvas, and a Screen whose server
+  # has stopped answering. Their own job because they are the same JavaScript
+  # whichever PHP is installed.
+  #
+  # This count is on its fourth correction and all three were merges: the branch that
+  # added brands and themes wrote two suites and left the word "four", main corrected it
+  # to "six" against the six it could see, the step list below ran eight after that, and
+  # the merge that brought main's table suite across made it nine — a suite that had a
+  # file, a rule it did not follow, and no step here, which is the case the paragraph
+  # below describes and the first time the check caught it rather than a person.
+  # `selftest_builder_readonly.js` asserts there are nine — but it counts
+  # `selftest_*.js` **files**, not the steps below, so a ninth suite added without a
+  # step here used to pass every gate in the repo and never run. `check_invariants.php`
+  # now reads this file and holds the two lists to each other in both directions: a
+  # gate in `tools/` that no step runs, and a step naming a file that is not there.
+  # Comments are stripped first — this workflow discusses tools it does not run, a few
+  # lines above the steps that run other ones.
   builder-js:
     runs-on: ubuntu-latest
     steps:
@@ -273,6 +301,32 @@ jobs:
       # The central check is a whole-string round trip, which cannot be read.
       - name: Builder self-test — undo
         run: node tools/selftest_builder_undo.js
+
+      # §4az: the data is not this app's. A .csv somebody else wrote, dropped into Edit
+      # Table — quoted commas, a semicolon file, a header row naming columns this app
+      # has no style for, and the drop that must not navigate the tab away from an
+      # unpublished canvas. Arrived with `main` and had no step here until the merge.
+      - name: Builder self-test — a table filled from a file
+        run: node tools/selftest_builder_table.js
+
+      # v2 step 4: picking a Brand repaints the canvas and writes nothing, which is
+      # the whole design and is invisible to a parse — a version that saved as you
+      # picked would look identical on screen and would change every board in the
+      # venue the moment somebody browsed the menu. The suite counts requests. It
+      # also drives the palette swatches, where setting `.value` from script fires
+      # no event, so a swatch can fill a control and change nothing.
+      - name: Builder self-test — the Brand a sign wears
+        run: node tools/selftest_builder_brands.js
+
+      # v2 step 5: the one control on this page that is about the person rather than
+      # the sign, on a page that may be holding an hour of unpublished layout. The
+      # first design of it posted a form and let the page come back painted, which
+      # works perfectly and throws that work away — so the suite holds the canvas
+      # nodes by identity across a switch and watches the undo stack not move. It
+      # also drives the failure path: the paint happens before the round trip, so a
+      # save that fails leaves the screen showing a theme the account is not on.
+      - name: Builder self-test — a Workspace Theme, changed mid-edit
+        run: node tools/selftest_builder_theme.js
 
       # #26: the defect was not a throw. A `.catch` doing the right thing for a
       # dropped packet did the wrong thing for a failure that was never going to

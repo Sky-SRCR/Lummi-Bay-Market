@@ -18,15 +18,16 @@
 // exactly the defect this found in `clearTargetSection()` — a lookup guarded on
 // the account's role while the node it wanted depended on the lock as well.
 //
-// So: strip the PHP, force the two page constants to what a read-only basic
-// account gets, stub a DOM that has only the ids that page actually emits, and
-// run the paths that survive. Anything reaching for a control that is not there
-// throws, and a throw is a failure.
+// So: build the page's JavaScript through `page_constants.js` with the constants a
+// read-only basic account gets, stub a DOM that has only the ids that page actually
+// emits, and run the paths that survive. Anything reaching for a control that is not
+// there throws, and a throw is a failure.
 //
 // CLI only. Nothing here touches a database or a network.
 
 const fs   = require('fs');
 const path = require('path');
+const { buildPageJs } = require('./page_constants');
 
 const BUILDER = path.join(__dirname, '..', 'builder.php');
 
@@ -67,6 +68,31 @@ async function settle() { for (let i = 0; i < 10; i++) { await Promise.resolve()
 
 const php = fs.readFileSync(BUILDER, 'utf8');
 
+section('Every suite gets its page the one way');
+
+// The rule §4bh closed lives across nine files, and this is the only mechanical place
+// to hold it: `check_invariants.php` reads PHP and these are JavaScript. A suite that
+// strips `<?= … ?>` for itself is a suite back to leaving every value it did not think
+// of as the literal 0 — which is how the edit lock's warning window came to be
+// unreachable in all eight at once, and how the Viewer scaled its canvas by Infinity.
+// Nine rather than eight because the merge with `main` brought a suite written beside
+// this rule and not under it: `selftest_builder_table.js` stripped the page for itself
+// and named three constants, which is exactly the shape above. This check is what said
+// so — the count and the seam, both, on a file no gate on either branch had compared.
+const SUITES = fs.readdirSync(path.join(__dirname))
+                 .filter(f => f.startsWith('selftest_') && f.endsWith('.js'));
+const handRolled = SUITES.filter(f =>
+    /php\.replace\(\/<\\\?/.test(fs.readFileSync(path.join(__dirname, f), 'utf8')));
+const notAsking = SUITES.filter(f =>
+    !/require\('\.\/page_constants'\)/.test(fs.readFileSync(path.join(__dirname, f), 'utf8')));
+check(SUITES.length === 9, 'there are nine node suites, which is the number this audit covers');
+check(handRolled.length === 0,
+      'and none of them strips the page\'s PHP for itself' +
+      (handRolled.length ? ' — ' + handRolled.join(', ') + ' does' : ''));
+check(notAsking.length === 0,
+      'they all ask page_constants.js what the server put on the page' +
+      (notAsking.length ? ' — ' + notAsking.join(', ') + ' does not' : ''));
+
 section('The editing controls are not in a read-only page');
 
 // Each of these must sit inside a `<?php if (!$readOnly): ?>` block. Checked by
@@ -90,8 +116,17 @@ function emittedOnlyWhenEditable(marker) {
     return guarded && depth > 0;
 }
 
-check(emittedOnlyWhenEditable('<div id="align-bar">'),              'the align bar is emitted only when the page can edit');
-check(emittedOnlyWhenEditable('<div id="inspector">'),              'so is the inspector');
+check(emittedOnlyWhenEditable('<div id="inspector">'),              'the properties rail is emitted only when the page can edit');
+// `#align-bar` retired with the horizontal bar stack; the same buttons are the
+// Arrange group inside the rail, so they are covered by the line above. The check
+// that they did not simply escape the gate on the way is below: nothing named
+// align-bar is in the file at all any more, and the id would otherwise sit in
+// PRESENT for ever pointing at nothing — which is exactly the failure the PRESENT
+// audit further down exists to catch.
+// The prose that explains the retirement mentions the name several times, so this
+// asks for the node and the lookup rather than the string.
+check(!/id="align-bar"/.test(php) && !/getElementById\('align-bar'\)/.test(php),
+      'and the align bar it replaced is gone rather than hidden');
 check(emittedOnlyWhenEditable('<div id="carousel-modal-overlay">'), 'so is the carousel editor');
 check(emittedOnlyWhenEditable('<div id="table-modal-overlay">'),    'so is the table editor');
 check(emittedOnlyWhenEditable('<button id="publish-btn"'),          'and so is the Publish button, which is why setPublishBusy has to cope without one');
@@ -104,10 +139,30 @@ check(emittedOnlyWhenEditable('<button id="publish-btn"'),          'and so is t
 // point of this list: those are emitted only for the holder, while losing *access*
 // can happen to somebody who is only watching. A read-only page has the access bar
 // and the banner above it, and nothing else the lock uses.
+// `control-bar` left this list with the bar itself. What replaced it is three
+// columns, and only two of them reach a read-only page: the palette, which carries
+// Switch sign and the read-only sentence and no editing control, and the canvas
+// column with its footer — the zoom controls and the publish line, which is a fact
+// somebody who cannot edit still needs.
+// `brand-control` joins them with v2 step 4, and it is the one entry here that is a
+// *feature* on a read-only page rather than a leftover: somebody who cannot edit still
+// needs to know which venue they are looking at. What is not here is everything inside
+// it — the button, the logo, the name and the menu — because that branch of the markup
+// is emitted only for an admin who holds the lock, and the plain version carries no ids
+// at all. Two copies of `#brand-name` would make every lookup of it depend on which
+// branch the page took.
+// `theme-pick` and `theme-warn` join them with v2 step 5, and they are the second
+// entry of that kind: a Workspace Theme is a fact about the *person*, not about the
+// sign, so somebody who may not touch this layout may still want their own screen
+// legible. Unlike the Brand control, the whole thing reaches this page — the picker,
+// its items and the sentence it says when a choice could not be saved — because there
+// is no half of it a read-only page should be refused.
 const PRESENT = new Set([
     'lock-banner', 'lock-access-bar', 'lock-access-text',
-    'control-bar', 'zoom-readout', 'editor-frame', 'canvas-sizer', 'builder-canvas',
-    'toast', 'resize-label', 'display-off-banner', 'top-nav'
+    'workbench', 'palette', 'brand-control', 'canvas-column', 'canvas-footer', 'pub-state',
+    'zoom-readout', 'editor-frame', 'canvas-sizer', 'builder-canvas',
+    'toast', 'resize-label', 'display-off-banner', 'top-nav', 'gear-btn', 'gear-menu',
+    'theme-pick', 'theme-warn'
 ]);
 
 // ---- ...and the list above is checked against the page, not trusted ----------
@@ -165,7 +220,15 @@ function canEmitForReadOnlyBasic(conds) {
          // that believes a read-only page can emit #undo-btn would report the
          // absent stub entry as its own bug. The check below holds the page to that
          // derivation, so this line is a reading of the source and not a guess.
-         .replace(/\$undoSteps/g, '0');
+         .replace(/\$undoSteps/g, '0')
+         // The same shape, and the same reason (v2 step 4). builder.php computes
+         // `$canPickBrand = $isAdmin && !$readOnly && $wearing !== null`, so on this
+         // page it is false however the Brands are set up. Left to the enumeration
+         // below it would be tried both ways, one of those ways would say yes, and the
+         // walker would believe a read-only page can emit the Brand menu. The check
+         // below holds the page to that derivation, so this is a reading of the source
+         // rather than a guess.
+         .replace(/\$canPickBrand/g, 'false');
 
     let n = 0;
     e = e.replace(/\$[A-Za-z_][A-Za-z0-9_]*(?:->[A-Za-z_][A-Za-z0-9_]*\([^)]*\))?|__unknown/g,
@@ -219,6 +282,37 @@ check(!canEmitForReadOnlyBasic(EMITS['undo-btn'] || []),
 check(/\$undoSteps\s*=\s*\$readOnly\s*\?\s*0\s*:\s*undoStepsSetting\(\)/.test(php),
       'and the depth is derived from $readOnly, not merely read beside it');
 
+// The Brand control (v2 step 4) is the one thing this page gained rather than lost: a
+// person who cannot edit still needs to know which venue they are looking at, and still
+// must not be able to change it. So the control is emitted and the *picker* is not, and
+// both halves are read off the markup rather than trusted.
+check(/\$canPickBrand\s*=\s*\$isAdmin\s*&&\s*!\$readOnly\s*&&/.test(php),
+      'whether the Brand may be changed is derived from the role and the lock together');
+check(canEmitForReadOnlyBasic(EMITS['brand-control'] || []),
+      'so the Brand control itself reaches a page that cannot edit');
+check(!canEmitForReadOnlyBasic(EMITS['brand-menu'] || []),
+      'while the menu that would change it never does');
+check(!canEmitForReadOnlyBasic(EMITS['brand-btn'] || []),
+      'nor the button that opens it');
+// The palette swatches live in the rail, which this page does not get at all — asserted
+// so that a row moved out of the rail some day is a failure here rather than a colour
+// control appearing on a page that may not use one.
+['sw-bg', 'sw-font', 'sw-marquee', 'sw-marquee-bg'].forEach(function (row) {
+    check(!canEmitForReadOnlyBasic(EMITS[row] || []),
+          'and the ' + row + ' palette row stays inside the rail, which is not sent here');
+});
+
+// The Workspace Theme picker (v2 step 5), which this page keeps in full. The Brand
+// control above is emitted with its picker withheld; this one is not, and the difference
+// is the whole distinction between the two nouns — one says what a sign wears and the
+// other says what a screen is painted in, and only the first is somebody else's to lose.
+check(canEmitForReadOnlyBasic(EMITS['theme-pick'] || []),
+      'the theme picker reaches a page that cannot edit');
+check(canEmitForReadOnlyBasic(EMITS['theme-warn'] || []),
+      'and so does the sentence it says when a choice could not be saved');
+check(/name="theme_id"/.test(php) === false,
+      'and it is not a form that would take the page away from unpublished work');
+
 function stubEl(id) {
     return {
         id, style: {}, dataset: {}, children: [], files: [],
@@ -270,18 +364,24 @@ global.clearTimeout = () => {};
 
 // ---- The page's own JavaScript ----------------------------------------------
 
-// Strip PHP the way `node --check` already does for the standing gate, then take
-// the inline <script> bodies. `0` is a valid expression everywhere the page
-// interpolates a value, which is why every interpolation there is a number, a
-// json_encode, or a bare true/false.
-let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
-            .match(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)
-            .map(function (b) { return b.replace(/^<script\b[^>]*>/i, '').replace(/<\/script>$/i, ''); })
-            .join('\n');
+// What a basic account looking at somebody else's edit session gets. The three Brand
+// constants are written out rather than left at the page default, because that is what
+// the page really carries here: one Brand — the one this sign wears, which the control
+// names — and no permission to change it. Everything this suite has no opinion about
+// comes from `page_constants.js`, which is what makes it a value somebody chose rather
+// than the literal 0 that used to be left behind (§4bh).
+let js = buildPageJs(BUILDER, {
+    READ_ONLY:      true,
+    IS_ADMIN:       false,
+    BRANDS:         [{ id: 3, name: 'Salmon House', logo_asset_id: 12,
+                       logo_src: 'uploads/salmon.png',
+                       palette: ['#0b3d2e', '#e67e22'], styles: {} }],
+    BRAND_ID:       3,
+    CAN_PICK_BRAND: false,
+});
 
-// What a basic account looking at somebody else's edit session gets.
-js = js.replace(/^var READ_ONLY\s*=.*$/m, 'var READ_ONLY = true;')
-       .replace(/^var IS_ADMIN\s*=.*$/m,  'var IS_ADMIN = false;');
+check(/var CAN_PICK_BRAND = false;/.test(js),
+      'and the page constant saying so is one this suite really replaced');
 
 eval(js);   // eslint-disable-line no-eval — the point is to run the page's own code
 
@@ -324,10 +424,10 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     // none of the code it names. And the promise is returned rather than dropped: a
     // throw inside a `.then` is an unhandled rejection, not something survives() can
     // see, so dropping it would swallow exactly the failure being tested for.
-    function layoutReplying(display, elements) {
+    function layoutReplying(display, elements, brand) {
         global.fetch = () => Promise.resolve({
             json: () => Promise.resolve({ status: 'success', display: display,
-                                          elements: elements || [],
+                                          elements: elements || [], brand: brand || null,
                                           block_styles: {}, layout_stamp: 'stamp' })
         });
         return loadLayout().then(settle);
@@ -338,6 +438,14 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
                    () => layoutReplying({ bg_type: 'image', bg_val: 'bg.png' }));
     await survives('and choosing a background file finds no file input to read',
                    () => applyBgFile());
+
+    // The layout reply carries the Brand this sign wears (v2 step 4), and this page has
+    // to take it without a control to draw it into. The reply is also the only thing
+    // that can tell a watcher their sign changed venue while they were looking at it.
+    await survives('a reply naming a Brand this page was never offered is taken anyway',
+                   () => layoutReplying({ bg_type: 'color', bg_val: '#123456' }, [],
+                                        { id: 8, name: 'Cedar Room', logo_asset_id: 0, palette: ['#3d2b1f'] }));
+    check(BRAND_ID === 8, 'and the page moves onto it rather than naming the old one');
 
     // Both loads above carry no elements, which exercises the background and not one
     // line of the drawing — and drawing is what a read-only page is *for*. Somebody
@@ -392,6 +500,33 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
     await survives('showing an inspector that is not there does nothing', () => showInspector(block));
     await survives('multi-select does not reach for it either',           () => toggleMultiSel(stubEl('b2')));
     multiSel.length = 0;   // undo the block the line above pushed in
+
+    // The Brand (v2 step 4). This page draws the venue's name and logo out of the
+    // markup and has nothing to change it with — no menu, no swatch row, no palette
+    // item — so every one of these lookups comes back null and every one of these
+    // functions has to do nothing rather than throw. The one that matters most is the
+    // first: refreshBrandSurfaces() runs on every page load, read-only or not.
+    await survives('redrawing the Brand surfaces finds none of them',   () => refreshBrandSurfaces());
+    await survives('and the menu that is not there does not open',       () => toggleBrandMenu(null));
+    await survives('or close',                                          () => closeBrandMenu());
+    await survives('placing the venue logo is refused rather than half-done', () => createVenueLogo());
+
+    // The refusal that is the belt to the markup's braces. A read-only page has no menu
+    // to click, so this is the keyboard, the console, and anything else that finds the
+    // function — and it must not repaint a canvas this account may not publish.
+    // Whatever the reply above left the page showing — read rather than written down, so
+    // this cannot pass by being wrong about both halves at once.
+    const showing = BRAND_ID;
+    await survives('switching Brand from a page that may not is a no-op', () => switchBrand(3));
+    check(BRAND_ID === showing, 'and the Brand the page is showing has not moved');
+    await survives('nor does an unknown one reach the canvas',            () => switchBrand(9999));
+    check(BRAND_ID === showing, 'still the one the reply named');
+
+    // A palette swatch, applied by hand. There is no row on this page to click, so this
+    // is the same class of check: the guard inside applyPaletteColor, not the absence of
+    // a button.
+    await survives('applying a palette colour finds no picker to fill',
+                   () => applyPaletteColor(PALETTE_TARGETS[1], '#0b3d2e'));
 
     await survives('a slide upload from a read-only page uploads nothing', () => uploadSlideImage(stubEl('i')));
     await survives('align actions find no targets',   () => { alignBlocks('left'); alignToParent('left'); });
@@ -469,7 +604,7 @@ eval(js);   // eslint-disable-line no-eval — the point is to run the page's ow
 
     // The expected total, for the same reason selftest_layout.php carries one:
     // without it, deleting half this file still reports a clean run.
-    const expected = 45;
+    const expected = 71;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
     }

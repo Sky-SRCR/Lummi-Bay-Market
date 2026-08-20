@@ -41,6 +41,7 @@ require_once __DIR__ . '/../lib/layout_store.php';
 require_once __DIR__ . '/../lib/grants.php';
 require_once __DIR__ . '/../lib/display_request.php';
 require_once __DIR__ . '/../lib/display_admin.php';
+require_once __DIR__ . '/../lib/brand_admin.php';
 require_once __DIR__ . '/../lib/password_resets.php';
 require_once __DIR__ . '/../lib/server_report.php';
 require_once __DIR__ . '/../lib/accounts.php';
@@ -54,6 +55,10 @@ require_once __DIR__ . '/../lib/schema.php';
 require_once __DIR__ . '/../lib/branding.php';
 require_once __DIR__ . '/../lib/color_audit.php';
 require_once __DIR__ . '/../lib/markup.php';
+// The Workspace Theme half of step 5. `site_chrome.php` arrives with color_audit.php
+// above, but named here too: a transitive include is not a dependency, and this
+// fixture's own tables include the one that module reads.
+require_once __DIR__ . '/../lib/workspace_themes.php';
 
 // ---- Which engine is under the suite ----------------------------------------
 
@@ -144,7 +149,8 @@ function makeTestAccount(PDO $pdo, $username, $role = 'basic')
 function newTestDisplayAdmin(PDO $pdo)
 {
     $displays = newTestDisplayStore($pdo);
-    return new DisplayAdmin($pdo, $displays, new LayoutStore($pdo, $displays), new GrantStore($pdo));
+    return new DisplayAdmin($pdo, $displays, new LayoutStore($pdo, $displays),
+                            new GrantStore($pdo), new BrandStore($pdo));
 }
 
 /**
@@ -227,7 +233,36 @@ function newSqliteTestDb()
         last_failed_at TEXT DEFAULT NULL,
         locked_until TEXT DEFAULT NULL,
         email TEXT NOT NULL DEFAULT '' UNIQUE,
-        closed_at TEXT DEFAULT NULL
+        closed_at TEXT DEFAULT NULL,
+        -- Nullable with no default, exactly as the live column is. NULL means the store
+        -- default, which is what every account means until it picks a theme.
+        -- No REFERENCES clause, and that is not laziness — SQLite enforces foreign keys
+        -- only when `PRAGMA foreign_keys` is on, so declaring one here would assert a
+        -- refusal this engine may not perform, and the refusal the app depends on is
+        -- `WorkspaceThemeStore`'s own, which names the accounts.
+        workspace_theme_id INTEGER DEFAULT NULL
+    )");
+
+    // The thirteen chrome roles, one column each, NOT NULL with today's colour as the
+    // default — the same shape as the live table, because `SiteChrome::pick()` falls
+    // back per role and a fixture with nullable columns could not tell a theme that
+    // stores a bad colour from one that stores nothing.
+    $pdo->exec("CREATE TABLE workspace_themes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        nav_bg TEXT NOT NULL DEFAULT '#1a252f',
+        nav_border TEXT NOT NULL DEFAULT '#0d1b24',
+        nav_text TEXT NOT NULL DEFAULT '#ffffff',
+        accent TEXT NOT NULL DEFAULT '#3498db',
+        work_area TEXT NOT NULL DEFAULT '#2c3e50',
+        panel TEXT NOT NULL DEFAULT '#1a252f',
+        panel_border TEXT NOT NULL DEFAULT '#34495e',
+        status_good TEXT NOT NULL DEFAULT '#27ae60',
+        status_warn TEXT NOT NULL DEFAULT '#7d6608',
+        status_bad TEXT NOT NULL DEFAULT '#7b3f3f',
+        status_busy TEXT NOT NULL DEFAULT '#4b3869',
+        status_note TEXT NOT NULL DEFAULT '#7a4a12',
+        selection TEXT NOT NULL DEFAULT '#e74c3c'
     )");
 
     $pdo->exec("CREATE TABLE displays (
@@ -246,6 +281,10 @@ function newSqliteTestDb()
         lock_holder_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
         lock_taken_at TEXT,
         lock_activity_at TEXT,
+        -- NOT NULL with no default, exactly as the live column is declared. A default
+        -- of 1 here would let every insert that forgets a Brand pass, which is the one
+        -- thing this column exists to stop.
+        brand_id INTEGER NOT NULL REFERENCES brands(id),
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
     )");
 
@@ -278,10 +317,27 @@ function newSqliteTestDb()
         auto_pooled INTEGER NOT NULL DEFAULT 0
     )");
 
+    // Keyed on (brand_id, block_type), like the live table since ADR-0011. The
+    // composite PRIMARY KEY is the shape that matters: a suite running against the
+    // old single-column key would let two Brands' `price` rows collide and never
+    // notice, which is the whole thing the re-key is for.
+    $pdo->exec("CREATE TABLE brands (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        logo_asset_id INTEGER REFERENCES assets(id) ON DELETE SET NULL,
+        bg_type TEXT NOT NULL DEFAULT 'color',
+        bg_val TEXT NOT NULL DEFAULT '#1a1a2e',
+        palette_1 TEXT, palette_2 TEXT, palette_3 TEXT,
+        palette_4 TEXT, palette_5 TEXT, palette_6 TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    )");
+
     $pdo->exec("CREATE TABLE block_styles (
-        block_type TEXT PRIMARY KEY,
+        brand_id INTEGER NOT NULL REFERENCES brands(id) ON DELETE CASCADE,
+        block_type TEXT NOT NULL,
         font_family TEXT, font_size INTEGER, font_color TEXT,
-        font_weight TEXT, font_style TEXT, line_height REAL
+        font_weight TEXT, font_style TEXT, line_height REAL,
+        PRIMARY KEY (brand_id, block_type)
     )");
 
     $pdo->exec("CREATE TABLE canvas_elements (
@@ -310,16 +366,21 @@ function newSqliteTestDb()
         hidden INTEGER NOT NULL DEFAULT 0
     )");
 
-    // All six branded types, matching the seed in lib/schema.php. One row was
+    // The Brand every fixture Display wears. Id 1, matching what schema.sql seeds
+    // and what convergence creates, so a test that hardcodes a brand_id and one that
+    // reads it off a Display agree.
+    $pdo->exec("INSERT INTO brands (id, name) VALUES (1, 'Test Brand')");
+
+    // All six branded types, matching BrandStyles::STARTING_POINTS. One row was
     // enough while the only question was "does a snapshot carry typography"; it is
     // not enough to test that a save leaves the types it was not given alone.
-    $pdo->exec("INSERT INTO block_styles (block_type,font_family,font_size,font_color,font_weight,font_style,line_height) VALUES
-        ('section_header','Arial',36,'#ffffff','bold','normal',1.30),
-        ('item_title',    'Arial',24,'#ffffff','bold','normal',1.30),
-        ('item_title_2',  'Arial',24,'#27ae60','bold','normal',1.30),
-        ('price',         'Arial',30,'#e74c3c','bold','normal',1.20),
-        ('price_2',       'Arial',30,'#e74c3c','bold','normal',1.20),
-        ('description',   'Arial',16,'#bdc3c7','normal','normal',1.40)");
+    $pdo->exec("INSERT INTO block_styles (brand_id,block_type,font_family,font_size,font_color,font_weight,font_style,line_height) VALUES
+        (1,'section_header','Arial',36,'#ffffff','bold','normal',1.30),
+        (1,'item_title',    'Arial',24,'#ffffff','bold','normal',1.30),
+        (1,'item_title_2',  'Arial',24,'#27ae60','bold','normal',1.30),
+        (1,'price',         'Arial',30,'#e74c3c','bold','normal',1.20),
+        (1,'price_2',       'Arial',30,'#e74c3c','bold','normal',1.20),
+        (1,'description',   'Arial',16,'#bdc3c7','normal','normal',1.40)");
 
     seedTestAccounts($pdo);
 
@@ -368,6 +429,65 @@ function newMysqlTestDb()
     seedTestAccounts($pdo);
 
     return $pdo;
+}
+
+// ---- Tables a test builds by hand, on either engine --------------------------
+//
+// Two states in this app are not a schema — they are a schema part-way through
+// changing, or one this build replaced — so no `schema.sql` describes them and a
+// test that needs one writes the `CREATE TABLE` itself. Written inline, that DDL is
+// SQLite dialect: `AUTOINCREMENT` is one word on this engine and another on MySQL,
+// and `TEXT NOT NULL DEFAULT 'text'` is legal here and rejected outright there.
+// Both spellings live in these two functions instead, beside the rest of what this
+// file knows about the difference between the engines, so a test says which state it
+// wants and not how to spell it (§4bl).
+//
+// This matters more than a refused value does. A refused value is a failed check; SQL
+// in the wrong dialect is a **fatal**, which ends the run and takes the step under it
+// down as well — and on SQLite it is simply correct, so nothing local disagrees.
+
+/**
+ * `canvas_elements` as it exists between the ADD COLUMN and the tighten.
+ *
+ * A nullable `display_id`, which is the only state the backfill ever sees: the plan
+ * puts it between the two, so a fixture with the column already NOT NULL would be
+ * testing the statement against a database it never runs on.
+ *
+ * The inline `REFERENCES` is honoured by SQLite and ignored by InnoDB, which is
+ * accepted rather than worked around — nothing here deletes a Display, so the
+ * cascade is not what is under test.
+ */
+function createNullableDisplayIdElements(PDO $pdo)
+{
+    $pdo->exec("DROP TABLE canvas_elements");
+    $pdo->exec(testIsMysql()
+        ? "CREATE TABLE canvas_elements (
+               id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+               display_id INT(11) DEFAULT NULL,
+               type VARCHAR(50) NOT NULL DEFAULT 'text') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        : "CREATE TABLE canvas_elements (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               display_id INTEGER REFERENCES displays(id) ON DELETE CASCADE,
+               type TEXT NOT NULL DEFAULT 'text')");
+}
+
+/**
+ * `canvas_settings` — the single-sign app's one row of canvas background.
+ *
+ * Gone from `schema.sql` on purpose: this build keeps the background on the Display.
+ * It is still the table the deploy-day seed reads the store's own wallpaper out of,
+ * on an install that has not converged yet, so the seed has to be tested against a
+ * database that still has one.
+ */
+function createLegacyCanvasSettings(PDO $pdo)
+{
+    $pdo->exec(testIsMysql()
+        ? "CREATE TABLE canvas_settings (
+               id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+               bg_type VARCHAR(20) DEFAULT NULL,
+               bg_val VARCHAR(255) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+        : "CREATE TABLE canvas_settings (id INTEGER PRIMARY KEY AUTOINCREMENT,
+               bg_type TEXT, bg_val TEXT)");
 }
 
 /**
@@ -425,65 +545,6 @@ function testMysqlAdminConnection()
                          [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
     }
     return $admin;
-}
-
-// ---- Tables a test builds by hand, on either engine --------------------------
-//
-// Two states in this app are not a schema — they are a schema part-way through
-// changing, or one this build replaced — so no `schema.sql` describes them and a test
-// that needs one writes the `CREATE TABLE` itself. Written inline, that DDL is SQLite
-// dialect: `AUTOINCREMENT` is one word on this engine and another on MySQL, and
-// `TEXT NOT NULL DEFAULT 'text'` is legal here and rejected outright there. Both
-// spellings live in these two functions instead, beside the rest of what this file
-// knows about the difference between the engines, so a test says which state it wants
-// and not how to spell it.
-//
-// This matters more than a refused value does. A refused value is a failed check; SQL
-// in the wrong dialect is a **fatal**, which ends the run and takes the step under it
-// down as well — and on SQLite it is simply correct, so nothing local disagrees.
-
-/**
- * `canvas_elements` as it exists between the ADD COLUMN and the tighten.
- *
- * A nullable `display_id`, which is the only state the backfill ever sees: the plan
- * puts it between the two, so a fixture with the column already NOT NULL would be
- * testing the statement against a database it never runs on.
- *
- * The inline `REFERENCES` is honoured by SQLite and ignored by InnoDB, which is
- * accepted rather than worked around — nothing here deletes a Display, so the cascade
- * is not what is under test.
- */
-function createNullableDisplayIdElements(PDO $pdo)
-{
-    $pdo->exec("DROP TABLE canvas_elements");
-    $pdo->exec(testIsMysql()
-        ? "CREATE TABLE canvas_elements (
-               id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-               display_id INT(11) DEFAULT NULL,
-               type VARCHAR(50) NOT NULL DEFAULT 'text') ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-        : "CREATE TABLE canvas_elements (
-               id INTEGER PRIMARY KEY AUTOINCREMENT,
-               display_id INTEGER REFERENCES displays(id) ON DELETE CASCADE,
-               type TEXT NOT NULL DEFAULT 'text')");
-}
-
-/**
- * `canvas_settings` — the single-sign app's one row of canvas background.
- *
- * Gone from `schema.sql` on purpose: this build keeps the background on the Display.
- * It is still the table the deploy-day seed reads the store's own wallpaper out of, on
- * an install that has not converged yet, so the seed has to be tested against a
- * database that still has one.
- */
-function createLegacyCanvasSettings(PDO $pdo)
-{
-    $pdo->exec(testIsMysql()
-        ? "CREATE TABLE canvas_settings (
-               id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-               bg_type VARCHAR(20) DEFAULT NULL,
-               bg_val VARCHAR(255) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
-        : "CREATE TABLE canvas_settings (id INTEGER PRIMARY KEY AUTOINCREMENT,
-               bg_type TEXT, bg_val TEXT)");
 }
 
 /** The `dbname` out of the configured DSN — the stem every fixture is named from. */
@@ -584,31 +645,61 @@ function convergedSchemaShape()
                 'display_id'    => $col('int(11)'),
             ],
             'assets'   => ['id' => $col('int(11)'), 'auto_pooled' => $col('tinyint(1)')],
-            'displays' => ['id' => $col('int(11)'), 'lock_taken_at' => $col('datetime', true)],
+            'displays' => [
+                'id'            => $col('int(11)'),
+                'lock_taken_at' => $col('datetime', true),
+                // Not nullable, which is the fact the tighten is gated on. A shape
+                // carrying it as nullable would keep the MODIFY in a converged plan.
+                'brand_id'      => $col('int(11)'),
+            ],
             'display_permissions' => ['id' => $col('int(11)')],
-            'block_styles'        => ['block_type' => $col('varchar(50)')],
+            'block_styles'        => [
+                'block_type' => $col('varchar(50)'),
+                'brand_id'   => $col('int(11)'),
+            ],
+            // One column is enough to say the table is there, which is all
+            // needsTableCreate() asks. `brands` is created whole by one statement,
+            // so there is no ALTER for a missing column of it to answer.
+            'brands'              => ['id' => $col('int(11)')],
             // The three ADR-0001 lockout columns are part of a converged shape as
             // of the day they became gated plan entries rather than three ALTERs
             // fired from the pre-auth login page. A shape without them would make
             // the "a converged database is issued no DDL" check pass for the wrong
             // reason — by never asking.
             'users'               => [
-                'id'              => $col('int(11)'),
-                'failed_attempts' => $col('int(11)'),
-                'last_failed_at'  => $col('datetime', true),
-                'locked_until'    => $col('datetime', true),
-                'closed_at'       => $col('datetime', true),
+                'id'                 => $col('int(11)'),
+                'failed_attempts'    => $col('int(11)'),
+                'last_failed_at'     => $col('datetime', true),
+                'locked_until'       => $col('datetime', true),
+                'closed_at'          => $col('datetime', true),
+                // Nullable, and there is nothing to tighten it to: null is the answer
+                // "use the store default" rather than a value waiting to be backfilled.
+                'workspace_theme_id' => $col('int(11)', true),
             ],
+            // One column is enough to say the table is there, as for `brands`: it is
+            // created whole by one statement, so no ALTER of it has a gate to answer.
+            'workspace_themes'    => ['id' => $col('int(11)')],
         ],
         'indexes' => [
             'canvas_elements' => ['PRIMARY' => true, 'display_id' => true],
-            'displays'        => ['PRIMARY' => true, 'tag' => true],
+            'displays'        => ['PRIMARY' => true, 'tag' => true, 'brand_id' => true],
+            'users'           => ['PRIMARY' => true, 'workspace_theme_id' => true],
+            // Spelled out as columns rather than `true`, because this is the one key
+            // whose *columns* a gate reads: the re-key from `block_type` alone is
+            // skipped only when the catalogue says the key is already these two, in
+            // this order. `true` here would mean "cannot tell", and the plan would
+            // keep asking for a DROP/ADD PRIMARY KEY on every request.
+            'block_styles'    => ['PRIMARY' => ['brand_id', 'block_type']],
         ],
         'constraints' => [
             'canvas_elements'     => ['canvas_elements_ibfk_3' => true],
-            'displays'            => ['displays_ibfk_1' => true, 'displays_ibfk_2' => true],
+            'displays'            => ['displays_ibfk_1' => true, 'displays_ibfk_2' => true,
+                                      'displays_ibfk_3' => true],
             'display_permissions' => ['display_permissions_ibfk_1' => true,
                                       'display_permissions_ibfk_2' => true],
+            'brands'              => ['brands_ibfk_1' => true],
+            'block_styles'        => ['block_styles_ibfk_1' => true],
+            'users'               => ['users_ibfk_1' => true],
         ],
     ];
 }
@@ -663,8 +754,14 @@ function fakeCatalogue(array $shape, ?PDO $onto = null)
     $pdo->exec("CREATE TABLE information_schema.COLUMNS
                 (TABLE_SCHEMA TEXT, TABLE_NAME TEXT, COLUMN_NAME TEXT,
                  COLUMN_TYPE TEXT, IS_NULLABLE TEXT)");
+    // COLUMN_NAME and SEQ_IN_INDEX are here because the real query reads them: a
+    // composite key is its columns *in order*, and the `block_styles` re-key is gated
+    // on the PRIMARY being exactly (brand_id, block_type). A catalogue fixture that
+    // only carried index names could not execute that query at all, which is the
+    // whole reason this fake exists rather than a hand-built SchemaFacts.
     $pdo->exec("CREATE TABLE information_schema.STATISTICS
-                (TABLE_SCHEMA TEXT, TABLE_NAME TEXT, INDEX_NAME TEXT)");
+                (TABLE_SCHEMA TEXT, TABLE_NAME TEXT, INDEX_NAME TEXT,
+                 COLUMN_NAME TEXT, SEQ_IN_INDEX INTEGER)");
     $pdo->exec("CREATE TABLE information_schema.TABLE_CONSTRAINTS
                 (TABLE_SCHEMA TEXT, TABLE_NAME TEXT, CONSTRAINT_NAME TEXT)");
 
@@ -674,9 +771,18 @@ function fakeCatalogue(array $shape, ?PDO $onto = null)
             $col->execute([$table, $name, $spec['type'], !empty($spec['nullable']) ? 'YES' : 'NO']);
         }
     }
-    $ix = $pdo->prepare("INSERT INTO information_schema.STATISTICS VALUES ('lbm',?,?)");
+    // An index given as `true` carries one row naming the index and no column, which
+    // is what MySQL could never report — but the shape is what a caller wrote, and a
+    // caller who did not say which columns has to read back as "cannot tell" rather
+    // than as a confident empty list. A list of columns becomes one row each, numbered
+    // from 1, exactly as SEQ_IN_INDEX is.
+    $ix = $pdo->prepare("INSERT INTO information_schema.STATISTICS VALUES ('lbm',?,?,?,?)");
     foreach ($shape['indexes'] as $table => $names) {
-        foreach (array_keys($names) as $name) { $ix->execute([$table, $name]); }
+        foreach ($names as $name => $columns) {
+            if (!is_array($columns)) { $columns = [$name]; }
+            $seq = 0;
+            foreach ($columns as $column) { $ix->execute([$table, $name, $column, ++$seq]); }
+        }
     }
     $ct = $pdo->prepare("INSERT INTO information_schema.TABLE_CONSTRAINTS VALUES ('lbm',?,?)");
     foreach ($shape['constraints'] as $table => $names) {
@@ -728,11 +834,46 @@ function planWants(array $plan, $fragment)
     return false;
 }
 
-function makeTestDisplay(PDO $pdo, $tag, $title = 'Sign', $w = 1920, $h = 1080)
+/**
+ * @param int $brandId which Brand the sign wears. Defaults to 1, the Brand every
+ *                     fixture seeds — a test that does not care about Brands should
+ *                     not have to name one, and a test that does passes a second id.
+ */
+function makeTestDisplay(PDO $pdo, $tag, $title = 'Sign', $w = 1920, $h = 1080, $brandId = 1)
 {
-    $pdo->prepare("INSERT INTO displays (tag,title,canvas_width,canvas_height) VALUES (?,?,?,?)")
-        ->execute([$tag, $title, $w, $h]);
+    $pdo->prepare("INSERT INTO displays (tag,title,canvas_width,canvas_height,brand_id) VALUES (?,?,?,?,?)")
+        ->execute([$tag, $title, $w, $h, $brandId]);
     return loadTestDisplay($pdo, $pdo->lastInsertId());
+}
+
+/**
+ * A `brands` row and nothing else — no standards behind it.
+ *
+ * The state convergence's seed and `BrandAdmin::create()` both exist to prevent, so
+ * a test that wants to prove either of them has to be able to produce it.
+ */
+function makeTestBrandRow(PDO $pdo, $name)
+{
+    $pdo->prepare("INSERT INTO brands (name) VALUES (?)")->execute([$name]);
+    return intval($pdo->lastInsertId());
+}
+
+/**
+ * A second Brand, complete with its six sets of standards.
+ *
+ * The fixture seeds one Brand, which is enough for every test that is not about
+ * Brands and useless for every test that is: one Brand cannot show that two do not
+ * share a row. This is what the re-key is proved with.
+ */
+function makeTestBrand(PDO $pdo, $name, array $overrides = [])
+{
+    $brandId = makeTestBrandRow($pdo, $name);
+    (new BrandStyles($pdo))->seedFor($brandId);
+
+    foreach ($overrides as $type => $fields) {
+        (new BrandStyles($pdo))->save($brandId, [$type => $fields]);
+    }
+    return $brandId;
 }
 
 /**
@@ -925,24 +1066,44 @@ class PinnedBrandingConfig extends BrandingConfig
 function newTestStateDir()
 {
     $dir = sys_get_temp_dir() . '/lbm-selftest-' . getmypid() . '-' . count($GLOBALS['_testStateDirs']);
+    // Emptied rather than merely created. The name is keyed on the process id, and a
+    // container reuses those freely — so a directory left behind by an earlier run
+    // was inherited whole by a later one. That is not a tidiness problem: the install
+    // paths section asserts *which* credentials file is found, and finding one this
+    // run never wrote made it fail; a check that reads a stale file can pass for the
+    // wrong reason just as easily.
+    removeTestDirTree($dir);
     @mkdir($dir, 0700, true);
     $GLOBALS['_testStateDirs'][] = $dir;
     return $dir;
 }
 
+/**
+ * Delete a directory and everything under it, at any depth.
+ *
+ * The cleanup below used to be one level deep, and the install paths tests write
+ * `private/db_credentials.php` — a file inside a subdirectory. `rmdir` on a
+ * non-empty `private/` failed, so `rmdir` on the parent failed too, and every run of
+ * the suite left a directory in /tmp for ever. 429 of them had accumulated by the
+ * time one collided with a reused process id and failed a check that had nothing to
+ * do with the change being tested.
+ */
+function removeTestDirTree($dir)
+{
+    if (!@is_dir($dir)) { return; }
+    // Two globs: `*` does not match a leading dot, and the branding swap's temporary
+    // file is deliberately hidden. A missed dotfile leaves the rmdir failing.
+    $entries = array_merge((array)@glob($dir . '/*'), (array)@glob($dir . '/.[!.]*'));
+    foreach ($entries as $entry) {
+        if (@is_dir($entry)) { removeTestDirTree($entry); } else { @unlink($entry); }
+    }
+    @rmdir($dir);
+}
+
 $GLOBALS['_testStateDirs'] = [];
 
 register_shutdown_function(function () {
-    foreach ($GLOBALS['_testStateDirs'] as $dir) {
-        // Two globs: `*` does not match a leading dot, and the branding swap's
-        // temporary file is deliberately hidden. A missed dotfile leaves the rmdir
-        // failing and a directory behind in /tmp on every run.
-        $files = array_merge((array)@glob($dir . '/*'), (array)@glob($dir . '/.[!.]*'));
-        foreach ($files as $file) {
-            if (@is_dir($file)) { @rmdir($file); } else { @unlink($file); }
-        }
-        @rmdir($dir);
-    }
+    foreach ($GLOBALS['_testStateDirs'] as $dir) { removeTestDirTree($dir); }
 });
 
 /**

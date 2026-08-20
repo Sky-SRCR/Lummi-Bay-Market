@@ -337,13 +337,13 @@ class AssetLibrary
      *
      * Text is plain text (ADR-0002) wherever it entered the app, which is the half
      * of this rule a hidden form field used to be able to switch off. Everything
-     * else — an image path, and the path a pooled video row carries — is stored as it
-     * arrived, because a path is not markup and stripping one damages it.
+     * else — an image path, and the path a pooled video row carries — is stored as
+     * it arrived, because a path is not markup and stripping one damages it.
      *
-     * This said "the JSON a pooled carousel, table or marquee row carries", and no such
-     * row can exist: `assets.type` offers three members and the Builder marks those
-     * three block types `pool: false`, because what they hold is the block's own
-     * settings rather than a piece of content anybody would reuse.
+     * This said "the JSON a pooled carousel, table or marquee row carries" until
+     * §4bl, and no such row can exist: `assets.type` offers three members and the
+     * Builder marks those three block types `pool: false`, because what they hold is
+     * the block's own settings rather than a piece of content anybody would reuse.
      */
     private static function contentFor($type, $content)
     {
@@ -361,10 +361,24 @@ class AssetLibrary
      */
     public static function isAllowedImageRef($ref)
     {
-        $path = explode('|', (string)$ref)[0];   // drop any |fit suffix (e.g. |contain)
-        $path = strtok($path, '?#');             // drop query string / fragment
+        $path = strtok(self::imagePath($ref), '?#');   // drop query string / fragment
         $ext  = strtolower(pathinfo((string)$path, PATHINFO_EXTENSION));
         return in_array($ext, self::IMAGE_EXTENSIONS, true);
+    }
+
+    /**
+     * The file part of an image entry's stored reference, without the Builder's
+     * `|fit` suffix.
+     *
+     * One place knows about that suffix, because two now need the answer: the check
+     * above, and the Builder's Brand control, which draws the venue's logo out of the
+     * library row a Brand points at. The Builder's own `renderBlock()` splits the same
+     * string in JavaScript — that copy is unavoidable and is about a value already on
+     * the page, while this is about one on its way there.
+     */
+    public static function imagePath($ref)
+    {
+        return explode('|', (string)$ref)[0];
     }
 
     /** Remove one row, whatever made it. The caller decides whether that is safe. */

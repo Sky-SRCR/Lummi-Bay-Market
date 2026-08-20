@@ -46,6 +46,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { buildPageJs } = require('./page_constants');
 
 const BUILDER = path.join(__dirname, '..', 'builder.php');
 
@@ -286,18 +287,16 @@ global.clearTimeout = () => {};
 
 // ---- The page's own JavaScript ----------------------------------------------
 
-// ---- The page's own JavaScript ----------------------------------------------
-
-const php = fs.readFileSync(BUILDER, 'utf8');
-
-let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
-            .match(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)
-            .map(function (b) { return b.replace(/^<script\b[^>]*>/i, '').replace(/<\/script>$/i, ''); })
-            .join('\n');
-
-js = js.replace(/^var READ_ONLY\s*=.*$/m, 'var READ_ONLY = false;')
-       .replace(/^var IS_ADMIN\s*=.*$/m,  'var IS_ADMIN = true;')
-       .replace(/^var LOCK_HOLDER\s*=.*$/m, "var LOCK_HOLDER = 'Dana';");
+// Through `page_constants.js` rather than stripping the PHP here, which is the rule
+// §4bh closed and which this suite was written on a branch that never saw. It said the
+// three constants its own premise needs and left the other eighteen as the literal `0`
+// — including the two that made the edit lock's idle warning unreachable. An admin
+// editing a table on a Display nobody else holds.
+let js = buildPageJs(BUILDER, {
+    READ_ONLY:   false,
+    IS_ADMIN:    true,
+    LOCK_HOLDER: 'Dana',
+});
 
 eval(js);   // eslint-disable-line no-eval — the point is to run the page's own code
 

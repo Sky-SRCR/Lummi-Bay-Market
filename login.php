@@ -11,7 +11,7 @@ if (isLoggedIn()) {
 
 // The BRAND_* constants this page's CSS reads are defined by config.php, which
 // auth.php requires above — one list of eight names and defaults, in lib/branding.php.
-// The four that are colours are then read back through Brand::, not escaped: they
+// The four that are colours are then read back through SiteChrome::, not escaped: they
 // land in the <style> block below, where there is no delimiter for an entity to
 // neutralise and a value that is not a colour is CSS.
 
@@ -93,10 +93,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             font-size: 16px; margin-bottom: 18px;
             transition: border-color .2s;
         }
-        input:focus { outline: none; border-color: <?= Brand::accent() ?>; }
+        input:focus { outline: none; border-color: <?= SiteChrome::accent() ?>; }
         .btn {
             width: 100%; padding: 13px;
-            background: <?= Brand::accent() ?>; color: #fff;
+            background: <?= SiteChrome::accent() ?>; color: #fff;
             border: none; border-radius: 6px;
             font-size: 16px; font-weight: bold; cursor: pointer;
         }
@@ -114,9 +114,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body>
 <div class="card">
-    <?php if (Brand::logo()): ?>
+    <?php if (SiteChrome::logo()): ?>
         <div style="text-align:center; margin-bottom:16px;">
-            <img src="<?= Markup::text(Brand::logo()) ?>" alt="<?= Markup::text(SITE_NAME) ?>"
+            <img src="<?= Markup::text(SiteChrome::logo()) ?>" alt="<?= Markup::text(SITE_NAME) ?>"
                  style="max-height:60px; max-width:180px; object-fit:contain;">
         </div>
     <?php endif; ?>

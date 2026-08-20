@@ -41,6 +41,7 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { buildPageJs } = require('./page_constants');
 
 const BUILDER = path.join(__dirname, '..', 'builder.php');
 
@@ -252,20 +253,15 @@ global.clearTimeout = () => {};
 
 const php = fs.readFileSync(BUILDER, 'utf8');
 
-let js = php.replace(/<\?(php|=)[\s\S]*?\?>/g, '0')
-            .match(/<script\b(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)
-            .map(function (b) { return b.replace(/^<script\b[^>]*>/i, '').replace(/<\/script>$/i, ''); })
-            .join('\n');
-
 // An admin editing a display nobody else holds, with the setting at its default
 // five. UNDO_LIMIT is the number the admin Settings page writes; the PHP that
 // computes it is stripped with every other `<?= ?>` above, so it is put back here
 // the way a real page would carry it.
-js = js.replace(/^var READ_ONLY\s*=.*$/m,  'var READ_ONLY = false;')
-       .replace(/^var IS_ADMIN\s*=.*$/m,   'var IS_ADMIN = true;')
-       .replace(/^var CANVAS_W\s*=.*$/m,   'var CANVAS_W = 1920;')
-       .replace(/^var CANVAS_H\s*=.*$/m,   'var CANVAS_H = 1080;')
-       .replace(/^var UNDO_LIMIT\s*=.*$/m, 'var UNDO_LIMIT = 5;');
+let js = buildPageJs(BUILDER, {
+    READ_ONLY:  false,
+    IS_ADMIN:   true,
+    UNDO_LIMIT: 5,
+});
 
 check(/var UNDO_LIMIT = 5;/.test(js), 'the page carries an undo depth set by an admin');
 
@@ -742,7 +738,18 @@ applyPos('x', 320);
 undoStep();
 checkSame(null, activeBlock,    'the selection is dropped');
 checkSame(null, targetSection,  'and the section that was targeted for new blocks');
-checkSame('none', document.getElementById('inspector').style.display, 'the inspector is put away');
+// The rail stays on screen and goes back to its resting state — it is a docked
+// column now, not a floating panel, so "put away" would mean the canvas reflowing
+// under the pointer every time a selection was dropped. This is the stronger check
+// the display property was standing in for: what matters is that no control is
+// still populated from a node that has gone, and that the two states are never
+// both showing.
+checkSame('none',  document.getElementById('insp-block').style.display,
+          'the rail stops showing block controls');
+checkSame('block', document.getElementById('insp-resting').style.display,
+          'and shows its resting state instead of disappearing');
+checkSame('',      document.getElementById('sel-count').textContent,
+          'with nothing left claiming a selection');
 
 // A multi-selection is the other way nodes are held, and it is a separate run
 // because the two are mutually exclusive: toggleMultiSel() gives up the single
@@ -843,7 +850,85 @@ checkSame(150, clipRestored.offsetWidth, 'at the narrow width it was snapshotted
 check(clipRestored.querySelector(':scope > .clip-badge') !== null,
       'and it says again that it is hiding a block, having been rebuilt from nothing');
 
-const expected = 122;
+// ============================================================
+section('Repainting a Brand is not a change to the canvas (invariant 34)');
+// ============================================================
+// The fault this is about is the one the round trip cannot see, because it is not
+// about restoring: applyTextStyles() paints the shared standard onto a branded
+// block's inline style, and serializeBlock() read that back out. So the *snapshot*
+// carried the Brand, and picking a different one — which changes no element at all —
+// moved the string every step is measured against. The next real edit would then
+// push a step recording a difference nobody made, and an Undo would give back
+// somebody else's typography as though it had been typed. Invariant 27 the other
+// way round, and the reason ADR-0011 makes this fix land on its own and first.
+//
+// Up to here `blockStyles` has been empty, which is a half-seeded install and the
+// case where the block's own columns are load-bearing. Everything below is the
+// ordinary one.
+
+const BRAND_OWNS = ['font_family', 'font_size', 'font_color', 'font_weight', 'font_style', 'line_height'];
+
+/** The price block's entry out of a snapshot, which is the only one that is branded. */
+function priceEntry(json) {
+    return JSON.parse(json).filter(function (e) { return e.block_subtype === 'price'; })[0];
+}
+
+// A venue's standards, as loadLayout() hands them over.
+blockStyles = {
+    price: { font_family: 'Georgia', font_size: 64, font_color: '#c0392b',
+             font_weight: 'bold', font_style: 'normal', line_height: 1.1 }
+};
+buildFixture();
+
+const brandPrice = priceBlock();
+checkSame('price',   brandPrice.dataset.subtype, 'the fixture has a branded block');
+checkSame('Georgia', brandPrice.style.fontFamily, 'and the Brand painted it, not the element row');
+checkSame('1',       brandPrice.dataset.brandTypography, 'so it is marked as wearing somebody else\'s typography');
+
+const brandBefore = snapshotCanvas();
+const beforeEntry = priceEntry(brandBefore);
+check(!!beforeEntry, 'it is in the snapshot');
+check(BRAND_OWNS.every(function (f) { return !(f in beforeEntry); }),
+      'carrying none of the six fields the Brand owns');
+checkSame('right', beforeEntry.text_align,
+      'while what is still the block\'s own is there — alignment is not typography');
+
+// The admin picks a different venue. This changes no element: nothing moved, nothing
+// was typed, nothing was added or deleted. The canvas repaints and that is all.
+blockStyles = {
+    price: { font_family: 'Impact', font_size: 96, font_color: '#1abc9c',
+             font_weight: 'normal', font_style: 'italic', line_height: 2.0 }
+};
+applyTextStyles(brandPrice, { block_subtype: 'price' });
+
+// First, that the repaint really happened. Without this the two checks below pass
+// for a function that does nothing at all, which is the shape #50 was filed about —
+// three checks here had been unable to fail since the day they landed.
+checkSame('Impact',  brandPrice.style.fontFamily, 'the second Brand really does repaint the block');
+checkSame('96px',    brandPrice.style.fontSize,   'at its own size');
+checkSame('#1abc9c', brandPrice.style.color,      'in its own colour');
+
+checkSame(brandBefore, snapshotCanvas(), 'and switching Brands moves the snapshot not at all');
+checkSame(false, commitUndoStep(),
+          'so the step it would have recorded — a difference nobody made — is not there to record');
+
+// The marker is cleared rather than left, so a block handed its typography back
+// starts publishing it again on the same page load.
+applyTextStyles(brandPrice, { block_subtype: 'free', font_family: 'Verdana', font_size: 20 });
+checkSame(undefined, brandPrice.dataset.brandTypography, 'a block that stops being branded loses the marker');
+checkSame('Verdana', priceEntry(snapshotCanvas()).font_family, 'and publishes its own font again');
+
+// And with nothing stored for the type — a half-seeded install, which
+// rehearse_phase1.php looks for — both renderers read the element's own columns, so
+// the snapshot has to carry them or a restore would blank the block.
+blockStyles = {};
+buildFixture();
+checkSame(undefined, priceBlock().dataset.brandTypography,
+          'no standard stored means no Brand is painting it');
+checkSame('Arial', priceEntry(snapshotCanvas()).font_family,
+          'and its own typography is carried again, exactly as before this landed');
+
+const expected = 139;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

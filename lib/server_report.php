@@ -94,6 +94,8 @@ class ServerReport
     // deprecated and every request that builds this report emits a notice into the
     // error log. The explicit form is understood back to 7.1, so this costs nothing
     // below the floor and is one fewer thing between here and the next version.
+    // It is invariant 33 now (§4bj), which is what stops the next one being found by
+    // compiling the tree by hand — and the sentence above is the reason it is a rule.
     public function __construct(PDO $pdo, ?array $server = null)
     {
         $this->pdo    = $pdo;
@@ -110,7 +112,8 @@ class ServerReport
 
         $out['PHP version'] = [PHP_VERSION, self::phpVersionNote(PHP_VERSION_ID)];
 
-        $out['MySQL version'] = [$this->mysqlVersion(), ''];
+        $out['MySQL version'] = [$this->mysqlVersion(),
+            self::mysqlVersionNote($this->driverName(), $this->mysqlVersion())];
 
         // Which install this is, and which database it is talking to. Together these
         // are the only place a person can *see* that a rehearsal copy is isolated,
@@ -151,20 +154,15 @@ class ServerReport
         // and not a defect any more. Which is exactly why it stays on the card and why
         // the note changed: it used to say times may be hours out, and saying that now
         // would send somebody after a problem the setting above has already answered.
-        $php = ini_get('date.timezone');
         $out['PHP time zone'] = [date_default_timezone_get(),
-            $php === ''
-                ? 'Not set in the server configuration. Harmless — the app sets its own '
-                  . 'from the setting above on every page, which is what stopped this '
-                  . 'from being the reason a time was wrong.'
-                : ''];
+            self::phpZoneNoteFor(ini_get('date.timezone'))];
 
         // MySQL's, and the reason it is worth a row of its own: it is where
         // `created_at` comes from, PHP cannot convert what it did not write, and until
         // `db_connect.php` set it there was no screen anywhere that showed it. The note
         // is seamed rather than spelled here, because the value is read off the
-        // connection and its two forms are the two engines — and the question it answers
-        // is whether the stamps are in UTC, not whether the `SET` ran.
+        // connection and its two forms are the two engines (§4bl) — and the question
+        // it answers is whether the stamps are in UTC, not whether the `SET` ran.
         $dbZone = $this->databaseTimeZone();
         $out['Database time zone'] = [$dbZone, self::dbZoneNoteFor($dbZone)];
 
@@ -190,16 +188,58 @@ class ServerReport
         // Builder enforces in the file picker and what every refusal message
         // quotes. Printing the raw settings here as well invited reading the
         // largest of them as the answer, when the smallest is.
-        $effective = UploadLimit::bytes();
         $out['Largest file that can be uploaded'] = [
             UploadLimit::describe(),
-            $effective < UploadLimit::APP_MAX_BYTES
-                ? 'This server, not the app, is the limit (upload_max_filesize '
-                  . ini_get('upload_max_filesize') . ', post_max_size '
-                  . ini_get('post_max_size') . '). A video for a sign may not fit.'
-                : ''];
+            self::uploadCeilingNoteFor(UploadLimit::bytes(),
+                                       ini_get('upload_max_filesize'),
+                                       ini_get('post_max_size'))];
 
         return $out;
+    }
+
+    /**
+     * What an unset `date.timezone` means, given that the app no longer depends on it.
+     *
+     * Takes the ini value for the reason `phpVersionNote()` takes the version id: the
+     * case this exists for is the one no test process can be in. `date.timezone` is
+     * PHP_INI_ALL in name only — a host that has no such line in its php.ini answers
+     * `''`, and `php -d date.timezone=` does not reproduce that, it is rejected at
+     * startup and replaced with UTC. So the branch that speaks was unreachable while
+     * it was spelled inline, and the branch that stays silent was the only one any
+     * machine here could produce.
+     *
+     * Silent when the host has a zone, and that is not a check that cannot fail: the
+     * point of the sentence is that an unset zone is *harmless now*, and saying so
+     * every time would train an admin past the rows above that are not.
+     */
+    public static function phpZoneNoteFor($iniValue)
+    {
+        if ((string)$iniValue !== '') { return ''; }
+        return 'Not set in the server configuration. Harmless — the app sets its own '
+             . 'from the setting above on every page, which is what stopped this '
+             . 'from being the reason a time was wrong.';
+    }
+
+    /**
+     * Whether the host or the app is the thing refusing a large file, and which
+     * settings to go and change.
+     *
+     * Same seam and the same reason as `UploadLimit::smallestOf()`, whose docblock
+     * says it out loud: `upload_max_filesize` and `post_max_size` are PHP_INI_PERDIR,
+     * so a running process cannot be moved between the two cases. Reading them inline
+     * meant this sentence had exactly one form on any given machine — here, the one
+     * that names 2M, forever.
+     *
+     * The two ini values are quoted verbatim rather than in bytes on purpose: they are
+     * what somebody has to find and edit, and `8388608` is not what is written in the
+     * file they will open.
+     */
+    public static function uploadCeilingNoteFor($effective, $uploadMax, $postMax)
+    {
+        if ($effective >= UploadLimit::APP_MAX_BYTES) { return ''; }
+        return 'This server, not the app, is the limit (upload_max_filesize '
+             . $uploadMax . ', post_max_size ' . $postMax . '). A video for a sign '
+             . 'may not fit.';
     }
 
     /**
@@ -268,6 +308,8 @@ class ServerReport
             ['assets',          'auto_pooled',     'The Library tidy-up falls back to the "Auto: " label prefix.'],
             ['displays',        'lock_taken_at',   'A read-only Builder cannot say since when.'],
             ['canvas_elements', 'display_id',      'Nothing is scoped to a Display. Do not publish.'],
+            ['block_styles',    'brand_id',        'Brand Standards are not keyed to a brand, so every display shares one set and Display Branding can only edit the first. Do not create a second brand.'],
+            ['displays',        'brand_id',        'No display knows which brand it wears, so its branded blocks fall back to their own stored typography. Do not publish.'],
         ];
 
         $out = [];
@@ -338,6 +380,94 @@ class ServerReport
         }
     }
 
+    /** Which engine is answering, so a note about MySQL is not printed about SQLite. */
+    private function driverName()
+    {
+        try {
+            return (string)$this->pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        } catch (Throwable $e) {
+            return 'unknown';
+        }
+    }
+
+    /**
+     * The database floor the SQL in this repo is written to.
+     *
+     * 5.7 because that is what the host **is** — `5.7.23-23`, read off this very card on
+     * 2026-08-11 and recorded in `HANDOFF.md`. Which is the whole reason this note exists
+     * now and did not before: the version sat in that table for eight days beside two
+     * rows that each settled a standing question, and this one produced nothing. The row
+     * printed a number and said `''`, hardcoded, while the row above it had three bands
+     * of commentary and a declared floor.
+     */
+    const ASSUMED_MYSQL = '5.7';
+
+    /**
+     * What this server's database engine means, given the SQL this repo actually sends.
+     *
+     * Takes the driver and the version rather than reading either, for the reason
+     * `phpVersionNote()` takes the version id: one process talks to one engine, and the
+     * bands that matter are the ones no test database is. The driver is a parameter and
+     * not an afterthought — the self-test fixture is **SQLite**, whose
+     * `ATTR_SERVER_VERSION` is something like `3.45.1`. Parsed as a MySQL version that is
+     * far below the floor, so a note written without the driver would have fired on every
+     * SQLite run in the project and said the shop's engine was ancient.
+     *
+     * Silent at and above the floor, for the reason the PHP note is: a sentence an admin
+     * reads every time is one they learn to skip.
+     *
+     * The band below the floor names consequences rather than the number, because the
+     * number is already in the row beside it, and because a failed schema statement here
+     * is **logged and emailed, never thrown** (#9) — so an engine that refuses one of
+     * these does not announce itself. The page carries on and dies later at the first
+     * query against what was never created.
+     */
+    public static function mysqlVersionNote($driver, $version)
+    {
+        if ($driver !== 'mysql') { return ''; }
+
+        // MariaDB reports 10.x, which is numerically above the floor and tells you
+        // nothing, because it is a different product. No mechanism is invented here: the
+        // honest statement is that nothing in this project has ever run on it.
+        //
+        // `!== false` and not `!= false`: `stripos` answers 0 for a match at the start of
+        // the string, and 0 is falsy. No version string PDO hands back begins with the
+        // word — MariaDB reports `10.6.16-MariaDB`, and some builds `5.5.5-10.6.16-MariaDB`
+        // — so the loose form would work here by luck rather than by being right. The
+        // suite pins the strict form with a string starting at position 0, which is the
+        // only way to tell the two spellings apart (invariant 30).
+        if (stripos((string)$version, 'mariadb') !== false) {
+            return 'This is MariaDB, not the MySQL ' . self::ASSUMED_MYSQL . ' the SQL in '
+                 . 'this app was written against and observed on. Nothing here has run on '
+                 . 'it. Rehearse against a copy before publishing — tools/rehearse_phase1.php.';
+        }
+
+        // A comparable integer, not a meaningful number. The two multipliers survive
+        // mutation on purpose and it is worth saying why rather than leaving it to be
+        // rediscovered: any base in which the major version outranks the minor gives the
+        // same answer at the one threshold below, so `10001` and `101` are the same
+        // function as `10000` and `100` for every version string a MySQL host produces.
+        // What the encoding has to get right is the ordering, and that is what the
+        // boundary checks at 5.6 / 5.7 / 8.0 assert.
+        if (!preg_match('/^(\d+)\.(\d+)/', (string)$version, $m)) { return ''; }
+        $id = intval($m[1]) * 10000 + intval($m[2]) * 100;
+
+        if ($id >= 50700) { return ''; }
+
+        // Deliberately no SQL keyword in this sentence. Two reasons, and the second is
+        // the one that bit: an admin reading this card does not need the identifier, and
+        // `check_invariants.php` holds the whole repo to one place that may name the
+        // database's own clock — a rule it enforces over string literals, which unlike
+        // comments it cannot drop. The first draft of this note failed that check.
+        return 'Older than the MySQL ' . self::ASSUMED_MYSQL . ' this app\'s SQL is '
+             . 'written for. Two things it needs stop being safe below that: a date column '
+             . 'that defaults to the time the row was made, and the unique index on a '
+             . '255-character utf8mb4 email address, which is 1020 bytes and needs '
+             . 'innodb_large_prefix — off by default before 5.7.7. A schema statement this '
+             . 'server refuses is logged and emailed, never thrown, so it will not announce '
+             . 'itself. Tell the developer before the next deploy.';
+    }
+
     /**
      * What the store time zone row has to say, if anything.
      *
@@ -392,15 +522,15 @@ class ServerReport
      *
      * A seam beside `databaseTimeZone()` for the reason every other readout on this
      * card has one: the value is read off the machine, so spelled inline it has one
-     * form on whatever ran the suite and the other form on nothing — and here the two
-     * forms are the two engines, which is why the suite could only ever assert
-     * whichever one it happened to be running against.
+     * form on whatever ran the suite and the other form on nothing — and here the
+     * two forms are the two engines, which is why the suite could only ever assert
+     * whichever one it happened to be running against (§4bl).
      *
      * `SYSTEM (UTC)` is the case that made this more than tidiness. It means the
      * `SET time_zone` in `db_connect.php` did not take *and* the host's own zone is
-     * already UTC, so the stamps are in UTC regardless — while the note below says they
-     * may read hours out, which is the sentence somebody acts on. A protection that
-     * turns out not to have been needed is not a problem to report.
+     * already UTC, so the stamps are in UTC regardless — and the note below says
+     * they may read hours out, which is the sentence somebody acts on. A protection
+     * that turns out not to have been needed is not a problem to report.
      */
     public static function dbZoneNoteFor($zone)
     {
@@ -420,9 +550,9 @@ class ServerReport
      *
      * `SYSTEM (x)` is unwrapped and asked again, because the name is standing in for
      * `x` and the question is about the instant, not about which statement set it.
-     * Only what this predicate already recognises counts as zero — an abbreviation like
-     * `GMT` is left warning rather than added on the strength of what it looks like,
-     * since a wrong entry here is silence about stamps that really are out.
+     * Only what this predicate already recognises counts as zero — an abbreviation
+     * like `GMT` is left warning rather than added on the strength of what it looks
+     * like, since a wrong entry here is silence about stamps that really are out.
      */
     private static function isUtcOffset($zone)
     {

@@ -55,22 +55,38 @@
 require_once __DIR__ . '/plain_text.php';
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/brand_styles.php';
+// For `BrandChoice` and for the one read this module makes of `brands`: a publish that
+// carries a Brand has to establish that the Brand is still there before it writes the
+// id onto the sign, and asking that question is not a licence to write the table —
+// `BrandStore` is still its only writer (invariant 35).
+require_once __DIR__ . '/brands.php';
 require_once __DIR__ . '/assets.php';
 require_once __DIR__ . '/layout_rules.php';
 
-/** One publish attempt: the layout, the background intent, who is publishing, and the stamp they hold. */
+/**
+ * One publish attempt: the layout, the background and Brand intents, who is
+ * publishing, and the stamp they hold.
+ *
+ * The two intents are the two things a publish carries that are not elements, and both
+ * are staged in the browser and written by the publish rather than at the moment they
+ * were picked. They are separate objects because they fail separately and are refused
+ * with different sentences — see `LayoutStore::publish()`.
+ */
 class PublishRequest
 {
     private $elements;
     private $background;
+    private $brand;
     private $actorId;
     private $isAdmin;
     private $stamp;
 
-    public function __construct(array $elements, Background $background, $actorId, $isAdmin, $stamp)
+    public function __construct(array $elements, Background $background, BrandChoice $brand,
+                                $actorId, $isAdmin, $stamp)
     {
         $this->elements   = $elements;
         $this->background = $background;
+        $this->brand      = $brand;
         $this->actorId    = intval($actorId);
         $this->isAdmin    = (bool)$isAdmin;
         $this->stamp      = (string)$stamp;
@@ -90,15 +106,17 @@ class PublishRequest
      * An empty array is still a layout: that is somebody who deleted every block
      * and meant it. Only "this did not decode" is refused.
      */
-    public static function fromPostedJson($raw, Background $background, $actorId, $isAdmin, $stamp)
+    public static function fromPostedJson($raw, Background $background, BrandChoice $brand,
+                                          $actorId, $isAdmin, $stamp)
     {
         $elements = json_decode((string)$raw, true);
         if (!is_array($elements)) { return null; }
-        return new self($elements, $background, $actorId, $isAdmin, $stamp);
+        return new self($elements, $background, $brand, $actorId, $isAdmin, $stamp);
     }
 
     public function elements()   { return $this->elements; }
     public function background() { return $this->background; }
+    public function brand()      { return $this->brand; }
     public function actorId()    { return $this->actorId; }
     public function isAdmin()    { return $this->isAdmin; }
     public function stamp()      { return $this->stamp; }
@@ -202,6 +220,19 @@ class LayoutStore
     }
 
     /**
+     * Brands, which owns `brands`. Built on demand and used for exactly one question:
+     * is the Brand this publish named still there.
+     *
+     * On demand rather than in the constructor for the same reason as BrandStyles: no
+     * caller of this store should have to know about a table it never mentions, and one
+     * `SELECT` by primary key on the one path that asks does not repay a field.
+     */
+    private function brands()
+    {
+        return new BrandStore($this->pdo);
+    }
+
+    /**
      * The Asset Library, which owns `assets`. Built on demand, and not a
      * constructor argument: every caller of this store would otherwise have to
      * know about a table it never mentions, and the two writes involved (pooling a
@@ -279,7 +310,12 @@ class LayoutStore
         // Brand Standards belongs to BrandStyles, which is the only writer of that
         // table; reading it through the same module keeps one definition of what a
         // stored style looks like.
-        $styles = $this->brandStyles()->all();
+        //
+        // Scoped to the Brand this sign wears (ADR-0011). It used to be every row in
+        // the table, which was the same answer for every Display because there was
+        // only ever one set — so this key's *shape* is unchanged and neither client
+        // needed touching. What changed is which six rows fill it.
+        $styles = $this->brandStyles()->all($display->brandId());
 
         $display_ = $display->toClientArray();
 
@@ -406,11 +442,27 @@ class LayoutStore
 
         // Sections come first in the result set, so a child's parent is always
         // already in the map by the time the child is inserted.
+        //
+        // The **target's** Brand, not the source's: these rows are about to belong to
+        // that sign, and what decides whether a column is the Brand's to paint is the
+        // Brand the row will be read under. A duplicate into a differently branded
+        // Display is an ordinary thing to do — same dimensions is the only rule
+        // ADR-0004 imposes — and asking the source would decide a target row's
+        // typography from a venue it is not part of.
+        $brandStandards = $this->brandStyles()->all($target->brandId());
         $idMap  = [];
         $copied = 0;
         foreach ($rows as $row) {
             $oldSection = $row['section_id'] !== null ? intval($row['section_id']) : null;
             $newSection = $oldSection !== null && isset($idMap[$oldSection]) ? $idMap[$oldSection] : null;
+
+            // The same question a publish asks, so invariant 34 holds for every row
+            // this module writes rather than for the rows one of its two writers
+            // happened to write. A source row that predates the fix carries the
+            // baked standard; copying it faithfully would be copying a fossil into
+            // a sign that never had one, and there is nothing on the new row to
+            // say where it came from.
+            $typography = self::typographyFor($row, $brandStandards);
 
             $insert->execute([
                 $target->id(),
@@ -424,17 +476,17 @@ class LayoutStore
                 $row['manual_content'],
                 $row['asset_id'] !== null ? intval($row['asset_id']) : null,
                 $row['section_bg'],
-                $row['font_family'],
-                intval($row['font_size']),
-                $row['font_color'],
-                $row['font_weight'],
-                $row['font_style'],
+                $typography['font_family'],
+                intval($typography['font_size']),
+                $typography['font_color'],
+                $typography['font_weight'],
+                $typography['font_style'],
                 // Through the same clamp as a publish, not `number_format($v, 2)`.
                 // DECIMAL(4,2) cannot hold a value that needs a thousands
                 // separator, so a row that predates the column — or one hand-edited
                 // — is brought inside the bounds here rather than copied into a
                 // string the placeholder cannot bind (#32).
-                LayoutRules::lineHeight($row['line_height']),
+                LayoutRules::lineHeight($typography['line_height']),
                 $row['text_align'],
                 intval($row['locked']) ? 1 : 0,
                 intval($row['sort_order']),
@@ -628,6 +680,25 @@ class LayoutStore
                 . ' Your work is still on screen.');
         }
 
+        // And the Brand's, which is the half of it that needs no database: something
+        // that is not an id at all is refused here, before the row lock, exactly as an
+        // unreadable colour is. Whether the Brand it names still *exists* is asked
+        // below, under the lock, because that answer can change while this request is
+        // in flight and a check that races is worse than no check — it reports a state
+        // the write then contradicts.
+        //
+        // `isAdmin()` and not a bare test, and it is the same condition the existence
+        // check below carries. A basic account's publish never writes `brand_id` at all
+        // — `applyBrand()` is inside the admin branch and `brandFromPost()` does not even
+        // read the field for them — so refusing their publish over a Brand they could not
+        // have set and this app is not going to store is punishing somebody for something
+        // they cannot see. The two halves of one question must answer for the same people
+        // or "a clerk is not held up by a Brand they cannot set" is true of a deleted
+        // Brand and false of a mistyped one.
+        if ($request->isAdmin() && !$request->brand()->isUsable()) {
+            return PublishResult::invalid($request->brand()->problemWith(null));
+        }
+
         try {
             // Give up on a colliding publish in seconds rather than being killed
             // mid-wait by PHP's own time limit (#35). Before beginTransaction: it
@@ -671,6 +742,19 @@ class LayoutStore
                     $this->abandon();
                     return PublishResult::invalid($problem);
                 }
+
+                // The Brand, asked the same way and for the same reason: the row lock is
+                // held, so a Brand that is there now is there when the UPDATE runs. Read
+                // through BrandStore, which owns that table — this module writes no
+                // statement against `brands` and reads none of its own (invariant 35).
+                $wanted = $request->brand();
+                $problem = $wanted->problemWith(
+                    $wanted->kind() === 'brand' ? $this->brands()->forId($wanted->id()) : null
+                );
+                if ($problem !== null) {
+                    $this->abandon();
+                    return PublishResult::invalid($problem);
+                }
             }
 
             // Read before the layout is deleted: these are the library rows this
@@ -680,7 +764,23 @@ class LayoutStore
 
             if ($request->isAdmin()) {
                 $this->displays->applyBackground($display, $request->background());
-                $this->replaceWholeLayout($display, $request->elements());
+                $this->displays->applyBrand($display, $request->brand());
+
+                // Re-read, and the layout is written from *that* Display. The rows about
+                // to be inserted will be read under the Brand this publish has just set,
+                // and what decides whether a typography column is the Brand's to paint
+                // is the Brand the row will be read under — the same rule `copyLayout()`
+                // states one method over about a duplicate's target. Writing them from
+                // the object this method was handed would decide it with the Brand the
+                // sign wore a moment ago, which is invariant 34's fossil arriving by a
+                // new door: the one publish where the answer changes is the publish that
+                // changes the Brand.
+                //
+                // `?: $display` cannot happen — the row lock above is held on a row that
+                // exists — and is here because a null Display would otherwise be a
+                // TypeError inside a transaction that has already deleted the layout.
+                $wearing = $this->displays->forId($display->id()) ?: $display;
+                $this->replaceWholeLayout($wearing, $request->elements());
             } else {
                 // The one refusal that needs the database to decide, so it cannot be
                 // made in the pre-transaction pass with the others. Nothing has been
@@ -907,6 +1007,54 @@ class LayoutStore
         return isset($tempMap[$parentTmp]) ? $tempMap[$parentTmp] : null;
     }
 
+    /**
+     * The six typography values an element row should carry (invariant 34).
+     *
+     * Brand Standards owns the typography of a branded text block: both renderers
+     * read `block_styles` for it and never look at these six columns. The Builder
+     * nevertheless *paints* the standard onto the node's inline style — it has to,
+     * or the block would not look like what it will become — and `serializeBlock()`
+     * read that inline style straight back out. So every publish baked the shared
+     * standard into every branded element's own row, and had done since the columns
+     * existed.
+     *
+     * Invisible while one set of standards reached every sign. Two live faults the
+     * moment several do (ADR-0011): a block whose subtype is changed to `free` a
+     * month later would inherit whichever Brand was selected at its last publish,
+     * from a venue it may never have been part of and with nothing saying so; and
+     * the Builder's undo snapshot would move when a Brand was merely *picked*,
+     * although no element had changed — invariant 27 the other way round.
+     *
+     * Decided here rather than trusted from the payload, because this module owns
+     * the table and the browser is not the thing that gets to promise this. It is
+     * also not a *refusal*: a Builder tab loaded before this landed still sends all
+     * six fields, and somebody publishing from one on the afternoon of a deploy is
+     * an ordinary thing to happen. Their work lands; the six fields are ignored.
+     *
+     * What lands instead is `BrandStyles::DEFAULTS`, which is that module's own
+     * answer to "what a field is when the row does not say" and is the `schema.sql`
+     * column defaults written down. Not NULL: `intval(null)` is 0, and a `font_size`
+     * of 0 read back by anything that does not expect it is an invisible block.
+     */
+    private static function typographyFor(array $el, array $brandStandards)
+    {
+        if (BrandStyles::paints($el['type'] ?? 'text', $el['block_subtype'] ?? 'free', $brandStandards)) {
+            return BrandStyles::DEFAULTS;
+        }
+        // `??` and nothing else, which is what these six lines were before this
+        // function existed — an empty string or a zero is a value the payload sent
+        // and is stored as one, exactly as it always was. The first draft wrote
+        // `isset($el[$field]) && $el[$field] !== null`, whose second clause is dead
+        // (isset is already false for null) and whose mutant therefore survived
+        // while still changing behaviour: under `!=` an empty family would have
+        // started falling back to Arial. A dead clause that can still be wrong.
+        $own = [];
+        foreach (BrandStyles::DEFAULTS as $field => $fallback) {
+            $own[$field] = $el[$field] ?? $fallback;
+        }
+        return $own;
+    }
+
     private function insertSection(Display $display, array $el)
     {
         $this->pdo->prepare(
@@ -955,6 +1103,12 @@ class LayoutStore
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         );
 
+        // Read once, outside the loop: the answer is the same for every element and
+        // this runs inside the publish transaction, a line at a time down the sign.
+        // Scoped to the Brand this sign wears, which is the same question the two
+        // renderers ask of the snapshot they were given (invariant 34, ADR-0011).
+        $brandStandards = $this->brandStyles()->all($display->brandId());
+
         $order = 0;
         foreach ($elements as $el) {
             $type = $el['type'] ?? 'text';
@@ -998,6 +1152,8 @@ class LayoutStore
                        && isset($keepIds[intval($el['db_id'])]))
                 ? intval($el['db_id']) : null;
 
+            $typography = self::typographyFor($el, $brandStandards);
+
             $insert->execute([
                 $keepId,
                 $display->id(),
@@ -1010,12 +1166,12 @@ class LayoutStore
                 intval($el['height'] ?? 100),
                 $manualToStore,
                 $assetId,
-                $el['font_family'] ?? 'Arial',
-                intval($el['font_size'] ?? 16),
-                $el['font_color']  ?? '#000000',
-                $el['font_weight'] ?? 'normal',
-                $el['font_style']  ?? 'normal',
-                LayoutRules::lineHeight($el['line_height'] ?? null),
+                $typography['font_family'],
+                intval($typography['font_size']),
+                $typography['font_color'],
+                $typography['font_weight'],
+                $typography['font_style'],
+                LayoutRules::lineHeight($typography['line_height']),
                 $el['text_align']  ?? '',
                 intval($el['locked'] ?? 0),
                 $order++,

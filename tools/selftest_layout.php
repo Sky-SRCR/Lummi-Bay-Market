@@ -246,7 +246,7 @@ function publishAs(LayoutStore $layouts, Display $display, array $elements, $sta
 {
     global $pdo;
     $result = $layouts->publish($display, new PublishRequest(
-        $elements, $bg ?: Background::unchanged(), $actorId, $isAdmin, $stamp
+        $elements, $bg ?: Background::unchanged(), BrandChoice::unchanged(), $actorId, $isAdmin, $stamp
     ));
     (new DisplayStore($pdo))->releaseLock($display, $actorId);
     return $result;
@@ -743,7 +743,7 @@ checkSame($before, $driveT->backgroundValue(),
 // two doors was deliberate and visible rather than assumed. There is no difference
 // left to assert, so what it checks is the refusal: nothing stored, and said so.
 $panelSign = makeTestDisplay($pdo, 'panel-bg', 'Panel Colour');
-$admin     = new DisplayAdmin($pdo, $store, $layouts, new GrantStore($pdo));
+$admin     = new DisplayAdmin($pdo, $store, $layouts, new GrantStore($pdo), new BrandStore($pdo));
 $panelWas  = loadTestDisplay($pdo, $panelSign->id())->backgroundValue();
 $res = $admin->setBackgroundColor($panelSign, 'nonsense');
 checkSame(false, $res->isOk(), 'the admin panel refuses a colour it cannot read');
@@ -811,7 +811,7 @@ $store  = new DisplayStore($pdo);
 $admin  = newTestDisplayAdmin($pdo);
 $layouts = newTestLayoutStore($pdo);
 
-$res = $admin->create(['title' => 'Drive-Thru', 'canvas_width' => 1920, 'canvas_height' => 1080]);
+$res = $admin->create(['brand_id' => 1, 'title' => 'Drive-Thru', 'canvas_width' => 1920, 'canvas_height' => 1080]);
 check($res->isOk(), 'a Display is created from a title and a canvas size alone');
 $driveT = $res->display();
 checkSame('drive-thru', $driveT->tag(), 'its tag was suggested from its title');
@@ -820,17 +820,17 @@ checkSame(true, $driveT->isActive(), 'it is active from the moment it exists');
 check(strpos($res->message(), 'viewer.php?display=drive-thru') !== false,
       'and the confirmation gives the address to point a Screen at');
 
-$res = $admin->create(['title' => 'Second Drive-Thru', 'tag' => 'drive-thru',
+$res = $admin->create(['brand_id' => 1, 'title' => 'Second Drive-Thru', 'tag' => 'drive-thru',
                        'canvas_width' => 1920, 'canvas_height' => 1080]);
 checkSame(DisplayResult::CONFLICT, $res->kind(), 'a tag already in use is refused');
 checkSame('tag', $res->field(), 'and the refusal names the field to fix');
 checkSame(1, $store->count(), 'nothing was created');
 
-$res = $admin->create(['title' => '', 'canvas_width' => 1920, 'canvas_height' => 1080]);
+$res = $admin->create(['brand_id' => 1, 'title' => '', 'canvas_width' => 1920, 'canvas_height' => 1080]);
 checkSame(DisplayResult::INVALID, $res->kind(), 'a Display with no title is refused');
-$res = $admin->create(['title' => 'Bad Tag', 'tag' => 'Lobby_1', 'canvas_width' => 1920, 'canvas_height' => 1080]);
+$res = $admin->create(['brand_id' => 1, 'title' => 'Bad Tag', 'tag' => 'Lobby_1', 'canvas_width' => 1920, 'canvas_height' => 1080]);
 checkSame(DisplayResult::INVALID, $res->kind(), 'a tag with an underscore is refused');
-$res = $admin->create(['title' => 'No Size', 'canvas_width' => 0, 'canvas_height' => 0]);
+$res = $admin->create(['brand_id' => 1, 'title' => 'No Size', 'canvas_width' => 0, 'canvas_height' => 0]);
 checkSame(DisplayResult::INVALID, $res->kind(), 'a Display with no canvas size is refused');
 checkSame('canvas_width', $res->field(), 'and the refusal points at the size');
 checkSame(1, $store->count(), 'still nothing created');
@@ -840,13 +840,13 @@ $res = publishAs($layouts, $driveT, layoutWith('Drive-thru $9.99'), '0');
 check($res->isOk(), 'the drive-thru gets a layout to duplicate');
 $driveT = loadTestDisplay($pdo, $driveT->id());
 
-$res = $admin->create(['title' => 'Portrait Board', 'canvas_width' => 1080, 'canvas_height' => 1920,
+$res = $admin->create(['brand_id' => 1, 'title' => 'Portrait Board', 'canvas_width' => 1080, 'canvas_height' => 1920,
                        'duplicate_from' => 'drive-thru']);
 checkSame(DisplayResult::INVALID, $res->kind(), 'duplicating into a different shape is refused (ADR-0004)');
 check(strpos($res->message(), '1920 × 1080') !== false, 'and the refusal states the shape it would have copied');
 checkSame(1, $store->count(), 'the Display was not created either');
 
-$res = $admin->create(['title' => 'Lobby', 'canvas_width' => 1920, 'canvas_height' => 1080,
+$res = $admin->create(['brand_id' => 1, 'title' => 'Lobby', 'canvas_width' => 1920, 'canvas_height' => 1080,
                        'duplicate_from' => 'drive-thru']);
 check($res->isOk(), 'duplicating from an identically sized Display works');
 $lobby = $res->display();
@@ -866,7 +866,7 @@ checkSame(intval($copiedSection['id']), intval($copiedText['section_id']),
 checkSame('Drive-thru $9.99', $copiedText['manual_content'], 'the content came across');
 checkSame(10, intval($copiedSection['x_pos']), 'and so did the positions');
 
-$res = $admin->create(['title' => 'Third', 'canvas_width' => 1920, 'canvas_height' => 1080,
+$res = $admin->create(['brand_id' => 1, 'title' => 'Third', 'canvas_width' => 1920, 'canvas_height' => 1080,
                        'duplicate_from' => 'no-such-display']);
 checkSame(DisplayResult::INVALID, $res->kind(), 'duplicating from a Display that does not exist is refused');
 
@@ -876,7 +876,7 @@ checkSame(false, $layouts->copyLayout($driveT, loadTestDisplay($pdo, $lobby->id(
 // ---- Editing -----------------------------------------------------------------
 checkSame('lobby', $lobby->tag(), 'the duplicate was tagged from its own title, not the original\'s');
 
-$res = $admin->updateDetails($lobby, ['title' => 'Lobby Screen', 'tag' => 'lobby-screen',
+$res = $admin->updateDetails($lobby, ['brand_id' => 1, 'title' => 'Lobby Screen', 'tag' => 'lobby-screen',
                                       'location' => 'Front entrance']);
 check($res->isOk(), 'title, tag and location can be edited');
 $lobby = $res->display();
@@ -885,15 +885,15 @@ checkSame('Front entrance', $lobby->location(), 'the location is stored');
 check(strpos($res->message(), 'viewer.php?display=lobby-screen') !== false,
       'a rename says what address the Screen must be pointed at now');
 
-$res = $admin->updateDetails($lobby, ['title' => 'Lobby Screen', 'tag' => 'lobby-screen']);
+$res = $admin->updateDetails($lobby, ['brand_id' => 1, 'title' => 'Lobby Screen', 'tag' => 'lobby-screen']);
 check($res->isOk() && strpos($res->message(), 'address changed') === false,
       'saving without changing the tag does not claim the address changed');
 
-$res = $admin->updateDetails($lobby, ['title' => 'Lobby Screen', 'tag' => 'drive-thru']);
+$res = $admin->updateDetails($lobby, ['brand_id' => 1, 'title' => 'Lobby Screen', 'tag' => 'drive-thru']);
 checkSame(DisplayResult::CONFLICT, $res->kind(), 'renaming onto another Display\'s tag is refused');
 checkSame('lobby-screen', $store->forId($lobby->id())->tag(), 'and the tag is unchanged');
 
-$res = $admin->updateDetails($lobby, ['title' => 'Lobby', 'tag' => '']);
+$res = $admin->updateDetails($lobby, ['brand_id' => 1, 'title' => 'Lobby', 'tag' => '']);
 check($res->isOk() && $res->display()->tag() === 'lobby',
       'clearing the tag re-suggests it from the title rather than failing');
 $lobby = $res->display();
@@ -1378,7 +1378,7 @@ $store->releaseLock($lobby, 1);
 $driveT = $store->forId($driveT->id());
 $before = count(elementsOf($pdo, $driveT->id()));
 $res = $layouts->publish($driveT, new PublishRequest(
-    layoutWith('Published over somebody'), Background::unchanged(), 1, true, $driveT->layoutStamp()
+    layoutWith('Published over somebody'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $driveT->layoutStamp()
 ));
 checkSame('locked', $res->kind(), 'a publish is refused while somebody else holds the lock');
 check(strpos($res->message(), 'clerk') !== false, 'the refusal names who is editing');
@@ -1388,7 +1388,7 @@ checkSame($before, count(elementsOf($pdo, $driveT->id())), 'and nothing was writ
 
 // The holder's own publish goes through, and keeps the lock alive.
 $res = $layouts->publish($driveT, new PublishRequest(
-    layoutWith('The holder publishes'), Background::unchanged(), 2, true, $driveT->layoutStamp()
+    layoutWith('The holder publishes'), Background::unchanged(), BrandChoice::unchanged(), 2, true, $driveT->layoutStamp()
 ));
 check($res->isOk(), 'the account holding the lock may publish');
 $d = $store->forId($driveT->id());
@@ -1397,7 +1397,7 @@ checkSame(true, $d->lockState()->heldBy(2), 'and publishing keeps the lock — i
 // The lock refusal comes first: "reload and re-apply" is bad advice while somebody
 // else is mid-edit, because re-applying would only be refused again.
 $res = $layouts->publish($driveT, new PublishRequest(
-    layoutWith('Stale and locked out'), Background::unchanged(), 1, true, 'nonsense-stamp'
+    layoutWith('Stale and locked out'), Background::unchanged(), BrandChoice::unchanged(), 1, true, 'nonsense-stamp'
 ));
 checkSame('locked', $res->kind(), 'a publish that is both stale and locked out reports the lock');
 
@@ -1405,7 +1405,7 @@ checkSame('locked', $res->kind(), 'a publish that is both stale and locked out r
 ageTestLock($pdo, $driveT->id(), LockState::IDLE_LAPSE_SECONDS + 1);
 $driveT = $store->forId($driveT->id());
 $res = $layouts->publish($driveT, new PublishRequest(
-    layoutWith('Back after a break'), Background::unchanged(), 1, true, $driveT->layoutStamp()
+    layoutWith('Back after a break'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $driveT->layoutStamp()
 ));
 check($res->isOk(), 'a publish onto a lapsed lock succeeds');
 $d = $store->forId($driveT->id());
@@ -1422,7 +1422,7 @@ $d = $store->claimLock($driveT, 1);
 checkSame(true, $d->lockState()->heldBy(2), 'the ousted tab\'s next heartbeat cannot reclaim it');
 
 $res = $layouts->publish($driveT, new PublishRequest(
-    layoutWith('Publishing after being ousted'), Background::unchanged(), 1, true, $driveT->layoutStamp()
+    layoutWith('Publishing after being ousted'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $driveT->layoutStamp()
 ));
 checkSame('locked', $res->kind(), 'and its publish is refused, which is how it finds out');
 
@@ -1458,13 +1458,13 @@ foreach ([
     ['null',                       'a literal null'],
     ['',                           'an empty body'],
 ] as $case) {
-    checkSame(null, PublishRequest::fromPostedJson($case[0], $bg, 1, true, '0'),
+    checkSame(null, PublishRequest::fromPostedJson($case[0], $bg, BrandChoice::unchanged(), 1, true, '0'),
               $case[1] . ' is not a layout');
 }
 
 // The other half: an empty array really is a layout. Somebody who deleted every
 // block and published meant it, and must not be refused.
-$emptyReq = PublishRequest::fromPostedJson('[]', $bg, 1, true, '0');
+$emptyReq = PublishRequest::fromPostedJson('[]', $bg, BrandChoice::unchanged(), 1, true, '0');
 check($emptyReq !== null,               'an empty array is still a publish');
 checkSame([], $emptyReq->elements(),    'and it carries no elements');
 
@@ -1474,12 +1474,12 @@ $store   = newTestDisplayStore($pdo);
 $layouts = newTestLayoutStore($pdo);
 $victim  = makeTestDisplay($pdo, 'victim', 'Victim');
 $layouts->publish($victim, new PublishRequest(
-    layoutWith('Sockeye 18.99'), Background::unchanged(), 1, true, $victim->layoutStamp()
+    layoutWith('Sockeye 18.99'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $victim->layoutStamp()
 ));
 $victim = $store->forId($victim->id());
 checkSame(2, count(elementsOf($pdo, $victim->id())), 'the Display starts with a published layout');
 
-checkSame(null, PublishRequest::fromPostedJson('[{"type":', $bg, 1, true, $victim->layoutStamp()),
+checkSame(null, PublishRequest::fromPostedJson('[{"type":', $bg, BrandChoice::unchanged(), 1, true, $victim->layoutStamp()),
           'and an unreadable publish for it never reaches the store');
 checkSame(2, count(elementsOf($pdo, $victim->id())), 'so its elements are still there');
 
@@ -1498,7 +1498,7 @@ section('A hostile publish payload is a refusal, never an escaping error');
 $victim = $store->forId($victim->id());
 $res = $layouts->publish($victim, new PublishRequest(
     [['type' => 'text', 'manual_content' => ['not' => 'a string'], 'temp_id' => 't1']],
-    Background::unchanged(), 1, true, $victim->layoutStamp()
+    Background::unchanged(), BrandChoice::unchanged(), 1, true, $victim->layoutStamp()
 ));
 checkSame('invalid', $res->kind(), 'manual_content as an object is a refusal, not a fatal');
 checkMentions($res->message(), 'Block 1 (text)', 'and the refusal says which block');
@@ -1508,7 +1508,7 @@ checkSame(false, $pdo->inTransaction(), 'with no transaction left open behind it
 $victim = $store->forId($victim->id());
 $res = $layouts->publish($victim, new PublishRequest(
     [['type' => 'section', 'temp_id' => ['an', 'array']]],
-    Background::unchanged(), 1, true, $victim->layoutStamp()
+    Background::unchanged(), BrandChoice::unchanged(), 1, true, $victim->layoutStamp()
 ));
 checkSame('invalid', $res->kind(), 'an array where a temp_id belongs is refused the same way');
 checkSame(2, count(elementsOf($pdo, $victim->id())), 'and again nothing was lost');
@@ -1521,7 +1521,7 @@ $store   = newTestDisplayStore($pdo);
 $layouts = newTestLayoutStore($pdo);
 $sign    = makeTestDisplay($pdo, 'deli', 'Deli Case');
 $layouts->publish($sign, new PublishRequest(
-    layoutWith('Chowder 6.50'), Background::unchanged(), 1, true, $sign->layoutStamp()
+    layoutWith('Chowder 6.50'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $sign->layoutStamp()
 ));
 $store->releaseLock($sign, 1);
 
@@ -1556,7 +1556,7 @@ checkSame(true, $res->isOk(), 'once the lock has lapsed the Work Area can delete
 // that would do it is the one lib/schema.php never converges.
 $sign = $store->forId($sign->id());
 $layouts->publish($sign, new PublishRequest(
-    layoutWith('Cascade, explicitly'), Background::unchanged(), 1, true, $sign->layoutStamp()
+    layoutWith('Cascade, explicitly'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $sign->layoutStamp()
 ));
 setTestForeignKeys($pdo, false);
 $sectionId = 0;
@@ -1568,7 +1568,7 @@ checkSame(0, count(elementsOf($pdo, $sign->id())),
 setTestForeignKeys($pdo, true);
 
 // ─────────────────────────────────────────────────────────────
-section('Brand Standards: shared typography, and what may change it');
+section('Brand Standards: a Brand\'s typography, and what may change it');
 
 $pdo   = newTestDb();
 $store = newTestDisplayStore($pdo);
@@ -1576,29 +1576,107 @@ $brand = new BrandStyles($pdo);
 $one   = makeTestDisplay($pdo, 'one', 'Sign One');
 $two   = makeTestDisplay($pdo, 'two', 'Sign Two');
 
-checkSame(null, $store->editedByAnyoneElse(1), 'nobody is editing anything to begin with');
+// A second Brand, and a sign wearing it. This is what the narrowed refusal needs to
+// be *shown* rather than asserted: with one Brand, "refuse while anyone is editing
+// anything" and "refuse while anyone is editing a sign wearing this Brand" are the
+// same rule and no test could tell them apart.
+$brandB = makeTestBrand($pdo, 'Salmon House');
+$three  = makeTestDisplay($pdo, 'three', 'Sign Three', 1920, 1080, $brandB);
+
+checkSame(null, $store->editedByAnyoneElseUsingBrand(1, 1), 'nobody is editing anything to begin with');
 $store->claimLock($two, 2);
-$busy = $store->editedByAnyoneElse(1);
-check($busy !== null,        'a lock held by another account is visible to the whole installation');
+$busy = $store->editedByAnyoneElseUsingBrand(1, 1);
+check($busy !== null,        'a lock held by another account on a sign wearing this Brand is visible');
 checkSame('two', $busy ? $busy->tag() : '', 'and it names which Display');
-checkSame(null, $store->editedByAnyoneElse(2), 'the holder is not blocked by their own lock');
+checkSame(null, $store->editedByAnyoneElseUsingBrand(2, 1), 'the holder is not blocked by their own lock');
+
+// The narrowing itself (ADR-0011). Sign Two is being edited and wears Brand 1;
+// editing Brand 2 is nobody's business but the Salmon House's.
+checkSame(null, $store->editedByAnyoneElseUsingBrand(1, $brandB),
+          'somebody editing a sign wearing another Brand does not block this one');
+$store->claimLock($three, 2);
+$busyB = $store->editedByAnyoneElseUsingBrand(1, $brandB);
+checkSame('three', $busyB ? $busyB->tag() : '', 'and the sign wearing it does block it');
 
 ageTestLock($pdo, $two->id(), LockState::IDLE_LAPSE_SECONDS + 60);
-checkSame(null, $store->editedByAnyoneElse(1), 'a lapsed lock does not block a brand change');
+checkSame(null, $store->editedByAnyoneElseUsingBrand(1, 1), 'a lapsed lock does not block a brand change');
+
+checkSame([$one->id(), $two->id()], array_map(function ($d) { return $d->id(); }, $store->usingBrand(1)),
+          'a Brand knows which signs wear it, which is what makes a delete refusal name them');
+checkSame(1, count($store->usingBrand($brandB)), 'and the other Brand has its own');
 
 // Absent means untouched — the defect that reset every sign to black Arial 16.
-$before = $brand->all();
-checkSame(0, $brand->save([]), 'a save carrying no typography writes nothing');
-checkSame($before, $brand->all(), 'and leaves every stored style exactly as it was');
+$before = $brand->all(1);
+checkSame(0, $brand->save(1, []), 'a save carrying no typography writes nothing');
+checkSame($before, $brand->all(1), 'and leaves every stored style exactly as it was');
 
-checkSame(1, $brand->save(['price' => ['font_family' => 'Georgia', 'font_size' => 44,
-                                       'font_color' => '#00FF00', 'font_weight' => 'bold',
-                                       'font_style' => 'normal', 'line_height' => 1.25]]),
+checkSame(1, $brand->save(1, ['price' => ['font_family' => 'Georgia', 'font_size' => 44,
+                                          'font_color' => '#00FF00', 'font_weight' => 'bold',
+                                          'font_style' => 'normal', 'line_height' => 1.25]]),
           'a save carrying one type writes one row');
-$after = $brand->all();
+$after = $brand->all(1);
 checkSame('Georgia', $after['price']['font_family'],   'the submitted family is stored');
 checkSame('#00ff00', $after['price']['font_color'],    'a colour is normalised to lowercase hex');
 checkSame($before['item_title'], $after['item_title'], 'and the five types it did not carry are untouched');
+
+// The whole point of the re-key: two Brands' rows for one block type are two rows.
+// On the old single-column key this save would have overwritten the row above.
+checkSame('Arial', $brand->all($brandB)['price']['font_family'],
+          'a second Brand keeps its own price typography when the first one changes');
+checkSame(1, $brand->save($brandB, ['price' => ['font_family' => 'Verdana', 'font_size' => 30,
+                                                'font_color' => '#123456', 'font_weight' => 'bold',
+                                                'font_style' => 'normal', 'line_height' => 1.2]]),
+          'and saving the second Brand writes its own row');
+checkSame('Verdana', $brand->all($brandB)['price']['font_family'], 'which really changed');
+checkSame('Georgia',  $brand->all(1)['price']['font_family'],
+          'and left the first Brand exactly as it was — the re-key, proved');
+
+// ---- schema.sql's seed and STARTING_POINTS are the same six rows -------------
+// `BrandStyles::STARTING_POINTS` is where a new Brand starts, and it has two readers
+// in PHP — `BrandStyles::seedFor()` for a Brand an admin creates, and
+// `signageSchemaPlan()`'s step for the one convergence makes. schema.sql is the third
+// writer and the one that cannot call PHP, so it holds a *copy*. The docblock claims
+// three writers of one list; this is what makes that true rather than aspirational.
+//
+// A drift here is silent and lasting: a fresh install built from schema.sql would
+// start its first Brand somewhere every later Brand does not, and nothing would ever
+// say so — the values are only wrong relative to each other, and both render.
+$ssSql = file_get_contents(__DIR__ . '/../schema.sql');
+$ssPos = strpos($ssSql, 'INSERT IGNORE INTO block_styles');
+check($ssPos !== false, 'schema.sql seeds the branded block types');
+$ssRows = [];
+if ($ssPos !== false) {
+    $ssChunk = substr($ssSql, $ssPos, strpos($ssSql, ';', $ssPos) - $ssPos);
+    if (preg_match_all(
+            "/\(\s*1\s*,\s*'([a-z_0-9]+)'\s*,\s*'([^']*)'\s*,\s*(\d+)\s*,\s*'([^']*)'\s*,"
+            . "\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*([0-9.]+)\s*\)/",
+            $ssChunk, $ssM, PREG_SET_ORDER)) {
+        foreach ($ssM as $ssOne) {
+            $ssRows[$ssOne[1]] = [$ssOne[2], intval($ssOne[3]), $ssOne[4], $ssOne[5], $ssOne[6],
+                                  floatval($ssOne[7])];
+        }
+    }
+}
+checkSame(array_keys(BrandStyles::STARTING_POINTS), array_keys($ssRows),
+          'schema.sql seeds exactly the branded types BrandStyles starts a Brand with');
+foreach (BrandStyles::STARTING_POINTS as $ssType => $ssWant) {
+    $ssHave = $ssRows[$ssType] ?? null;
+    // Compared as values rather than as text: the line height is 1.30 in the file and
+    // 1.3 in PHP, and a difference of spelling is not a drift to report.
+    $ssSame = is_array($ssHave)
+           && $ssHave[0] === $ssWant[0] && $ssHave[1] === $ssWant[1]
+           && $ssHave[2] === $ssWant[2] && $ssHave[3] === $ssWant[3]
+           && $ssHave[4] === $ssWant[4] && floatval($ssHave[5]) === floatval($ssWant[5]);
+    checkSame(true, $ssSame, 'and starts ' . $ssType . ' at the same values PHP does');
+}
+
+checkSame(0, $brand->seedFor($brandB), 'seeding a Brand that already has its six writes nothing');
+checkSame(6, $brand->seedFor(makeTestBrandRow($pdo, 'Casino Floor')),
+          'and a Brand with none gets all six');
+
+$brandGone = makeTestBrand($pdo, 'Doomed');
+checkSame(6, $brand->deleteFor($brandGone), 'destroying a Brand takes its six standards with it');
+checkSame([], $brand->all($brandGone),      'leaving none behind for an id that is never reused');
 
 // Every one of these reaches every sign within 30 seconds with no publish, so a
 // value that cannot render must never be stored in the first place.
@@ -1615,6 +1693,355 @@ checkSame('Arial',   BrandStyles::cleanFamily('Arial;position:fixed;top:0;width:
 checkSame('5.00',    BrandStyles::formatLineHeight(9999),
           'a line height beyond the column is clamped, not written as "1,000.00"');
 checkSame('1.40',    BrandStyles::formatLineHeight('nonsense'), 'and nonsense falls back to the default');
+
+// ─────────────────────────────────────────────────────────────
+section('A Brand: its name, its palette, and what may destroy it');
+// ─────────────────────────────────────────────────────────────
+// ADR-0011 makes a Brand the thing several signs read their typography, palette and
+// logo from. Two properties matter more than the rest, and both are #21's line: a
+// palette colour that cannot be read is *named*, never substituted, and a Brand a
+// sign still wears is refused rather than reassigned.
+
+$nPdo    = newTestDb();
+$nBrands = new BrandStore($nPdo);
+$nStyles = new BrandStyles($nPdo);
+$nDisp   = newTestDisplayStore($nPdo);
+$nAdmin  = new BrandAdmin($nPdo, $nBrands, $nStyles, $nDisp);
+$nAdminD = newTestDisplayAdmin($nPdo);
+
+// ---- The name rules ---------------------------------------------------------
+checkSame('Salmon House', BrandStore::cleanName('  Salmon   House  '),
+          'a name is trimmed and its whitespace collapsed');
+checkSame('', BrandStore::cleanName(['Salmon House']),
+          'and a value that is not a string is not a name folded badly — it is not a name (#27)');
+checkSame(false, BrandStore::isValidName(''), 'an empty name is refused');
+checkSame(false, BrandStore::isValidName(str_repeat('a', BrandStore::NAME_MAX + 1)),
+          'and one longer than the column, rather than being truncated to something nobody chose');
+checkSame(true,  BrandStore::isValidName(str_repeat('a', BrandStore::NAME_MAX)),
+          'exactly the column width is fine');
+checkSame(false, BrandStore::isValidName("Salmon\tHouse"),
+          'a control character is refused, because two names that look identical must not be two rows');
+checkSame(true,  BrandStore::isValidName('Tavern & Grill'),
+          'but an ampersand is an ordinary venue name');
+
+// The two numbers that have to agree with `schema.sql`, asserted as literals rather
+// than through the constants. A check written as `str_repeat('a', NAME_MAX)` moves
+// with the constant and would pass just as happily at 81, where the column would
+// truncate silently; PALETTE_SLOTS at 7 would build `palette_7 = ?` against a table
+// that has six. Both are the constant agreeing with the database, so both are stated.
+checkSame(80, BrandStore::NAME_MAX, 'the name limit is the width of brands.name in schema.sql');
+checkSame(6,  BrandStore::PALETTE_SLOTS, 'and there are exactly as many palette slots as columns');
+checkSame(['palette_1','palette_2','palette_3','palette_4','palette_5','palette_6'],
+          BrandStore::paletteFields(), 'spelled the way the columns are');
+
+// ---- Which value names a Brand ----------------------------------------------
+// Reached straight from `$_POST['b_id']` on the panel's save and delete forms, so
+// this is the same hazard `DisplayStore::forId()` was fixed for (#21): `intval("7abc")`
+// is 7, so a mangled id would not fail — it would silently name a *different Brand*,
+// and the delete form would act on it.
+$nSeeded = $nBrands->all()[0];
+checkSame($nSeeded->id(), $nBrands->forId((string)$nSeeded->id())->id(),
+          'an id written as a whole number names its Brand');
+checkSame(null, $nBrands->forId((string)$nSeeded->id() . 'abc'),
+          'but a number with rubbish after it names no Brand, rather than that one');
+checkSame(null, $nBrands->forId([]),      'and neither does an array, which intval() reads as 1');
+checkSame(null, $nBrands->forId(true),    'nor a boolean, which intval() also reads as 1');
+checkSame(null, $nBrands->forId('1.9'),   'nor a fraction, which would round down onto Brand 1');
+checkSame(null, $nBrands->forId(0),       'zero names nothing');
+checkSame(null, $nBrands->forId(-1),      'and so does a negative id');
+checkSame(null, $nBrands->forId(99999),   'and an id no Brand has answers null rather than throwing');
+
+// ---- Creating one -----------------------------------------------------------
+$nRes = $nAdmin->create(['name' => 'Salmon House']);
+checkSame(true, $nRes->isOk(), 'a Brand is created from a name alone');
+$nSalmon = $nRes->brand();
+checkSame(6, count($nStyles->all($nSalmon->id())),
+          'and comes with its six sets of standards, or its typography form would save nothing');
+checkSame('#e74c3c', $nStyles->all($nSalmon->id())['price']['font_color'],
+          'started from BrandStyles::STARTING_POINTS');
+
+$nDup = $nAdmin->create(['name' => 'salmon house']);
+checkSame(BrandResult::CONFLICT, $nDup->kind(),
+          'a name another Brand already has is refused, compared the way a person reads it');
+checkSame('name', $nDup->field(), 'and the refusal names the field to point at');
+checkMentions($nDup->message(), 'Salmon House', 'and quotes the Brand already using it');
+
+checkSame(BrandResult::INVALID, $nAdmin->create(['name' => ''])->kind(), 'a nameless Brand is refused');
+
+// An empty name matches nothing rather than the first Brand whose name is falsy —
+// the guard that makes `otherBrandNamed('')` safe to call before the name has been
+// validated, which is the order `checkFields()` puts them in.
+checkSame(null, $nBrands->otherBrandNamed(''), 'an empty name clashes with no Brand');
+checkSame(null, $nBrands->otherBrandNamed('   '), 'and neither does one that is only spaces');
+checkSame($nSalmon->id(), $nBrands->otherBrandNamed('SALMON HOUSE')->id(),
+          'but case is not a difference, because MySQL\'s collation does not think so either');
+checkSame(null, $nBrands->otherBrandNamed('Salmon House', $nSalmon->id()),
+          'and a Brand does not clash with itself, or it could never be re-saved');
+checkSame($nSeeded->id(), $nBrands->otherBrandNamed($nSeeded->name())->id(),
+          'the very first Brand is checked like any other — the default exceptId excludes nothing');
+checkSame($nSalmon->id(), $nBrands->otherBrandNamed('  Salmon   House  ')->id(),
+          'and the name being compared is the folded one, so spacing is not a way past the check');
+
+// ---- The logo, and the two background kinds ---------------------------------
+$nLogoId = intval((new AssetLibrary($nPdo))->pool('image', 'uploads/salmon-logo.png'));
+$nAdmin->updateDetails($nSalmon, ['name' => 'Salmon House', 'logo_asset_id' => $nLogoId,
+                                  'bg_type' => 'color', 'bg_val' => '#1a1a2e']);
+checkSame($nLogoId, $nBrands->forId($nSalmon->id())->logoAssetId(), 'a Brand remembers its logo');
+checkSame($nLogoId, $nBrands->forId($nSalmon->id())->toClientArray()['logo_asset_id'],
+          'and hands it to a client as an id');
+$nAdmin->updateDetails($nBrands->forId($nSalmon->id()),
+                       ['name' => 'Salmon House', 'logo_asset_id' => '',
+                        'bg_type' => 'color', 'bg_val' => '#1a1a2e']);
+checkSame(0, $nBrands->forId($nSalmon->id())->logoAssetId(),
+          'and clearing it answers 0 rather than null, so no caller has to test for both');
+
+$nPdo->prepare("UPDATE brands SET bg_type = 'image', bg_val = ? WHERE id = ?")
+     ->execute(['uploads/salmon-bg.png', $nSalmon->id()]);
+checkSame('image', $nBrands->forId($nSalmon->id())->backgroundType(), 'a Brand can default to an image background');
+// The third kind is handed to the reader as a row rather than written to the column,
+// because on the engine the shop runs the column cannot hold it: `bg_type` is an ENUM,
+// strict mode has been MySQL's default since 5.7, and that UPDATE is error 1265 — a
+// thrown PDOException rather than a stored value, which took the whole MySQL leg down
+// and the rehearsal step under it with it (§4bk). What this check is about is the
+// reader, and the reader takes a row.
+checkSame('color', (new Brand(['bg_type' => 'nonsense']))->backgroundType(),
+          'and anything that is not the word image reads as a colour, never as a third kind');
+
+// ---- The palette: offered, and never substituted ----------------------------
+$nRes = $nAdmin->updateDetails($nSalmon, [
+    'name' => 'Salmon House', 'bg_type' => 'color', 'bg_val' => '#102030',
+    'palette_1' => '#AABBCC', 'palette_2' => '', 'palette_3' => '#ddeeff',
+    'palette_4' => '', 'palette_5' => '', 'palette_6' => '',
+]);
+checkSame(true, $nRes->isOk(), 'a Brand\'s palette and background are saved');
+$nSalmon = $nBrands->forId($nSalmon->id());
+checkSame(['#aabbcc', '#ddeeff'], $nSalmon->palette(),
+          'the filled slots come back normalised, in slot order, with the empty ones left out');
+checkSame('#102030', $nSalmon->backgroundValue(), 'and the default canvas background is stored');
+checkSame([], $nSalmon->unreadablePalette(), 'nothing is unreadable about a palette this app wrote');
+
+$nBad = $nAdmin->updateDetails($nSalmon, [
+    'name' => 'Salmon House', 'bg_type' => 'color', 'bg_val' => '#102030',
+    'palette_1' => '#aabbcc', 'palette_2' => 'puce', 'palette_3' => '',
+    'palette_4' => '', 'palette_5' => '', 'palette_6' => '',
+]);
+checkSame(BrandResult::INVALID, $nBad->kind(), 'a palette colour that is not a colour is refused');
+checkSame('palette_2', $nBad->field(), 'naming the slot rather than the whole form');
+checkMentions($nBad->message(), 'Palette colour 2', 'in the words the form puts on it');
+checkSame(['#aabbcc', '#ddeeff'], $nBrands->forId($nSalmon->id())->palette(),
+          'and nothing was saved — a refusal is whole, never a partial write');
+
+// The default background is the same question `Background` answers for a Display, so
+// it gets the same answer: refused, not replaced. Blank is the *other* case and has
+// to stay distinguishable from it — a Brand created from a name alone carries no
+// background at all, and refusing that would make the ordinary create impossible.
+$nBadBg = $nAdmin->updateDetails($nBrands->forId($nSalmon->id()),
+    ['name' => 'Salmon House', 'bg_type' => 'color', 'bg_val' => 'darkish blue']);
+checkSame(BrandResult::INVALID, $nBadBg->kind(), 'a default background that is not a colour is refused');
+checkSame('bg_val', $nBadBg->field(), 'naming the field');
+checkSame('#102030', $nBrands->forId($nSalmon->id())->backgroundValue(),
+          'and the stored one is untouched, never replaced with a substitute (#21)');
+checkSame(true, $nAdmin->create(['name' => 'No Background Given'])->isOk(),
+          'while supplying none at all is the ordinary create, not a refusal');
+checkSame(Background::DEFAULT_COLOR,
+          $nBrands->otherBrandNamed('No Background Given')->backgroundValue(),
+          'and it lands on the app\'s documented default');
+// Cleared again, so the count the destroy checks below rest on stays what they say.
+$nAdmin->destroy($nBrands->otherBrandNamed('No Background Given'), 'No Background Given');
+
+// A row that got past this app — hand-edited, or written before the rule. The
+// swatch is not offered, and the tab says which value it could not use rather than
+// leaving a palette one colour short with no explanation (#21).
+$nPdo->prepare("UPDATE brands SET palette_2 = 'puce' WHERE id = ?")->execute([$nSalmon->id()]);
+$nStored = $nBrands->forId($nSalmon->id());
+checkSame(['#aabbcc', '#ddeeff'], $nStored->palette(), 'an unreadable stored slot is not offered as a swatch');
+checkSame(1, count($nStored->unreadablePalette()), 'but it is reported rather than silently dropped');
+checkSame('puce', $nStored->unreadablePalette()[0]['value'], 'quoting what is actually stored');
+checkSame('Palette colour 2', $nStored->unreadablePalette()[0]['label'], 'and naming which slot');
+checkSame('puce', $nStored->paletteSlot(1), 'the form redraws the stored value, not a substitute');
+checkSame('', $nStored->paletteSlot(99), 'and a slot that does not exist is empty rather than an error');
+
+// ---- Destroying one ---------------------------------------------------------
+$nCasino = $nAdmin->create(['name' => 'Casino Floor'])->brand();
+$nSign   = makeTestDisplay($nPdo, 'salmon-board', 'Salmon House Board', 1920, 1080, $nSalmon->id());
+
+checkSame(BrandResult::INVALID, $nAdmin->destroy($nSalmon, 'wrong name')->kind(),
+          'destroying a Brand needs its name typed back');
+checkSame(BrandResult::INVALID, $nAdmin->destroy($nSalmon, '')->kind(),
+          'and a blank confirm is not a match either');
+
+checkSame(BrandResult::INVALID, $nAdmin->destroy($nSalmon, ['Salmon House'])->kind(),
+          'and a value that is not a string is not a confirmation');
+checkSame(true, $nAdmin->destroy($nSalmon, '  salmon   house  ')->kind() !== BrandResult::INVALID,
+          'but the confirm is folded the same way the name was, so spacing and case are not traps');
+
+$nWorn = $nAdmin->destroy($nSalmon, 'Salmon House');
+checkSame(BrandResult::CONFLICT, $nWorn->kind(), 'a Brand a sign still wears cannot be destroyed');
+checkMentions($nWorn->message(), 'Salmon House Board',
+              'and the refusal names the sign, because "it is in use" is not something to act on');
+checkMentions($nWorn->message(), 'no undo', 'and says why it is not done automatically');
+checkSame(6, count($nStyles->all($nSalmon->id())), 'its standards are still there');
+
+// A venue with more boards than the sentence will list. The refusal has to stay a
+// sentence rather than becoming a wall of names, and it has to say how many it did
+// not print — "and 2 more" is the difference between a list and a list that lies by
+// omission. Nothing exercised this branch until a surviving mutant pointed at it.
+for ($nI = 2; $nI <= 8; $nI++) {
+    makeTestDisplay($nPdo, 'salmon-' . $nI, 'Salmon Board ' . $nI, 1920, 1080, $nSalmon->id());
+}
+$nMany = $nAdmin->destroy($nSalmon, 'Salmon House');
+checkSame(BrandResult::CONFLICT, $nMany->kind(), 'eight signs still refuse the delete');
+checkMentions($nMany->message(), '8 displays still wear', 'the count is the number of signs, not the number listed');
+checkMentions($nMany->message(), 'and 2 more', 'and the two it did not name are accounted for');
+check(strpos($nMany->message(), 'Salmon Board 8') === false,
+      'the eighth is genuinely not printed, so the truncation is doing something');
+for ($nI = 2; $nI <= 8; $nI++) {
+    $nAdminD->destroy(loadTestDisplay($nPdo, $nDisp->forTag('salmon-' . $nI)->id()), 'salmon-' . $nI, 1);
+}
+checkSame(1, count($nDisp->usingBrand($nSalmon->id())), 'and with them gone one wearer is left');
+
+// Moved off it, and now it goes — with its standards.
+$nAdminD->updateDetails(loadTestDisplay($nPdo, $nSign->id()),
+                        ['title' => 'Salmon House Board', 'tag' => 'salmon-board',
+                         'location' => '', 'brand_id' => $nCasino->id()]);
+checkSame($nCasino->id(), loadTestDisplay($nPdo, $nSign->id())->brandId(),
+          'a sign can be moved to another Brand from the panel');
+$nGone = $nAdmin->destroy($nBrands->forId($nSalmon->id()), 'Salmon House');
+checkSame(true, $nGone->isOk(), 'and then the Brand nothing wears is destroyed');
+checkSame(null, $nBrands->forId($nSalmon->id()), 'the row is gone');
+checkSame([], $nStyles->all($nSalmon->id()), 'and its six sets of standards went with it');
+
+// The last Brand cannot go: `displays.brand_id` is NOT NULL, so an install with no
+// Brands is one where no sign can be created at all. The sign goes first, or the
+// refusal under test is never the one that fires — the wearer check comes before it,
+// which is the right order and is why this needs saying.
+$nStillWorn = $nAdmin->destroy($nBrands->forId($nCasino->id()), 'Casino Floor');
+checkSame(BrandResult::CONFLICT, $nStillWorn->kind(), 'the Brand the sign moved to is now the one in use');
+checkMentions($nStillWorn->message(), 'Salmon House Board', 'and it is that sign standing in the way');
+
+$nAdminD->destroy(loadTestDisplay($nPdo, $nSign->id()), 'salmon-board', 1);
+checkSame(0, count($nDisp->usingBrand($nCasino->id())), 'with the sign gone, nothing wears it');
+checkSame(true, $nAdmin->destroy($nBrands->forId($nCasino->id()), 'Casino Floor')->isOk(),
+          'and it can go too');
+
+// Down to the one the fixture seeds, which nothing wears and which still cannot be
+// destroyed: `displays.brand_id` is NOT NULL, so an install with no Brands is one
+// where no sign can be created at all.
+$nOnly = $nBrands->all()[0];
+checkSame(1, $nBrands->count(), 'one Brand is left');
+$nLast = $nAdmin->destroy($nOnly, $nOnly->name());
+checkSame(BrandResult::CONFLICT, $nLast->kind(), 'and the only Brand left cannot be destroyed');
+checkMentions($nLast->message(), 'Rename it instead', 'the message says what to do instead');
+checkSame(1, $nBrands->count(), 'and it really is still there');
+
+// ---- What a client is handed -------------------------------------------------
+$nClient = $nOnly->toClientArray();
+checkSame($nOnly->id(), $nClient['id'],     'the client array carries the id');
+checkSame($nOnly->name(), $nClient['name'], 'and the name');
+checkSame([], $nClient['palette'],          'and a palette that is read rather than raw');
+checkSame(0, $nClient['logo_asset_id'],     'and 0 for a Brand with no logo, never null');
+
+// ─────────────────────────────────────────────────────────────
+section('Publish never writes what a Brand paints (invariant 34)');
+// ─────────────────────────────────────────────────────────────
+// The Builder paints the shared standard onto a branded block's inline style so it
+// looks like what it will become, and serialising read that straight back out — so
+// every publish baked the standard into the element's own row. Harmless while one
+// set of standards reaches every sign; a stale-brand fossil the moment several do
+// (ADR-0011).
+//
+// The browser stopped sending them, and this is the other half: the module that
+// owns the table decides, so a Builder tab loaded before the fix — an ordinary
+// thing on the afternoon of a deploy — cannot write one either.
+
+// Who is painted and who is not, asked of the standards this install really has.
+$stored = $brand->all(1);
+check(BrandStyles::paints('text', 'price', $stored),       'a price block is painted by Brand Standards');
+check(!BrandStyles::paints('text', 'free', $stored),       'a free text block owns its own typography');
+check(!BrandStyles::paints('image', 'price', $stored),     'and only a text block reads these columns at all');
+check(!BrandStyles::paints('text', 'price', []),           'no standard for a type means the block\'s own values are load-bearing');
+check(!BrandStyles::paints('text', ['price'], $stored),    'a subtype that is not a string names no standard');
+
+$bPdo     = newTestDb();
+$bStore   = newTestDisplayStore($bPdo);
+$bLayouts = newTestLayoutStore($bPdo);
+$bSign    = makeTestDisplay($bPdo, 'brandcheck', 'Brand Check');
+
+/** One section holding a branded block and a free one, both shouting the same font. */
+function brandBakingLayout()
+{
+    $shout = ['font_family' => 'Comic Sans MS', 'font_size' => 99, 'font_color' => '#ff00ff',
+              'font_weight' => 'bold', 'font_style' => 'italic', 'line_height' => 3.0];
+    return [
+        ['type' => 'section', 'temp_id' => 'bs', 'x_pos' => 0, 'y_pos' => 0,
+         'width' => 600, 'height' => 380],
+        array_merge(['type' => 'text', 'block_subtype' => 'price', 'parent_temp_id' => 'bs',
+                     'manual_content' => '18.99', 'x_pos' => 5, 'y_pos' => 5,
+                     'width' => 160, 'height' => 60], $shout),
+        array_merge(['type' => 'text', 'block_subtype' => 'free', 'parent_temp_id' => 'bs',
+                     'manual_content' => 'Fresh today', 'x_pos' => 5, 'y_pos' => 90,
+                     'width' => 300, 'height' => 60], $shout),
+    ];
+}
+
+check(publishAs($bLayouts, $bSign, brandBakingLayout(), '0')->isOk(),
+      'a publish carrying typography for a branded block is accepted, not refused');
+
+$bRows = [];
+foreach (elementsOf($bPdo, $bSign->id()) as $row) {
+    if ($row['type'] === 'text') { $bRows[$row['block_subtype']] = $row; }
+}
+checkSame(2, count($bRows), 'both text blocks landed');
+
+// The branded one: every field is the documented default, none of them the payload's.
+checkSame('Arial',    $bRows['price']['font_family'], 'a branded block stores no font family of its own');
+checkSame(16,         intval($bRows['price']['font_size']),  'no size');
+checkSame('#000000',  $bRows['price']['font_color'],  'no colour');
+checkSame('normal',   $bRows['price']['font_weight'], 'no weight');
+checkSame('normal',   $bRows['price']['font_style'],  'no style');
+checkSame('1.40', number_format(floatval($bRows['price']['line_height']), 2), 'and no line height');
+
+// The free one, same payload, and it keeps every field — which is what stops the
+// check above passing because publish dropped typography altogether.
+checkSame('Comic Sans MS', $bRows['free']['font_family'], 'a free block keeps the family it was sent');
+checkSame(99,        intval($bRows['free']['font_size']), 'and the size');
+checkSame('#ff00ff', $bRows['free']['font_color'],        'and the colour');
+checkSame('bold',    $bRows['free']['font_weight'],       'and the weight');
+checkSame('italic',  $bRows['free']['font_style'],        'and the style');
+checkSame('3.00', number_format(floatval($bRows['free']['line_height']), 2), 'and the line height');
+
+// A copy is a write of the same columns by the same module, so it answers the same
+// question. Otherwise the invariant would hold for the rows one of the two writers
+// wrote, which is not an invariant.
+$bTarget = makeTestDisplay($bPdo, 'brandcopy', 'Brand Copy', 1920, 1080);
+$bPdo->prepare("UPDATE canvas_elements SET font_family = ?, font_size = ?, font_color = ?
+                 WHERE display_id = ? AND block_subtype = 'price'")
+     ->execute(['Georgia', 44, '#c0392b', $bSign->id()]);
+check($bLayouts->copyLayout($bStore->forId($bSign->id()), $bStore->forId($bTarget->id())) > 0,
+      'a layout carrying a fossil from before this landed can still be copied');
+
+$copied = [];
+foreach (elementsOf($bPdo, $bTarget->id()) as $row) {
+    if ($row['type'] === 'text') { $copied[$row['block_subtype']] = $row; }
+}
+checkSame('Arial',   $copied['price']['font_family'], 'and the copy does not carry the fossil forward');
+checkSame('#000000', $copied['price']['font_color'],  'in any of its columns');
+checkSame('Comic Sans MS', $copied['free']['font_family'],
+          'while a free block\'s own typography is copied exactly as before');
+
+// The half that is a *sign* rather than a row: with no standard stored for a type,
+// both renderers fall back to the element's own columns, so publish must keep them.
+// Stripping on the strength of a row that is not there is a blank price on a wall.
+$bPdo->exec("DELETE FROM block_styles WHERE block_type = 'price'");
+$bSign = $bStore->forId($bSign->id());
+check(publishAs($bLayouts, $bSign, brandBakingLayout(), $bSign->layoutStamp())->isOk(),
+      'a publish still succeeds when no standard is stored for the type');
+$bare = [];
+foreach (elementsOf($bPdo, $bSign->id()) as $row) {
+    if ($row['type'] === 'text') { $bare[$row['block_subtype']] = $row; }
+}
+checkSame('Comic Sans MS', $bare['price']['font_family'],
+          'and a block no standard paints keeps the typography it was sent');
 
 // ─────────────────────────────────────────────────────────────
 section('The session gates: a token that is really checked, and a role that is re-read');
@@ -1864,15 +2291,15 @@ date_default_timezone_set($tzWas);
 // login that stored the column verbatim gave a row spelling it any other way one
 // meaning for one request and another from then on.
 //
-// The odd spelling is handed to the reader as a row rather than written to the column,
-// because the column will not hold it: `role` is an ENUM, and MySQL matches an
-// assignment against its members through the column's collation — `'Admin'` is stored
-// as `admin`, so the row this check is about cannot exist on the shop's engine, and the
-// version that wrote it there asserted the opposite of what it built (invariant 32).
-// That folding is a second defence and deliberately not the one under
-// test: a lagging install has its `canvas_elements` ENUMs widened at runtime, so what
-// type a column *is* is not something this app gets to assume, and the normalisation in
-// code is what has to hold either way.
+// The odd spelling is handed to the reader as a row rather than written to the
+// column, because the column will not hold it: `role` is an ENUM, and MySQL matches
+// an assignment against its members through the column's collation — `'Admin'` is
+// stored as `admin`, so the row this check is about cannot exist on the shop's
+// engine, and the version that wrote it there asserted the opposite of what it
+// built (§4bl). That folding is a second defence and deliberately not the one under
+// test: a lagging install has its `canvas_elements` ENUMs widened at runtime, so
+// what type a column *is* is not something this app gets to assume, and the
+// normalisation in code is what has to hold either way.
 checkSame('basic', LoginOutcome::ok(['id' => 1, 'username' => 'sky', 'role' => 'Admin'])->role(),
           'a role the reader is handed that is not spelled exactly "admin" is not admin');
 checkSame('basic', LoginOutcome::ok(['id' => 1, 'username' => 'sky', 'role' => 'root'])->role(),
@@ -2164,7 +2591,7 @@ check(abs(strtotime($stamp) - time()) > 3600,
       'read without the UTC suffix that same string is hours out — the line that got forgotten');
 checkSame(0, StoreClock::epochOf('not a date'), 'a stamp that will not read is 0, not a warning');
 checkSame(0, StoreClock::epochOf('0000-00-00 00:00:00'),
-          'and so is the zero date, which reads as year zero rather than failing (invariant 32)');
+          'and so is the zero date, which reads as year zero rather than failing (§4bk)');
 checkSame(0, StoreClock::epochOf('0000-00-00'), 'in either of the two shapes MySQL writes it');
 checkSame(0, StoreClock::epochOf(''),           'and neither is an empty one');
 checkSame(0, StoreClock::epochOf(null),         'nor a null column');
@@ -2202,8 +2629,14 @@ checkSame('', StoreClock::label('not a date', 'g:ia'),
           'an unreadable stamp is no words at all, so a refusal reads short rather than wrong');
 
 // ---- Through the callers ---------------------------------------------------------
-// The suite's own zone is the setting's default, so these assert the store's answer
-// rather than the server's — and would have read two hours out before this landed.
+// These assert the store's answer rather than the server's — they would have read two
+// hours out before this landed — and they say so *through* `StoreClock` rather than by
+// naming a time. The clock arithmetic is a fixed point five lines up, where the zone is
+// an argument and 2:15pm is written down; here the question is only whether the caller
+// went through that door or read the column itself, which a bare `strtotime()` still
+// fails by the hours the check above measures. Written as a literal these three passed
+// only on a checkout with no `branding_config.php` in it, which is this one and CI and
+// not the install they protect.
 $pdo   = newTestDb();
 $store = newTestDisplayStore($pdo);
 $zoned = makeTestDisplay($pdo, 'zoned', 'Zoned');
@@ -2233,9 +2666,14 @@ check(abs(strtotime((string)$takenAt) - time()) > 3600,
 // in the same minute.
 $pdo->prepare("UPDATE displays SET lock_taken_at = ? WHERE id = ?")
     ->execute([$instant, $zoned->id()]);
-checkSame('2:15pm', $store->forId($zoned->id())->lockState()->takenAtLabel(),
-          'a lock taken at 21:15 UTC is a lock taken at 2:15pm on the shop floor');
-checkMentions($store->forId($zoned->id())->editingSentence(), 'since 2:15pm',
+checkSame(StoreClock::label($instant, 'g:ia'), $store->forId($zoned->id())->lockState()->takenAtLabel(),
+          'a lock taken at 21:15 UTC is a lock taken at the store\'s own hour on the shop floor');
+// The store's zone through the door rather than the literal `2:15pm` main wrote here:
+// this suite now runs as a configured install (§4bg), so the zone is the install's and
+// not this checkout's. `label()` itself is still pinned to a literal two blocks up, so
+// the anchor did not move — it moved to where the zone is known.
+checkMentions($store->forId($zoned->id())->editingSentence(),
+              'since ' . StoreClock::label($instant, 'g:ia'),
               'and so does the sentence a refused publish prints');
 
 // ---- The publish stamp was the third clock ---------------------------------------
@@ -2246,7 +2684,7 @@ checkMentions($store->forId($zoned->id())->editingSentence(), 'since 2:15pm',
 // agreed with the reader. A bound gmdate() is the same string on both.
 $layoutsZ = newTestLayoutStore($pdo);
 $store->claimLock($zoned, 1);
-$layoutsZ->publish($zoned, new PublishRequest([], Background::unchanged(), 1, true, $zoned->layoutStamp()));
+$layoutsZ->publish($zoned, new PublishRequest([], Background::unchanged(), BrandChoice::unchanged(), 1, true, $zoned->layoutStamp()));
 $publishedAt = $pdo->query("SELECT last_published_at FROM displays WHERE id = " . $zoned->id())->fetchColumn();
 check(abs(StoreClock::epochOf($publishedAt) - time()) <= 5,
       'a publish records the moment in UTC, bound by PHP rather than asked of the database');
@@ -2255,18 +2693,23 @@ check(abs(strtotime((string)$publishedAt) - time()) > 3600,
 
 $pdo->prepare("UPDATE displays SET last_published_at = ?, last_published_by = 1 WHERE id = ?")
     ->execute([$instant, $zoned->id()]);
-checkSame('sky, Aug 11 at 2:15pm', $store->forId($zoned->id())->lastPublishDescription(),
-          'and the refusal names the moment in the store\'s zone');
-// Handed to the reader as a row rather than written to the column (invariant 32):
-// a DATETIME will not hold 'nonsense' on MySQL — strict mode raises 1292 and the whole
-// run stops here — and `lastPublishDescription()` reads a row rather than a database, so
-// the state this check is about does not need the column's permission to exist.
+// `n/j/y g:ia` since the publish line moved into the canvas footer. The year is the
+// point of the change rather than the brevity: without it a sign published last
+// August and left alone reads as published this August, and "is what I'm looking at
+// live?" is the one question this sentence exists to answer.
+checkSame('sky, ' . StoreClock::label($instant, 'n/j/y g:ia'),
+          $store->forId($zoned->id())->lastPublishDescription(),
+          'and the refusal names the moment in the store\'s zone, year and all');
+// Handed to the reader as a row for the Brand's reason one column along (§4bk): a
+// DATETIME will not hold 'nonsense' on MySQL — strict mode raises 1292 and the whole run
+// stops here — and `lastPublishDescription()` reads a row rather than a database, so the
+// state this check is about does not need the column's permission to exist.
 checkSame('sky', (new Display(['last_published_at'      => 'nonsense',
                                'last_published_by_name' => 'sky']))->lastPublishDescription(),
           'a stamp that will not read leaves the name rather than a half-written sentence');
 // And the one unreadable stamp MySQL *can* hold, which is why the line above is not the
-// whole check: a host running without strict mode, or a dump taken from one, leaves a
-// zero date, and `strtotime()` reads that as a moment in year zero rather than failing.
+// whole check: a host running without strict mode, or a dump from one, leaves a zero
+// date, and `strtotime()` reads that as a moment in year zero rather than failing.
 checkSame('sky', (new Display(['last_published_at'      => '0000-00-00 00:00:00',
                                'last_published_by_name' => 'sky']))->lastPublishDescription(),
           'and so does the zero date a non-strict host writes, which does not fail to parse');
@@ -2282,10 +2725,20 @@ checkMentions($configSrc, 'StoreClock::apply()',
               'config.php points the process clock at the store, once, for every page');
 checkMentions(file_get_contents(__DIR__ . '/../db_connect.php'), "SET time_zone = '+00:00'",
               'and db_connect.php asks the database for UTC, which was the clock no screen showed');
-checkSame('America/Los_Angeles', StoreClock::apply(),
+checkSame(StoreClock::zone(), StoreClock::apply(),
           'apply() answers with the zone it set, so a caller can say which one it was');
-checkSame('America/Los_Angeles', date_default_timezone_get(),
+checkSame(StoreClock::zone(), date_default_timezone_get(),
           'and the process is actually on it afterwards — config.php ran this on the way in');
+// Which of those two is doing the work is invisible in a process whose zone is the
+// default, and that is every process this suite can otherwise build: `apply()` could
+// ignore the setting entirely and both lines above would still agree. One process that
+// has been told a zone answers it.
+checkSame('Pacific/Auckland|Pacific/Auckland', inFreshProcess('
+        define("STORE_TIMEZONE", "Pacific/Auckland");
+        require LBM_ROOT . "/lib/store_clock.php";
+        $answered = StoreClock::apply();
+        echo $answered . "|" . date_default_timezone_get();
+    '), 'and the zone it sets is the one the store configured, not the one this app ships with');
 
 // ---- The Settings form ------------------------------------------------------------
 $panelTz = file_get_contents(__DIR__ . '/../admin_panel.php');
@@ -2306,22 +2759,38 @@ checkSame(0, preg_match('/date\(\s*.M j, Y.\s*,\s*strtotime/', $panelTz),
 // to name all three clocks now, because there were three.
 $tzReport = (new ServerReport($pdo, ['HTTPS' => 'on']))->runtime();
 check(isset($tzReport[StoreClock::LABEL]), 'This Server reports the zone the app shows times in');
-checkMentions($tzReport[StoreClock::LABEL][0], 'America/Los_Angeles', 'and says which one that is');
+checkMentions($tzReport[StoreClock::LABEL][0], StoreClock::zone(), 'and says which one that is');
 check(isset($tzReport['PHP time zone']), 'and the server\'s own, which no longer decides anything');
+// The note on that row had been spelled inline against `ini_get('date.timezone')`,
+// which meant it had one form on any machine that ran this suite and the other form
+// on none of them: a host with no `date.timezone` line answers '', and `php -d
+// date.timezone=` does not reproduce that — PHP rejects the empty value at startup
+// and substitutes UTC. Seamed, both forms are reachable here.
+checkSame('', ServerReport::phpZoneNoteFor('America/Chicago'),
+          'a host that has set its own zone is told nothing about it');
+checkSame('', ServerReport::phpZoneNoteFor(StoreClock::DEFAULT_ZONE),
+          'and neither is one that happens to have set the app\'s own');
+$noZone = ServerReport::phpZoneNoteFor('');
+check($noZone !== '', 'a host that has set none does get a sentence');
+checkMentions($noZone, 'Harmless',
+              'and it opens by saying so, because this row used to mean times were hours out');
+check(strpos($noZone, 'setting above') !== false,
+      'and points at the store\'s own zone, which is the row that decides what a screen shows');
 check(isset($tzReport['Database time zone']),
       'and the database\'s, which is where an account\'s creation date comes from');
-// The value itself is the one thing here that genuinely differs by engine, so the
-// engine *is* the expectation. `not applicable` is the catch in `databaseTimeZone()`,
-// and it has to be reached on SQLite — where neither variable exists — and not reached
-// on MySQL, where a real answer means the two queries ran.
+// The value itself is the one thing here that genuinely differs by engine, so it is
+// asserted the way `limitPublishLockWait()` below is: the engine *is* the expectation.
+// `not applicable` is the catch in `databaseTimeZone()`, and it has to be reached on
+// SQLite — where neither variable exists — and not reached on MySQL, where a real
+// answer means the two queries ran.
 checkSame(!testIsMysql(), $tzReport['Database time zone'][0] === 'not applicable',
           'the engine with no session zone at all says so, and the engine with one does not');
 checkSame('', $tzReport['Database time zone'][1],
           'with nothing to warn about, because both engines here write their stamps in UTC');
-// Seamed for the same reason the PHP zone note above it is, and the two forms this one
-// had were the two engines: spelled inline, the row could only ever be asserted against
-// whichever engine the suite was started on, and the MySQL leg then failed on the value
-// the SQLite leg had written down as correct.
+// Seamed for the same reason `phpZoneNoteFor()` above it is, and the two forms this
+// one had were the two engines: spelled inline, the row could only ever be asserted
+// against whichever one the suite was started on, and the MySQL leg then failed on
+// the value the SQLite leg had written down as correct (§4bl).
 checkSame('', ServerReport::dbZoneNoteFor('not applicable'),
           'a database with no session zone at all has nothing to say about one');
 checkSame('', ServerReport::dbZoneNoteFor('+00:00'),
@@ -2338,6 +2807,12 @@ check(strpos($dbZoneWarn, 'Nothing a sign shows') !== false,
       'together with what is not affected, because a sign is what this app is for');
 check(ServerReport::dbZoneNoteFor('America/Chicago') !== '',
       'a named zone that is not UTC is the same refusal by another spelling');
+// The `trim()` inside the predicate, which survived §4bl's sweep. MySQL does not pad
+// what it answers to `@@session.time_zone`, so the line is insurance rather than a
+// path — but this is a public seam now, and one check is cheaper than the paragraph
+// explaining why the line is allowed to be untested.
+checkSame('', ServerReport::dbZoneNoteFor("  UTC \n"),
+          'and a zone arriving with whitespace round it is still that zone');
 checkSame('', $tzReport[StoreClock::LABEL][1],
           'and nothing to say about a setting this app can read');
 // The note is the whole point of the row: a stored value nobody can use has to be
@@ -2475,9 +2950,9 @@ $b = makeTestDisplay($pdo, 'bb', 'Sign B');
 // blanked that line on both of them, permanently. Two rows now.
 $shared = ['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'Sockeye  18.99',
            'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60];
-$layouts->publish($a, new PublishRequest([$shared], Background::unchanged(), 1, true, $a->layoutStamp()));
+$layouts->publish($a, new PublishRequest([$shared], Background::unchanged(), BrandChoice::unchanged(), 1, true, $a->layoutStamp()));
 $store->releaseLock($a, 1);
-$layouts->publish($b, new PublishRequest([$shared], Background::unchanged(), 1, true, $b->layoutStamp()));
+$layouts->publish($b, new PublishRequest([$shared], Background::unchanged(), BrandChoice::unchanged(), 1, true, $b->layoutStamp()));
 $store->releaseLock($b, 1);
 
 $assetId = intval($pdo->query("SELECT id FROM assets ORDER BY id ASC LIMIT 1")->fetchColumn());
@@ -2528,11 +3003,11 @@ $block = function ($words) {
 };
 
 $fresh = $store->forId($sign->id());
-$layouts->publish($sign, new PublishRequest([$block('Sockeye  18.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$layouts->publish($sign, new PublishRequest([$block('Sockeye  18.99')], Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 $fresh = $store->forId($sign->id());
-$layouts->publish($fresh, new PublishRequest([$block('Sockeye  19.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$layouts->publish($fresh, new PublishRequest([$block('Sockeye  19.99')], Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 $fresh = $store->forId($sign->id());
-$layouts->publish($fresh, new PublishRequest([$block('Sockeye  21.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$layouts->publish($fresh, new PublishRequest([$block('Sockeye  21.99')], Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 
 checkSame(1, intval($pdo->query("SELECT COUNT(*) FROM assets")->fetchColumn()),
           'three publishes of one block leave one library entry, not three');
@@ -2546,7 +3021,7 @@ checkSame(1, intval($pdo->query("SELECT COUNT(*) FROM canvas_elements WHERE asse
 // on its own deletes from a "<" onwards, which labelled this row "Auto: Kids " and
 // left the only clue to which block it belongs to on the cutting-room floor.
 $fresh = $store->forId($sign->id());
-$layouts->publish($fresh, new PublishRequest([$block('Kids <12 eat free')], Background::unchanged(),
+$layouts->publish($fresh, new PublishRequest([$block('Kids <12 eat free')], Background::unchanged(), BrandChoice::unchanged(),
                                              1, true, $fresh->layoutStamp()));
 checkSame('Auto: Kids <12 eat free',
           $pdo->query("SELECT label FROM assets WHERE content = 'Kids <12 eat free'")->fetchColumn(),
@@ -2557,7 +3032,7 @@ checkSame('Auto: Kids <12 eat free',
 $mine = $library->create('image', 'uploads/promo.jpg', 'Summer Promo Banner');
 check($mine > 0, 'an admin can still add an entry of their own');
 $fresh = $store->forId($sign->id());
-$layouts->publish($fresh, new PublishRequest([$block('Sockeye  22.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$layouts->publish($fresh, new PublishRequest([$block('Sockeye  22.99')], Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 check($library->forId($mine) !== null,
       'and publishing does not sweep it away, though no sign uses it');
 
@@ -2567,14 +3042,14 @@ $library->update($autoId, 'Sockeye price', 'Sockeye  22.99');
 checkSame(0, intval($pdo->query("SELECT auto_pooled FROM assets WHERE id = " . $autoId)->fetchColumn()),
           'naming an auto-saved entry makes it yours');
 $fresh = $store->forId($sign->id());
-$layouts->publish($fresh, new PublishRequest([$block('Sockeye  23.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$layouts->publish($fresh, new PublishRequest([$block('Sockeye  23.99')], Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 check($library->forId($autoId) !== null,
       'so the next publish leaves it alone even once nothing points at it');
 
 // The half a publish cannot reach: a block deleted from the admin Work Area
 // releases its entry with no publish anywhere near it. That is the tidy button.
 $fresh = $store->forId($sign->id());
-$layouts->publish($fresh, new PublishRequest([$block('Halibut  26.99')], Background::unchanged(), 1, true, $fresh->layoutStamp()));
+$layouts->publish($fresh, new PublishRequest([$block('Halibut  26.99')], Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 $live = intval($pdo->query("SELECT id FROM canvas_elements WHERE asset_id IS NOT NULL")->fetchColumn());
 $fresh = $store->forId($sign->id());
 $layouts->deleteElement($fresh, $live, 1);
@@ -2617,9 +3092,9 @@ $two = makeTestDisplay($pdo, 'two', 'Lobby Screen');
 
 $words = ['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'OPEN 7 DAYS',
           'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60];
-$layouts->publish($one, new PublishRequest([$words], Background::unchanged(), 1, true, $one->layoutStamp()));
+$layouts->publish($one, new PublishRequest([$words], Background::unchanged(), BrandChoice::unchanged(), 1, true, $one->layoutStamp()));
 $store->releaseLock($one, 1);
-$layouts->publish($two, new PublishRequest([$words], Background::unchanged(), 1, true, $two->layoutStamp()));
+$layouts->publish($two, new PublishRequest([$words], Background::unchanged(), BrandChoice::unchanged(), 1, true, $two->layoutStamp()));
 $store->releaseLock($two, 1);
 
 // Point both signs at one row, the way the old pooling did.
@@ -2633,7 +3108,7 @@ $fresh = $store->forId($one->id());
 $layouts->publish($fresh, new PublishRequest(
     [['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'CLOSED SUNDAYS',
       'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60]],
-    Background::unchanged(), 1, true, $fresh->layoutStamp()));
+    Background::unchanged(), BrandChoice::unchanged(), 1, true, $fresh->layoutStamp()));
 
 check($library->forId($sharedId) !== null,
       'publishing one sign does not sweep an entry the other sign still uses');
@@ -2663,7 +3138,7 @@ checkSame(0, (new AssetLibrary($noLib))->pool('text', 'Sockeye  18.99'),
 $result = $noLay->publish($noSign, new PublishRequest(
     [['type' => 'text', 'block_subtype' => 'price', 'manual_content' => 'Sockeye  18.99',
       'save_to_db_pool' => true, 'x_pos' => 0, 'y_pos' => 0, 'width' => 200, 'height' => 60]],
-    Background::unchanged(), 1, true, $noSign->layoutStamp()));
+    Background::unchanged(), BrandChoice::unchanged(), 1, true, $noSign->layoutStamp()));
 checkSame(true, $result->isOk(), 'the publish still succeeds');
 $kept = $noLib->query("SELECT manual_content, asset_id FROM canvas_elements")->fetch();
 checkSame('Sockeye  18.99', $kept['manual_content'], 'and the words stay on the block, where they render');
@@ -2729,18 +3204,18 @@ checkSame(AssetEdit::MISSING, $res->kind(), 'saving an entry that no longer exis
 checkSame(false, $res->isOk(), 'and is never reported as a save');
 
 // ---- The type the add form never offers and a publish does --------------------
-// `assets.type` is ENUM('text','image','video'), and a `video` row is the only kind in
-// the library nobody can create by hand: the add form offers two, and the third arrives
-// when a publish pools a video block that carries its own path. It is the case the
-// Library's edit form has a whole third branch for — not text, so nothing may strip it,
-// and not an image, so the allow-list must not be reached for it.
+// `assets.type` is ENUM('text','image','video'), and a `video` row is the only kind
+// in the library nobody can create by hand: the add form offers two, and the third
+// arrives when a publish pools a video block that carries its own path. It is the
+// case the Library's edit form has a whole third branch for — not text, so nothing
+// may strip it, and not an image, so the allow-list must not be reached for it.
 //
-// This block used to build a `carousel` row and assert that it was ordinary. It is not:
-// the column refuses it, and the Builder never asks — `pool: false` on all three of the
-// types that carry a block's settings rather than a piece of content. Two comments in
-// this app said those rows exist while the schema and the Builder said they cannot, and
-// the suite had been asserting the wrong pair for as long as SQLite was the only engine
-// it ran on, since SQLite has no ENUM to refuse anything.
+// This block used to build a `carousel` row and assert that it was ordinary. It is
+// not: the column refuses it, and the Builder never asks — `pool: false` on all three
+// of the types that carry a block's settings rather than a piece of content. Two
+// comments in this app say those rows exist and the schema and the Builder say they
+// cannot, and the suite had been asserting the wrong pair for as long as SQLite was
+// the only engine it ran on, since SQLite has no ENUM to refuse anything (§4bl).
 $videoId = $library->pool('video', 'uploads/deli-loop.mp4');
 check($videoId > 0, 'publishing a video block that carries its own path pools it');
 $res = $library->update($videoId, 'Deli loop', 'uploads/deli-loop-v2.mp4');
@@ -2751,11 +3226,11 @@ checkSame('uploads/deli-loop-v2.mp4',
 checkSame('video', $pdo->query("SELECT type FROM assets WHERE id = " . $videoId)->fetchColumn(),
           'and no edit anywhere changes what kind of entry a row is');
 
-// The agreement that makes those three the whole list, read out of the two files that
-// have to hold it rather than restated here. A block type added to the Builder's
-// poolable set and not to the column is a publish whose "save to library" silently does
-// nothing; added to the column and not the Builder, it is a member no row can ever
-// have. Neither says anything on any screen.
+// The agreement that makes the three above the whole list, read out of the two files
+// that have to hold it rather than restated here. A block type added to the Builder's
+// poolable set and not to the column is a publish whose "save to library" silently
+// does nothing; added to the column and not the Builder, it is a member no row can
+// ever have. Neither says anything on any screen.
 $assetsEnum = [];
 if (preg_match('/CREATE TABLE IF NOT EXISTS assets\b.*?\n\s*type\s+ENUM\(([^)]*)\)/s',
                file_get_contents(__DIR__ . '/../schema.sql'), $enumMatch)) {
@@ -3113,7 +3588,7 @@ $server = new ServerReport($sPdo);
 
 check($server->isConverged(), 'a fully converged database reports as converged');
 $columns = $server->convergence();
-checkSame(8, count($columns), 'and every runtime-added column is accounted for');
+checkSame(10, count($columns), 'and every runtime-added column is accounted for');
 foreach ($columns as $col) {
     check($col['ok'], 'present: ' . $col['table'] . '.' . $col['column']);
     checkSame('', $col['note'], 'with nothing to warn about for ' . $col['column']);
@@ -3176,6 +3651,23 @@ foreach ($runtime as $fact) {
 }
 check($allStrings, 'every fact is a printable pair, so the panel cannot be handed an object');
 
+// The row an admin reads when a file was refused and they want to know whose rule it
+// was. It too had been spelled inline against two PHP_INI_PERDIR settings, so on this
+// machine it has always been the server-limited form naming 2M and could never be
+// anything else — the same unreachability `UploadLimit::smallestOf()` was seamed for.
+checkSame('', ServerReport::uploadCeilingNoteFor(UploadLimit::APP_MAX_BYTES, '64M', '128M'),
+          'a host more generous than the app is not blamed for the app\'s own ceiling');
+$hostBound = ServerReport::uploadCeilingNoteFor(2097152, '2M', '8M');
+check($hostBound !== '', 'a host that is the binding limit says so');
+checkMentions($hostBound, 'upload_max_filesize 2M',
+              'and quotes the setting as it is written in the file somebody has to edit');
+checkMentions($hostBound, 'post_max_size 8M',
+              'and the other one, because the smaller of the two is the one that binds');
+// The number in the row beside it is the effective limit; this sentence must not
+// repeat it in bytes, which is not what is in any php.ini anybody will open.
+check(strpos($hostBound, '2097152') === false,
+      'and never in bytes — nobody edits a php.ini by typing 2097152');
+
 // ASSUMED_PHP is the floor the repo is written to — 8.2, stated by the owner (§4k) and
 // since observed twice: 8.2.33 on the runtime card, and `ea-php82` pinned explicitly to
 // srcresort.com in cPanel (2026-08-11, HANDOFF §7). A server at or above it is told
@@ -3215,6 +3707,55 @@ check(strpos($ancient, 'Session cookie') !== false,
       'and points at the row that reads the three flags back off the live cookie');
 check($behind !== $ancient,
       'the two speaking bands do not print the same sentence — what to do next differs');
+
+// ---- And the same for the engine, which had a number and no sentence ----------------
+// The row printed `''` hardcoded while the row above it had three bands. The version had
+// been read off that card and written into HANDOFF.md on 2026-08-11 — 5.7.23-23 — and
+// eight days later nothing had been done with it: no floor, no note, and no check that
+// the SQL this app sends is 5.7's to accept. It is 5.7 because the shop *is* 5.7.
+checkSame('5.7', ServerReport::ASSUMED_MYSQL,
+          'the database floor is the engine the shop runs, read off its own card');
+checkSame('', ServerReport::mysqlVersionNote('mysql', '5.7.23-23'),
+          'the engine the store actually has is told nothing about itself');
+checkSame('', ServerReport::mysqlVersionNote('mysql', '8.0.36'),
+          'and neither is a newer one — being ahead of the floor is not a problem');
+// The driver is a parameter and this is why. SQLite answers 3.45.1, which parsed as a
+// MySQL version is far below the floor: a note written without the driver would have
+// fired on every SQLite run in this project and called the shop's engine ancient.
+checkSame('', ServerReport::mysqlVersionNote('sqlite', '3.45.1'),
+          'and the fixture engine is not told it is an ancient MySQL, because it is not one');
+checkSame('', ServerReport::mysqlVersionNote('mysql', 'unknown'),
+          'a version this cannot parse gets no opinion rather than a wrong one');
+
+$oldDb = ServerReport::mysqlVersionNote('mysql', '5.6.51');
+check($oldDb !== '', 'an engine below the floor does say so');
+checkMentions($oldDb, ServerReport::ASSUMED_MYSQL, 'and names the version the SQL is written for');
+check(strpos($oldDb, 'innodb_large_prefix') !== false,
+      'and names the setting that makes a 1020-byte utf8mb4 index legal, which 5.6 has off');
+// No SQL keyword in a sentence an admin reads — and `check_invariants.php` holds the whole
+// repo to one place that may name the database's own clock, over string literals, which
+// unlike comments it cannot drop. The first draft of this note failed that check.
+check(strpos($oldDb, 'CURRENT_' . 'TIMESTAMP') === false,
+      'and names no SQL keyword, which is both better copy and a rule this repo enforces');
+// The reason this band cannot be left to "the query will fail and somebody will see it".
+check(strpos($oldDb, 'never thrown') !== false,
+      'and says a refused schema statement is silent, which is why the card has to say it');
+check(strpos($oldDb, '5.7.23') === false,
+      'and does not repeat the exact version, which is already the value beside it');
+
+// MariaDB reports 10.x — numerically above the floor and a different product, so a
+// version comparison alone answers "fine" about an engine nothing here has run on.
+$maria = ServerReport::mysqlVersionNote('mysql', '10.6.16-MariaDB-log');
+check($maria !== '', 'MariaDB is not silently accepted for being numbered above 5.7');
+checkMentions($maria, 'MariaDB', 'the note names the product rather than the number');
+checkMentions($maria, 'rehearse_phase1.php', 'and points at the one tool that would find out');
+// The strict `!== false` on the stripos, pinned with a match at position 0 — the only
+// string that tells `!== false` and `!= false` apart, since 0 is falsy. No version PDO
+// returns begins with the word, so the loose form would have worked here by luck; this is
+// the check that makes it right rather than lucky (invariant 30 — mutant 56 survived).
+check(ServerReport::mysqlVersionNote('mysql', 'MariaDB 10.6 (repackaged)') !== '',
+      'and a version naming the product first is still caught, where a falsy 0 would not be');
+check($maria !== $oldDb, 'and it is not the below-the-floor sentence — the answer differs');
 
 // ─────────────────────────────────────────────────────────────
 section('Which install is this, and whose credentials does it use');
@@ -3288,15 +3829,15 @@ section('Convergence asks the catalogue before it alters anything');
 $converged = schemaPlanFor(convergedSchemaShape());
 checkSame(0, count(planStatements($converged)),
           'a converged database is issued no ALTER or CREATE at all');
-checkSame(['seed_block_styles', 'seed_legacy_display'], planSteps($converged),
-          'only the two steps a catalogue cannot answer are left, and both are a small COUNT');
+checkSame(['seed_first_brand', 'seed_block_styles', 'seed_legacy_display'], planSteps($converged),
+          'only the three steps a catalogue cannot answer are left, and each is a small COUNT');
 
 // The fallback has to be the old behaviour exactly, or a host whose catalogue
 // cannot be read would quietly stop converging.
 $blind = signageSchemaPlan(SchemaFacts::unknown());
-checkSame(21, count(planStatements($blind)),
+checkSame(35, count(planStatements($blind)),
           'a database whose catalogue cannot be read is issued every statement, as before');
-checkSame(4, count(planSteps($blind)), 'and every step');
+checkSame(7, count(planSteps($blind)), 'and every step');
 checkSame(false, SchemaFacts::unknown()->known(), 'and it says so rather than answering false');
 checkSame(null, SchemaFacts::unknown()->hasColumn('assets', 'auto_pooled'),
           'an unknown catalogue answers "cannot tell", never "not there"');
@@ -3335,13 +3876,60 @@ $plan = signageSchemaPlan(readSchemaFacts(fakeCatalogue($shape)));
 check(planWants($plan, 'MODIFY COLUMN display_id INT(11) NOT NULL'),
       'a column the catalogue reports as nullable is tightened');
 
+// ---- The re-key, which is the one statement that replaces structure ----------
+// The gate reads the PRIMARY's *columns*, because every table has a PRIMARY and an
+// existence test would answer the same before and after. So the property worth
+// asserting is both directions: a database still on the old key is asked for the
+// swap, and one already on the new key is asked for nothing — a second
+// `DROP PRIMARY KEY, ADD PRIMARY KEY` does not fail harmlessly, it rebuilds the table
+// every sign's typography lives in.
+$kShape = convergedSchemaShape();
+$kFacts = schemaFactsFrom($kShape);
+checkSame(false, $kFacts->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+          'a table already keyed on (brand_id, block_type) is not re-keyed');
+check(!planWants(schemaPlanFor($kShape), 'DROP PRIMARY KEY'),
+      'so a converged database is sent no DROP PRIMARY KEY at all');
+
+$kShape['indexes']['block_styles']['PRIMARY'] = ['block_type'];
+$kOld = schemaFactsFrom($kShape);
+checkSame(true, $kOld->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+          'a table still on the old single-column key is re-keyed');
+check(planWants(schemaPlanFor($kShape), 'DROP PRIMARY KEY, ADD PRIMARY KEY (brand_id, block_type)'),
+      'and the plan carries exactly that statement');
+
+// Order is the whole of a composite key. These are different keys, and a gate that
+// compared them as sets would call the re-key already done and leave the table on a
+// key whose first column is the block type — which is why the catalogue read orders
+// by SEQ_IN_INDEX rather than trusting the row order MySQL happens to return.
+$kShape['indexes']['block_styles']['PRIMARY'] = ['block_type', 'brand_id'];
+checkSame(true, schemaFactsFrom($kShape)->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+          'the same two columns in the other order is a different key, and is re-keyed');
+
+// A shape that recorded the index without its columns cannot answer, and "cannot
+// tell" has to mean null rather than an empty list — an empty list would compare
+// unequal and issue the rebuild on every request, for ever.
+$kShape['indexes']['block_styles']['PRIMARY'] = true;
+checkSame(null, schemaFactsFrom($kShape)->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+          'an index recorded without its columns answers "cannot tell", never a confident list');
+checkSame(null, schemaFactsFrom($kShape)->indexColumns('block_styles', 'PRIMARY'),
+          'and indexColumns says so directly');
+checkSame(null, SchemaFacts::unknown()->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+          'and so does a catalogue that could not be read at all');
+
+// The three-valued discipline the rest of this file has: a table that is not there is
+// a definite no, because the CREATE that makes it declares its own key.
+$kGone = convergedSchemaShape();
+unset($kGone['columns']['block_styles'], $kGone['indexes']['block_styles']);
+checkSame(false, schemaFactsFrom($kGone)->needsPrimaryKey('block_styles', ['brand_id', 'block_type']),
+          'a table that is not there is not re-keyed');
+
 // A catalogue that answers but knows nothing about this app is not a database with
 // no tables — it is a question that did not land. Reading it as "everything is
 // missing" would issue two CREATE TABLEs and five foreign keys against a database
 // that has them all.
 $empty = readSchemaFacts(fakeCatalogue(['columns' => [], 'indexes' => [], 'constraints' => []]));
 checkSame(false, $empty->known(), 'a catalogue with nothing to say about this app is unknown, not empty');
-checkSame(21, count(planStatements(signageSchemaPlan($empty))),
+checkSame(35, count(planStatements(signageSchemaPlan($empty))),
           'so it falls back to trying everything rather than creating what already exists');
 
 // Two things about a catalogue this app does not control, both of which decide
@@ -3536,9 +4124,10 @@ checkSame(true, $absent->needsConstraint('canvas_elements', 'canvas_elements_ibf
           'but its foreign key is still wanted, because no CREATE TABLE here declares one');
 check(!planWants($plan, 'MODIFY COLUMN'), 'so the plan sends it no MODIFY');
 check(!planWants($plan, 'ADD KEY'),       'and no ADD KEY');
-checkSame(['seed_block_styles', 'seed_legacy_display', 'canvas_elements → displays'],
+checkSame(['seed_first_brand', 'seed_block_styles', 'seed_legacy_display',
+           'canvas_elements → displays'],
           planOrder($plan),
-          'leaving the two steps and the one statement that is not redundant, and nothing else');
+          'leaving the three steps and the one statement that is not redundant, and nothing else');
 
 // The same rule one level down: a column that is absent from a table that is *there*
 // is added by its own ADD COLUMN, or not at all. MODIFY has nothing to work on, and
@@ -3558,15 +4147,34 @@ check(!in_array('seed_block_styles', planSteps(schemaPlanFor($shape)), true),
 
 // ---- The steps, and what a failure now looks like ----------------------------
 
-// SQLite rejects `INSERT IGNORE`, which makes it a useful witness: a true return
-// can only mean the count found all six types and the statement was never sent.
-// That is the whole technique, so this pair stays on SQLite even on a MySQL run —
-// where the statement is valid, is sent, and succeeds, which proves the opposite
-// thing. Both are worth knowing; the MySQL half is checked at the end of the file.
+// The seed used to be one `INSERT IGNORE`, which SQLite rejects — so on this engine
+// a `true` return could only ever mean "the count found all six and nothing was
+// sent", and the inserting half of the function had never run in a test at all.
+// Re-keying on the Brand replaced it with a computed set of plain INSERTs, which
+// both engines run, so the seed can now be watched actually seeding.
 $bPdo = newSqliteTestDb();
 checkSame(true, seedBlockStyles($bPdo), 'a complete set of branded block types is not re-seeded');
 $bPdo->exec("DELETE FROM block_styles WHERE block_type = 'price_2'");
-checkSame(false, seedBlockStyles($bPdo), 'a missing one makes it try the seed');
+checkSame(true, seedBlockStyles($bPdo), 'a missing one is put back');
+checkSame(6, count((new BrandStyles($bPdo))->all(1)), 'so the Brand has all six again');
+
+// A second Brand with no standards at all is six more rows, not zero: the seed is
+// per Brand now, and a Brand created by a hand-written INSERT is exactly the state
+// that used to leave a whole venue's typography form silently saving nothing.
+makeTestBrandRow($bPdo, 'Unseeded Venue');
+checkSame(true, seedBlockStyles($bPdo), 'a Brand with no standards at all is seeded');
+checkSame(6, count((new BrandStyles($bPdo))->all(2)), 'with its own six rows');
+checkSame('Arial', (new BrandStyles($bPdo))->all(2)['price']['font_family'],
+          'started from BrandStyles::STARTING_POINTS rather than from the other Brand');
+
+// And the cascade of a Brand that could not be created: nothing to seed *for*.
+$bNoBrand = newSqliteTestDb();
+$bNoBrand->exec("DELETE FROM block_styles");
+$bNoBrand->exec("DELETE FROM displays");
+$bNoBrand->exec("DELETE FROM brands");
+$bErr = 'untouched';
+checkSame(false, seedBlockStyles($bNoBrand, $bErr), 'with no Brand there is nothing to seed for');
+checkMentions($bErr, 'no Brand', 'and it says that rather than naming a column');
 
 checkSame(true, runSchemaStep(newTestDb(), 'no_such_step'),
           'a step name nothing knows is nothing to do, not a failure');
@@ -3810,7 +4418,8 @@ $yPdo   = newTestDb();
 $yStore = newTestDisplayStore($yPdo);
 $yLobby = makeTestDisplay($yPdo, 'lobby', 'Lobby');
 $yDeli  = makeTestDisplay($yPdo, 'deli', 'Deli Case');
-$yBreak = new DisplayAdmin($yPdo, $yStore, newTestLayoutStore($yPdo), new RefusingGrantStore($yPdo));
+$yBreak = new DisplayAdmin($yPdo, $yStore, newTestLayoutStore($yPdo), new RefusingGrantStore($yPdo),
+                           new BrandStore($yPdo));
 grantTestAccess($yPdo, $yLobby->id(), 2);
 $yStore->claimLock($yLobby, 2);
 
@@ -4103,7 +4712,7 @@ check(strpos($res->message(), 'cannot sign in') === false,
 // theirs.
 $wStore->claimLock(loadTestDisplay($wPdo, $wDrive->id()), 2);
 $res = $wAdmin->updateDetails(loadTestDisplay($wPdo, $wDrive->id()), [
-    'tag' => 'drive-through', 'title' => 'Drive-Thru', 'location' => '',
+    'brand_id' => 1, 'tag' => 'drive-through', 'title' => 'Drive-Thru', 'location' => '',
 ]);
 checkSame(true, $res->isOk(), 'a screen name tag can be renamed');
 checkSame('drive-through', loadTestDisplay($wPdo, $wDrive->id())->tag(), 'and really changes');
@@ -4117,7 +4726,7 @@ checkMentions($res->message(), 'still theirs',
 // With nobody editing, there is nothing to say about a reload.
 $wStore->releaseLockOn($wDrive->id(), 2);
 $res = $wAdmin->updateDetails(loadTestDisplay($wPdo, $wDrive->id()), [
-    'tag' => 'drive-thru', 'title' => 'Drive-Thru', 'location' => '',
+    'brand_id' => 1, 'tag' => 'drive-thru', 'title' => 'Drive-Thru', 'location' => '',
 ]);
 check(strpos($res->message(), 'reload') === false,
       'renaming a display nobody has open says nothing about anybody reloading');
@@ -4149,11 +4758,17 @@ checkMentions($apiSrc, "'published'    => \$justPublished ? \$justPublished->las
 checkMentions($apiSrc, '$justPublished = $displays->forId($display->id());',
               'read fresh after the publish, not composed beside it');
 checkMentions($wJs, "showPublishState(res.published);",
-              'and the Builder puts that sentence in its top bar');
-checkMentions($wJs, '<span class="d-pub" id="pub-state">',
+              'and the Builder puts that sentence in its canvas footer');
+checkMentions($wJs, '<span id="pub-state">',
               'which is a line the page renders on load as well, so it is there before any publish');
-checkMentions($wJs, 'published by <?= Markup::text($display->lastPublishDescription()) ?>',
+checkMentions($wJs, 'Last published by <?= Markup::text($display->lastPublishDescription()) ?>',
               'from the same method, through the one escaping door');
+// The line moved out of the nav and into the footer, and the footer is emitted for
+// a read-only Builder too — that was the case it was written for. `#canvas-footer`
+// sits outside every `$readOnly` conditional, which selftest_builder_readonly.js
+// holds it to by name; this is the half that says the publish line is inside it.
+check(strpos($wJs, '<span id="pub-state">') > strpos($wJs, '<div id="canvas-footer">'),
+      'and it is inside the canvas footer rather than the bar the sketch was clearing');
 
 // ─────────────────────────────────────────────────────────────
 section('What a visitor is told when something breaks');
@@ -4307,6 +4922,90 @@ check(file_exists($rollPath . '.1'),
       'a later entry in the same request measures the file again rather than remembering it');
 
 // ─────────────────────────────────────────────────────────────
+section('What the Settings tab says the error policy is doing');
+
+// This readout had no check of any kind. `admin_panel.php` prints it through the same
+// `[value, note]` loop as `ServerReport::runtime()` — the loop that runtime() has a
+// check about, three lines of "every fact is a printable pair" — and nothing ever
+// called status() at all. Which matters more here than there, because its own docblock
+// says why it exists: every part of what it reports fails *silently by design*. An
+// unwritable directory means no log; no recipients means no alert; and both look
+// exactly like nothing having gone wrong. A readout that is the only way to see that
+// is a readout worth knowing renders.
+$statusDir  = newTestStateDir();
+$statusPath = $statusDir . '/lbm-error.log';
+ErrorPolicy::useLogFile($statusPath);
+ErrorPolicy::log('an entry, so there is something to report the age of');
+$status = ErrorPolicy::status();
+
+$statusStrings = true;
+foreach ($status as $fact) {
+    if (!is_array($fact) || count($fact) !== 2
+        || !is_string($fact[0]) || !is_string($fact[1])) { $statusStrings = false; }
+}
+check($statusStrings, 'every fact is a printable pair, the same shape the panel loops for both cards');
+check(isset($status['Errors shown to visitors']), 'it says whether a PHP error would reach a visitor');
+check(isset($status['Error log']), 'and where what goes wrong is being written');
+check(isset($status['Last logged']), 'and when something last did');
+check(isset($status['Alerts go to']), 'and who finds out without looking');
+checkSame($statusPath, $status['Error log'][0], 'the log row names the file actually in use');
+checkSame('', $status['Error log'][1], 'and says nothing more when it can be written to');
+check(strpos($status['Last logged'][0], 'UTC') !== false,
+      'the moment carries its frame, since this row is read beside two other clocks');
+// The alert half. `ErrorPolicy::$alerts` is unset in this process, which is the same
+// state as a shop where no admin has an email address on file.
+checkSame('Nobody', $status['Alerts go to'][0], 'with nobody attached, the alert row says Nobody');
+checkMentions($status['Alerts go to'][1], 'nobody will be told',
+              'and spells out the consequence rather than leaving "Nobody" to be read as fine');
+
+// The branch that fires when the app's own decision has been overridden. `-d
+// display_errors=1` reaches it because this suite deliberately never calls
+// ErrorPolicy::install(), and `selftest_installed.php` runs an arm that does exactly
+// that — so the two forms of this row are each produced by a real process.
+//
+// Stated as the invariant and not as this machine's answer. Predicting the word from
+// `ini_get('display_errors')` here would be the §4bg mistake in miniature — and worse
+// than usual, because `ini_get` answers the string 'Off' for a flag that is off, which
+// is truthy, so the prediction would have been *wrong* on a host that spells it that
+// way and right on this one, which spells it ''.
+$showing = ErrorPolicy::status()['Errors shown to visitors'];
+check($showing[0] === 'On' || $showing[0] === 'Off',
+      'the row is one of two words, whichever way this host is set');
+check(($showing[0] === 'On') === ($showing[1] !== ''),
+      'and it says something exactly when errors would reach a visitor, which is never '
+    . 'the app\'s own doing — it sets the flag off on every request');
+
+// Nowhere to write. The first row of the pair changes and the second disappears —
+// there is no "last logged" when there is no log.
+ErrorPolicy::useLogFile('');
+$noLog = ErrorPolicy::status();
+checkSame('Nowhere to write', $noLog['Error log'][0], 'with no writable directory the log row says so');
+checkMentions($noLog['Error log'][1], 'no alert can be sent',
+              'and names the second thing that stops, which is the one nobody would guess');
+check(!isset($noLog['Last logged']),
+      'and there is no "last logged" row at all, rather than one reading never');
+ErrorPolicy::useLogFile($statusPath);
+
+// ---- Which request the log line is about -----------------------------------------
+// The tag on a JSON failure, and the reason this pass exists in one line: the `'cli'`
+// fallback was written for the command line and has never once been reached there.
+// PHP sets SCRIPT_NAME on the CLI too — to the script path, and under `php -r` to the
+// literal phrase "Standard input code", which is PHP's own internal English arriving
+// in a log a person reads to find out which page broke.
+checkSame('cli', ErrorPolicy::requestNameFor('cli', '/home/acct/tools/selftest_layout.php'),
+          'a command-line run is cli, whatever PHP put in SCRIPT_NAME');
+checkSame('cli', ErrorPolicy::requestNameFor('cli', 'Standard input code'),
+          'including `php -r`, which is how selftest_installed.php runs every arm');
+checkSame('api.php', ErrorPolicy::requestNameFor('apache2handler', '/lbm/api.php'),
+          'a real request is named by its page');
+checkSame('api.php', ErrorPolicy::requestNameFor('fpm-fcgi', '/lbm-test/api.php'),
+          'and by the page rather than the install, which the row above it already names');
+checkSame('cli', ErrorPolicy::requestNameFor('cgi-fcgi', ''),
+          'and a host that supplies no script name still gets a word rather than an empty tag');
+checkSame('cli', ErrorPolicy::whichRequest(),
+          'so this suite tags its own log lines cli, which is what it is');
+
+// ─────────────────────────────────────────────────────────────
 section('Alerts: one per problem per hour, to admins only');
 
 $alertDir = newTestStateDir();
@@ -4415,9 +5114,9 @@ foreach ($blindPlan as $entry) {
     if ($entry['need'] === null) { $guessed[] = $entry['why']; }
     if ($entry['need'] === true) { $certain[] = $entry['why']; }
 }
-checkSame(23, count($guessed), 'with no catalogue, every statement in the plan is a guess');
-checkSame(['seed_block_styles', 'seed_legacy_display'], $certain,
-          'and the only certainties are the two steps that ask the rows, not the catalogue');
+checkSame(39, count($guessed), 'with no catalogue, every statement in the plan is a guess');
+checkSame(['seed_first_brand', 'seed_block_styles', 'seed_legacy_display'], $certain,
+          'and the only certainties are the three steps that ask the rows, not the catalogue');
 $statementNeeds = [];
 foreach ($blindPlan as $entry) {
     if (isset($entry['sql'])) { $statementNeeds[] = $entry['need']; }
@@ -4793,16 +5492,16 @@ checkSame('#1a1a2e', $blankBg->query("SELECT bg_val FROM displays")->fetchColumn
 // "other request" wrote survives and this one's insert throws. That is the state the
 // catch block is written for, and nothing else in one process can produce it.
 //
-// SQLite-only, and not because the dialect is inconvenient — MySQL cannot express this
-// state at all. A trigger there may not write to the table it is defined on (1442),
-// which is the half that has to survive the failure, and its second connection cannot
-// be made to interleave *inside* a statement. What is under test is a catch block in
-// PHP, identical on both engines; what only one engine can build is the interleaving
-// that reaches it.
+// SQLite-only, and not because the dialect is inconvenient — MySQL cannot express
+// this state at all. A trigger there may not write to the table it is defined on
+// (1442), which is the half that has to survive the failure, and its second
+// connection cannot be made to interleave *inside* a statement. What is under test
+// is a catch block in PHP, identical on both engines; what only one engine can build
+// is the interleaving that reaches it (§4bl).
 $racePdo = newSqliteTestDb();
 $racePdo->exec("CREATE TRIGGER seed_race BEFORE INSERT ON displays BEGIN
-    INSERT INTO displays (tag,title,canvas_width,canvas_height)
-        VALUES ('" . LEGACY_DISPLAY_TAG . "','Drive-Thru',1920,1080);
+    INSERT INTO displays (tag,title,canvas_width,canvas_height,brand_id)
+        VALUES ('" . LEGACY_DISPLAY_TAG . "','Drive-Thru',1920,1080,1);
     SELECT RAISE(FAIL, 'UNIQUE constraint failed: displays.tag');
 END");
 $err = 'untouched';
@@ -5786,7 +6485,7 @@ $vLayouts = newTestLayoutStore($vPdo);
 $vSign    = makeTestDisplay($vPdo, 'valid', 'Validation');
 
 check($vLayouts->publish($vSign, new PublishRequest(
-        goodLayout(), Background::unchanged(), 1, true, $vSign->layoutStamp()))->isOk(),
+        goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true, $vSign->layoutStamp()))->isOk(),
       'a good layout publishes');
 checkSame(2, count(elementsOf($vPdo, $vSign->id())), 'and lands as two elements');
 
@@ -5796,7 +6495,7 @@ function refusedPublish(LayoutStore $layouts, DisplayStore $store, Display $sign
 {
     $fresh = $store->forId($sign->id());
     return $layouts->publish($fresh, new PublishRequest(
-        $elements, $bg ?: Background::unchanged(), 1, $isAdmin, $fresh->layoutStamp()));
+        $elements, $bg ?: Background::unchanged(), BrandChoice::unchanged(), 1, $isAdmin, $fresh->layoutStamp()));
 }
 
 $res = refusedPublish($vLayouts, $vStore, $vSign, layoutWithField(0, 'type', 'script'));
@@ -5826,13 +6525,21 @@ checkSame(2, count(elementsOf($vPdo, $vSign->id())), 'and its narrower delete di
 $vSign = $vStore->forId($vSign->id());
 checkSame('1', $vSign->layoutStamp(), 'a refused publish does not advance the stamp');
 check($vLayouts->publish($vSign, new PublishRequest(
-        goodLayout(), Background::unchanged(), 1, true, $vSign->layoutStamp()))->isOk(),
+        goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true, $vSign->layoutStamp()))->isOk(),
       'so the corrected layout publishes on the next try');
 
 // And the clamp reaches the column, which is the half a pure function cannot prove.
-$vSign = $vStore->forId($vSign->id());
+//
+// On a `free` block rather than the baseline's price. A branded subtype's line
+// height belongs to Brand Standards and publish no longer carries it at all
+// (invariant 34), so the baseline would now pass this check for the wrong reason:
+// the stored 1.40 would be the *default*, proving the value never arrived rather
+// than that it was clamped on the way in. This caught it.
+$vSign  = $vStore->forId($vSign->id());
+$absurd = layoutWithField(1, 'line_height', 2000);
+$absurd[1]['block_subtype'] = 'free';
 check($vLayouts->publish($vSign, new PublishRequest(
-        layoutWithField(1, 'line_height', 2000), Background::unchanged(), 1, true,
+        $absurd, Background::unchanged(), BrandChoice::unchanged(), 1, true,
         $vSign->layoutStamp()))->isOk(),
       'a layout with an absurd line height publishes, clamped');
 $stored = elementsOf($vPdo, $vSign->id());
@@ -5863,7 +6570,7 @@ check($hLayouts->publish($hSign, new PublishRequest([
          'hidden' => 1],
         ['type' => 'text', 'parent_temp_id' => 'closed', 'manual_content' => 'Closed for the season'],
         ['type' => 'text', 'manual_content' => 'Open daily'],
-      ], Background::unchanged(), 1, true, $hSign->layoutStamp()))->isOk(),
+      ], Background::unchanged(), BrandChoice::unchanged(), 1, true, $hSign->layoutStamp()))->isOk(),
       'a layout with hidden blocks publishes');
 
 $hSign  = $hStore->forId($hSign->id());
@@ -5888,7 +6595,7 @@ checkMentions(json_encode($editor), 'NEXT MONTH',
 $hBlank = makeTestDisplay($hPdo, 'allhidden', 'Everything Hidden');
 $hLayouts->publish($hBlank, new PublishRequest([
     ['type' => 'text', 'manual_content' => 'Not yet', 'hidden' => 1],
-], Background::unchanged(), 1, true, $hBlank->layoutStamp()));
+], Background::unchanged(), BrandChoice::unchanged(), 1, true, $hBlank->layoutStamp()));
 $hBlank = $hStore->forId($hBlank->id());
 $blankPublic = $hLayouts->publicSnapshot($hBlank);
 checkSame(0, count($blankPublic['elements']), 'a Display whose every block is hidden sends none');
@@ -5958,7 +6665,7 @@ $bStore   = newTestDisplayStore($bPdo);
 $bLayouts = newTestLayoutStore($bPdo);
 $bSign    = makeTestDisplay($bPdo, 'poison', 'Background');
 $bLayouts->publish($bSign, new PublishRequest(
-    goodLayout(), Background::unchanged(), 1, true, $bSign->layoutStamp()));
+    goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true, $bSign->layoutStamp()));
 
 $res = refusedPublish($bLayouts, $bStore, $bSign, goodLayout(), true,
                       Background::color('https://elsewhere.example/tracker.png'));
@@ -5975,7 +6682,7 @@ checkSame('color', $bStore->forId($bSign->id())->backgroundType(),
 
 $bSign = $bStore->forId($bSign->id());
 check($bLayouts->publish($bSign, new PublishRequest(
-        goodLayout(), Background::color('#2c3e50'), 1, true, $bSign->layoutStamp()))->isOk(),
+        goodLayout(), Background::color('#2c3e50'), BrandChoice::unchanged(), 1, true, $bSign->layoutStamp()))->isOk(),
       'while a real colour publishes');
 checkSame('#2c3e50', $bStore->forId($bSign->id())->backgroundValue(), 'and is stored');
 
@@ -5994,8 +6701,253 @@ $bSign = $bStore->forId($bSign->id());
 // background problem.
 check($bLayouts->publish($bSign, new PublishRequest(
         basicLayoutFor($bPdo, $bSign, 'Sockeye 18.99'),
-        Background::unchanged(), 2, false, $bSign->layoutStamp()))->isOk(),
+        Background::unchanged(), BrandChoice::unchanged(), 2, false, $bSign->layoutStamp()))->isOk(),
       "a basic account's publish is not held up by a background it cannot change");
+
+// ─────────────────────────────────────────────────────────────
+section('A publish carries the Brand it was picked with, or it carries nothing');
+
+// Step 4's server half. Picking a Brand in the Builder writes nothing at the moment it
+// is picked — it repaints the canvas in the browser and rides out with the next Publish
+// (decision 6), which means the publish endpoint receives an *intent* and the intent
+// has to be refusable before anything is written. Exactly the shape of the section
+// above, one column over, and the same rule underneath it: refuse rather than merge,
+// because falling back to the Brand already on the sign would report success over the
+// one change the person made (invariant 5).
+
+checkSame('unchanged', BrandChoice::unchanged()->kind(), 'leaving the Brand alone is an intent of its own');
+checkSame(0, BrandChoice::unchanged()->id(), 'and it names no Brand');
+check(BrandChoice::unchanged()->isUsable(), 'it is always carryable');
+checkSame(null, BrandChoice::unchanged()->problemWith(null),
+          'and is never refused, whatever the caller found');
+
+checkSame('brand', BrandChoice::brand('3')->kind(), 'an id from a form is a Brand intent');
+checkSame(3, BrandChoice::brand('3')->id(), 'carrying the number it named');
+checkSame(3, BrandChoice::brand(3)->id(), 'written as a string or as an int');
+check(BrandChoice::brand('3')->isUsable(), 'and it is carryable');
+
+// The half that needs no database, and the reason it is a separate question: this is
+// what `intval()` would have guessed at. `intval('7abc')` is 7 — so a mangled field
+// would not have failed, it would have published a *different venue's* Brand onto the
+// sign, which is #21's shape and `DisplayStore::isIdLike()`'s whole reason for being.
+foreach ([
+    ['7abc',  'an id with something after it'],
+    ['',      'an empty field'],
+    ['0',     'a zero'],
+    ['-2',    'a negative'],
+    ['7.9',   'a float that would have selected Brand 7'],
+    ['1e2',   'exponent notation'],
+    [' ',     'a space'],
+    [[],      'an array, which intval() calls 1'],
+    [null,    'nothing at all'],
+    [true,    'a boolean, which casts to the first Brand ever created'],
+] as $case) {
+    $bad = BrandChoice::brand($case[0]);
+    checkSame(BrandChoice::INVALID, $bad->kind(), $case[1] . ' is not a Brand');
+    checkSame(0, $bad->id(), 'and ' . $case[1] . ' names no Brand id');
+    check(!$bad->isUsable(), 'and ' . $case[1] . ' cannot be carried');
+    // Which refusal, not merely that there is one. There are two sentences here — "that
+    // is not a brand" and "that brand has been deleted" — and they tell somebody to do
+    // different things; a check that accepted either would pass on the wrong one.
+    checkMentions($bad->problemWith(null), 'cannot read',
+                  'and ' . $case[1] . ' is refused as unreadable rather than as deleted');
+}
+
+// The boundary, both sides. `1` is a real Brand id — the seeded one every install has —
+// so a threshold that crept up by one would refuse the Brand nobody can be without, and
+// every other check in this section would still pass.
+checkSame('brand', BrandChoice::brand(1)->kind(), 'Brand 1 is a Brand, not a rounding error');
+checkSame(1, BrandChoice::brand(1)->id(), 'and it names itself');
+
+checkMentions(BrandChoice::brand('7abc')->problemWith(null), '7abc',
+              'and the refusal quotes what actually arrived');
+checkMentions(BrandChoice::brand('7abc')->problemWith(null), 'nothing was saved',
+              'and says nothing was saved');
+check(strpos(BrandChoice::brand(str_repeat('9', 400))->problemWith(null), str_repeat('9', 400)) === false,
+      'a very long value is shortened rather than printed whole into a page');
+
+// ---- The half only the database knows -------------------------------------------
+$kPdo    = newTestDb();
+$kStore  = newTestDisplayStore($kPdo);
+$kBrands = new BrandStore($kPdo);
+$kOther  = makeTestBrand($kPdo, 'Salmon House');
+
+checkSame(null, BrandChoice::brand($kOther)->problemWith($kBrands->forId($kOther)),
+          'a Brand that is there is a Brand this publish may wear');
+checkSame(null, BrandChoice::brand(1)->problemWith($kBrands->forId(1)),
+          'including Brand 1, which is the one every install is seeded with');
+check(BrandChoice::brand(999999)->problemWith($kBrands->forId(999999)) !== null,
+      'and one that is not is refused rather than merged away');
+checkMentions(BrandChoice::brand(999999)->problemWith(null), 'no longer exists',
+              'saying what happened, because somebody deleted it while the tab was open');
+checkMentions(BrandChoice::brand(999999)->problemWith(null), 'still on screen',
+              'and that the work is not lost');
+
+// Both spellings answered, which is the rule `Background::problemWith()` states: the
+// kind is what the factory produces today and the guard is what keeps this honest if
+// the factory ever stops filtering. A reader knowing only one of them answers "no
+// problem" for the other, and that is a publish nothing refuses.
+check(BrandChoice::brand('7abc')->problemWith($kBrands->forId($kOther)) !== null,
+      'and something that is not an id is refused even when a real Brand is handed in');
+
+// ---- Through a real publish ------------------------------------------------------
+$kLayouts = newTestLayoutStore($kPdo);
+$kSign    = makeTestDisplay($kPdo, 'venue', 'Venue board');
+checkSame(1, $kSign->brandId(), 'a fixture sign starts on the seeded Brand');
+
+check($kLayouts->publish($kSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), BrandChoice::brand($kOther), 1, true,
+        $kSign->layoutStamp()))->isOk(),
+      'an admin publish carrying a Brand is accepted');
+checkSame($kOther, $kStore->forId($kSign->id())->brandId(),
+          'and the sign wears it afterwards — the publish is what wrote it, not the picking');
+
+$kSign = $kStore->forId($kSign->id());
+check($kLayouts->publish($kSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true,
+        $kSign->layoutStamp()))->isOk(),
+      'a publish that names no Brand still publishes');
+checkSame($kOther, $kStore->forId($kSign->id())->brandId(), 'and leaves the one it is wearing');
+
+// The refusals, and what they left behind. Two elements is `goodLayout()` stored, so
+// finding two afterwards is finding the layout that was there before the refusal.
+$kSign = $kStore->forId($kSign->id());
+$res = $kLayouts->publish($kSign, new PublishRequest(
+    goodLayout(), Background::unchanged(), BrandChoice::brand('7abc'), 1, true, $kSign->layoutStamp()));
+checkSame('invalid', $res->kind(), 'a publish naming something that is not a Brand is refused');
+checkSame(false, $kPdo->inTransaction(),
+          'with no transaction opened at all — it is settled beside the layout rules');
+checkSame(2, count(elementsOf($kPdo, $kSign->id())), 'and the layout it came with is not saved either');
+checkSame($kOther, $kStore->forId($kSign->id())->brandId(), 'and the sign wears what it wore');
+
+// Which of the two gates answered, and it matters: one of them needs no database and the
+// other holds the row lock. A publish that is wrong in *both* ways — not an id, and a
+// stamp from before somebody else published — must come back `invalid` rather than
+// `stale`, because the id was settled before the transaction was ever opened. Without
+// this, the outer gate could be deleted and every other check in this section would
+// still pass, since the inner one answers `invalid` too.
+$res = $kLayouts->publish($kSign, new PublishRequest(
+    goodLayout(), Background::unchanged(), BrandChoice::brand('7abc'), 1, true, 'not-the-stamp'));
+checkSame('invalid', $res->kind(),
+          'a publish wrong in two ways is refused for the one that needed no database');
+checkSame(false, $kPdo->inTransaction(), 'and still opens no transaction');
+
+$res = $kLayouts->publish($kSign, new PublishRequest(
+    goodLayout(), Background::unchanged(), BrandChoice::brand(999999), 1, true, $kSign->layoutStamp()));
+checkSame('invalid', $res->kind(), 'so is one naming a Brand that has been deleted');
+checkSame(2, count(elementsOf($kPdo, $kSign->id())), 'and that layout is not saved either');
+checkSame($kOther, $kStore->forId($kSign->id())->brandId(), 'and the sign still wears what it wore');
+checkMentions($res->message(), 'Reload', 'and the refusal says what to do next');
+
+// A basic account cannot change the Brand, so it is never asked about one — the check
+// is inside the `isAdmin` branch beside the background's. Worth pinning both ways: a
+// clerk naming a Brand does not move the sign onto it, and a clerk naming a Brand that
+// does not exist is not refused for it either. Moving that check out of the branch
+// would stop every clerk publishing the moment an admin deleted a Brand.
+$kStore->releaseLock($kStore->forId($kSign->id()), 1);
+$kSign = $kStore->forId($kSign->id());
+check($kLayouts->publish($kSign, new PublishRequest(
+        basicLayoutFor($kPdo, $kSign, 'Sockeye 18.99'),
+        Background::unchanged(), BrandChoice::brand(999999), 2, false, $kSign->layoutStamp()))->isOk(),
+      "a basic account's publish is not held up by a Brand it cannot set");
+checkSame($kOther, $kStore->forId($kSign->id())->brandId(),
+          'and the Brand it named is not the Brand the sign wears');
+
+// Both halves of that, for the same people. A deleted Brand and a mistyped one are the
+// same thing to a clerk — neither is theirs to set and neither is going to be stored —
+// so a rule that refused one and allowed the other would be arbitrary from where they
+// are standing. This is the check that holds the pre-transaction gate to the same
+// `isAdmin()` as the one under the lock.
+$kSign = $kStore->forId($kSign->id());
+check($kLayouts->publish($kSign, new PublishRequest(
+        basicLayoutFor($kPdo, $kSign, 'Sockeye 19.99'),
+        Background::unchanged(), BrandChoice::brand('7abc'), 2, false, $kSign->layoutStamp()))->isOk(),
+      "nor by one that is not an id at all");
+
+// ---- The Brand a publish sets is the Brand its rows are read under ---------------
+// The `copyLayout()` rule, arriving by the one door that had not needed it: what
+// decides whether a typography column is the Brand's to paint is the Brand the row
+// will be read under (invariant 34), and the publish that *changes* the Brand is the
+// one publish where "before" and "after" differ. Deciding it from the Display this
+// method was handed would bake the old venue's answer into the new venue's rows.
+//
+// `makeTestBrandRow()` and not `makeTestBrand()`: a Brand with no standards behind it
+// paints nothing, so a `price` block publishing onto it keeps its own typography —
+// which is the observable difference between the two answers.
+$kBare = makeTestBrandRow($kPdo, 'No standards yet');
+// The clerk's publish above took the edit lock, as a publish does (ADR-0007), so the
+// admin has to be given it back or every check below is refused for a reason that has
+// nothing to do with Brands — and would pass while proving something else.
+$kStore->releaseLock($kStore->forId($kSign->id()), 2);
+$kStore->claimLock($kStore->forId($kSign->id()), 1);
+$kSign = $kStore->forId($kSign->id());
+check($kLayouts->publish($kSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), BrandChoice::brand($kBare), 1, true,
+        $kSign->layoutStamp()))->isOk(),
+      'a publish onto a Brand with no standards is accepted');
+$kRows  = elementsOf($kPdo, $kSign->id());
+$kPrice = null;
+foreach ($kRows as $row) { if (($row['block_subtype'] ?? '') === 'price') { $kPrice = $row; } }
+check($kPrice !== null, 'and the price block it carried is stored');
+checkSame(48, intval($kPrice['font_size']),
+          "and keeps its own font size, because the Brand it now wears paints nothing");
+
+// The other direction, so the check above is not passing on a Brand nobody painted
+// with: back onto a Brand that does have standards, and the same block publishes the
+// documented default instead of its own 48.
+$kSign = $kStore->forId($kSign->id());
+check($kLayouts->publish($kSign, new PublishRequest(
+        goodLayout(), Background::unchanged(), BrandChoice::brand($kOther), 1, true,
+        $kSign->layoutStamp()))->isOk(),
+      'and publishing back onto a Brand that has them is accepted too');
+$kPrice = null;
+foreach (elementsOf($kPdo, $kSign->id()) as $row) {
+    if (($row['block_subtype'] ?? '') === 'price') { $kPrice = $row; }
+}
+checkSame(intval(BrandStyles::DEFAULTS['font_size']), intval($kPrice['font_size']),
+          'where the same block stores the documented default, because that Brand paints it');
+
+// ---- The two contracts meet, and the stamp is what settles it -------------------
+// The Admin Panel changes a Display's Brand *immediately* — every Screen showing it
+// picks up the new venue's typography on its next poll, with no publish, which is that
+// page's normal contract. The Builder *stages* it. So a Builder tab that loaded before
+// such a save is holding the old Brand and its publish would put it straight back:
+// silently, on every screen wearing the sign, with a payload that is otherwise perfectly
+// valid. `updateDetails()` advances the layout stamp for exactly that, which is ADR-0006
+// answering the question it was written for.
+$kAdmin = newTestDisplayAdmin($kPdo);
+$kSign  = $kStore->forId($kSign->id());
+$kStamp = $kSign->layoutStamp();
+
+$kRes = $kAdmin->updateDetails($kSign, ['title' => 'Venue board', 'tag' => 'venue',
+                                        'location' => '', 'brand_id' => $kBare]);
+check($kRes->isOk(), 'an admin may move a sign onto another Brand from the panel');
+checkSame($kBare, $kStore->forId($kSign->id())->brandId(), 'and the sign wears it at once');
+check($kStore->forId($kSign->id())->layoutStamp() !== $kStamp,
+      'and the layout stamp moved, so a Builder that loaded before it is holding a stale sign');
+checkMentions($kRes->message(), 'No standards yet', 'the sentence names the Brand it moved to');
+checkMentions($kRes->message(), '30 seconds', 'and says the screens pick it up on their own');
+
+$kRes = $kLayouts->publish($kSign, new PublishRequest(
+    goodLayout(), Background::unchanged(), BrandChoice::brand($kOther), 1, true, $kStamp));
+checkSame('stale', $kRes->kind(),
+          'so that tab\'s publish is refused rather than putting the old Brand back');
+checkSame($kBare, $kStore->forId($kSign->id())->brandId(), 'and the sign still wears the panel\'s choice');
+checkMentions($kRes->message(), 'changed since you opened it',
+              'with the sentence ADR-0006 already had, which is true of this too');
+
+// The other half, and the reason this is a *comparison* rather than a bump on every
+// save: an ordinary rename must not refuse a colleague's publish. A rename has its own
+// answer already — the Builder is told the address moved and keeps its lock.
+$kSign  = $kStore->forId($kSign->id());
+$kStamp = $kSign->layoutStamp();
+$kRes   = $kAdmin->updateDetails($kSign, ['title' => 'Venue board B', 'tag' => 'venue-b',
+                                          'location' => 'Deck', 'brand_id' => $kBare]);
+check($kRes->isOk(), 'a save that leaves the Brand alone still saves');
+checkSame($kStamp, $kStore->forId($kSign->id())->layoutStamp(),
+          'and does not move the stamp, so it refuses nobody');
+check(strpos($kRes->message(), 'wears the brand') === false,
+      'and says nothing about a brand it did not change');
 
 // ─────────────────────────────────────────────────────────────
 section('Refusing a value rather than guessing what it meant (#21)');
@@ -6067,7 +7019,7 @@ $cPdo   = newTestDb();
 $cStore = new DisplayStore($cPdo);
 $cAdmin = newTestDisplayAdmin($cPdo);
 
-$res = $cAdmin->create(['title' => 'Deli Board', 'canvas_width' => 1920,
+$res = $cAdmin->create(['brand_id' => 1, 'title' => 'Deli Board', 'canvas_width' => 1920,
                         'canvas_height' => 1080, 'bg_val' => 'darkish blue']);
 checkSame(false, $res->isOk(), 'a Display is not created with a background nobody can read');
 checkSame(DisplayResult::INVALID, $res->kind(), 'it is invalid input rather than a database failure');
@@ -6075,12 +7027,12 @@ checkSame('bg_val', $res->field(), 'and the refusal points at the swatch');
 checkMentions($res->message(), '#1a1a2e', 'saying what a colour looks like, since the form was wrong about it');
 checkSame(0, count($cStore->all()), 'and no Display was created — not one in the wrong colour');
 
-$res = $cAdmin->create(['title' => 'Deli Board', 'canvas_width' => 1920, 'canvas_height' => 1080]);
+$res = $cAdmin->create(['brand_id' => 1, 'title' => 'Deli Board', 'canvas_width' => 1920, 'canvas_height' => 1080]);
 checkSame(true, $res->isOk(), 'a form that named no colour at all is fine');
 checkSame(DisplayAdmin::DEFAULT_BACKGROUND, $res->display()->backgroundValue(),
           'and gets the default, which is what "nothing supplied" has always meant');
 
-$res = $cAdmin->create(['title' => 'Bakery', 'canvas_width' => 1920,
+$res = $cAdmin->create(['brand_id' => 1, 'title' => 'Bakery', 'canvas_width' => 1920,
                         'canvas_height' => 1080, 'bg_val' => '#AABBCC']);
 checkSame(true, $res->isOk(), 'a real colour creates a Display');
 checkSame('#aabbcc', $res->display()->backgroundValue(), 'stored the one way the app stores colours');
@@ -6539,8 +7491,8 @@ $aLay   = newTestLayoutStore($aPdo);
 // The fourth argument is the store's own branding, which lives in a file rather than
 // the database. Named here rather than left to default, or every count below would
 // depend on what `branding_config.php` happens to hold on the machine running this.
-$aBrand = Brand::DEFAULTS;
-$aAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo), $aBrand);
+$aBrand = SiteChrome::DEFAULTS;
+$aAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo), new BrandStore($aPdo), $aBrand);
 
 $aDrive = makeTestDisplay($aPdo, 'drive-thru', 'Drive-Thru Menu');
 $aPatio = makeTestDisplay($aPdo, 'patio', 'Patio Board');
@@ -6637,51 +7589,100 @@ section('The colours that are not in the database at all (#15, second half)');
 // app where escaping is the wrong tool, because a `<style>` has no delimiter for an
 // entity to neutralise and a value that is not a colour is simply more CSS.
 //
-// Every check below goes through `Brand::pick()` rather than the constants, for the
+// Every check below goes through `SiteChrome::pick()` rather than the constants, for the
 // reason the module says: `define()` cannot be undone, so a rule reachable only
 // through the constants could only ever be tested with the one value this machine
 // holds.
 
-checkSame('#3498db', Brand::pick('accent', '#3498db'), 'a colour that reads is the colour');
-checkSame('#3498db', Brand::pick('accent', '#3498DB'), 'in the one case this app stores it in');
-checkSame('#3498db', Brand::pick('accent', null),      'an absent value is the documented default');
-checkSame('#3498db', Brand::pick('accent', ''),        'and so is a blank one');
-checkSame('#1a252f', Brand::pick('nav_bg', 'darkblue'),
+checkSame('#3498db', SiteChrome::pick('accent', '#3498db'), 'a colour that reads is the colour');
+checkSame('#3498db', SiteChrome::pick('accent', '#3498DB'), 'in the one case this app stores it in');
+checkSame('#3498db', SiteChrome::pick('accent', null),      'an absent value is the documented default');
+checkSame('#3498db', SiteChrome::pick('accent', ''),        'and so is a blank one');
+checkSame('#1a252f', SiteChrome::pick('nav_bg', 'darkblue'),
           'a CSS colour keyword is not a colour this app stores, so it is the default');
-checkSame('#3498db', Brand::pick('accent', ['#fff']),
+checkSame('#3498db', SiteChrome::pick('accent', ['#fff']),
           'and neither is an array, which is what a hand-built config could hold');
 
 // The shape that made this worth doing: escaped, it is still a closed rule and a new
 // one, because nothing in a stylesheet is looking for an entity.
 $aInject = '#fff; } body { background: url(https://example.invalid/x)';
-checkSame('#3498db', Brand::pick('accent', $aInject),
+checkSame('#3498db', SiteChrome::pick('accent', $aInject),
           'a value that closes the rule and opens another is refused, not escaped');
 checkSame(true, strpos(Markup::text($aInject), 'body {') !== false,
           'which matters because escaping leaves that value doing exactly what it said');
 
 // Each colour falls back to its own default, not to one shared "some colour".
-checkSame('#0d1b24', Brand::pick('nav_border', 'nope'), 'the border falls back to the border default');
-checkSame('#ffffff', Brand::pick('text', 'nope'),       'and the nav text to its own');
+checkSame('#0d1b24', SiteChrome::pick('nav_border', 'nope'), 'the border falls back to the border default');
+// The role is `nav_text` since step 5 named all thirteen of them consistently; the
+// *method* is still `SiteChrome::text()`, because every page and every check says so
+// and the point of that step was that no call site changes.
+checkSame('#ffffff', SiteChrome::pick('nav_text', 'nope'),   'and the nav text to its own');
 
 $aThrew = false;
-try { Brand::pick('no_such_colour', '#ffffff'); } catch (Throwable $e) { $aThrew = true; }
+try { SiteChrome::pick('no_such_colour', '#ffffff'); } catch (Throwable $e) { $aThrew = true; }
 checkSame(true, $aThrew, 'a colour this app does not have is a mistake, not an answer');
 
+// ---- The Display Branding forms and their handler agree about field names ----
+// Grep-shaped on purpose, and it is worth saying what that does and does not buy.
+// Nothing here renders the page, so this cannot see a broken layout — that is the
+// browser pass's job and it is owed for this tab. What it *can* see is the failure a
+// rendered page would not shout about either: a form posting `b_palette_1_unset` at a
+// handler reading `b_palette_1_clear` looks perfectly fine on screen and silently
+// drops what somebody typed. The two halves are written 700 lines apart in one file,
+// which is exactly the distance a rename survives.
+foreach (['b_name', 'b_id', 'b_bg', 'b_logo', 'b_confirm_name'] as $bF) {
+    check(strpos($panel, 'name="' . $bF . '"') !== false, 'the Display Branding form posts ' . $bF);
+    check(strpos($panel, "\$_POST['" . $bF . "']") !== false,
+          'and the handler reads it back under the same name');
+}
+
+// The palette's twelve fields are not literals on either side: the form emits them
+// from `BrandStore::paletteFields()` and the handler reads them back from the same
+// list. That is stronger than matching names — one list means they cannot drift — so
+// what is asserted is that both halves really do come from it, rather than one of
+// them having been spelled out by hand at some point and left behind.
+checkMentions($panel, 'BrandStore::paletteFields()', 'the palette form is built from the one list of slots');
+checkSame(2, substr_count($panel, 'BrandStore::paletteFields()'),
+          'and so is the handler that reads it back — both halves, no third copy');
+checkMentions($panel, "\$_POST['b_' . \$_pf . '_unset']",
+              'the handler reads each slot\'s empty tick, which is how "no colour" is said at all');
+
+// The three actions the tab offers, each reaching its use case rather than SQL.
+foreach (['action_create_brand', 'action_save_brand', 'action_delete_brand'] as $bA) {
+    checkMentions($panel, "\$_POST['" . $bA . "']", 'the panel handles ' . $bA);
+}
+checkMentions($panel, '$brandAdmin->create(',        'creating a Brand goes through BrandAdmin');
+checkMentions($panel, '$brandAdmin->updateDetails(', 'and so does saving one');
+checkMentions($panel, '$brandAdmin->destroy(',       'and destroying one');
+checkMentions($panel, 'editedByAnyoneElseUsingBrand',
+              'and the lock refusal is the narrowed one, not the old install-wide question');
+check(strpos($panel, 'editedByAnyoneElse(') === false,
+      'the install-wide refusal is gone from the panel entirely, not merely unused');
+
 // What the Branding tab and the audit both read.
-checkSame([], Brand::unreadable(Brand::DEFAULTS), 'a config that reads has nothing to report');
-checkSame([], Brand::unreadable([]),              'and neither has one that defines nothing yet');
-$aBadCfg = Brand::unreadable(['accent' => 'puce'] + Brand::DEFAULTS);
+checkSame([], SiteChrome::unreadable(SiteChrome::DEFAULTS), 'a config that reads has nothing to report');
+checkSame([], SiteChrome::unreadable([]),              'and neither has one that defines nothing yet');
+$aBadCfg = SiteChrome::unreadable(['accent' => 'puce'] + SiteChrome::DEFAULTS);
 checkSame(1, count($aBadCfg),        'one value nobody can read is one thing to report');
 checkSame('accent', $aBadCfg[0]['key'],   'named by the field it is');
 checkSame('Accent', $aBadCfg[0]['label'], 'in the words the Branding form uses');
 checkSame('puce',   $aBadCfg[0]['value'], 'quoting what is actually in the file');
+// Defined-and-blank is not the same silence as never defined, and the line separating
+// them is one character wide: `=== null` rather than `== null`, which would read a
+// blank `define()` as an absent one. A colour somebody deleted the value out of is a
+// line in the file with nothing in it, and the person who did that is the one who
+// wants telling — the default is what gets painted either way, so nothing else in
+// the app can distinguish these two and say so.
+$aBlankCfg = SiteChrome::unreadable(['accent' => ''] + SiteChrome::DEFAULTS);
+checkSame(1, count($aBlankCfg), 'a colour defined as blank is reported, not treated as undefined');
+checkSame('', $aBlankCfg[0]['value'], 'quoting the nothing that is stored');
 
 // And it reaches the same report every other unreadable colour reaches, under a kind
 // of its own — because this one is the only colour in the app that no sign uses, and
 // a finding that read like the others would send somebody to the shop floor over a
 // navigation bar.
-$aCfgAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo),
-                            ['accent' => 'puce'] + Brand::DEFAULTS);
+$aCfgAudit = new ColorAudit($aStore, $aLay, new BrandStyles($aPdo), new BrandStore($aPdo),
+                            ['accent' => 'puce'] + SiteChrome::DEFAULTS);
 $found = $aCfgAudit->findings();
 checkSame(3, count($found), 'a brand colour nobody can read joins the audit');
 checkSame(ColorAudit::WRONG_IN_APP, $found[2]['kind'], 'under the kind that touches no sign');
@@ -6767,9 +7768,9 @@ foreach ([['font_family', 'Arial; }'], ['font_color', 'puce'], ['font_size', 900
           ['font_weight', 'heavy'], ['font_style', 'oblique'], ['line_height', 40]] as $aPair) {
     $aRow = [$aPair[0] => $aPair[1]] + $aRaw;
     $aSaveStore = new BrandStyles(newTestDb());
-    $aSaveStore->save(['price' => $aRow]);
+    $aSaveStore->save(1, ['price' => $aRow]);
     $aDrawn = BrandStyles::readable($aRow)[$aPair[0]];
-    $aKept  = $aSaveStore->all()['price'][$aPair[0]];
+    $aKept  = $aSaveStore->all(1)['price'][$aPair[0]];
     // Numerically for the two numeric columns, by the same rule unrenderable() uses:
     // readable() answers what CSS takes — a float — and the column answers what a
     // DECIMAL(4,2) round-trips to, which is '5.00' on MySQL and 5 on SQLite. The
@@ -6785,7 +7786,7 @@ foreach ([['font_family', 'Arial; }'], ['font_color', 'puce'], ['font_size', 900
 // tidied would report nothing and would be believed.
 $aRawPdo = newTestDb();
 $aRawPdo->prepare("UPDATE block_styles SET font_color = 'gold' WHERE block_type = 'price'")->execute();
-checkSame('gold', (new BrandStyles($aRawPdo))->all()['price']['font_color'],
+checkSame('gold', (new BrandStyles($aRawPdo))->all(1)['price']['font_color'],
           'all() hands back what is stored, not what renders');
 
 // And the page that draws them uses the reader, not the row. Cross-file, because the
@@ -6801,6 +7802,538 @@ checkMentions($panel, 'BrandStyles::unrenderable(',
 // it, so the check is on the render rather than on the loop above it.
 checkMentions($panel, 'if ($styleBad):',
               'and puts them on the tab, which is the whole point of working them out');
+
+// ─────────────────────────────────────────────────────────────
+section('A Workspace Theme paints a person, and a store default paints everybody else');
+
+// The second of CONTEXT.md's two nouns (v2 roadmap decision 1, step 5). What is being
+// checked here is a *resolution*: three layers — a worn theme, then
+// `branding_config.php`, then the documented default — with one direction and one
+// function that knows the order. It matters because the two ways it could go wrong are
+// both silent. A layer read in the wrong order paints a screen the colour of somebody
+// else's preference; a layer read where it does not belong let the Branding form offer
+// a theme's colours as the store's and save them over the shop's own.
+//
+// `SiteChrome::wear(null)` is left set at the end of each part on purpose. This is one
+// process, the static outlives a section, and a check further down this file that
+// happened to ask for a colour would otherwise be answered by whatever the last theme
+// here was — which is the class of defect §4am's mutation run exists to find.
+
+$tPdo   = newTestDb();
+$tStore = new WorkspaceThemeStore($tPdo);
+
+// ---- The store default: no theme, no row, no change --------------------------------
+SiteChrome::wear(null);
+checkSame(0, $tStore->count(), 'a database that has converged has no themes in it at all');
+checkSame(null, SiteChrome::worn(), 'and nothing is being worn');
+checkSame(SiteChrome::DEFAULTS['work_area'], SiteChrome::workArea(),
+          'so the work area is the colour it was a literal in builder.php');
+checkSame(SiteChrome::DEFAULTS['status_bad'], SiteChrome::statusBad(),
+          'and so is every status colour');
+checkSame(SiteChrome::DEFAULTS['selection'], SiteChrome::selection(),
+          'and the selection outline');
+
+// The thirteen and the table agree. Two lists, one of them readable only by MySQL, so
+// the check is that the plan's own statement names a column for every role — a role
+// added to ROLES with no column would resolve to its default on every screen for ever
+// and nothing else here would notice.
+$tCreate = '';
+foreach (signageSchemaPlan(SchemaFacts::unknown()) as $tEntry) {
+    if (isset($tEntry['sql']) && strpos($tEntry['sql'], 'CREATE TABLE IF NOT EXISTS workspace_themes') !== false) {
+        $tCreate = $tEntry['sql'];
+    }
+}
+check($tCreate !== '', 'the plan carries a statement creating workspace_themes');
+checkSame(13, count(SiteChrome::ROLES), 'there are thirteen chrome roles');
+checkSame(count(SiteChrome::ROLES), count(SiteChrome::DEFAULTS),
+          'and every one of them has a documented default');
+foreach (SiteChrome::ROLES as $tRole => $tMeta) {
+    check(preg_match('/^\s*' . preg_quote($tRole, '/') . '\s+VARCHAR\(7\)\s+NOT NULL DEFAULT \'([^\']+)\'/m',
+                     $tCreate, $tHit) === 1,
+          'the table has a NOT NULL column for ' . $tRole);
+    checkSame(SiteChrome::DEFAULTS[$tRole], isset($tHit[1]) ? $tHit[1] : '',
+              'and the column starts where the documented default is');
+    check($tMeta[0] !== '', 'and the role has words a person can pick it by');
+}
+checkSame(13, preg_match_all('/VARCHAR\(7\)/', $tCreate),
+          'and the table has no fourteenth colour column that no role names');
+
+// The four that Site Branding still owns, and the nine that are a theme's alone.
+$tConfigBacked = array_keys(SiteChrome::FIELDS);
+checkSame(4, count($tConfigBacked), 'four roles are backed by branding_config.php');
+foreach ($tConfigBacked as $tKey) {
+    check(isset(SiteChrome::ROLES[$tKey]), $tKey . ' is one of the thirteen roles');
+}
+check(!isset(SiteChrome::FIELDS['selection']),
+      'and the canvas selection outline is not something the Branding form can set');
+
+// ---- A worn theme wins, per role ---------------------------------------------------
+$tOne = $tStore->insert(['name' => 'Night shift', 'nav_bg' => '#101820', 'accent' => '#ffcc00',
+                         'work_area' => '#050505', 'status_bad' => '#ff0000']);
+check($tOne instanceof WorkspaceTheme, 'a theme can be created');
+checkSame('Night shift', $tOne->name(), 'under the name it was given');
+checkSame('#101820', $tOne->colorFor('nav_bg'), 'holding the colour it was given');
+checkSame(SiteChrome::DEFAULTS['panel'], $tOne->colorFor('panel'),
+          'and the documented default for a role the form did not carry');
+
+SiteChrome::wear($tOne);
+checkSame('#101820', SiteChrome::navBg(), 'wearing it, the nav is the theme\'s colour');
+checkSame('#ffcc00', SiteChrome::accent(), 'and so is the accent');
+checkSame('#050505', SiteChrome::workArea(), 'and the work area');
+checkSame('#ff0000', SiteChrome::statusBad(), 'and the status colour');
+checkSame($tOne->id(), SiteChrome::worn()->id(), 'and the page can say which theme it is wearing');
+
+// The Branding form's own reads must not go through the theme. This is the defect that
+// was one edit away: an admin wearing a theme opens Site Branding, is shown the
+// theme's colours as "what is there now", and saves them into the store's own file.
+// Written against the *worn* colour and the config's own answer rather than against
+// `DEFAULTS`, which is the shape they were first written in and which was true here only
+// because this container has no branding file. Both of them failed the moment the suite
+// was run in a process that had one — on the live install they were asserting that the
+// shop's nav is the colour the app ships with. What they mean has no `DEFAULTS` in it.
+check(SiteChrome::configColor('nav_bg') !== $tOne->colorFor('nav_bg'),
+      'while the Branding form is still shown what the config holds, not what is worn');
+// Wearing a theme this app cannot read, because the empty list this check used to assert
+// was a property of the machine rather than of the seam: it said "no findings" on a
+// checkout whose config is clean, and said it while the worn theme had nothing wrong with
+// it either. What it means is that a theme's bad value is not reported as the shop's.
+SiteChrome::wear(new WorkspaceTheme(['id' => 0, 'name' => 'Unreadable', 'nav_bg' => 'chartreuse-ish']));
+check(!in_array('chartreuse-ish', array_column(SiteChrome::unreadable(), 'value'), true),
+      'and the audit still reports on the config rather than on a theme, even wearing one '
+    . 'whose colour it cannot read');
+SiteChrome::wear($tOne);
+
+SiteChrome::wear(null);
+checkSame(SiteChrome::configColor('nav_bg'), SiteChrome::navBg(),
+          'taking the theme off puts every role back to the store default');
+
+// ---- A theme that stores something nobody can read --------------------------------
+// The column defaults make this state unreachable through the form, so it is built the
+// way it would really arise: somebody in a database client.
+// Four characters, not the eight 'darkblue' would take: the column is `VARCHAR(7)`, so
+// MySQL's strict mode refuses the longer name outright (error 1406) and the state this
+// check is about never arrives. A colour that cannot be read has to *fit* the column
+// before anybody can be shown the wrong thing by it (§4bk). 'gold' is still a colour a
+// browser would happily paint, which is the property that matters here.
+$tPdo->prepare("UPDATE workspace_themes SET nav_bg = 'gold', panel = '' WHERE id = ?")
+     ->execute([$tOne->id()]);
+$tBad = $tStore->forId($tOne->id());
+SiteChrome::wear($tBad);
+checkSame(SiteChrome::configColor('nav_bg'), SiteChrome::navBg(),
+          'an unreadable colour in a worn theme falls through to the layer under it');
+checkSame('#ffcc00', SiteChrome::accent(),
+          'and the roles either side of it are unaffected — the fallback is per role');
+checkSame(SiteChrome::DEFAULTS['panel'], SiteChrome::panel(),
+          'and a role with no config layer falls all the way to its documented default');
+$tBadList = $tBad->unreadable();
+checkSame(2, count($tBadList), 'and the theme can say which of its values it could not use');
+checkSame('nav_bg', $tBadList[0]['key'], 'named by the role it is');
+checkSame('Navigation background', $tBadList[0]['label'], 'in the words the theme form uses');
+checkSame('gold', $tBadList[0]['value'], 'quoting what is actually stored');
+SiteChrome::wear(null);
+$tPdo->prepare("UPDATE workspace_themes SET nav_bg = '#101820', panel = '#1a252f' WHERE id = ?")
+     ->execute([$tOne->id()]);
+
+// ---- Which layer that fallback actually landed on ---------------------------------
+// The three checks above cannot tell. This container has no `branding_config.php` — it
+// is server-side and deliberately not in the repo (`docs/DEPLOY-SKIP.md`) — so the
+// colour the shop set and the colour the app ships with are the same string here, and a
+// fallback to either passes. On the live install they are a dark red and a dark slate.
+// So the layering is asserted in a process built to have both, which is the same
+// machinery `StoreClock`'s absent-setting branch uses and the only way anything here
+// reaches this line at all: mutation moved it and every check lived (§4bf).
+checkSame('#8b0000|#123456|' . SiteChrome::DEFAULTS['work_area'], inFreshProcess('
+        define("BRAND_NAV_BG", "#8b0000");
+        require LBM_ROOT . "/lib/workspace_themes.php";
+        SiteChrome::wear(new WorkspaceTheme(["id" => 1, "name" => "T",
+                                            "nav_bg" => "darkblue", "panel" => "#123456"]));
+        echo SiteChrome::navBg() . "|" . SiteChrome::panel() . "|" . SiteChrome::workArea();
+    '), 'an unusable theme colour paints what the shop set, a usable one paints itself, '
+      . 'and a role the config has no line for paints the documented default');
+// The same theme with nothing configured, which is what makes the line above about the
+// config file rather than about a constant that happened to be there.
+checkSame(SiteChrome::DEFAULTS['nav_bg'], inFreshProcess('
+        require LBM_ROOT . "/lib/workspace_themes.php";
+        SiteChrome::wear(new WorkspaceTheme(["id" => 1, "name" => "T", "nav_bg" => "darkblue"]));
+        echo SiteChrome::navBg();
+    '), 'and with no config file at all it lands on the documented default, one layer further down');
+// And the pair further up this section, held where they can actually say something. In
+// this container they compare the store default with the store default; on a branded
+// install they are the difference between the Branding form showing the shop what it set
+// and showing it somebody's night-shift theme, which is the save that would overwrite the
+// shop's own file. Running the whole suite with the four constants defined is how both
+// were found: of 2271 checks exactly two noticed, and both by failing.
+checkSame('#8b0000|#101820|#8b0000', inFreshProcess('
+        define("BRAND_NAV_BG", "#8b0000");
+        require LBM_ROOT . "/lib/workspace_themes.php";
+        SiteChrome::wear(new WorkspaceTheme(["id" => 1, "name" => "T", "nav_bg" => "#101820"]));
+        echo SiteChrome::configColor("nav_bg") . "|" . SiteChrome::navBg() . "|";
+        SiteChrome::wear(null);
+        echo SiteChrome::navBg();
+    '), 'the Branding form reads the shop\'s own colour while the page around it wears a '
+      . 'theme, and taking the theme off puts that colour back rather than the shipped one');
+
+// ---- What the browser is handed ----------------------------------------------------
+// Resolved, not raw: `style.setProperty()` discards a value it cannot read in silence,
+// which is §4ax's defect one boundary further out.
+$tClient = $tStore->forId($tOne->id())->toClientArray();
+checkSame(13, count($tClient['colors']), 'the client payload carries every role');
+checkSame('#101820', $tClient['colors']['nav_bg'], 'resolved to a colour a browser will take');
+$tPdo->prepare("UPDATE workspace_themes SET status_note = 'puce' WHERE id = ?")->execute([$tOne->id()]);
+checkSame(SiteChrome::DEFAULTS['status_note'],
+          $tStore->forId($tOne->id())->toClientArray()['colors']['status_note'],
+          'and an unreadable one is resolved there too, rather than sent for the CSSOM to drop');
+$tPdo->prepare("UPDATE workspace_themes SET status_note = '#7a4a12' WHERE id = ?")->execute([$tOne->id()]);
+
+// The variable names three separate things have to agree about.
+checkSame('--nav-bg', SiteChrome::varName('nav_bg'), 'a role is drawn through a named custom property');
+checkSame('--status-good', SiteChrome::varName('status_good'), 'with underscores as hyphens');
+$tThrew = false;
+try { SiteChrome::varName('not_a_role'); } catch (Throwable $e) { $tThrew = true; }
+checkSame(true, $tThrew, 'and a role this app does not have is a mistake, not a name');
+$tVars = SiteChrome::styleVariables();
+foreach (array_keys(SiteChrome::ROLES) as $tRole) {
+    checkMentions($tVars, SiteChrome::varName($tRole) . ':', 'the :root block declares ' . $tRole);
+}
+// Every line of it, shape and all — which is what makes the block safe to print into a
+// `<style>` unescaped: a stylesheet has no delimiter for escaping to neutralise, so the
+// property that matters is that nothing here can be anything but a colour.
+$tVarLines = array_filter(array_map('trim', explode("\n", $tVars)), 'strlen');
+checkSame(13, count($tVarLines), 'the :root block is thirteen declarations and nothing else');
+$tShapely = 0;
+foreach ($tVarLines as $tLine) {
+    if (preg_match('/^--[a-z-]+: #[0-9a-f]{6};$/', $tLine) === 1) { $tShapely++; }
+}
+checkSame(13, $tShapely, 'and every one of them is a role name and a six-digit colour');
+
+// ---- Which theme an account is wearing ---------------------------------------------
+// ---- A row older than the code ----------------------------------------------------
+// Invariant 10's ordinary state: a database that has not converged has no column for a
+// role, and every layer above has to read that as "this theme does not decide this one"
+// rather than falling over. Built as a row rather than by dropping a column, because
+// SQLite cannot drop one and the value object is what is being asked.
+$tPartial = new WorkspaceTheme(['id' => 99, 'name' => 'Older than the code',
+                                'nav_bg' => '#123456']);
+checkSame('#123456', $tPartial->colorFor('nav_bg'), 'a role the row has is the row\'s answer');
+checkSame(null, $tPartial->colorFor('status_note'),
+          'and one it has no column for is null, not a warning and a blank');
+checkSame([], $tPartial->unreadable(),
+          'absent is not unreadable — there is nothing there for anybody to go and fix');
+SiteChrome::wear($tPartial);
+checkSame('#123456', SiteChrome::navBg(), 'wearing it, the role it knows is its own');
+checkSame(SiteChrome::DEFAULTS['status_note'], SiteChrome::statusNote(),
+          'and the one it does not know falls through to the layer underneath');
+checkSame(13, count($tPartial->toClientArray()['colors']),
+          'and the browser is still handed thirteen roles, not the two the row had');
+SiteChrome::wear(null);
+
+// ---- Ids that would name a different row ------------------------------------------
+// Each of these is checked against a database where the mangled id **would** resolve, and
+// that is the whole point: `forAccount('7abc')` on a database with no account 7 answers
+// null whether the guard is there or not, which is a check that cannot fail. The mutation
+// run said so — the guards survived every mutant until these named rows that exist.
+checkSame(null, $tStore->forId('1abc'),
+          'an id that intval() would read as an existing theme is refused, not read');
+checkSame(null, $tStore->forId(0),  'nor is 0 a theme');
+checkSame(null, $tStore->forId(-1), 'nor a negative one');
+checkSame($tOne->id(), $tStore->forId((string)$tOne->id())->id(),
+          'while the id as a string, which is how a form sends it, still works');
+
+checkSame(null, $tStore->forAccount(1), 'an account that has chosen nothing wears the store default');
+$tAccounts = new AccountStore($tPdo);
+checkSame(true, $tAccounts->chooseWorkspaceTheme(1, $tOne->id()), 'an account can choose a theme');
+checkSame($tOne->id(), $tStore->forAccount(1)->id(), 'and is wearing it on the next request');
+checkSame(null, $tStore->forAccount(2), 'while a colleague is unaffected');
+checkSame(true, $tAccounts->chooseWorkspaceTheme(1, 0), 'and "use the store default" is one write away');
+checkSame(null, $tStore->forAccount(1), 'which puts them back with everybody else');
+checkSame(false, $tAccounts->chooseWorkspaceTheme(99999, $tOne->id()),
+          'an id that names no account is refused rather than reported as saved');
+checkSame(null, $tStore->forAccount(0), 'and no account has no theme');
+// Against an account that really is wearing one, so the refusal is the guard's doing
+// rather than the row simply not being there.
+$tAccounts->chooseWorkspaceTheme(2, $tOne->id());
+checkSame($tOne->id(), $tStore->forAccount(2)->id(), 'a colleague is wearing a theme');
+checkSame(null, $tStore->forAccount('2abc'),
+          'and an id intval() would read as *their* account is refused, not answered with theirs');
+$tAccounts->chooseWorkspaceTheme(2, 0);
+
+// A theme somebody is wearing cannot be deleted out from under them, and the refusal
+// can say whose screens it would have changed.
+$tAccounts->chooseWorkspaceTheme(2, $tOne->id());
+checkSame(['clerk'], $tStore->accountsUsing($tOne), 'the store can name who is wearing a theme');
+$tAccounts->chooseWorkspaceTheme(1, $tOne->id());
+checkSame(2, count($tStore->accountsUsing($tOne)), 'all of them, not the first one it found');
+$tAccounts->chooseWorkspaceTheme(1, 0);
+$tAccounts->chooseWorkspaceTheme(2, 0);
+checkSame([], $tStore->accountsUsing($tOne), 'and nobody once they have moved off it');
+
+// Closing an account frees its theme, which is the edit lock's rule one table further
+// out: a change to what somebody may reach frees what they are holding. A closed account
+// can never sign in to move itself off a theme, so without this the theme is pinned for
+// ever by somebody who will never use it — and the Admin Panel's refusal names them.
+$tAccounts->chooseWorkspaceTheme(2, $tOne->id());
+checkSame(['clerk'], $tStore->accountsUsing($tOne), 'a colleague is on the theme');
+$tClose = newTestAccountAdmin($tPdo)->close(2, 1);
+checkSame(true, $tClose->isOk(), 'and their account is closed');
+checkSame([], $tStore->accountsUsing($tOne),
+          'which frees the theme — nobody is holding it who could never let go');
+// Suspension is not closure, and the difference is that one of them is coming back.
+$tPdo->exec("UPDATE users SET closed_at = NULL, is_active = 1 WHERE id = 2");
+$tAccounts->chooseWorkspaceTheme(2, $tOne->id());
+$tPdo->exec("UPDATE users SET is_active = 0 WHERE id = 2");
+checkSame(['clerk'], $tStore->accountsUsing($tOne),
+          'while a suspended account keeps its choice, because it may be turned back on');
+$tPdo->exec("UPDATE users SET is_active = 1 WHERE id = 2");
+$tAccounts->chooseWorkspaceTheme(2, 0);
+
+// ---- Names, on a picker ------------------------------------------------------------
+checkSame(null, $tStore->otherThemeNamed('Daylight'), 'a name nothing uses is free');
+checkSame($tOne->id(), $tStore->otherThemeNamed('night SHIFT')->id(),
+          'one that differs only in case is the same name on a list');
+checkSame(null, $tStore->otherThemeNamed('Night shift', $tOne->id()),
+          'and a theme may keep its own name while being renamed');
+checkSame('Night shift', PickerName::clean("  Night   shift "), 'a typed name is folded, not invented');
+checkSame('', PickerName::clean(['Night shift']),
+          'and something that is not a string is not a name badly written');
+checkSame(false, PickerName::isValid(''), 'a blank name is refused');
+checkSame(false, PickerName::isValid(str_repeat('x', PickerName::MAX + 1)),
+          'so is one longer than the column, rather than being truncated to fit');
+checkSame(false, PickerName::isValid("Night\tshift"), 'and one with a control character in it');
+checkSame(PickerName::MAX, BrandStore::NAME_MAX,
+          'and a Brand asks the same rule rather than carrying a second copy of it');
+// Called with nothing to excuse, which is what every caller's own default passes down.
+// Asserted here because the two stores both hand `clashIn()` three arguments, so its
+// own default parameter is reached from nowhere else — and a default of 1 rather than
+// 0 would quietly excuse the first row anybody ever made from every clash check.
+checkSame($tOne->id(), PickerName::clashIn($tStore->all(), 'Night shift')->id(),
+          'clashIn() excusing nothing excuses no row, not row 1');
+// A row whose name is blank, which the form cannot make and the column allows. The
+// guard is what stops it being the answer to every unnamed clash check — an empty
+// name matching an empty name is true, and the caller asking is a save that has not
+// validated the name yet.
+$tPdo->exec("INSERT INTO workspace_themes (id, name) VALUES (77, '')");
+checkSame(null, $tStore->otherThemeNamed(''),
+          'an empty name clashes with nothing, even with a blank-named row to match');
+checkSame(null, $tStore->otherThemeNamed('   '), 'and neither does one that is only spaces');
+checkSame($tOne->id(), $tStore->otherThemeNamed('Night shift')->id(),
+          'while a real name still finds its row past it');
+$tPdo->exec("DELETE FROM workspace_themes WHERE id = 77");
+
+// ---- The colour rules the form leans on --------------------------------------------
+checkSame('#ffcc00', WorkspaceThemeStore::cleanColor('#FFCC00'), 'a colour is stored one way');
+checkSame('', WorkspaceThemeStore::cleanColor('goldenrod'), 'and something that is not one is not');
+$tSubmitted = ['nav_bg' => '#ffffff', 'accent' => 'puce', 'status_warn' => ['#fff']];
+$tUnread    = WorkspaceThemeStore::unreadableIn($tSubmitted);
+checkSame(2, count($tUnread), 'a submitted set says everything wrong with it at once');
+checkSame(true, array_key_exists('accent', $tUnread), 'naming the field that was typed wrong');
+checkSame(true, array_key_exists('status_warn', $tUnread), 'and the one that was not even a string');
+checkSame([], WorkspaceThemeStore::unreadableIn(['name' => 'x']),
+          'while a role the payload never mentioned is not a complaint about a colour');
+
+// A whole-row save, for the reason BrandStore::updateDetails() is whole-row.
+$tSaved = $tStore->updateDetails($tStore->forId($tOne->id()),
+                                 ['name' => 'Night shift', 'nav_bg' => '#222222']);
+checkSame('#222222', $tSaved->colorFor('nav_bg'), 'a save writes what it was given');
+checkSame(SiteChrome::DEFAULTS['accent'], $tSaved->colorFor('accent'),
+          'and puts a role the form did not carry back to its documented default, never to NULL');
+SiteChrome::wear($tSaved);
+checkSame(SiteChrome::DEFAULTS['accent'], SiteChrome::accent(),
+          'which is a colour the page can draw either way');
+SiteChrome::wear(null);
+
+$tStore->deleteRow($tSaved);
+checkSame(0, $tStore->count(), 'and a theme nobody is wearing can be removed');
+checkSame(null, $tStore->forId($tSaved->id()), 'leaving nothing behind to point at');
+
+// ---- Contrast: warned about, never refused (decision 13) ---------------------------
+checkSame(21.0, round(Color::contrastRatio('#000000', '#ffffff'), 1),
+          'black on white is the widest two colours get');
+checkSame(1.0, round(Color::contrastRatio('#3498db', '#3498db'), 1),
+          'and a colour on itself is the narrowest');
+checkSame(true, Color::hardToRead('#ffffff', '#1a252f') === false,
+          'today\'s nav text on today\'s nav background is readable');
+checkSame(true, Color::hardToRead('#7f8c8d', '#8fa6bb'),
+          'two mid greys are not, which is the case the warning exists for');
+checkSame(true, Color::hardToRead('#101820', '#101820'),
+          'and a theme whose two nav colours are identical is warned about');
+checkSame(Color::READABLE_RATIO, 4.5, 'the threshold is named once rather than typed into a form');
+// Three colours whose answer depends on *which* channel is which. Every fixed point
+// above is grey, identical or both, and a grey is the one input a channel mix-up
+// cannot change: mutation moved the two substring offsets and both weightings in
+// `luminance()` and each one lived, because #000000, #ffffff and a colour on itself
+// give the same ratio whichever way round the bytes are read. Red, green and blue on
+// white are three different numbers, and the standard's weighting is why — green
+// carries 0.7152 of the luminance and blue 0.0722, so the same byte in a different
+// channel is a tenfold difference in what a person can read.
+checkSame(4.0, round(Color::contrastRatio('#ff0000', '#ffffff'), 2),
+          'red on white is a shade under the threshold');
+checkSame(1.37, round(Color::contrastRatio('#00ff00', '#ffffff'), 2),
+          'green on white is nearly invisible, being the channel most of the luminance is in');
+checkSame(8.59, round(Color::contrastRatio('#0000ff', '#ffffff'), 2),
+          'and blue on white is comfortable, being the channel least of it is in');
+checkSame(true, Color::hardToRead('#ff0000', '#ffffff'),
+          'so a red-on-white theme is warned about');
+checkSame(false, Color::hardToRead('#0000ff', '#ffffff'),
+          'and a blue-on-white one is not — the pair a mixed-up channel would answer backwards');
+$tThrew = false;
+try { Color::contrastRatio('puce', '#ffffff'); } catch (Throwable $e) { $tThrew = true; }
+checkSame(true, $tThrew,
+          'and a value that is not a colour has no contrast, rather than the worst possible contrast');
+
+// ---- A theme's unreadable colour reaches the audit ---------------------------------
+// The one tool safe to point at the live database, and a table this step created is a
+// place it could have had a blind spot. Reported under the kind that says no sign is
+// affected, beside `branding_config.php`'s, because that is what is true of both — and a
+// finding that read like the others would send somebody to the shop floor over a menu bar.
+// Its own theme, made here: by this point the one above has been deleted, and an UPDATE
+// matching no row would have left this whole block asserting that an audit of nothing
+// finds nothing.
+$tAuditTheme = $tStore->insert(['name' => 'Night shift']);
+check($tAuditTheme instanceof WorkspaceTheme, 'a theme for the audit to find something in');
+// Six characters rather than ten, for the `VARCHAR(7)` reason above (§4bk).
+$tPdo->prepare("UPDATE workspace_themes SET status_warn = 'tomato' WHERE id = ?")
+     ->execute([$tAuditTheme->id()]);
+$tAudit = new ColorAudit(new DisplayStore($tPdo), new LayoutStore($tPdo, new DisplayStore($tPdo)),
+                         new BrandStyles($tPdo), new BrandStore($tPdo), SiteChrome::DEFAULTS,
+                         $tStore);
+$tFound = $tAudit->findings();
+$tThemeFindings = [];
+foreach ($tFound as $tF) {
+    if (strpos($tF['what'], 'workspace theme') !== false) { $tThemeFindings[] = $tF; }
+}
+checkSame(1, count($tThemeFindings), 'a theme colour nobody can read joins the audit');
+checkSame(ColorAudit::WRONG_IN_APP, $tThemeFindings[0]['kind'], 'under the kind that touches no sign');
+checkSame('tomato', $tThemeFindings[0]['value'], 'quoting what is actually stored');
+checkMentions($tThemeFindings[0]['what'], 'Night shift', 'naming the theme a person would open');
+// The store default for that role, which is what the fallback paints — asked for by the
+// same method the finding uses rather than by naming a constant, because for a role Site
+// Branding *can* set they are two different colours on a live install and the same one
+// here. `status_warn` is not one of the four, so this check cannot tell them apart; the
+// pair of subprocess checks above is where that distinction is actually held.
+checkMentions($tThemeFindings[0]['consequence'], SiteChrome::configColor('status_warn'),
+              'saying which colour is drawn instead');
+checkMentions($tThemeFindings[0]['consequence'], 'nothing on the shop floor',
+              'and saying plainly that no sign is affected');
+checkMentions($tThemeFindings[0]['fix'], 'Workspace Themes', 'pointing at the tab that fixes it');
+// And the store is optional, so the audit that forgets to pass one reports nothing about
+// themes and looks exactly like a clean table. The tool is what must not forget.
+$tNoThemes = new ColorAudit(new DisplayStore($tPdo), new LayoutStore($tPdo, new DisplayStore($tPdo)),
+                            new BrandStyles($tPdo), new BrandStore($tPdo), SiteChrome::DEFAULTS);
+$tSilent = 0;
+foreach ($tNoThemes->findings() as $tF) {
+    if (strpos($tF['what'], 'workspace theme') !== false) { $tSilent++; }
+}
+checkSame(0, $tSilent, 'an audit built without the theme store says nothing about themes');
+checkMentions(file_get_contents(__DIR__ . '/audit_colors.php'), 'new WorkspaceThemeStore($pdo)',
+              'which is why the tool passes one explicitly');
+$tStore->deleteRow($tAuditTheme);
+
+// ---- What "use the store default" is, as a value -----------------------------------
+// `storeColors()` is what the Builder hands its script so the escape hatch can put the
+// thirteen back, and the mutation run found its whole body deletable: the node suite
+// substitutes that payload, so nothing here had ever run it. The property that matters is
+// the last check — it must answer the *store's* colours while a theme is being worn,
+// because that is the only state it is ever called in.
+$tStoreColors = SiteChrome::storeColors();
+checkSame(13, count($tStoreColors), 'the store default is thirteen colours like any theme');
+checkSame(SiteChrome::configColor('nav_bg'), $tStoreColors['nav_bg'],
+          'the four Site Branding owns come from the config');
+checkSame(SiteChrome::DEFAULTS['status_busy'], $tStoreColors['status_busy'],
+          'and the other nine from the documented defaults');
+// Its own theme, because by this point in the section the earlier one has been deleted —
+// and a `forId()` answering null here would have made the next two checks pass by wearing
+// nothing at all, which is the shape of every hollow check this file has found.
+$tForStore = $tStore->insert(['name' => 'Loud', 'nav_bg' => '#ff00ff']);
+check($tForStore instanceof WorkspaceTheme, 'a theme to wear while asking about the store default');
+SiteChrome::wear($tForStore);
+checkSame($tStoreColors, SiteChrome::storeColors(),
+          'and wearing a theme does not change what the store default is — which is the '
+        . 'only state this is ever asked in');
+checkSame('#ff00ff', SiteChrome::navBg(),
+          'while the page around it is painted in the theme, so the two really are different answers');
+SiteChrome::wear(null);
+$tStore->deleteRow($tForStore);
+
+// ---- The two pages a theme must never reach, by construction -----------------------
+// Decision 12 says the sign-in page and the Viewer are unaffected "by construction", and
+// a construction is worth a check: what makes it true is that neither page ever calls
+// `wear()`, so `SiteChrome` answers the store default there and no query is made. The
+// sign-in page is the one that would be tempting — it draws a stylesheet from the same
+// four colours — and it has no account to look a theme up for, which is the whole reason
+// the lookup is passed in rather than reached for.
+// The Viewer's filename is built rather than written, and that is not a dodge — it is
+// the ADR-0003 check working. That rule looks for `viewer.php` immediately followed by a
+// quote, because a closing quote is what makes a string a *link* rather than a mention,
+// and a link with no Display is the "no display specified" notice. A path this file reads
+// its source from would match that pattern and be flagged, correctly by the rule's own
+// terms. Same shape as admin_panel.php spelling out a `<script>` tag in words so the gate
+// that extracts its script block does not trip on a comment.
+$tLogin  = file_get_contents(__DIR__ . '/../login.php');
+$tViewer = file_get_contents(__DIR__ . '/../viewer' . '.php');
+checkSame(0, substr_count($tLogin, 'SiteChrome::wear'),
+          'the sign-in page never wears a theme');
+checkSame(0, substr_count($tLogin, 'WorkspaceThemeStore'),
+          'and never reads the table, so it makes no query for one');
+check(strpos($tLogin, 'SiteChrome::accent()') !== false,
+      'while still drawing the store\'s own colours, which is what it is for');
+checkSame(0, substr_count($tViewer, 'SiteChrome'),
+          'and the Viewer does not know this module exists at all');
+checkSame(0, substr_count($tViewer, 'workspace_theme'),
+          'nor the table behind it — the page a customer sees loads neither config.php nor auth.php');
+
+// ---- The panel's theme surface and its handler agree about field names -------------
+// Grep-shaped, for the reason the Display Branding block above says: nothing here renders
+// the page, so a broken layout is the browser pass's job. What this can see is the
+// failure a rendered page would not shout about either — a form posting `t_nav_bg` at a
+// handler reading `t_navbg` looks perfectly fine and silently drops what was picked. The
+// two halves are 600 lines apart in one file.
+foreach (['t_name', 't_id'] as $tF) {
+    checkMentions($panel, 'name="' . $tF . '"', 'the theme form posts ' . $tF);
+    checkMentions($panel, "\$_POST['" . $tF . "']", 'and the handler reads it back under the same name');
+}
+// The thirteen are not literals on either side: the form emits them from
+// `SiteChrome::ROLES` and the handler reads them back from the same list. That is
+// stronger than matching names — one list means they cannot drift — so what is asserted
+// is that both halves really do come from it.
+checkMentions($panel, 'name="t_<?= Markup::text($tRole) ?>"',
+              'each role\'s input is named from the one list of roles');
+checkMentions($panel, "\$_POST['t_' . \$_tr]",
+              'and the handler reads all thirteen from that same list');
+// Not a count — the first version of this check asserted three uses and there are five,
+// all of them legitimate (the save loop, the refusal's labels, the swatch loop, each
+// swatch's title, the form's grouping). A number would have to be edited every time this
+// page grows a way of showing a role, which is a check that trains people to change it.
+// What matters is that no *hand-written* list of roles exists beside the one list.
+check(substr_count($panel, 'SiteChrome::ROLES') >= 4,
+      'every place that walks the roles walks the one list');
+checkSame(0, preg_match("/'nav_bg'\s*(=>|,)\s*'?#?[a-z0-9]*'?\s*,?\s*'nav_border'/", $panel),
+          'and the page holds no second copy of what the roles are');
+
+foreach (['action_create_theme', 'action_save_theme', 'action_delete_theme'] as $tA) {
+    checkMentions($panel, "\$_POST['" . $tA . "']", 'the panel handles ' . $tA);
+}
+checkMentions($panel, '$themeStore->insert(',        'creating a theme goes through the store that owns the table');
+checkMentions($panel, '$themeStore->updateDetails(', 'and so does saving one');
+checkMentions($panel, '$themeStore->deleteRow(',     'and deleting one');
+checkMentions($panel, '$themeStore->accountsUsing(',
+              'and a delete asks who is wearing it first, so the refusal can name them');
+// The two rules the form leans on, asked rather than restated.
+checkMentions($panel, 'WorkspaceThemeStore::unreadableIn(',
+              'the form asks which submitted colours cannot be read');
+checkMentions($panel, 'Color::hardToRead(',
+              'and whether the result is legible, which it warns about rather than refusing');
+check(strpos($panel, 'Nothing was saved') !== false,
+      'and says nothing was saved when it refuses, rather than only what was wrong');
+// The threshold reaches the browser from the one place it is declared. A form carrying
+// its own 4.5 would be the second opinion that disagrees the day this changes.
+checkMentions($panel, 'HttpReply::jsValue(Color::READABLE_RATIO)',
+              'the live warning is given the threshold rather than holding a copy of it');
+checkSame(0, preg_match('/THEME_READABLE_RATIO\s*=\s*4\.5/', $panel),
+          'and no literal 4.5 is written into the script beside it');
+// The panel is where a theme is *made*; it is not where one is worn by somebody else.
+// Nothing here may write the choice column — that is the account's own, through the API.
+checkSame(0, substr_count($panel, 'chooseWorkspaceTheme'),
+          'and the panel never chooses a theme for anybody: that write is the account\'s own');
 
 // ─────────────────────────────────────────────────────────────
 // Everything above this line runs on both engines. What follows can only be asked
@@ -6838,10 +8371,14 @@ checkSame([], $mStatements,
 // an empty database, but it is still asked, so they are not expected to be empty.
 check(is_array(planSteps($mPlan)), 'and the row-level steps are still offered');
 
-// ---- The seed, sent rather than refused -----------------------------------------
-// The SQLite half of this pair is up in the convergence section, where `INSERT
-// IGNORE` being invalid is used as the witness that the statement was never sent.
-// Here it is valid, so the opposite is provable: a missing row really is restored.
+// ---- The seed, against the engine the shop runs ---------------------------------
+// This pair used to be the only place the seed was executed at all: it was one
+// `INSERT IGNORE`, which SQLite rejects, so the SQLite half could only ever witness
+// the statement *not* being sent. Re-keying on the Brand replaced it with computed
+// plain INSERTs that both engines run, and the SQLite half up in the convergence
+// section now watches it seed for real. What is still worth asking only here is
+// whether MySQL agrees — the composite primary key is what makes a second Brand's
+// six rows six more rows rather than a duplicate-key error.
 $mSeed = newTestDb();
 checkSame(true, seedBlockStyles($mSeed), 'a complete set of branded block types is not re-seeded');
 $mSeed->exec("DELETE FROM block_styles WHERE block_type = 'price_2'");
@@ -6850,7 +8387,14 @@ checkSame(6, intval($mSeed->query("SELECT COUNT(*) FROM block_styles")->fetchCol
           'leaving all six branded types on the table');
 checkSame('#e74c3c', $mSeed->query(
     "SELECT font_color FROM block_styles WHERE block_type = 'price'")->fetchColumn(),
-    'and INSERT IGNORE left the store\'s own values alone');
+    'and the store\'s own values were left alone');
+
+// A second Brand on the real engine: six more rows under the composite key, which
+// on the pre-ADR-0011 key would have been six duplicate-key failures.
+makeTestBrandRow($mSeed, 'Second Venue');
+checkSame(true, seedBlockStyles($mSeed), 'a second Brand is seeded too');
+checkSame(12, intval($mSeed->query("SELECT COUNT(*) FROM block_styles")->fetchColumn()),
+          'and MySQL keeps both Brands\' rows, which is the whole point of the re-key');
 
 // ---- The row lock, actually taken -----------------------------------------------
 // `SELECT … FOR UPDATE` is the statement the SQLite fixture replaces, which made the
@@ -6868,7 +8412,7 @@ $lockPdo->rollBack();
 
 $lockLayouts = newTestLayoutStore($lockPdo);
 $pubbed = $lockLayouts->publish($lockSign, new PublishRequest(
-    layoutWith('Locked publish'), Background::unchanged(), 1, true, $lockSign->layoutStamp()));
+    layoutWith('Locked publish'), Background::unchanged(), BrandChoice::unchanged(), 1, true, $lockSign->layoutStamp()));
 checkSame(true, $pubbed->isOk(), 'and a publish taking that lock for real succeeds');
 $lockPdo->beginTransaction();
 checkSame(1, intval($lockStore->lockLayoutRevision(loadTestDisplay($lockPdo, $lockSign->id()))),
@@ -6895,7 +8439,7 @@ $colStore   = new DisplayStore($colPdo);
 $colLayouts = new LayoutStore($colPdo, $colStore);
 $colSign    = makeTestDisplay($colPdo, 'collide', 'Collision');
 check($colLayouts->publish($colSign, new PublishRequest(
-        goodLayout(), Background::unchanged(), 1, true, $colSign->layoutStamp()))->isOk(),
+        goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true, $colSign->layoutStamp()))->isOk(),
       'a Display to collide on starts with a published layout');
 
 // A second session takes the Display's row and holds it, which is exactly what the
@@ -6909,7 +8453,7 @@ $colSign     = $colStore->forId($colSign->id());
 $fastLayouts = new LayoutStore($colPdo, new FastLockWaitStore($colPdo));
 $startedAt   = microtime(true);
 $res = $fastLayouts->publish($colSign, new PublishRequest(
-    goodLayout(), Background::unchanged(), 1, true, $colSign->layoutStamp()));
+    goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true, $colSign->layoutStamp()));
 $waited = microtime(true) - $startedAt;
 
 checkSame('busy', $res->kind(), 'a publish that collides with another comes back as busy');
@@ -6925,7 +8469,7 @@ checkSame(false, $colPdo->inTransaction(), 'and no transaction is left open behi
 $holder->rollBack();
 $colSign = $colStore->forId($colSign->id());
 check($colLayouts->publish($colSign, new PublishRequest(
-        goodLayout(), Background::unchanged(), 1, true, $colSign->layoutStamp()))->isOk(),
+        goodLayout(), Background::unchanged(), BrandChoice::unchanged(), 1, true, $colSign->layoutStamp()))->isOk(),
       'and once the other session lets go, the same publish succeeds');
 
 // ---- Changed rows are not affected rows ------------------------------------------
@@ -6966,4 +8510,70 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // (§4ap: the live host is on Central, not the UTC this write-up first asserted). One
 // check added, so 1779 was a confident prediction — and it was run anyway, because a
 // prediction that turns out right is exactly what the paragraph above is warning about.
-reportChecks(testIsMysql() ? 1845 : 1822);
+//
+// **And the merge after that is where it went wrong.** Step 3 of the v2 roadmap added
+// two checks to the engine-only section below and moved the MySQL figure by three, so
+// from that commit until this one the MySQL arm expected one check more than the suite
+// contains — a failure nothing here could see, because this container has no MySQL
+// server and that arm never runs. The paragraph above describes the mistake precisely
+// and was read while it was being made: a delta was carried across instead of checked.
+//
+// So the MySQL figure is no longer a delta. The section below is straight-line code —
+// no loop, no conditional, no helper that checks more than once — so its checks can be
+// *counted*, and there are 25 of them. The MySQL figure is this file's SQLite number
+// plus that count, and both halves are things somebody can verify without a database.
+// The SQLite number stays what the run reported.
+//
+// Step 5 moved it from 2068 to 2257, its mutation runs added the eleven checks its
+// survivors asked for (2268), and changing which layer an unusable theme colour falls
+// through to added three more, two of them in a subprocess. Running the suite as an
+// install that has actually been set up (§4bg) then rewrote seven checks that were
+// asserting this checkout's own configuration and added two that say what the rewrites
+// gave up. None of that touched the engine-only section, so the count below it is still
+// 25 — read, not assumed, which is the whole of the paragraph above.
+//
+// Then §4bi: the four readouts that describe *the machine* and had no seam between them
+// and it — the PHP time zone note, the upload ceiling note, `ErrorPolicy::status()` in
+// its entirety, and the log's request tag. 31 checks, all engine-independent, so 25 is
+// still the difference and 2304 was what that run reported.
+//
+// Then the engine's own row, which had a number and a hardcoded `''` where the PHP row
+// beside it had three bands — the version having been read off that card and written down
+// eight days earlier without anything being done with it. 14 more checks, all through the
+// seam and so all engine-independent again: 2320, and 25 is still the difference.
+//
+// Then §4bk, which is the first change to this number the MySQL arm had a vote in: three
+// checks over the zero date, all engine-independent, and four writes this file had been
+// making that MySQL will not accept — two of them replaced by handing the reader a row
+// instead of a column, which is where they belonged. 2323, and 25 is still the
+// difference, because nothing here added or removed a check inside that section.
+//
+// Then §4bl, which is the first change to this number that a *failing* MySQL run asked
+// for rather than a local reading: four more of the same class, found only once the four
+// in §4bk stopped killing the run before it reached them. Two engine-dependent readouts
+// went through seams and lost the value they were asserting off the machine, the library
+// block moved onto the type the column actually offers and gained the schema-and-Builder
+// agreement that says why, and the role check was handed a row. 13 net, none of them
+// inside the engine-only section, so 25 is still the difference. 2336 and 2361, and this
+// is the first entry in this paragraph the MySQL arm has *confirmed* rather than been
+// predicted at: run 32286293398 reported 2361 having never been asked locally.
+//
+// Then one more, in the same breath as §4bm: the `trim()` in `isUtcOffset()` survived the
+// sweep, and a public seam is worth a check rather than a note about why a line is
+// allowed to be untested. 25 is still the difference.
+//
+// **Then the merge with `main`, and neither number moved.** Work-lanes item 3 says to
+// resolve this line by running the suite and never by adding two branches' deltas, and
+// this is the case that would have punished the sum: `main` had written the same class of
+// fix over the same file, so the merge's whole diff here is one comment. Adding the two
+// deltas would have claimed checks that do not exist. The run said 2337, unchanged, and
+// the engine-only section is untouched, so the MySQL figure stays its 25 above.
+//
+// **Then the merge with `main` that carried #16 across, and this time one moved.** Same
+// file, same block, the same class of fix again — main had rewritten the edit-lock stamp
+// checks this branch had already touched (§4ba there), so git conflicted rather than
+// merging quietly. What survives the resolution is main's split of the write from the
+// read plus this branch's zone-through-the-door form, and that is one check more than
+// either side had alone: main's `editingSentence()` assertion had no counterpart here.
+// Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
+reportChecks(testIsMysql() ? 2363 : 2338);

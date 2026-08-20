@@ -105,10 +105,15 @@ try {
 // the pages rather than in a table, so --host and --db say nothing about which one is
 // read: it is always this checkout's. Worth knowing when auditing a copy — the brand
 // findings describe the machine the script is on, not the database it connected to.
-Brand::load();
+SiteChrome::load();
 
 $displays = new DisplayStore($pdo);
-$audit    = new ColorAudit($displays, new LayoutStore($pdo, $displays), new BrandStyles($pdo));
+// `null` for the brand colours means "read this checkout's branding_config.php", which is
+// what the paragraph above is about. The theme store is the opposite: it is a real table
+// on whatever database --host and --db named, and it is passed explicitly because an audit
+// that quietly skipped a table would report a clean run over one it never opened.
+$audit    = new ColorAudit($displays, new LayoutStore($pdo, $displays), new BrandStyles($pdo),
+                           new BrandStore($pdo), null, new WorkspaceThemeStore($pdo));
 
 try {
     $findings = $audit->findings();

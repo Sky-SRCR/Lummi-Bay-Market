@@ -6,6 +6,13 @@ require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/display_request.php';
 require_once __DIR__ . '/lib/upload_limits.php';
+// The Brand this sign wears, its standards, and the library row its logo points at —
+// three modules because they are three tables, and each is the only writer of its own.
+require_once __DIR__ . '/lib/brands.php';
+require_once __DIR__ . '/lib/brand_styles.php';
+require_once __DIR__ . '/lib/assets.php';
+// The other noun: what *this employee's screen* is painted in, which reaches no sign.
+require_once __DIR__ . '/lib/workspace_themes.php';
 requireCurrentAccount($pdo);
 $me      = currentUser();
 $isAdmin = isAdmin();
@@ -13,6 +20,17 @@ $isAdmin = isAdmin();
 // Which Display is being edited, and at what canvas size. Authenticated, so schema
 // convergence is safe here (BUILD-REFERENCE §2 invariant 7).
 ensureSignageSchema($pdo);
+
+// ---- What this page is painted in (v2 step 5) --------------------------------------
+// Before anything renders, including the Display picker below, which is a signed-in
+// page like any other and would otherwise be the one screen a theme did not reach.
+// After convergence, so the column this reads exists on the request that adds it.
+//
+// The account is looked up and passed in; `SiteChrome` never reaches for a session.
+// Null — no theme chosen, or a database that has not converged — means the store
+// default, which is what every screen showed before this step existed.
+$themeStore = new WorkspaceThemeStore($pdo);
+SiteChrome::wear($themeStore->forAccount($me['id']));
 
 $displayStore = new DisplayStore($pdo);
 // Who is asking, and which Displays they hold (ADR-0005). The same object decides
@@ -62,13 +80,24 @@ if (!$resolution->isFound()) {
 <html lang="en">
 <head><meta charset="UTF-8"><title>Choose a display — Builder</title>
 <style>
+/* This page's share of the Workspace Theme (v2 step 5). Thirteen validated colours,
+   one echo, and `var(--…)` everywhere below — see SiteChrome::styleVariables() for why
+   the roles are drawn through custom properties rather than interpolated one rule at a
+   time. There is no canvas on this page, so every role here is chrome. */
+:root {
+<?= SiteChrome::styleVariables() ?>
+}
 * { box-sizing:border-box; margin:0; padding:0;
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
-body { background:#2c3e50; color:#fff; min-height:100vh; padding:40px 20px; }
+body { background:var(--work-area); color:#fff; min-height:100vh; padding:40px 20px; }
 .wrap { max-width:640px; margin:0 auto; }
 h1 { font-size:19px; margin-bottom:6px; }
 .sub { font-size:13px; color:#bdc3c7; margin-bottom:22px; line-height:1.6; }
-.notice { background:#5d3a3a; border:1px solid #8c5252; border-radius:5px; padding:10px 14px;
+/* The seventh of the seven banners, and the one that used to be its own slightly
+   different red (#5d3a3a against the off-banner's #7b3f3f). Two banners meaning the
+   same thing were two colours for no reason anybody wrote down; they are one role now,
+   which is the only thing on any screen that step 5 deliberately changes the look of. */
+.notice { background:var(--status-bad); border:1px solid #8c5252; border-radius:5px; padding:10px 14px;
           font-size:13px; margin-bottom:18px; }
 a.pick { display:block; background:#34495e; border:1px solid #415b76; border-radius:6px;
          padding:13px 16px; margin-bottom:9px; text-decoration:none; color:#fff; }
@@ -77,7 +106,7 @@ a.pick:hover { background:#3d566e; }
 .pick .title { font-size:15px; font-weight:600; }
 .pick .tag { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:12px; background:#2c3e50;
              border:1px solid #4a6480; border-radius:3px; padding:1px 7px; color:#aed6f1; }
-.pick .off { font-size:11px; font-weight:700; background:#7b3f3f; border-radius:9px; padding:1px 8px; }
+.pick .off { font-size:11px; font-weight:700; background:var(--status-bad); border-radius:9px; padding:1px 8px; }
 .pick .facts { font-size:12px; color:#bdc3c7; margin-top:5px; }
 .foot { margin-top:24px; font-size:13px; }
 .foot a { color:#aed6f1; }
@@ -192,9 +221,11 @@ $switchable = count($actor->openable($displayStore->all()));
 
 // The nine generated constants this page reads are defined by config.php, which
 // auth.php requires above — one list of names and defaults, in lib/branding.php.
-// The four that are colours are then read back through Brand::, not escaped: they
-// land in the <style> block below, where there is no delimiter for an entity to
-// neutralise and a value that is not a colour is CSS.
+// The four that are colours are two layers down now: they are the store default for
+// four of the thirteen chrome roles, and this page reaches every role the same way, as
+// `var(--…)` against the one `:root` block below. That block is the only place a colour
+// is printed, and printed values are validated rather than escaped — a `<style>` has no
+// delimiter for an entity to neutralise, and a value that is not a colour is CSS.
 
 // How far back Undo may go on this page (ADR-0010), from the admin Settings page by
 // way of config.php. Zero on a read-only Builder as well as when the setting says
@@ -202,6 +233,123 @@ $switchable = count($actor->openable($displayStore->all()));
 // the one number the button, the shortcut and the snapshots all read — so switching
 // it off switches off all three rather than two of them.
 $undoSteps = $readOnly ? 0 : undoStepsSetting();
+
+// ---- The Brand this sign wears (ADR-0011, v2 step 4) ------------------------------
+// Which venue's identity is on the canvas: the six branded block-type standards, the
+// palette offered as swatches, the logo the Venue Logo item places, and the name the
+// control prints.
+//
+// `null` when `displays.brand_id` names no row — a database whose convergence has not
+// run yet (invariant 10). The page then draws no Brand control at all, which is the
+// honest answer rather than an empty box: there is no Brand to name. Everything below
+// is written to survive it, and the publish deliberately sends no `brand_id` in that
+// state, because an id naming nothing would be refused and a lagging schema would
+// become a sign nobody can publish to.
+$brandStore = new BrandStore($pdo);
+$wearing    = $brandStore->forId($display->brandId());
+
+// Only an admin holding the lock may change it. A basic account and a read-only page
+// get the venue's name and logo and no control — they should know which venue they are
+// building for and be unable to change it (decision 5). Not sending the menu is the
+// courtesy; `api.php`'s `brandFromPost()` is the check.
+$canPickBrand = $isAdmin && !$readOnly && $wearing !== null;
+
+// What the picker may offer, and what the page needs about each: enough that switching
+// is entirely local. Picking a Brand repaints this canvas and writes nothing (decision
+// 6), so the standards, palette and logo of every Brand a person may switch to have to
+// be on the page already — a fetch per switch would be a network failure in the middle
+// of an edit, for data that changes about once a season.
+//
+// One Brand for everybody else: the swatches and the control still want the Brand this
+// sign wears, and a list of one cannot be switched between.
+$brandChoices = $canPickBrand ? $brandStore->all() : ($wearing ? [$wearing] : []);
+
+$brandStyleRows = (new BrandStyles($pdo))->allByBrand();
+$assetLibrary   = new AssetLibrary($pdo);
+
+$brandPayload = [];
+foreach ($brandChoices as $b) {
+    $entry = $b->toClientArray();
+    // The six branded standards, keyed by block type exactly as the layout reply's
+    // `block_styles` is — so switching Brands hands the canvas the same shape it was
+    // painted from in the first place.
+    $entry['styles'] = isset($brandStyleRows[$b->id()]) ? $brandStyleRows[$b->id()] : [];
+    // The logo as a path the page can draw, or '' when there is nothing to draw: no
+    // logo chosen, a library row that has been deleted, or one holding nothing. Read
+    // through AssetLibrary because `assets` is its table, and taken exactly as an image
+    // block would take it — the control has to show what the block it places will show,
+    // and a second opinion here about which stored references are acceptable would be
+    // one more place for the two to disagree. The Library page is where a doubtful row
+    // is already reported (`AssetLibrary::contentIssue()`).
+    $entry['logo_src'] = '';
+    if ($b->logoAssetId() > 0) {
+        $row = $assetLibrary->forId($b->logoAssetId());
+        if ($row && ($row['type'] ?? '') === 'image') {
+            $entry['logo_src'] = AssetLibrary::imagePath($row['content'] ?? '');
+        }
+    }
+    $brandPayload[] = $entry;
+}
+
+// Whether *this* sign's Brand has a logo to place, which decides whether the Venue Logo
+// item is on the palette when the page opens. Decided here rather than left to script
+// so the item does not appear and vanish on load; script re-decides it on a switch.
+$brandLogoNow = '';
+foreach ($brandPayload as $entry) {
+    if ($wearing && $entry['id'] === $wearing->id()) { $brandLogoNow = $entry['logo_src']; }
+}
+
+// A Brand pointing at a logo the library no longer has. Worth its own sentence rather
+// than an absent button: the item simply not being there is indistinguishable from this
+// app not having the feature, and the person who can fix it is the one looking at it
+// (#21's rule — a substitute nobody is told about, in the form of a silence).
+$brandLogoBroken = $wearing !== null && $wearing->logoAssetId() > 0 && $brandLogoNow === '';
+
+// ---- The Workspace Theme picker in the gear (v2 step 5) ----------------------------
+// A setting about this account rather than about this sign, which is what puts it in the
+// gear and not beside the Brand — and why it is drawn for a **read-only** Builder too.
+// Somebody who may not touch this layout may still want their own screen legible.
+//
+// Every theme's colours travel with the page, for the reason the Brand payload does:
+// switching has to be entirely local. There is no reload — this page may be holding
+// unpublished work, and a preference about a menu bar must not be able to throw that
+// away.
+$themeChoices = $themeStore->all();
+$themeNow     = SiteChrome::worn() ? SiteChrome::worn()->id() : 0;
+
+// Keyed by custom-property name rather than by role, so the script never spells the
+// mapping a second time: `SiteChrome::varName()` is the one place that turns `nav_bg`
+// into `--nav-bg`, and a script that did its own `replace(/_/g, '-')` would be the
+// second opinion that disagrees the day a role gains a digit.
+$themeVarsFor = function (array $colors) {
+    $out = [];
+    foreach ($colors as $role => $hex) { $out[SiteChrome::varName($role)] = $hex; }
+    return $out;
+};
+$themePayload = [];
+foreach ($themeChoices as $t) {
+    $entry = $t->toClientArray();
+    $themePayload[] = ['id' => $entry['id'], 'name' => $entry['name'],
+                       'vars' => $themeVarsFor($entry['colors'])];
+}
+// The thirteen the store itself is painted in, which is what "use the store default"
+// puts back. Decision 14: a preference you cannot reverse is not a preference, so this
+// entry is on the menu whatever state the account is in, including when it is already
+// the one selected.
+$themeStoreVars = $themeVarsFor(SiteChrome::storeColors());
+
+// Whether the gear needs a chip of its own to stay findable.
+//
+// Decision 14 says the picker always renders un-themed, and the picker's own card below
+// does — but a picker you cannot reach is not legible either, and the way to it is a
+// glyph drawn in a fixed grey on a themed nav bar. So the *route* is checked, at render,
+// with the same rule the theme form warns by: when the gear would be hard to read
+// against this person's nav colour, it gets a fixed background that does not depend on
+// the theme at all. Today's nav is dark and the glyph is light, so nothing changes for
+// anybody who has not made one — this appears exactly when it is needed, which is
+// `RequestScheme::isSecure()`'s shape: a protection that cannot apply is reported rather
+// than applied flat.
+$gearNeedsChip = Color::hardToRead('#bdc3c7', SiteChrome::navBg());
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -210,25 +358,102 @@ $undoSteps = $readOnly ? 0 : undoStepsSetting();
 <title>Builder — <?= Markup::text(SITE_NAME) ?></title>
 <script src="https://cdn.jsdelivr.net/npm/interactjs@1.10.27/dist/interact.min.js"></script>
 <style>
+/* ── The Workspace Theme, thirteen roles, one echo (v2 step 5) ──
+   Every colour a person's own theme may change is declared here as a custom property
+   and used as `var(--…)` below. Three reasons it is one block rather than a hundred
+   interpolations, and the third is the one that made it necessary:
+
+   - A colour in a `<style>` block is *validated*, never escaped — there is no
+     delimiter for an entity to neutralise — and thirteen validated echoes in one place
+     is that rule enforced thirteen times instead of everywhere it is drawn.
+   - Nine of the thirteen roles were literals in this file until step 5, so the
+     alternative was adding a hundred-odd new echoes to it.
+   - **The picker must not need a reload.** It lives in the gear menu on a page that
+     may be holding unpublished work, and a page that reloads has thrown that work
+     away. Custom properties are what let `applyThemeColors()` repaint the chrome in
+     place, without touching the canvas or the undo history.
+
+   Decision 11: **no role is used on the canvas.** `#builder-canvas` and everything
+   drawn on it belong to the Brand, because what the canvas shows is what the sign
+   shows. The one exception is `--selection`, which paints the selection outline and
+   the resize handles — chrome that happens to be drawn over the canvas and reaches no
+   Screen. `tools/check_invariants.php` enforces both halves of that. */
+:root {
+<?= SiteChrome::styleVariables() ?>
+}
 * { box-sizing: border-box; margin: 0; padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 
-body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh; overflow: hidden; color: #fff; }
+body { background: var(--work-area); display: flex; flex-direction: column; height: 100vh; overflow: hidden; color: #fff; }
 
 /* ── Nav ── */
 #top-nav {
-    background: <?= Brand::navBg() ?>; padding: 0 16px; display: flex; align-items: center;
-    gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid <?= Brand::navBorder() ?>;
+    background: var(--nav-bg); padding: 0 16px; display: flex; align-items: center;
+    gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid var(--nav-border);
 }
-#top-nav .brand { font-weight: bold; font-size: 14px; color: <?= Brand::text() ?>; }
+#top-nav .brand { font-weight: bold; font-size: 14px; color: var(--nav-text); }
 #top-nav .user-badge { margin-left: 20px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #bdc3c7; white-space: nowrap; flex-shrink: 0; }
 #top-nav .nav-spacer { flex: 1; }
 #top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px; padding: 5px 9px; border-radius: 3px; }
-#top-nav a:hover { background: #2c3e50; color: #fff; }
-.role-tag { background: <?= $isAdmin ? '#e74c3c' : '#3498db' ?>; color: #fff;
-            font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
-            text-transform: uppercase; }
-.btn.publish-btn { background: <?= Brand::accent() ?>; }
+#top-nav a:hover { background: var(--work-area); color: #fff; }
+#top-nav .nav-sep { border-left: 1px solid var(--nav-border); height: 20px; margin: 0 2px; }
+/* The account-and-settings menu. Everything that is a *destination* rather than a
+   thing you do to this sign lives behind it — Asset Library, Admin Panel, Help —
+   plus the role, which was a chip in the nav and is a fact about you rather than
+   about the display in front of you. Sign Out stays outside it: it was the one
+   link nobody should have to open a menu to find. */
+#gear-wrap { position: relative; display: flex; align-items: center; }
+.nav-icon { background: none; border: none; color: #bdc3c7; font-size: 16px; line-height: 1;
+            padding: 4px 7px; border-radius: 3px; cursor: pointer; }
+.nav-icon:hover { background: var(--work-area); color: #fff; }
+#gear-menu {
+    position: absolute; right: 0; top: 30px; min-width: 196px; background: var(--panel);
+    border: 1px solid var(--panel-border); border-radius: 6px; padding: 6px; display: none;
+    flex-direction: column; z-index: 400; box-shadow: 0 6px 22px rgba(0,0,0,.45);
+}
+#gear-menu.open { display: flex; }
+#gear-menu .gf { font-size: 11px; color: #8fa6bb; padding: 5px 8px; line-height: 1.4; }
+#gear-menu .gd { border-top: 1px solid var(--work-area); margin: 4px 0; }
+#gear-menu a { display: block; color: #dfe6ec; font-size: 12px; padding: 6px 8px;
+               border-radius: 3px; text-decoration: none; }
+#gear-menu a:hover { background: var(--work-area); color: #fff; }
+
+/* ── The Workspace Theme picker (decision 14) ──
+   **Every colour in this block is a literal, and that is the rule rather than an
+   oversight.** This is the control for changing your theme, so drawing it in your theme
+   is how a person paints themselves into a corner: one theme whose panel colour matches
+   its text and the menu that would have fixed it is a blank rectangle. It reads as a
+   pale card inside a dark menu on purpose — it is the one thing here that is about the
+   application rather than about this sign.
+
+   The route to it is handled at render instead: see `$gearNeedsChip`. */
+#theme-pick {
+    background: #f4f6f8; border: 1px solid #c7d0d8; border-radius: 5px;
+    padding: 6px; margin: 2px 0 4px;
+}
+#theme-pick .tp-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .7px;
+                      color: #5b6b7a; padding: 1px 4px 4px; }
+#theme-pick .tp-item {
+    display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+    background: #fff; border: 1px solid #dde3ea; border-radius: 4px; color: #1a252f;
+    font-size: 12px; padding: 5px 7px; margin-top: 3px; cursor: pointer;
+}
+#theme-pick .tp-item:hover { background: #e9eef3; }
+#theme-pick .tp-item.on { background: #dfe9f2; border-color: #9db8cd; font-weight: 600; }
+#theme-pick .tp-tick { width: 10px; flex-shrink: 0; color: #1e8449; font-size: 10px; }
+#theme-pick .tp-swatches { display: flex; gap: 2px; margin-left: auto; flex-shrink: 0; }
+#theme-pick .tp-sw { width: 9px; height: 12px; border-radius: 2px; border: 1px solid #b9c4cd; }
+/* Said when the preference could not be saved. Its own colours for the same reason as
+   the card: a sentence about a failed save must not be drawn in the thing that failed. */
+#theme-pick .tp-warn { display: none; font-size: 11px; line-height: 1.4; color: #7a2f18;
+                       background: #fdecea; border: 1px solid #f0b8ae; border-radius: 4px;
+                       padding: 4px 6px; margin-top: 4px; }
+
+/* The gear's own chip, drawn only when the nav colour would have hidden the glyph. */
+.nav-icon.gear-safe { background: #2b3a48; color: #e8eef3; }
+.nav-icon.gear-safe:hover { background: #3a4c5c; color: #fff; }
+
+.btn.publish-btn { background: var(--accent); }
 /* While a publish is in flight. The button being visibly out of action is what
    stops the second click happening at all; the guard in publishCanvas() is what
    catches the one that happens anyway. */
@@ -244,7 +469,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                           font-size: 12px; white-space: nowrap; }
 #top-nav .display-badge .d-title { font-weight: 600; color: #fff; }
 #top-nav .display-badge .d-tag { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 11px;
-                                 background: #2c3e50; border: 1px solid #4a6480; border-radius: 3px;
+                                 background: var(--work-area); border: 1px solid #4a6480; border-radius: 3px;
                                  padding: 1px 6px; color: #aed6f1; }
 #top-nav .display-badge .d-dims { color: #8fa6bb; font-size: 11px; }
 #top-nav .display-badge .d-off { background: #c0392b; color: #fff; font-size: 10px; font-weight: bold;
@@ -259,7 +484,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 
 /* Editing a retired Display is allowed on purpose — but never by accident. */
 #display-off-banner {
-    display: none; background: #7b3f3f; color: #fff; font-size: 13px; padding: 8px 14px;
+    display: none; background: var(--status-bad); color: #fff; font-size: 13px; padding: 8px 14px;
     flex-shrink: 0; border-bottom: 1px solid #9b5252;
 }
 
@@ -267,7 +492,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
    page is read-only — and the bar has to be the first thing read, because every
    control that would have changed something is simply not on the page. */
 #lock-banner {
-    background: #4b3869; color: #fff; font-size: 13px; padding: 9px 14px; flex-shrink: 0;
+    background: var(--status-busy); color: #fff; font-size: 13px; padding: 9px 14px; flex-shrink: 0;
     border-bottom: 1px solid #6b5291; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
 #lock-banner .who { font-weight: 700; }
@@ -280,48 +505,151 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     display: none; font-size: 13px; padding: 8px 14px; flex-shrink: 0;
     align-items: center; gap: 10px; flex-wrap: wrap;
 }
-#lock-idle-bar   { background: #7d6608; border-bottom: 1px solid #9e8109; }
-#lock-lapsed-bar { background: #4b3869; border-bottom: 1px solid #6b5291; }
-#lock-lost-bar   { background: #7b3f3f; border-bottom: 1px solid #9b5252; }
+#lock-idle-bar   { background: var(--status-warn); border-bottom: 1px solid #9e8109; }
+#lock-lapsed-bar { background: var(--status-busy); border-bottom: 1px solid #6b5291; }
+#lock-lost-bar   { background: var(--status-bad); border-bottom: 1px solid #9b5252; }
 /* Not the lock: the reach. Whatever this bar says, nothing on this page works again
    until somebody does something about it — so it is the one bar that never turns off
    by itself. Its sentence depends on which way the display stopped being this page's
    to edit; see LOCK_TERMINAL. */
-#lock-access-bar { background: #7b3f3f; border-bottom: 1px solid #9b5252; }
+#lock-access-bar { background: var(--status-bad); border-bottom: 1px solid #9b5252; }
 #lock-idle-bar .btn { padding: 4px 10px; }
 
-/* ── Control bar ── */
-#control-bar {
-    background: #1a252f; padding: 8px 14px; display: flex; gap: 8px;
-    align-items: center; flex-wrap: wrap; flex-shrink: 0; border-bottom: 2px solid #34495e;
+/* ── The workbench: palette | canvas | rail ──
+   One flex row owning everything under the banners. The three columns are
+   siblings, and that is the whole of why the properties panel can no longer
+   overlap anything: an overlap needs a positioned element and there is not one
+   here. The old panel was `position: fixed; top: 100px` against a stack of up to
+   five bars whose combined height depended on which of them were showing, so on a
+   page carrying a lock banner and an align bar it sat on top of them — and looked
+   like a window somebody had dragged there and could drag away again.
+
+   `min-height: 0` is load-bearing rather than tidy. A flex child defaults to
+   `min-height: auto`, which refuses to shrink below its content, so without it a
+   canvas taller than the window pushes this row past the bottom and the *page*
+   scrolls instead of the canvas. */
+#workbench { flex: 1; display: flex; min-height: 0; }
+
+/* ── Left column: which sign this is, then what you can put on it ──
+   Two parts divided by a rule, and the rule is a boundary in the markup as well as
+   a line: everything below it is an editing control and is not emitted for a
+   read-only Builder, while the block above it always is. Somebody looking at a
+   sign they cannot edit still has to be able to leave it, and still needs to know
+   which venue they are looking at. */
+#palette {
+    width: 178px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--panel-border);
+    display: flex; flex-direction: column; overflow-y: auto; padding: 9px 9px 12px;
 }
-.btn { background: #3498db; border: none; color: #fff; padding: 6px 12px;
+#palette .pal-top { display: flex; flex-direction: column; gap: 6px;
+                    border-bottom: 1px solid var(--panel-border); padding-bottom: 10px; margin-bottom: 2px; }
+#palette .pal-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: #7f8c8d; }
+#palette .pal-h   { font-size: 10px; text-transform: uppercase; letter-spacing: .8px;
+                    color: #7f8c8d; margin: 11px 0 4px; }
+#palette .pal-b {
+    display: flex; align-items: center; gap: 8px; width: 100%; margin-bottom: 3px;
+    background: #22303c; border: 1px solid #33475a; color: #fff; border-radius: 4px;
+    padding: 6px 8px; font-size: 12px; cursor: pointer; text-align: left;
+}
+#palette .pal-b:hover { background: #2d3e4f; }
+#palette .pal-b .ic { width: 16px; text-align: center; color: #8fa6bb; flex-shrink: 0; }
+#palette .pal-switch {
+    display: block; color: #bdc3c7; text-decoration: none; font-size: 12px;
+    border: 1px solid #33475a; border-radius: 4px; padding: 6px 8px; background: #22303c;
+}
+#palette .pal-switch:hover { background: #2d3e4f; color: #fff; }
+
+/* ── The Brand control ──
+   Which venue's identity is on this canvas. Above the rule, because it is a fact
+   about the sign rather than something you can put on it, and beside Switch sign
+   because the two read as a sequence: which sign, which venue, and the way off.
+
+   Two shapes for one control. An admin holding the lock gets a button that opens a
+   menu; a basic account and a read-only page get the same logo and name with no
+   chevron and no menu — they should know which venue they are building for and be
+   unable to change it. That distinction is in the markup, not in a disabled
+   attribute: a control that is on the page and refuses is a control somebody keeps
+   pressing. */
+#brand-control { position: relative; }
+#palette .brand-btn, #palette .brand-flat {
+    display: flex; align-items: center; gap: 7px; width: 100%; text-align: left;
+    background: #22303c; border: 1px solid #33475a; color: #fff; border-radius: 4px;
+    padding: 6px 8px; font-size: 12px;
+}
+#palette .brand-btn { cursor: pointer; }
+#palette .brand-btn:hover { background: #2d3e4f; }
+/* Not a button, and deliberately not styled like one. */
+#palette .brand-flat { background: #1f2a35; color: #dfe6ec; }
+#palette .brand-logo {
+    width: 20px; height: 20px; object-fit: contain; flex-shrink: 0; border-radius: 2px;
+    background: #101820;
+}
+#palette .brand-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                       white-space: nowrap; }
+#palette .brand-chev { color: #8fa6bb; flex-shrink: 0; font-size: 10px; }
+#brand-menu {
+    position: absolute; left: 0; right: 0; top: 100%; margin-top: 3px; z-index: 420;
+    background: var(--panel); border: 1px solid var(--panel-border); border-radius: 5px; padding: 4px;
+    display: none; flex-direction: column; max-height: 260px; overflow-y: auto;
+    box-shadow: 0 6px 22px rgba(0,0,0,.5);
+}
+#brand-menu.open { display: flex; }
+#brand-menu .brand-item {
+    display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+    background: none; border: none; color: #dfe6ec; font-size: 12px; padding: 5px 7px;
+    border-radius: 3px; cursor: pointer;
+}
+#brand-menu .brand-item:hover { background: var(--work-area); color: #fff; }
+#brand-menu .brand-item.on { background: var(--work-area); color: #fff; }
+#brand-menu .brand-item .tick { width: 10px; flex-shrink: 0; color: #2ecc71; font-size: 10px; }
+/* Said in the palette rather than in a toast, because it is a standing state of this
+   sign and not something that just happened. */
+#palette .brand-warn {
+    font-size: 11px; line-height: 1.45; color: #ffe9cf; background: var(--status-note);
+    border: 1px solid #a2670f; border-radius: 4px; padding: 6px 7px; margin-top: 2px;
+}
+#palette .pal-note { font-size: 11px; line-height: 1.5; color: #8fa6bb; margin-top: 10px; }
+#palette .pal-spacer { flex: 1; min-height: 10px; }
+/* Aimed at basic accounts, who add blocks into a section rather than onto the
+   canvas. It used to be a full-width orange bar above the canvas; here it sits at
+   the foot of the column whose buttons it is about. */
+#palette .pal-hint {
+    display: none; background: var(--status-note); border: 1px solid #a2670f; border-radius: 4px;
+    padding: 7px 8px; font-size: 11px; line-height: 1.45; color: #ffe9cf;
+}
+
+/* ── Centre column: the canvas, and a footer of facts about it ── */
+#canvas-column { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* Zoom on the left, who published and when on the right. Both are properties of
+   what you are looking at rather than controls you reach for, which is why they
+   are here and not in the nav the sketch was clearing. Drawn for a read-only
+   Builder too — somebody who cannot edit still needs to know whether the sign
+   moved under them. */
+#canvas-footer {
+    flex-shrink: 0; background: var(--panel); border-top: 1px solid var(--panel-border);
+    display: flex; align-items: center; gap: 6px; padding: 5px 12px;
+    font-size: 11px; color: #8fa6bb; flex-wrap: wrap;
+}
+#canvas-footer .foot-spacer { flex: 1; }
+#canvas-footer .btn { padding: 3px 9px; font-size: 11px; }
+
+.btn { background: var(--accent); border: none; color: #fff; padding: 6px 12px;
        border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 12px; white-space: nowrap; }
 .btn:hover { filter: brightness(1.15); }
-.btn.green  { background: #27ae60; }
+.btn.green  { background: var(--status-good); }
 .btn.purple { background: #8e44ad; }
 .btn.orange { background: #e67e22; }
 .btn.danger { background: #e74c3c; }
 .btn.gray   { background: #7f8c8d; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; filter: none; }
-.sep { border-left: 1px solid #34495e; height: 24px; margin: 0 4px; }
+.sep { border-left: 1px solid var(--panel-border); height: 24px; margin: 0 4px; }
 
-/* Align toolbar – hidden until multi-select */
-#align-bar {
-    background: #1a252f; padding: 6px 14px; display: none; gap: 6px;
-    align-items: center; flex-shrink: 0; border-bottom: 1px solid #34495e;
-}
-#align-bar span { font-size: 11px; color: #bdc3c7; margin-right: 4px; }
-.align-btn { background: #2c3e50; border: 1px solid #4a6278; color: #fff;
+/* The align buttons. `#align-bar` retired with the horizontal stack — the same
+   buttons are an *Arrange* group inside the rail now, beside the block they act
+   on, which is where somebody looks for them. */
+.align-btn { background: var(--work-area); border: 1px solid #4a6278; color: #fff;
              width: 32px; height: 28px; border-radius: 3px; cursor: pointer;
              font-size: 13px; display: inline-flex; align-items: center; justify-content: center; }
 .align-btn:hover { background: #3d5166; }
-
-/* Section target banner (basic users) */
-#section-banner {
-    background: #d35400; color: #fff; text-align: center; font-size: 12px;
-    font-weight: 600; padding: 5px; display: none; flex-shrink: 0;
-}
 
 /* ── Canvas wrapper ── */
 #editor-frame { flex: 1; overflow: auto; padding: 40px; display: flex;
@@ -346,7 +674,15 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 .editable-block:hover:not(.selected):not(.multi-sel) { outline: 1px dashed rgba(255,255,255,0.6); }
 .editable-block.draggable-block { cursor: move; }
 .editable-block.just-added { outline: 2px dashed #e0a400; outline-offset: -1px; background: rgba(255,212,0,.5); }
-.editable-block.selected  { outline: 2px solid #e74c3c; box-shadow: 0 0 8px rgba(231,76,60,.5); }
+/* The one role a theme is allowed to paint over the canvas, and the only `var(--…)`
+   permitted in this whole region of the stylesheet (decision 10 and 11 together, and
+   `tools/check_invariants.php` holds both halves). An outline drawn *over* a block to
+   say which one is selected is chrome: it exists for the person building the sign and
+   is not part of the sign, so it never reaches a Screen. The glow beside it stays a
+   literal `rgba()` — a shadow cannot be derived from a custom property without
+   `color-mix()`, and a theme that paints surfaces and leaves the hairlines and glows
+   alone is the honest limit of thirteen roles. */
+.editable-block.selected  { outline: 2px solid var(--selection); box-shadow: 0 0 8px rgba(231,76,60,.5); }
 .editable-block.multi-sel { outline: 2px solid #f39c12; box-shadow: 0 0 6px rgba(243,156,18,.4); }
 .editable-block.locked-block { cursor: default; }
 .editable-block.hidden-block { opacity: 0.45; }
@@ -374,7 +710,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 /* ── Resize handles ── */
 .rh {
     position: absolute; width: 10px; height: 10px;
-    background: #fff; border: 2px solid #e74c3c; border-radius: 2px;
+    background: #fff; border: 2px solid var(--selection); border-radius: 2px;
     z-index: 20; pointer-events: auto; touch-action: none;
     display: none; box-sizing: border-box;
 }
@@ -425,26 +761,56 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
     width: 100%; height: 100%; display: block; pointer-events: none;
 }
 
-/* ── Inspector ── */
+/* ── Inspector: the docked right rail ──
+   A sibling of the canvas column, not a floating panel. It keeps its width whether
+   or not a block is selected, so the canvas never reflows underneath somebody's
+   pointer, and it never vanishes — an empty rail with a sentence in it is a panel
+   waiting for you, and a rail that disappears is a panel you have to rediscover. */
 #inspector {
-    position: fixed; right: 16px; top: 100px; width: 290px;
-    background: #1a252f; border: 1px solid #34495e; border-radius: 6px;
-    padding: 14px; display: none; flex-direction: column; gap: 10px;
-    z-index: 300; box-shadow: 0 4px 20px rgba(0,0,0,.4);
-    max-height: calc(100vh - 120px); overflow-y: auto;
+    width: 296px; flex-shrink: 0;
+    background: var(--panel); border-left: 1px solid var(--panel-border);
+    padding: 14px; display: flex; flex-direction: column; gap: 10px;
+    overflow-y: auto;
 }
+/* What the rail says with nothing selected. Not a placeholder: for an admin it
+   carries the canvas background, which is a property of the canvas rather than a
+   block, and had no other home once the control bar went. */
+#insp-resting { font-size: 12px; line-height: 1.55; color: #8fa6bb; }
+#insp-resting .rest-lead { color: #bdc3c7; font-weight: 600; margin-bottom: 4px; }
+/* The block controls as one set, so the rail swaps between two states rather than
+   toggling twenty. Shown by showInspector() as `flex` — these two only take effect
+   once it is, which is why they are here and `display` is not. The gap has to be
+   restated at all because #inspector's own applies to its children, and this is
+   now one child rather than twenty. */
+#insp-block { flex-direction: column; gap: 10px; }
+.arrange-row { display: flex; gap: 4px; margin-top: 4px; }
+.arrange-row .align-btn { flex: 1; width: auto; }
 #inspector h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
-                color: #f39c12; border-bottom: 1px solid #34495e; padding-bottom: 6px; }
+                color: #f39c12; border-bottom: 1px solid var(--panel-border); padding-bottom: 6px; }
 #inspector label { font-size: 11px; text-transform: uppercase; letter-spacing: .7px;
                    color: #bdc3c7; display: block; margin-bottom: 3px; }
 #inspector input, #inspector select {
-    width: 100%; padding: 6px 8px; border-radius: 4px; border: 1px solid #34495e;
-    background: #2c3e50; color: #fff; font-size: 13px;
+    width: 100%; padding: 6px 8px; border-radius: 4px; border: 1px solid var(--panel-border);
+    background: var(--work-area); color: #fff; font-size: 13px;
 }
 #inspector input[type="color"]  { height: 32px; padding: 2px; cursor: pointer; }
 #inspector input[type="file"]   { font-size: 12px; color: #aaa; }
 #inspector input[type="number"] { width: 80px; }
-.insp-section { border-top: 1px solid #2c3e50; padding-top: 8px; }
+/* ── The Brand palette, above a colour control ──
+   Offered, never enforced (decision 4): a block with its own colour keeps it, and
+   nothing here writes anything by itself. A swatch is a shortcut to the picker
+   underneath it and reads as one. Hidden when the Brand has no palette, which is a
+   real state rather than an error — a Brand whose typography has been set and whose
+   colours have not. */
+.sw-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin: 4px 0 2px; }
+.sw-row .sw-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .6px;
+                  color: #7f8c8d; margin-right: 2px; }
+.sw-row .sw {
+    width: 17px; height: 17px; padding: 0; border: 1px solid #4a6278; border-radius: 3px;
+    cursor: pointer; flex-shrink: 0;
+}
+.sw-row .sw:hover { border-color: #fff; }
+.insp-section { border-top: 1px solid var(--work-area); padding-top: 8px; }
 .insp-row { display: flex; gap: 8px; align-items: flex-end; }
 .insp-row > * { flex: 1; }
 
@@ -485,9 +851,9 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 }
 #carousel-modal-overlay.open { display:flex; }
 #carousel-modal {
-    background:#1a252f; border-radius:8px; padding:24px;
+    background:var(--panel); border-radius:8px; padding:24px;
     width:760px; max-width:95vw; max-height:90vh; overflow-y:auto;
-    border:1px solid #34495e;
+    border:1px solid var(--panel-border);
 }
 #carousel-modal h2  { font-size:16px; margin-bottom:4px; }
 #carousel-modal > p { font-size:12px; color:#bdc3c7; margin-bottom:14px; }
@@ -503,12 +869,12 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 .slide-field label { font-size:11px; color:#bdc3c7; display:block; margin-bottom:3px; }
 .slide-field input[type="text"],
 .slide-field textarea {
-    width:100%; padding:6px 8px; background:#2c3e50; border:1px solid #34495e;
+    width:100%; padding:6px 8px; background:var(--work-area); border:1px solid var(--panel-border);
     color:#fff; border-radius:3px; font-size:13px;
 }
 .slide-field textarea { resize:vertical; }
 .slide-img-preview {
-    min-height:44px; background:#2c3e50; border:1px solid #34495e;
+    min-height:44px; background:var(--work-area); border:1px solid var(--panel-border);
     border-radius:3px; display:flex; align-items:center; justify-content:center;
     padding:4px; margin-bottom:4px; font-size:11px; color:#7f8c8d;
 }
@@ -532,9 +898,9 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 }
 #table-modal-overlay.open { display:flex; }
 #table-modal {
-    background:#1a252f; border-radius:8px; padding:24px;
+    background:var(--panel); border-radius:8px; padding:24px;
     width:860px; max-width:95vw; max-height:90vh; overflow-y:auto;
-    border:1px solid #34495e;
+    border:1px solid var(--panel-border);
 }
 #table-modal h2  { font-size:16px; margin-bottom:4px; }
 #table-modal > p { font-size:12px; color:#bdc3c7; margin-bottom:14px; }
@@ -545,18 +911,18 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 }
 .table-editor thead th { background:#0d1b24; min-width:120px; }
 .table-editor tbody td input[type="text"] {
-    width:100%; padding:5px 7px; background:#2c3e50; border:1px solid #34495e;
+    width:100%; padding:5px 7px; background:var(--work-area); border:1px solid var(--panel-border);
     color:#fff; border-radius:3px; font-size:13px; box-sizing:border-box;
 }
 .col-style-sel {
-    width:100%; padding:4px 6px; background:#2c3e50; color:#fff;
-    border:1px solid #34495e; border-radius:3px; font-size:12px; margin-bottom:4px;
+    width:100%; padding:4px 6px; background:var(--work-area); color:#fff;
+    border:1px solid var(--panel-border); border-radius:3px; font-size:12px; margin-bottom:4px;
 }
 .col-align-row { display:flex; gap:3px; margin-bottom:4px; }
 .col-width-row { display:flex; align-items:center; gap:3px; margin-bottom:4px; }
 .col-width-inp { width:52px; background:#0d1b24; border:1px solid #2c3e50; color:#ecf0f1; border-radius:3px; padding:2px 4px; font-size:11px; }
 .col-width-lbl { font-size:10px; color:#95a5a6; }
-.col-align-sel { flex:1; padding:2px 4px; background:#2c3e50; color:#fff; border:1px solid #34495e; border-radius:3px; font-size:10px; }
+.col-align-sel { flex:1; padding:2px 4px; background:var(--work-area); color:#fff; border:1px solid var(--panel-border); border-radius:3px; font-size:10px; }
 .del-col-btn { width:100%; font-size:10px; padding:2px 4px; }
 .del-row-td  { width:32px; text-align:center; background:#0d1b24; }
 
@@ -574,7 +940,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 /* ── Toast ── */
 #toast {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-    background: #27ae60; color: #fff; padding: 10px 22px; border-radius: 4px;
+    background: var(--status-good); color: #fff; padding: 10px 22px; border-radius: 4px;
     font-weight: bold; font-size: 13px; display: none; z-index: 9999;
     box-shadow: 0 4px 12px rgba(0,0,0,.3);
 }
@@ -587,13 +953,13 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
    the upload ended — one way or the other. */
 #upload-status {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-    background: #2c3e50; color: #fff; padding: 10px 18px; border-radius: 4px;
+    background: var(--work-area); color: #fff; padding: 10px 18px; border-radius: 4px;
     font-size: 13px; display: none; z-index: 10000; min-width: 260px;
     box-shadow: 0 4px 12px rgba(0,0,0,.4);
 }
 #upload-status .up-label { font-weight: bold; margin-bottom: 6px; }
-#upload-status .up-track { background: #1a252f; border-radius: 3px; height: 6px; overflow: hidden; }
-#upload-status .up-fill  { background: #3498db; height: 100%; width: 0; transition: width .15s linear; }
+#upload-status .up-track { background: var(--panel); border-radius: 3px; height: 6px; overflow: hidden; }
+#upload-status .up-fill  { background: var(--accent); height: 100%; width: 0; transition: width .15s linear; }
 #upload-status .up-cancel {
     display: block; margin: 8px 0 0 auto; padding: 3px 10px; font-size: 11px;
     background: #7f8c8d; color: #fff; border: none; border-radius: 3px; cursor: pointer;
@@ -603,44 +969,81 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 </head>
 <body>
 
-<!-- ── Top Nav ── -->
+<!-- ── Top Nav ──
+     Left to right: the store, then which sign this is, then the two things you do
+     to it, then who you are. No store logo and no role chip: both were about the
+     installation rather than about the sign in front of you, and the bar was being
+     cleared on purpose. The role moved into the gear, as text.
+
+     Two things that used to be here are deliberately elsewhere. The Brand control
+     and Switch sign are at the top of the left column, because both had to be
+     squeezed into icons to fit a bar that was being cleared — and a bare ⇄ is not
+     a clean bar, it is an unreadable one. "Last published by" is in the canvas
+     footer, quiet but still on screen, because the question it answers has to
+     answer at a glance or not at all. -->
 <div id="top-nav">
-    <?php if (Brand::logo()): ?>
-        <img src="<?= Markup::text(Brand::logo()) ?>" alt="<?= Markup::text(SITE_NAME) ?>"
-             style="max-height:32px; max-width:130px; object-fit:contain; flex-shrink:0;">
-    <?php endif; ?>
     <span class="brand"><?= Markup::text(SITE_NAME) ?></span>
-    <span class="user-badge">
-        <?= Markup::text($me['username']) ?>
-        <span class="role-tag"><?= $isAdmin ? 'ADMIN' : 'USER' ?></span>
-    </span>
     <span class="display-badge" title="The display you are editing. Publishing sends only this one to its screen.">
         <span class="d-title"><?= Markup::text($display->title()) ?></span>
         <span class="d-tag"><?= Markup::text($display->tag()) ?></span>
         <span class="d-dims"><?= Markup::text($display->dimensionsLabel()) ?></span>
         <?php if (!$display->isActive()): ?><span class="d-off">off</span><?php endif; ?>
-        <?php
-        // "who and when" comes from lastPublishDescription(), the same sentence the
-        // admin panel's Displays tab and a refused publish already use — so the three
-        // places that report a publish cannot drift, and the time goes through
-        // StoreClock exactly once (#44). A Display with a revision but no stamp is a
-        // real state, not an error: advanceLayoutRevision() bumps the stamp when an
-        // element is hidden or deleted and deliberately records no publisher, and rows
-        // published before this was stored have no stamp either.
-        ?>
-        <span class="d-pub" id="pub-state"><?php if ($display->lastPublishDescription() === ''): ?>not published yet<?php else: ?>published by <?= Markup::text($display->lastPublishDescription()) ?><?php endif; ?></span>
     </span>
-    <?php if ($switchable > 1): ?>
-        <a href="builder.php?switch=1" title="Edit a different display">Switch display ⇄</a>
-    <?php endif; ?>
+    <a href="viewer.php?display=<?= urlencode($display->tag()) ?>" target="_blank" title="Open this display's Viewer in a new tab">View &#8599;</a>
     <span class="nav-spacer"></span>
-    <a href="crud.php">Asset Library</a>
-    <?php if ($isAdmin): ?>
-    <a href="admin_panel.php">Admin Panel</a>
+
+    <?php if ($undoSteps > 0): ?>
+    <button id="undo-btn" class="btn gray" onclick="undoStep()" disabled
+            title="Undo the last change (Ctrl+Z)">&#8630; Undo</button>
     <?php endif; ?>
-    <a href="help.php" target="_blank">Help</a>
-    <a href="viewer.php?display=<?= urlencode($display->tag()) ?>" target="_blank">View Display ↗</a>
+    <?php if (!$readOnly): ?>
+    <button id="publish-btn" class="btn publish-btn" onclick="publishCanvas()">&#10003; Publish</button>
+    <?php endif; ?>
+
+    <span class="nav-sep"></span>
+    <span class="user-badge"><?= Markup::text($me['username']) ?></span>
     <a href="logout.php">Sign Out</a>
+    <span id="gear-wrap">
+        <button id="gear-btn" class="nav-icon<?= $gearNeedsChip ? ' gear-safe' : '' ?>" onclick="toggleGearMenu(event)"
+                title="Account and settings" aria-haspopup="true" aria-expanded="false">&#9881;</button>
+        <div id="gear-menu">
+            <div class="gf"><?= Markup::text($me['username']) ?> &mdash; <?= $isAdmin ? 'Administrator' : 'Standard user' ?></div>
+            <div class="gd"></div>
+            <!-- The Workspace Theme picker. A setting about this account rather than
+                 about this sign, which is what puts it in here and not beside the
+                 Brand — and why it is drawn for a read-only Builder too. Changing it
+                 writes nothing to any sign and reloads nothing: `chooseTheme()`
+                 repaints the chrome in place, because this page may be holding
+                 unpublished work. Drawn in fixed colours (decision 14). -->
+            <div id="theme-pick">
+                <div class="tp-cap">Workspace theme</div>
+                <button type="button" class="tp-item<?= $themeNow === 0 ? ' on' : '' ?>"
+                        data-theme-id="0" onclick="chooseTheme(0)">
+                    <span class="tp-tick"><?= $themeNow === 0 ? '&#10003;' : '' ?></span>
+                    <span>Store default</span>
+                </button>
+                <?php foreach ($themePayload as $tEntry): ?>
+                <button type="button" class="tp-item<?= $themeNow === $tEntry['id'] ? ' on' : '' ?>"
+                        data-theme-id="<?= intval($tEntry['id']) ?>" onclick="chooseTheme(<?= intval($tEntry['id']) ?>)">
+                    <span class="tp-tick"><?= $themeNow === $tEntry['id'] ? '&#10003;' : '' ?></span>
+                    <span><?= Markup::text($tEntry['name']) ?></span>
+                    <span class="tp-swatches">
+                        <?php foreach (['--nav-bg', '--accent', '--work-area'] as $tVar): ?>
+                        <span class="tp-sw" style="background:<?= Color::read($tEntry['vars'][$tVar]) ?>"></span>
+                        <?php endforeach; ?>
+                    </span>
+                </button>
+                <?php endforeach; ?>
+                <div class="tp-warn" id="theme-warn"></div>
+            </div>
+            <div class="gd"></div>
+            <a href="crud.php">Asset Library</a>
+            <?php if ($isAdmin): ?>
+            <a href="admin_panel.php">Admin Panel</a>
+            <?php endif; ?>
+            <a href="help.php" target="_blank">Help</a>
+        </div>
+    </span>
 </div>
 
 <!-- ── Edit lock (ADR-0007) ── -->
@@ -693,90 +1096,6 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         copy anything you need before you leave the page. Ask an admin if this was not expected.</span>
 </div>
 
-<!-- ── Control bar ── -->
-<div id="control-bar">
-    <?php if ($isAdmin && !$readOnly): ?>
-        <button class="btn purple" onclick="createSection()">+ Section</button>
-        <button class="btn"        onclick="createBlock('image',null)">+ Image</button>
-        <button class="btn"        onclick="createBlock('carousel',null)">+ Carousel</button>
-        <button class="btn"        onclick="createBlock('table',null)">+ Table</button>
-        <button class="btn"        onclick="createBlock('marquee',null)">+ Marquee</button>
-        <button class="btn"        onclick="createBlock('video',null)">+ Video</button>
-        <div class="sep"></div>
-    <?php endif; ?>
-
-    <?php if (!$readOnly): ?>
-    <button class="btn orange" onclick="createBlock('text','section_header')">+ Section Header</button>
-    <button class="btn orange" onclick="createBlock('text','item_title')">+ Item Title</button>
-    <button class="btn orange" onclick="createBlock('text','price')">+ Price</button>
-    <button class="btn orange" onclick="createBlock('text','description')">+ Description</button>
-    <?php else: ?>
-    <span style="font-size:12px; color:#bdc3c7;">Read-only — <?= Markup::text($lockHolder) ?> has this display open.</span>
-    <?php endif; ?>
-
-    <?php if ($isAdmin && !$readOnly): ?>
-    <div class="sep"></div>
-    <label style="font-size:11px; color:#bdc3c7;">Background:</label>
-    <select id="bg-type" onchange="toggleBgInputs()" style="padding:5px 7px; border-radius:3px; border:1px solid #34495e; background:#2c3e50; color:#fff; font-size:12px;">
-        <option value="color">Color</option>
-        <option value="image">Image</option>
-    </select>
-    <input type="color" id="bg-color" value="#1a1a2e" oninput="applyBg()"
-           style="width:40px; height:30px; padding:2px; border:none; cursor:pointer; border-radius:3px;">
-    <input type="file"  id="bg-file"  accept="image/jpeg,image/png,image/gif,image/webp" onchange="applyBgFile()"
-           style="display:none; font-size:11px; color:#aaa;">
-    <!-- Nothing uploads when a background is picked; it rides out with the next
-         Publish. This is what says so, because an absent progress bar and a broken
-         control look identical. Hidden until there is something to report, and
-         `display` rather than emptiness so the top bar does not reflow. -->
-    <span id="bg-pending" style="display:none; font-size:11px; color:#e0a400; max-width:260px;
-          overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
-    <?php endif; ?>
-
-    <div class="sep" style="margin-left:auto;"></div>
-    <label style="font-size:11px; color:#bdc3c7;">Zoom:</label>
-    <button class="btn gray" onclick="zoomToFit()" title="Fit the whole canvas in the window">Fit</button>
-    <button class="btn gray" onclick="applyZoom(1)" title="Actual size">100%</button>
-    <button class="btn gray" onclick="nudgeZoom(-1)" title="Zoom out">&minus;</button>
-    <button class="btn gray" onclick="nudgeZoom(1)" title="Zoom in">+</button>
-    <span id="zoom-readout" style="font-size:11px; color:#bdc3c7; min-width:34px; text-align:right;">100%</span>
-
-    <?php if ($undoSteps > 0): ?>
-    <button id="undo-btn" class="btn gray" style="margin-left:12px;" onclick="undoStep()" disabled
-            title="Undo the last change (Ctrl+Z)">&#8630; Undo</button>
-    <?php endif; ?>
-
-    <?php if (!$readOnly): ?>
-    <button id="publish-btn" class="btn publish-btn" style="margin-left:12px;" onclick="publishCanvas()">&#10003; Publish</button>
-    <?php endif; ?>
-</div>
-
-<!-- ── Align bar (shown on multi-select OR single select) ──
-     Everything from here to the end of the editor modals is an editing control,
-     and a read-only Builder does not get any of it in the page. See the note
-     above #inspector for what that costs and why it is worth it. -->
-<?php if (!$readOnly): ?>
-<div id="align-bar">
-    <span style="font-size:11px;color:#bdc3c7;">Align Items:</span>
-    <button class="align-btn" title="Align left edges (single: to parent left)"    onclick="alignBlocks('left')"     style="width:auto;padding:0 8px;font-size:11px;">&#9664; Left</button>
-    <button class="align-btn" title="Align right edges (single: to parent right)"  onclick="alignBlocks('right')"    style="width:auto;padding:0 8px;font-size:11px;">Right &#9654;</button>
-    <button class="align-btn" title="Align top edges (single: to parent top)"      onclick="alignBlocks('top')"      style="width:auto;padding:0 8px;font-size:11px;">&#9650; Top</button>
-    <button class="align-btn" title="Align bottom edges (single: to parent bottom)" onclick="alignBlocks('bottom')"  style="width:auto;padding:0 8px;font-size:11px;">Bottom &#9660;</button>
-    <button class="align-btn" title="Center horizontally (single: within parent)"  onclick="alignBlocks('center-h')" style="width:auto;padding:0 8px;font-size:11px;">&#8596; H-Center</button>
-    <button class="align-btn" title="Center vertically (single: within parent)"    onclick="alignBlocks('center-v')" style="width:auto;padding:0 8px;font-size:11px;">&#8597; V-Center</button>
-    <div class="sep"></div>
-    <span style="font-size:11px;color:#bdc3c7;">Align to Parent:</span>
-    <button class="align-btn" title="Snap left edge to parent left"   onclick="alignToParent('left')"     style="width:auto;padding:0 8px;font-size:11px;">&#9664; Left</button>
-    <button class="align-btn" title="Center in parent horizontally"   onclick="alignToParent('center-h')" style="width:auto;padding:0 8px;font-size:11px;">&#8596; H-Center</button>
-    <button class="align-btn" title="Snap right edge to parent right" onclick="alignToParent('right')"    style="width:auto;padding:0 8px;font-size:11px;">Right &#9654;</button>
-    <button class="align-btn" title="Snap top edge to parent top"     onclick="alignToParent('top')"      style="width:auto;padding:0 8px;font-size:11px;">&#9650; Top</button>
-    <button class="align-btn" title="Center in parent vertically"     onclick="alignToParent('center-v')" style="width:auto;padding:0 8px;font-size:11px;">&#8597; V-Center</button>
-    <button class="align-btn" title="Snap bottom edge to parent bottom" onclick="alignToParent('bottom')" style="width:auto;padding:0 8px;font-size:11px;">Bottom &#9660;</button>
-    <div class="sep"></div>
-    <span id="sel-count" style="font-size:11px; color:#bdc3c7;"></span>
-</div>
-<?php endif; ?>
-
 <!-- ── Turned-off notice ── -->
 <?php if (!$display->isActive()): ?>
 <div id="display-off-banner" style="display:block;">
@@ -791,20 +1110,169 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
 </div>
 <?php endif; ?>
 
-<!-- ── Section banner for basic users ── -->
-<?php if (!$isAdmin && !$readOnly): ?>
-<div id="section-banner">
-    Click on a <strong>section</strong> (purple border) to target it, then add your blocks.
-</div>
-<?php endif; ?>
+<!-- ── The workbench ──
+     Palette, canvas, rail: three columns of one flex row, so the properties panel
+     is a sibling of the canvas rather than something floating over it. Everything
+     above this point is a bar the whole window-width, and everything below it is
+     inside one of the three columns. -->
+<div id="workbench">
 
-<!-- ── Canvas ── -->
-<div id="editor-frame">
-    <!-- #canvas-sizer carries the ZOOMED footprint. A CSS transform does not
-         change layout size, so without this the frame could not scroll to the
-         far edge of a canvas zoomed past the viewport. -->
-    <div id="canvas-sizer" style="flex-shrink:0;">
-        <div id="builder-canvas"></div>
+<!-- ── Left column ──
+     Above the rule, always emitted: which sign this is and the way off it. Below
+     it, only for a Builder that may edit: what you can put on the sign. -->
+<div id="palette">
+    <?php
+    // Above the rule: which venue this sign belongs to, and the way off the sign.
+    // Emitted when either of the two exists — the rule below is drawn by `pal-top`
+    // itself, and a rule above nothing is a line the eye has to account for. The
+    // Brand control is absent rather than empty when `displays.brand_id` names no
+    // row: a caption over a blank box reads as something that failed to load.
+    ?>
+    <?php if ($wearing || $switchable > 1): ?>
+    <div class="pal-top">
+        <?php if ($wearing): ?>
+        <div class="pal-cap">Brand</div>
+        <div id="brand-control">
+            <?php if ($canPickBrand): ?>
+            <button id="brand-btn" class="brand-btn" onclick="toggleBrandMenu(event)"
+                    aria-haspopup="true" aria-expanded="false"
+                    title="The brand this sign wears — its typography, palette and logo. Changing it takes effect at the next Publish.">
+                <img id="brand-logo" class="brand-logo" alt=""<?php
+                    if ($brandLogoNow === ''): ?> style="display:none;"<?php endif; ?>>
+                <span id="brand-name" class="brand-name"><?= Markup::text($wearing->name()) ?></span>
+                <span class="brand-chev">&#9662;</span>
+            </button>
+            <?php
+            // The menu is markup rather than something script builds, so no venue's
+            // name is ever assembled into HTML: each item carries its Brand's id in
+            // an attribute a number cannot escape from, and the name goes through
+            // the one door (`Markup::text`). Which item is ticked changes as
+            // somebody switches, and that is a class script toggles — see
+            // renderBrandControl().
+            ?>
+            <div id="brand-menu">
+                <?php foreach ($brandChoices as $b): ?>
+                <button class="brand-item<?= $b->id() === $wearing->id() ? ' on' : '' ?>"
+                        data-brand-id="<?= intval($b->id()) ?>" onclick="switchBrand(<?= intval($b->id()) ?>)">
+                    <span class="tick"><?= $b->id() === $wearing->id() ? '&#10003;' : '' ?></span>
+                    <span class="brand-name"><?= Markup::text($b->name()) ?></span>
+                </button>
+                <?php endforeach; ?>
+            </div>
+            <?php else: ?>
+            <?php
+            // No ids in here on purpose. Nothing on this page can change the Brand,
+            // so nothing has to find these nodes again — and a second copy of
+            // `#brand-name` would make every lookup of it depend on which branch the
+            // page took. The read-only suite audits exactly that: an id it can
+            // resolve on a page that does not emit it is worse than no stub at all.
+            ?>
+            <span class="brand-flat" title="The brand this sign wears. Only an admin editing this display can change it.">
+                <?php if ($brandLogoNow !== ''): ?>
+                <img class="brand-logo" alt="" src="<?= Markup::text($brandLogoNow) ?>">
+                <?php endif; ?>
+                <span class="brand-name"><?= Markup::text($wearing->name()) ?></span>
+            </span>
+            <?php endif; ?>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($switchable > 1): ?>
+        <a class="pal-switch" href="builder.php?switch=1"
+           title="Edit a different display">&#8646; Switch sign</a>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
+
+    <?php if (!$readOnly): ?>
+        <?php if ($isAdmin): ?>
+        <div class="pal-h">Layout</div>
+        <button class="pal-b" onclick="createSection()"><span class="ic">&#9707;</span> Section</button>
+        <?php endif; ?>
+
+        <div class="pal-h">Text</div>
+        <button class="pal-b" onclick="createBlock('text','section_header')"><span class="ic">H</span> Section Header</button>
+        <button class="pal-b" onclick="createBlock('text','item_title')"><span class="ic">T</span> Item Title</button>
+        <button class="pal-b" onclick="createBlock('text','price')"><span class="ic">$</span> Price</button>
+        <button class="pal-b" onclick="createBlock('text','description')"><span class="ic">&#182;</span> Description</button>
+
+        <?php if ($isAdmin): ?>
+        <div class="pal-h">Media</div>
+        <button class="pal-b" onclick="createBlock('image',null)"><span class="ic">&#9635;</span> Image</button>
+        <button class="pal-b" onclick="createBlock('carousel',null)"><span class="ic">&#9707;</span> Carousel</button>
+        <button class="pal-b" onclick="createBlock('table',null)"><span class="ic">&#9636;</span> Table</button>
+        <button class="pal-b" onclick="createBlock('marquee',null)"><span class="ic">&#9654;</span> Marquee</button>
+        <button class="pal-b" onclick="createBlock('video',null)"><span class="ic">&#9658;</span> Video</button>
+
+        <?php
+        // The fourth group step 2's plan named, and the only one whose contents depend
+        // on data: a Brand with no logo has nothing to offer here, so the group is
+        // absent rather than holding a button that would drop an empty image block.
+        // Its initial state is decided by PHP so it does not appear and vanish on load,
+        // and renderBrandAssets() re-decides it when somebody switches Brand.
+        ?>
+        <div id="brand-assets"<?= $brandLogoNow === '' ? ' style="display:none;"' : '' ?>>
+            <div class="pal-h">Brand</div>
+            <button class="pal-b" onclick="createVenueLogo()"
+                    title="Drop an image block already linked to this brand's logo">
+                <span class="ic">&#9873;</span> Venue Logo</button>
+        </div>
+        <div id="brand-logo-warn" class="brand-warn"<?= $brandLogoBroken ? '' : ' style="display:none;"' ?>>
+            This brand points at a logo the asset library no longer has, so
+            <strong>Venue Logo</strong> is not offered. Point the brand at an image in the
+            Admin Panel, under Display Branding.
+        </div>
+        <?php endif; ?>
+
+        <div class="pal-spacer"></div>
+        <?php if (!$isAdmin): ?>
+        <!-- Aimed at basic accounts, and revealed by the same code that always
+             revealed it — the id and the emit condition are unchanged, only where
+             it is drawn. See setSectionBanner(): the markup decides whether it
+             exists and the script only has to survive the answer. -->
+        <div id="section-banner" class="pal-hint">
+            Click on a <strong>section</strong> (purple border) to target it, then add your blocks.
+        </div>
+        <?php endif; ?>
+    <?php else: ?>
+        <div class="pal-note">Read-only — <?= Markup::text($lockHolder) ?> has this display open.
+            You can look at it and leave it; nothing here can be changed.</div>
+    <?php endif; ?>
+</div>
+
+<!-- ── Centre column: the canvas, and the footer of facts about it ── -->
+<div id="canvas-column">
+    <div id="editor-frame">
+        <!-- #canvas-sizer carries the ZOOMED footprint. A CSS transform does not
+             change layout size, so without this the frame could not scroll to the
+             far edge of a canvas zoomed past the viewport. -->
+        <div id="canvas-sizer" style="flex-shrink:0;">
+            <div id="builder-canvas"></div>
+        </div>
+    </div>
+
+    <div id="canvas-footer">
+        <span>Zoom</span>
+        <button class="btn gray" onclick="zoomToFit()" title="Fit the whole canvas in the window">Fit</button>
+        <button class="btn gray" onclick="applyZoom(1)" title="Actual size">100%</button>
+        <button class="btn gray" onclick="nudgeZoom(-1)" title="Zoom out">&minus;</button>
+        <button class="btn gray" onclick="nudgeZoom(1)" title="Zoom in">+</button>
+        <span id="zoom-readout" style="min-width:34px; text-align:right;">100%</span>
+        <span class="foot-spacer"></span>
+        <?php
+        // "who and when" comes from lastPublishDescription(), the same sentence the
+        // admin panel's Displays tab and a refused publish already use — so the three
+        // places that report a publish cannot drift, and the time goes through
+        // StoreClock exactly once (#44). A Display with a revision but no stamp is a
+        // real state, not an error: advanceLayoutRevision() bumps the stamp when an
+        // element is hidden or deleted and deliberately records no publisher, and rows
+        // published before this was stored have no stamp either.
+        //
+        // Emitted for a read-only Builder too, which is the case it was written for:
+        // somebody who cannot edit still needs to know whether the sign moved under
+        // them.
+        ?>
+        <span id="pub-state"><?php if ($display->lastPublishDescription() === ''): ?>Not published yet<?php else: ?>Last published by <?= Markup::text($display->lastPublishDescription()) ?><?php endif; ?></span>
     </div>
 </div>
 
@@ -822,6 +1290,47 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
      drive one of these controls is now unreachable rather than merely inert. -->
 <?php if (!$readOnly): ?>
 <div id="inspector">
+
+    <!-- ── The resting state ──
+         What the rail says with nothing selected. The old panel answered that
+         question by disappearing, which is why it read as a window: a thing that
+         comes and goes is a thing you have to find again. It stays, and for an
+         admin it is not a placeholder — the canvas background is a property of the
+         canvas rather than of any block, and when the control bar went it had
+         nowhere else that was true of it. The left column is *what you can put on
+         the sign*; a background is not something you put on. -->
+    <div id="insp-resting">
+        <div class="rest-lead">Nothing selected.</div>
+        Click a block on the canvas to edit it. Shift+click a second block in the
+        same section to line them up with each other.
+
+        <?php if ($isAdmin): ?>
+        <div class="insp-section" style="margin-top:14px;">
+            <label>Canvas Background</label>
+            <select id="bg-type" onchange="toggleBgInputs()">
+                <option value="color">Color</option>
+                <option value="image">Image</option>
+            </select>
+            <!-- The Brand's palette, offered and never enforced (decision 4). Filled by
+                 renderPaletteSwatches() and hidden when the Brand has none, which is a
+                 real state: a Brand that has only had its typography set. -->
+            <div class="sw-row" id="sw-bg" style="display:none;"></div>
+            <input type="color" id="bg-color" value="#1a1a2e" oninput="applyBg()" style="margin-top:6px;">
+            <input type="file"  id="bg-file"  accept="image/jpeg,image/png,image/gif,image/webp"
+                   onchange="applyBgFile()" style="display:none; margin-top:6px;">
+            <!-- Nothing uploads when a background is picked; it rides out with the
+                 next Publish. This is what says so, because an absent progress bar
+                 and a broken control look identical. Hidden until there is
+                 something to report. -->
+            <div id="bg-pending" style="display:none; font-size:11px; color:#e0a400;
+                 margin-top:6px; line-height:1.45;"></div>
+        </div>
+        <?php endif; ?>
+    </div>
+
+    <!-- ── The block state ── Everything from here down is about one selected
+         block, and is shown as a set. -->
+    <div id="insp-block" style="display:none;">
     <h3 id="insp-title">Block</h3>
 
     <!-- Position + size (always visible when block selected) -->
@@ -904,6 +1413,10 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                        oninput="updateStyle('lineHeight',this.value)" onchange="commitUndoStep()">
             </div>
         </div>
+        <!-- Above the colour control it is about, and outside the row rather than in
+             it: `.insp-row` is a flex row, so a swatch strip inside it would sit
+             beside the picker instead of over it. -->
+        <div class="sw-row" id="sw-font" style="display:none;"></div>
         <div class="insp-row" style="margin-top:6px;">
             <div>
                 <label>Color</label>
@@ -993,6 +1506,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
                onchange="commitUndoStep()">
         <div id="marquee-speed-label" style="font-size:11px;color:#bdc3c7;margin-top:2px;">80 px/sec</div>
         <label style="margin-top:6px;">Text Style</label>
+        <div class="sw-row" id="sw-marquee" style="display:none;"></div>
         <div style="display:flex;gap:6px;align-items:center;margin-top:4px;">
             <input type="color" id="marquee-color" value="#ffffff"
                    style="width:36px;height:30px;flex-shrink:0;" oninput="updateMarqueeStyle()"
@@ -1005,6 +1519,7 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
             </select>
         </div>
         <label style="margin-top:6px;">Background Color</label>
+        <div class="sw-row" id="sw-marquee-bg" style="display:none;"></div>
         <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
             <input type="color" id="marquee-bg" value="#c0392b"
                    style="width:60px;height:30px;" oninput="updateMarqueeStyle()"
@@ -1024,9 +1539,33 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
         </select>
     </div>
 
-    <!-- Align tip -->
-    <div class="insp-section" style="font-size:11px;color:#7f8c8d;line-height:1.5;">
-        &#128161; <strong style="color:#bdc3c7;">Alignment tools:</strong> Select one block to align it to its parent. Shift+click additional blocks (same parent only) to align them to each other.
+    <!-- ── Arrange ──
+         What `#align-bar` was. It used to be a horizontal strip that appeared above
+         the canvas when something was selected — one more bar in the stack the
+         floating panel was landing on, and a long way from the block it acted on.
+         Same two sets of buttons, same two functions, beside the block instead.
+         The label under them is `#sel-count`, which says which of the two sets the
+         selection can actually use. -->
+    <div class="insp-section" id="insp-arrange">
+        <label>Arrange &mdash; align to parent</label>
+        <div class="arrange-row">
+            <button class="align-btn" title="Snap left edge to parent left"     onclick="alignToParent('left')">&#9664;</button>
+            <button class="align-btn" title="Center in parent horizontally"     onclick="alignToParent('center-h')">&#8596;</button>
+            <button class="align-btn" title="Snap right edge to parent right"   onclick="alignToParent('right')">&#9654;</button>
+            <button class="align-btn" title="Snap top edge to parent top"       onclick="alignToParent('top')">&#9650;</button>
+            <button class="align-btn" title="Center in parent vertically"       onclick="alignToParent('center-v')">&#8597;</button>
+            <button class="align-btn" title="Snap bottom edge to parent bottom" onclick="alignToParent('bottom')">&#9660;</button>
+        </div>
+        <label style="margin-top:9px;">Align selected to each other</label>
+        <div class="arrange-row">
+            <button class="align-btn" title="Align left edges"     onclick="alignBlocks('left')">&#9664;</button>
+            <button class="align-btn" title="Center horizontally"  onclick="alignBlocks('center-h')">&#8596;</button>
+            <button class="align-btn" title="Align right edges"    onclick="alignBlocks('right')">&#9654;</button>
+            <button class="align-btn" title="Align top edges"      onclick="alignBlocks('top')">&#9650;</button>
+            <button class="align-btn" title="Center vertically"    onclick="alignBlocks('center-v')">&#8597;</button>
+            <button class="align-btn" title="Align bottom edges"   onclick="alignBlocks('bottom')">&#9660;</button>
+        </div>
+        <div id="sel-count" style="font-size:11px; color:#8fa6bb; margin-top:6px;"></div>
     </div>
 
     <!-- Layer / Z-index -->
@@ -1070,8 +1609,16 @@ body { background: #2c3e50; display: flex; flex-direction: column; height: 100vh
             &#128465; Delete Block
         </button>
     </div>
-</div>
+    </div><!-- #insp-block -->
+</div><!-- #inspector -->
+<?php endif; ?>
 
+</div><!-- #workbench -->
+
+<!-- The two editor modals are full-window overlays, so they sit outside the
+     workbench row rather than inside one of its columns. Same read-only gate as
+     the rail: a page that cannot edit does not receive them at all. -->
+<?php if (!$readOnly): ?>
 <!-- ── Carousel Slide Editor Modal ── -->
 <div id="carousel-modal-overlay">
     <div id="carousel-modal">
@@ -1182,6 +1729,29 @@ var LOCK_WARN_SECONDS  = <?= LockState::WARN_AFTER_SECONDS ?>;
 var UPLOAD_MAX_BYTES = <?= intval(UploadLimit::bytes()) ?>;
 var UPLOAD_MAX_LABEL = <?= HttpReply::jsValue(UploadLimit::describe()) ?>;
 
+// ---- The Brand this sign wears, and the ones it could (ADR-0011, v2 step 4) ----
+// Every Brand this page may switch to, each with the six standards it paints, the
+// palette it offers and the logo it can place. The whole list is here because picking
+// one writes nothing: it repaints this canvas in the browser and rides out with the
+// next Publish (decision 6), so a switch must not depend on a request that can fail
+// in the middle of an edit.
+//
+// One entry for a page that cannot switch — a basic account, or a read-only Builder.
+// The control still prints the venue and the swatches still offer its palette; there
+// is simply nothing else in the list to choose.
+var BRANDS = <?= HttpReply::jsValue($brandPayload) ?>;
+
+// Which of them is on the canvas *now*. Staged, and the only page state a publish
+// carries that is not an element or the background — see publishCanvas(). Zero on a
+// database whose convergence has not run, and the publish then sends no brand_id at
+// all rather than an id naming nothing (invariant 10).
+var BRAND_ID = <?= intval($display->brandId()) ?>;
+
+// Whether this page may change it. The menu is not in the markup when this is false,
+// so this is the belt to that braces — for the keyboard, and for anything reachable
+// without a button.
+var CAN_PICK_BRAND = <?= $canPickBrand ? 'true' : 'false' ?>;
+
 // How many steps back Undo may go, from the admin Settings page (ADR-0010). Zero
 // means the whole feature is off — no button in the page, no Ctrl+Z, and no
 // snapshots taken at all, which is what makes zero a real off switch rather than
@@ -1254,6 +1824,12 @@ document.addEventListener('DOMContentLoaded', function() {
     loadAssets();
     loadLayout();
     setupCanvas();
+    // From the page's own copy of the Brand, before any reply arrives. The control's
+    // name and logo are already in the markup; this is what puts the palette swatches
+    // and the Venue Logo item on screen, and it must not wait for the layout read —
+    // the swatches are still worth offering to somebody whose layout read failed, and
+    // an offer that appears a beat late is an offer people learn not to look for.
+    refreshBrandSurfaces();
     // No role test here on purpose: this ran on every page load with the emit
     // condition spelled out a second time, and a lookup that survives only while
     // two copies of a rule agree is the one this page has already been bitten by.
@@ -1387,6 +1963,14 @@ function loadLayout() {
             blockStyles  = data.block_styles || {};
             LAYOUT_STAMP = data.layout_stamp || '';
             var canvas   = document.getElementById('builder-canvas');
+
+            // Before a single block is rendered: applyTextStyles() reads `blockStyles`
+            // as it paints, and adoptBrand() is what makes the Brand the control names
+            // the Brand those styles came from. `data.brand` is null on a database whose
+            // convergence has not run, and the page then keeps saying what it said —
+            // nothing.
+            if (data.brand) { adoptBrand(data.brand); }
+            refreshBrandSurfaces();
 
             if (data.display) {
                 var s = data.display;
@@ -1569,6 +2153,286 @@ function showBgPending(text) {
 }
 
 // ============================================================
+// THE BRAND (ADR-0011, v2 step 4)
+// ============================================================
+// Which venue's identity this canvas is wearing. Three surfaces read it — the control
+// at the top of the left column, the palette swatches above every colour picker, and
+// the Venue Logo item — and one write carries it: Publish.
+//
+// **Picking a Brand writes nothing.** It repaints what is on screen and stages the
+// choice for the next Publish (decision 6), on the path the canvas background already
+// takes. That is deliberate rather than convenient: a Brand assignment reaches every
+// block on the sign, and there is no undo behind a publish, so the person gets to look
+// at it before it is true. Nothing here calls the server at all.
+//
+// It is also not part of the undo history, for the same reason the background is not
+// (ADR-0010): the history is about the canvas, and the Brand is a property of the sign
+// that the canvas is drawn *from*. What must hold — and does, since step 1 stopped
+// publish carrying brand-owned typography — is that a switch moves no snapshot, so
+// cycling Brands cannot leave a step recording a change nobody made.
+
+/** The entry in BRANDS with this id, or null. */
+function brandById(id) {
+    var want = parseInt(id, 10);
+    for (var i = 0; i < BRANDS.length; i++) {
+        if (parseInt(BRANDS[i].id, 10) === want) { return BRANDS[i]; }
+    }
+    return null;
+}
+
+/** The Brand on the canvas now, or null when this database has none yet. */
+function currentBrandEntry() { return brandById(BRAND_ID); }
+
+/**
+ * Take the server's word for which Brand this sign wears.
+ *
+ * The page was rendered one request before the layout arrived, so if a colleague moved
+ * this sign onto another Brand — or renamed one — in between, the reply is the newer of
+ * the two, and the standards the canvas has just been painted from came with it. Left
+ * to the page's own copy, the control would name a venue the canvas is not wearing,
+ * which is the one thing this control exists to prevent.
+ */
+function adoptBrand(server) {
+    if (!server || !server.id) { return; }
+    BRAND_ID = parseInt(server.id, 10);
+    var entry = brandById(BRAND_ID);
+    if (entry) {
+        entry.name          = server.name;
+        entry.palette       = server.palette || [];
+        entry.logo_asset_id = server.logo_asset_id;
+        entry.styles        = blockStyles;
+        return;
+    }
+    // Moved onto a Brand this page was never offered — a basic account is sent one
+    // Brand, and this is that sign changing venue while the tab sat open. Named and
+    // offered as swatches; no logo, because the file behind it is a library read this
+    // reply does not carry and inventing a path would draw a broken picture.
+    BRANDS.push({
+        id: BRAND_ID, name: server.name, palette: server.palette || [],
+        logo_asset_id: server.logo_asset_id, logo_src: '', styles: blockStyles
+    });
+}
+
+/** Redraw everything that is about the Brand. One list, so the three cannot drift. */
+function refreshBrandSurfaces() {
+    renderBrandControl();
+    renderPaletteSwatches();
+    renderBrandAssets();
+}
+
+function toggleBrandMenu(e) {
+    if (e) { e.stopPropagation(); }     // or the document listener closes it again
+    var menu = document.getElementById('brand-menu');
+    var btn  = document.getElementById('brand-btn');
+    if (!menu) { return; }              // no menu on a page that may not switch
+    var open = !menu.classList.contains('open');
+    menu.classList.toggle('open', open);
+    if (btn) { btn.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+}
+
+function closeBrandMenu() {
+    var menu = document.getElementById('brand-menu');
+    var btn  = document.getElementById('brand-btn');
+    if (menu) { menu.classList.remove('open'); }
+    if (btn)  { btn.setAttribute('aria-expanded', 'false'); }
+}
+
+/**
+ * Show this Brand on the canvas, and stage it for the next Publish.
+ *
+ * `CAN_PICK_BRAND` repeats what the markup already decided — the menu is not on a
+ * read-only page or a basic account's page at all — and it is the belt to that braces,
+ * for the keyboard and for anything reachable without a button. The refusal below it is
+ * about an id that names no Brand *this page was offered*, which a menu built from the
+ * same list cannot produce and a console can.
+ */
+function switchBrand(id) {
+    closeBrandMenu();
+    if (!CAN_PICK_BRAND || READ_ONLY) { return; }
+    var next = brandById(id);
+    if (!next) {
+        showToast('That brand is not one this page was offered. Reload the display and pick again.', true);
+        return;
+    }
+    if (parseInt(next.id, 10) === BRAND_ID) { return; }
+
+    BRAND_ID    = parseInt(next.id, 10);
+    blockStyles = next.styles || {};
+    repaintForBrand();
+    refreshBrandSurfaces();
+
+    // Said out loud, because two things about this are not visible: nothing has been
+    // saved, and the sign's background is its own rather than the Brand's default —
+    // which is the question somebody asks the moment a venue's colours appear and the
+    // canvas behind them does not change (a Brand's default background is what a *new*
+    // sign starts from, in the Admin Panel).
+    showToast('Showing ' + next.name + '’s typography and palette. Nothing is saved yet — '
+            + 'Publish is what puts this brand on the screen. The canvas background stays this sign’s own.');
+}
+
+/**
+ * Redraw the canvas under the Brand now selected.
+ *
+ * Through the snapshot pair the undo history already uses, and not by walking the
+ * blocks and re-applying styles: `renderBlock()` is the one place that knows how an
+ * element becomes a node, and `applyTextStyles()` decides whose typography a block
+ * wears at the moment it paints — a second copy of that decision here is exactly what
+ * invariant 34's comment forbids, and it would be a copy that only runs on this path.
+ *
+ * `restoreCanvas()` raises `undoRestoring` for the duration, so nothing here records a
+ * step. It cannot fail on its own output, and its return value is deliberately ignored:
+ * there is no second way to draw this canvas to fall back to.
+ */
+function repaintForBrand() {
+    restoreCanvas(snapshotCanvas());
+}
+
+/** The venue's name, its logo, and which item in the menu is ticked. */
+function renderBrandControl() {
+    var brand = currentBrandEntry();
+    var label = document.getElementById('brand-name');
+    if (label && brand) { label.textContent = brand.name; }
+
+    var logo = document.getElementById('brand-logo');
+    if (logo) {
+        var src = (brand && brand.logo_src) || '';
+        if (src) { logo.src = src; }
+        logo.style.display = src ? 'inline-block' : 'none';
+    }
+
+    var menu = document.getElementById('brand-menu');
+    if (!menu) { return; }
+    Array.prototype.forEach.call(menu.querySelectorAll('.brand-item'), function (item) {
+        var on = parseInt(item.dataset.brandId, 10) === BRAND_ID;
+        item.classList.toggle('on', on);
+        var tick = item.querySelector('.tick');
+        // A tick and not only a highlight: the highlight is also what hover does, so on
+        // a menu of two Brands it says nothing.
+        if (tick) { tick.textContent = on ? '✓' : ''; }
+    });
+}
+
+/** Whether this Brand has a logo to place, and whether it is pointing at a gap. */
+function renderBrandAssets() {
+    var brand = currentBrandEntry();
+    var src   = (brand && brand.logo_src) || '';
+
+    var group = document.getElementById('brand-assets');
+    if (group) { group.style.display = src ? 'block' : 'none'; }
+
+    var warn = document.getElementById('brand-logo-warn');
+    if (warn) {
+        // A Brand with no logo at all is ordinary and says nothing. A Brand pointing at
+        // a library row that is gone is a thing somebody has to fix, and the absent
+        // button is indistinguishable from the feature not existing (#21's silence).
+        warn.style.display = (brand && brand.logo_asset_id && !src) ? 'block' : 'none';
+    }
+}
+
+// ---- The palette, offered above every colour control ----------------------------
+// Four pickers in this rail change a colour, and every one of them now has the venue's
+// palette over it. Offered and never enforced (decision 4): a swatch fills the picker
+// underneath it and nothing else, so a block with its own colour keeps it until
+// somebody chooses otherwise.
+//
+// Each entry names the row it draws into, the picker it fills, what to run afterwards,
+// and whether that counts as an undo step. The last two are why this is a table rather
+// than a loop over inputs: setting `.value` from script fires no `input` event, so the
+// work the picker's own handler would have done has to be named here — a swatch that
+// changed the control and nothing on the canvas would be a control that lies.
+var PALETTE_TARGETS = [
+    // The canvas background, which the undo history deliberately does not cover
+    // (ADR-0010) — so this one records no step, exactly like dragging the picker.
+    { row: 'sw-bg', input: 'bg-color', undo: false,
+      apply: function () { applyBg(); } },
+    { row: 'sw-font', input: 'font-color', undo: true,
+      apply: function (hex) { updateStyle('color', hex); } },
+    { row: 'sw-marquee', input: 'marquee-color', undo: true,
+      apply: function () { updateMarqueeStyle(); } },
+    { row: 'sw-marquee-bg', input: 'marquee-bg', undo: true,
+      apply: function () {
+          // Or the swatch does nothing at all: a transparent marquee ignores its
+          // background colour, and "I picked the venue's red and nothing happened" is
+          // the same defect as a control that lies, wearing a checkbox.
+          var t = document.getElementById('marquee-bg-transparent');
+          if (t) { t.checked = false; }
+          updateMarqueeStyle();
+      } }
+];
+
+function renderPaletteSwatches() {
+    var brand  = currentBrandEntry();
+    var colors = (brand && brand.palette) || [];
+
+    PALETTE_TARGETS.forEach(function (target) {
+        var row = document.getElementById(target.row);
+        if (!row) { return; }            // no rail at all on a read-only page (§4j)
+        row.innerHTML = '';
+
+        var cap = document.createElement('span');
+        cap.className   = 'sw-cap';
+        cap.textContent = 'Brand';
+        row.appendChild(cap);
+
+        var drawn = 0;
+        colors.forEach(function (raw) {
+            var hex = readHex(raw);
+            // A colour the CSSOM would discard is not a swatch, it is a grey box that
+            // silently does nothing — #41's shape one control along. The server already
+            // asked `Color::read()` of these, so this is the second of two agreements
+            // rather than the only one, and it is the half that runs where the value is
+            // about to become CSS.
+            if (hex === '') { return; }
+            var sw = document.createElement('button');
+            sw.type      = 'button';
+            sw.className = 'sw';
+            sw.style.background = hex;
+            sw.title = 'Brand palette — ' + hex;
+            sw.addEventListener('click', function () { applyPaletteColor(target, hex); });
+            row.appendChild(sw);
+            drawn++;
+        });
+
+        // An empty palette is a Brand whose colours nobody has set, which is a real
+        // state and not an error: no row rather than a caption over nothing.
+        row.style.display = drawn ? 'flex' : 'none';
+    });
+}
+
+function applyPaletteColor(target, hex) {
+    if (READ_ONLY) { return; }
+    var input = document.getElementById(target.input);
+    if (!input) { return; }
+    input.value = hex;
+    target.apply(hex);
+    // A swatch is a finished choice, which is what `onchange` means on the picker
+    // beside it — so it commits, while dragging the picker still commits once at the
+    // end rather than once per shade (ADR-0010).
+    if (target.undo) { commitUndoStep(); }
+}
+
+/**
+ * Drop an image block already linked to this venue's logo.
+ *
+ * Through `createBlock()` rather than beside it: the drop centre, the locked-section
+ * refusal and the fits-in-the-section rule are all decided there, and a second creation
+ * path would be a second place for them to be forgotten. The link is handed over as the
+ * element's own fields, so the block is created linked — one undo step, and one publish
+ * that carries `asset_id` exactly as the asset dropdown's would.
+ */
+function createVenueLogo() {
+    if (!IS_ADMIN || READ_ONLY) { return; }
+    var brand = currentBrandEntry();
+    var src   = (brand && brand.logo_src) || '';
+    if (!src) {
+        showToast('This brand has no logo to place. An admin sets one in the Admin Panel, '
+                + 'under Display Branding.', true);
+        return;
+    }
+    createBlock('image', null, { asset_id: brand.logo_asset_id, db_content: src });
+}
+
+// ============================================================
 // CREATE SECTION (admin)
 // ============================================================
 function createSection() {
@@ -1643,7 +2507,16 @@ function renderSection(el) {
 // ============================================================
 // CREATE BLOCK
 // ============================================================
-function createBlock(type, subtype) {
+/**
+ * Put a new block on the canvas.
+ *
+ * `extra` is how a block can be created with something already in it — today only
+ * Venue Logo, which hands over the library row and the file behind it so the block
+ * arrives linked. Merged over the defaults rather than applied afterwards, so the
+ * creation is one change and therefore one undo step: linking a block after creating it
+ * would record two, and Undo would then take back half of one action.
+ */
+function createBlock(type, subtype, extra) {
     if (READ_ONLY) return;
     // Basic users must have a section targeted
     if (!IS_ADMIN && !targetSection) {
@@ -1694,6 +2567,9 @@ function createBlock(type, subtype) {
         font_family: 'Arial', font_size: 16, font_color: '#000000',
         font_weight: 'normal', font_style: 'normal', line_height: 1.4
     };
+    if (extra) {
+        Object.keys(extra).forEach(function (k) { el[k] = extra[k]; });
+    }
     renderBlock(el, parent, true);
     commitUndoStep();
 }
@@ -1852,10 +2728,21 @@ function renderBlock(el, parent, isNew) {
 // ============================================================
 // APPLY TEXT STYLES
 // ============================================================
+// Two jobs, and the second one is why this function decides rather than reports:
+// paint the block, and record *whose* typography got painted (invariant 34).
+//
+// serializeBlock() needs the same answer and must not work it out again. A second
+// copy of `sub !== 'free' && blockStyles[sub]` somewhere else is a second thing to
+// keep in step with this one, and the day they disagree the publish either strips
+// typography the block was still rendering from — a blank price on a wall — or
+// keeps the Brand's, which is the fossil this is all about. So the condition is
+// evaluated exactly once, here, at the moment the paint happens, and the answer
+// rides on the node.
 function applyTextStyles(block, el) {
     var sub = el.block_subtype || 'free';
     if (sub !== 'free' && blockStyles[sub]) {
         var bs = blockStyles[sub];
+        block.dataset.brandTypography = '1';
         block.style.fontFamily  = bs.font_family;
         block.style.fontSize    = bs.font_size + 'px';
         applyStoredColor(block, bs.font_color);
@@ -1863,6 +2750,10 @@ function applyTextStyles(block, el) {
         block.style.fontStyle   = bs.font_style;
         block.style.lineHeight  = bs.line_height;
     } else {
+        // Cleared, not left: a Brand Standard that stops existing — or a block whose
+        // subtype went back to `free` — hands the six fields back to the block, and
+        // a stale marker would silently stop publishing them.
+        delete block.dataset.brandTypography;
         block.style.fontFamily  = el.font_family  || 'Arial';
         block.style.fontSize    = (el.font_size||16) + 'px';
         applyStoredColor(block, el.font_color);
@@ -1942,24 +2833,44 @@ function deselectAll() {
         if (_ti) { _ti.style.pointerEvents = 'none'; _ti.blur(); }
     }
     activeBlock = null;
-    // Both panels are absent on a read-only page, and this runs on every click in
-    // the canvas area — including there, where there is nothing to deselect but
-    // the handler still fires.
-    var insp = document.getElementById('inspector');
-    if (insp) { insp.style.display = 'none'; }
-    var bar = document.getElementById('align-bar');
-    if (bar && multiSel.length === 0) { bar.style.display = 'none'; }
+    // The rail is absent on a read-only page, and this runs on every click in the
+    // canvas area — including there, where there is nothing to deselect but the
+    // handler still fires.
+    //
+    // The rail itself does not move: it goes back to its resting state. What used
+    // to happen here was `inspector.style.display = 'none'`, which took a 290px
+    // panel off the screen on every click on empty canvas.
+    showRestingRail();
+    updateAlignBar();
+}
+
+/**
+ * Put the rail back to what it says with nothing selected.
+ *
+ * One function rather than the two lines written out four times, because the two
+ * halves have to move together: a rail showing the resting sentence *and* a
+ * populated block panel is worse than either, and that is the state every one of
+ * those call sites could reach on its own.
+ */
+function showRestingRail() {
+    var rest  = document.getElementById('insp-resting');
+    var block = document.getElementById('insp-block');
+    if (rest)  { rest.style.display  = 'block'; }
+    if (block) { block.style.display = 'none'; }
 }
 
 function showInspector(block) {
     var insp = document.getElementById('inspector');
     if (!insp) { return; }              // read-only: nothing to show it in
-    updateAlignBar(); // keep screen-align bar visible while a block is selected
+    updateAlignBar();
     var type    = block.dataset.type;
     var subtype = block.dataset.subtype || 'free';
     var isSection = type === 'section';
 
-    insp.style.display = 'flex';
+    // The rail is already on screen and stays there; only which of its two states
+    // is showing changes.
+    document.getElementById('insp-resting').style.display = 'none';
+    document.getElementById('insp-block').style.display   = 'flex';
     showGeometry(block);
     document.getElementById('insp-title').textContent =
         isSection ? 'Section' :
@@ -2092,8 +3003,7 @@ function toggleMultiSel(block) {
         multiSel.push(activeBlock);
     }
     activeBlock = null;
-    var _insp = document.getElementById('inspector');
-    if (_insp) { _insp.style.display = 'none'; }
+    showRestingRail();
 
     var idx = multiSel.indexOf(block);
     if (idx >= 0) {
@@ -2112,20 +3022,28 @@ function clearMultiSel() {
     updateAlignBar();
 }
 
+/**
+ * Say which of Arrange's two sets of buttons this selection can use.
+ *
+ * It used to show and hide `#align-bar`, a strip above the canvas — one more bar in
+ * the stack the floating properties panel was landing on. The buttons live in the
+ * rail now and are always there, so the only thing left to keep in step is the
+ * sentence under them, which is the part that was doing the work anyway: *align to
+ * parent* and *align to each other* are two different operations behind identical
+ * arrows, and which one a click performs depends on how many blocks are selected.
+ *
+ * The name is kept. It is called from six places, and a rename would be six edits
+ * to say the same thing.
+ */
 function updateAlignBar() {
-    var bar  = document.getElementById('align-bar');
-    var cnt  = document.getElementById('sel-count');
-    if (!bar || !cnt) { return; }       // read-only: the align bar is not in the page
-    var total = multiSel.length + (activeBlock ? 1 : 0);
-    if (total > 0) {
-        bar.style.display = 'flex';
-        if (multiSel.length >= 2) {
-            cnt.textContent = multiSel.length + ' blocks — aligning to each other';
-        } else {
-            cnt.textContent = '1 block — aligning to parent';
-        }
+    var cnt = document.getElementById('sel-count');
+    if (!cnt) { return; }               // read-only: the rail is not in the page
+    if (multiSel.length >= 2) {
+        cnt.textContent = multiSel.length + ' blocks selected — the second row aligns them to each other.';
+    } else if (multiSel.length + (activeBlock ? 1 : 0) > 0) {
+        cnt.textContent = '1 block selected — the first row aligns it inside its parent.';
     } else {
-        bar.style.display = 'none';
+        cnt.textContent = '';
     }
 }
 
@@ -3137,12 +4055,25 @@ function serializeSection(s) {
     };
 }
 
-/** One non-section block, as publish sends it. */
+/**
+ * One non-section block, as publish sends it.
+ *
+ * The six typography fields are sent only when the block owns them (invariant 34).
+ * A branded block's inline font, size, colour, weight, style and line height are
+ * the Brand's, painted on by applyTextStyles() so the block looks like what it
+ * will become — reading them back out and publishing them wrote the shared
+ * standard into the element's own row on every publish since those columns
+ * existed. The server ignores them for a branded block regardless (LayoutStore),
+ * so this half is not what makes the row right; it is what makes the *snapshot*
+ * right, and that is a different fault. snapshotCanvas() serializes through here,
+ * so leaving them in would mean picking a Brand changed the undo history although
+ * no element had changed — invariant 27 the other way round. See ADR-0011.
+ */
 function serializeBlock(block, sortOrder) {
     var assetId   = block.dataset.assetId || '';
     var sectionEl = block.closest('.section-block');
     var own       = assetId ? { content: '', pool: false } : blockContent(block);
-    return {
+    var out = {
         type:            block.dataset.type,
         block_subtype:   block.dataset.subtype || 'free',
         db_id:           block.dataset.dbId || null,
@@ -3154,22 +4085,32 @@ function serializeBlock(block, sortOrder) {
         asset_id:        assetId,
         manual_content:  own.content,
         save_to_db_pool: own.pool,
-        font_family:     block.style.fontFamily  || 'Arial',
-        font_size:       parseInt(block.style.fontSize) || 16,
-        // The stored value wins while it is still unreadable (#41), so a publish
-        // cannot quietly replace a colour nobody could read with black. It clears the
-        // moment somebody picks a colour — see updateStyle(). A block that simply
-        // never had a colour still publishes '#000000', exactly as before.
-        font_color:      block.dataset.colorUnread || readHex(block.style.color) || '#000000',
-        font_weight:     block.style.fontWeight  || 'normal',
-        font_style:      block.style.fontStyle   || 'normal',
-        line_height:     parseFloat(block.style.lineHeight) || 1.4,
         text_align:      block.dataset.textAlign || block.style.textAlign || '',
         locked:          block.dataset.locked === '1' ? 1 : 0,
         sort_order:      sortOrder,
         z_index:         Math.max(1, parseInt(block.dataset.zIndex) || 1),
         hidden:          block.dataset.hidden === '1' ? 1 : 0,
     };
+
+    if (block.dataset.brandTypography !== '1') {
+        out.font_family = block.style.fontFamily  || 'Arial';
+        out.font_size   = parseInt(block.style.fontSize) || 16;
+        // The stored value wins while it is still unreadable (#41), so a publish
+        // cannot quietly replace a colour nobody could read with black. It clears the
+        // moment somebody picks a colour — see updateStyle(). A block that simply
+        // never had a colour still publishes '#000000', exactly as before.
+        //
+        // Only reachable for a block that owns its colour now, which is the right
+        // narrowing rather than a lost check: an unreadable colour on a *branded*
+        // block is the Brand's, one row in `block_styles` reported once by ColorAudit
+        // where somebody can fix it, instead of once per block on every sign as
+        // though eleven signs had eleven faults.
+        out.font_color  = block.dataset.colorUnread || readHex(block.style.color) || '#000000';
+        out.font_weight = block.style.fontWeight  || 'normal';
+        out.font_style  = block.style.fontStyle   || 'normal';
+        out.line_height = parseFloat(block.style.lineHeight) || 1.4;
+    }
+    return out;
 }
 
 /** Everything on the canvas, sections first — the order publish has always sent. */
@@ -3454,7 +4395,7 @@ function endPublish() {
 function showPublishState(desc) {
     var line = document.getElementById('pub-state');
     if (!line || !desc) { return; }
-    line.textContent = 'published by ' + desc;
+    line.textContent = 'Last published by ' + desc;
 }
 
 function publishCanvas() {
@@ -3480,6 +4421,16 @@ function publishCanvas() {
     fd.append('layout_stamp', LAYOUT_STAMP);
 
     if (IS_ADMIN) {
+        // The Brand that was picked, written by this publish and by nothing else
+        // (decision 6) — the same journey the background beside it makes.
+        //
+        // Sent only when there is one. A database whose convergence has not run leaves
+        // this at 0 and draws no Brand control, and an id naming nothing is refused by
+        // the endpoint — so sending it unconditionally would turn a lagging schema into
+        // a sign nobody can publish to (invariant 10). An absent field means "leave the
+        // Brand alone", which is exactly what that page has to say.
+        if (BRAND_ID > 0) { fd.append('brand_id', BRAND_ID); }
+
         fd.append('bg_type', document.getElementById('bg-type').value);
         fd.append('bg_val',  document.getElementById('bg-color').value);
         var bgFile = document.getElementById('bg-file').files[0];
@@ -4192,6 +5143,157 @@ function svgPlaceholder(w, h, label) {
         '<text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" ' +
         'font-family="Arial" font-size="14" fill="#7f8c8d">'+label+'</text></svg>'
     );
+}
+
+/**
+ * The account-and-settings menu behind the gear.
+ *
+ * Closes on the next click anywhere, which is what a menu has to do — a panel that
+ * only closes by clicking the thing that opened it is a panel people leave open and
+ * then click through. The listener is added once, on the document, and reads the
+ * class rather than a variable so the two cannot disagree about whether it is open.
+ *
+ * `aria-expanded` is kept in step because a button that says nothing about its own
+ * state is a button a screen reader describes wrongly, and this one now holds the
+ * three links the nav used to show.
+ */
+function toggleGearMenu(e) {
+    if (e) { e.stopPropagation(); }     // or the document listener closes it again
+    var menu = document.getElementById('gear-menu');
+    var btn  = document.getElementById('gear-btn');
+    if (!menu) { return; }
+    var open = !menu.classList.contains('open');
+    menu.classList.toggle('open', open);
+    if (btn) { btn.setAttribute('aria-expanded', open ? 'true' : 'false'); }
+}
+
+function closeGearMenu() {
+    var menu = document.getElementById('gear-menu');
+    var btn  = document.getElementById('gear-btn');
+    if (menu) { menu.classList.remove('open'); }
+    if (btn)  { btn.setAttribute('aria-expanded', 'false'); }
+}
+
+document.addEventListener('click', function (e) {
+    var menu = document.getElementById('gear-menu');
+    // A click inside the menu is somebody using it — following a link, and later
+    // choosing a Workspace Theme. Closing on that would fight the control.
+    if (menu && menu.classList.contains('open') && !menu.contains(e.target)) { closeGearMenu(); }
+
+    // The Brand menu, on the same rule and in the same listener: two listeners doing
+    // this would be two places to remember that a click inside a menu is not a click
+    // away from it. A click on one of its items closes it through switchBrand() before
+    // this ever runs, which is why `contains` is checked here rather than the target's
+    // class — the case this covers is a click somewhere else entirely.
+    var brands = document.getElementById('brand-menu');
+    if (brands && brands.classList.contains('open') && !brands.contains(e.target)) { closeBrandMenu(); }
+});
+
+// ============================================================
+// THE WORKSPACE THEME PICKER (v2 step 5)
+// ============================================================
+// What one person's screen is painted in, changed without a reload. The no-reload part
+// is the requirement rather than the polish: this page can be holding an hour of
+// unpublished layout, and a control in the gear menu that reloaded to repaint would
+// throw that away — a setting about a menu bar destroying work on a sign.
+//
+// So the thirteen roles are CSS custom properties (see the `:root` block), and changing
+// theme is thirteen `setProperty()` calls. Nothing about the canvas, the layout, the
+// undo history or the edit lock is involved: decision 11 keeps every role off the
+// canvas, and `tools/check_invariants.php` keeps it that way, so a repaint here cannot
+// move a pixel of what the sign will show.
+
+var THEMES       = <?= HttpReply::jsValue($themePayload) ?>;
+var THEME_ID     = <?= intval($themeNow) ?>;
+// What "use the store default" puts back: the four colours out of branding_config.php
+// and the documented defaults for the other nine. Sent as a set rather than computed by
+// removing properties, because `removeProperty()` would fall back to whatever the
+// stylesheet declares — which is this person's theme, since the `:root` block was
+// rendered wearing it.
+var THEME_STORE  = <?= HttpReply::jsValue($themeStoreVars) ?>;
+
+/** The thirteen custom properties for one theme id, or the store default's. */
+function themeVarsFor(id) {
+    for (var i = 0; i < THEMES.length; i++) {
+        if (THEMES[i].id === id) { return THEMES[i].vars; }
+    }
+    return THEME_STORE;
+}
+
+/**
+ * Paint the page in a set of custom properties.
+ *
+ * Set on the document element, which is what `var(--x)` in a `:root` rule resolves
+ * against — an inline property there outranks the stylesheet's own declaration without
+ * either being removed, so the rendered `:root` block stays as the fallback.
+ */
+function applyThemeVars(vars) {
+    var root = document.documentElement;
+    if (!root || !vars) { return; }
+    for (var name in vars) {
+        if (Object.prototype.hasOwnProperty.call(vars, name)) {
+            root.style.setProperty(name, vars[name]);
+        }
+    }
+}
+
+/** Move the tick and the highlight onto the chosen row. */
+function markThemeChoice(id) {
+    var items = document.querySelectorAll('#theme-pick .tp-item');
+    for (var i = 0; i < items.length; i++) {
+        // `dataset`, as the Brand menu reads its own items: one idiom for "the id on this
+        // row" across the page, rather than two that behave the same in a browser and
+        // differently under anything reading the markup.
+        var on = parseInt(items[i].dataset.themeId, 10) === id;
+        items[i].classList.toggle('on', on);
+        var tick = items[i].querySelector('.tp-tick');
+        if (tick) { tick.innerHTML = on ? '&#10003;' : ''; }
+    }
+}
+
+function themeWarn(msg) {
+    var box = document.getElementById('theme-warn');
+    if (!box) { return; }
+    box.textContent   = msg || '';
+    box.style.display = msg ? 'block' : 'none';
+}
+
+/**
+ * Choose a Workspace Theme: 0 is the store default.
+ *
+ * Painted first and saved second, and the failure is handled rather than ignored. A
+ * preference that looks applied and was not stored is #21's shape — the wrong state,
+ * reported as success — so a failed save puts the page back to the theme it was
+ * actually wearing and says so, in the card's own colours. The `.catch()` is not
+ * optional and not a formality: it is the thing §4au was filed about.
+ */
+function chooseTheme(id) {
+    id = parseInt(id, 10) || 0;
+    var was = THEME_ID;
+    if (id === was) { themeWarn(''); return; }
+
+    applyThemeVars(themeVarsFor(id));
+    markThemeChoice(id);
+    THEME_ID = id;
+    themeWarn('');
+
+    var fd = new FormData();
+    fd.append('action', 'choose_theme');
+    fd.append('theme_id', String(id));
+    fd.append('csrf_token', CSRF_TOKEN);
+    fetch('api.php', { method: 'POST', body: fd })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d && d.status === 'success') { return; }
+            throw new Error((d && d.message) ? d.message : 'The server did not accept that.');
+        })
+        .catch(function (err) {
+            applyThemeVars(themeVarsFor(was));
+            markThemeChoice(was);
+            THEME_ID = was;
+            themeWarn('That was not saved, so you are still on the theme you had. ' +
+                      (err && err.message ? err.message : ''));
+        });
 }
 
 function showToast(msg, isErr) {

@@ -12,7 +12,7 @@ edited in place and every change reaches the sign by hand.
 | [`CONTEXT.md`](CONTEXT.md) | The domain language. Use these words — Display, Viewer, Screen, screen name tag, canvas, grant, edit lock — in code, comments and UI copy. |
 | [`docs/roadmap-multi-display.md`](docs/roadmap-multi-display.md) | The phased plan and its current status. |
 | [`docs/reviewed-decisions.md`](docs/reviewed-decisions.md) | **The 51-item list from the adversarial audit, with what each was decided to be.** All 50 numbered items are now Done — which closes the audit, not the app: nothing on that list was ever the browser pass. The numbering the owner uses. Two numbering traps are documented there; read them before quoting an issue number. |
-| [`docs/browser-pass.md`](docs/browser-pass.md) | **The only verification in this project that a person does, walked in full on 2026-08-13 against `lbm-test/`.** Its outcome table is at the top: seven defects, §4as–§4ax, five of them things a page did not *say* rather than wrong answers a suite could have caught. Read it before assuming a green gate means a working screen, and re-run it against the live install after the deploy — it is a list, not a receipt. |
+| [`docs/browser-pass.md`](docs/browser-pass.md) | **The only verification in this project that a person does, walked in full on 2026-08-13 against `lbm-test/`.** Its outcome table is at the top: seven defects, §4as–§4ax, five of them things a page did not *say* rather than wrong answers a suite could have caught. Read it before assuming a green gate means a working screen. **Five re-walks are owed and the table at the top names them**: `public_html/lbm/` *after the cutover* (it is still the single-sign app — the build is **not** live, `0a02b70`), `lbm-test/` for the step-2 workbench, Display Branding, the Builder's Brand control, and Workspace Themes — the last three of which this pass has no step for at all. It is a list, not a receipt. |
 | [`docs/adr/`](docs/adr/) | Decisions with their rejected alternatives. Don't re-litigate one without reading it. |
 | [`HANDOFF.md`](HANDOFF.md) | Deployment facts: live URLs, credentials layout, what is and isn't in the repo. |
 | [`docs/DEPLOY-SKIP.md`](docs/DEPLOY-SKIP.md) | **What not to overwrite, upload or delete when files go to the server.** Read before any upload — the repo and the server hold different files, and uploading the tree reverts live branding and restores `setup.php` silently. |
@@ -22,10 +22,30 @@ edited in place and every change reaches the sign by hand.
 
 - **Data access lives in `lib/`.** Page scripts are thin adapters. Nothing
   outside `lib/layout_store.php` may write SQL against `canvas_elements`, nothing
-  outside `lib/displays.php` against `displays`, and nothing outside
-  `lib/assets.php` against `assets`.
+  outside `lib/displays.php` against `displays`, nothing outside `lib/assets.php`
+  against `assets`, nothing outside `lib/brand_styles.php` against `block_styles`,
+  and nothing outside `lib/brands.php` against `brands` (invariant 35), and nothing outside
+  `lib/workspace_themes.php` against `workspace_themes` (invariant 36 — whose other
+  half is that no chrome role is ever drawn on the canvas).
 - **Deep modules**: small interface, substantial implementation. A new query
   means a new method on the module, not a `$pdo` handed to a caller.
+- **A value read from the machine gets a seam beside it that takes the value.** Five files
+  may read one at all — `server_report.php`, `error_policy.php`, `upload_limits.php`,
+  `alerts.php` and `displays.php` — and `check_invariants.php` fails on a sixth (invariant
+  37). The reason is not tidiness: `ini_get`, `PHP_VERSION`, `PHP_SAPI`, `$_SERVER` and the
+  engine's own `ATTR_SERVER_VERSION` have exactly one value on every machine that runs the
+  tests, so a branch chosen by one is asserted in the single configuration no shop is
+  running. `ServerReport` gets this right three times over and says why each time —
+  `phpVersionNote($id)`, `storeZoneNoteFor($stored)`, `UploadLimit::smallestOf($values)` —
+  and §4bi found that the four readouts where it had not were exactly the four with no
+  checks. **The engine's own row was the fifth**, and the worst kind: the version had been
+  read off that card and written into `HANDOFF.md`, and the row still printed it beside a
+  hardcoded `''` while the row above had three bands and a declared floor. It has
+  `mysqlVersionNote($driver, $version)` now, and the floor is 5.7 because the shop *is*
+  5.7 — the driver is a parameter because the fixture is SQLite, whose version parsed as
+  MySQL is far below any floor. The seam reaches what no flag can (an unset
+  `date.timezone` cannot be made with `php -d`); the arms in `selftest_installed.php` prove
+  the real read still works, and refuse an arm set to what this machine already holds.
 - **A new schema statement goes into `signageSchemaPlan()`, with its gate.**
   Convergence asks `information_schema` first and sends only what is missing, so an
   ungated `schemaTry()` re-runs on every signed-in page load — and an `ALTER` locks
@@ -39,8 +59,8 @@ edited in place and every change reaches the sign by hand.
   `repairSchemaAfterFailure()` — the one guarded door, which refuses inside a
   transaction, refuses twice on one request, and refuses again for five minutes.
 - **A change spanning two tables is one transaction, held by a use-case module.**
-  `DisplayAdmin`, `AccountAdmin` and `PasswordResetCompletion` are the three, and they
-  are the same shape on purpose: the module owns `beginTransaction`, writes no SQL
+  `DisplayAdmin`, `AccountAdmin`, `BrandAdmin` and `PasswordResetCompletion` are the
+  four, and they are the same shape on purpose: the module owns `beginTransaction`, writes no SQL
   itself, rolls back quietly, and returns a result the page turns into a sentence. A
   page doing the writes itself cannot roll back what already landed, so the message it
   prints is chosen by which line threw rather than by what is now true.
@@ -107,7 +127,13 @@ edited in place and every change reaches the sign by hand.
   refuses seven above-floor constructs and twenty functions, and prints on every run that
   it is a denylist. So the gate now disagrees with you when it can — but a denylist cannot
   know what 8.5 adds, so a construct you have not seen before is still worth looking up
-  rather than trusting the green line. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
+  rather than trusting the green line. **Invariant 33 is the same hole in the other
+  direction**: `?Type $x = null`, never `Type $x = null`. The implicit form parses on every
+  version, is deprecated from 8.4, and costs a line in the error log on *every request that
+  compiles the file* — and nothing else here can see it, because the notice fires when a
+  file is compiled rather than parsed (so it precedes any handler the suite installs) and
+  this container's `error_reporting` excludes `E_DEPRECATED`. A CI leg on a newer PHP does
+  not close it either; that leg goes green too. The 7.1-era fallbacks in `auth.php` and `.htaccess` stay
   for the reason they always did: they cover a host that moves, and what they prevent
   is silent. **Invariant 33 is the same hole in the other direction**, and the same
   lesson about `php -l`: `array $x = null` is deprecated from 8.4, the explicit
@@ -134,6 +160,9 @@ edited in place and every change reaches the sign by hand.
 php -l <every touched .php>
 php tools/check_deprecations.php           # compiles them, which is what `php -l` does not
 php tools/selftest_layout.php
+php tools/selftest_installed.php           # the same suite as a real install on a real
+                                           # server: what the shop chose, and what the
+                                           # machine was set to (§4bg, §4bi)
 php tools/check_invariants.php             # the mechanical half of BUILD-REFERENCE §5
 php tools/check_doc_numbering.php          # if a doc gained a section or invariant
 node tools/selftest_builder_readonly.js    # if builder.php was touched
@@ -142,6 +171,8 @@ node tools/selftest_builder_colors.js      # if builder.php was touched
 node tools/selftest_builder_editing.js     # if builder.php was touched
 node tools/selftest_builder_undo.js        # if builder.php was touched
 node tools/selftest_builder_table.js       # if builder.php was touched
+node tools/selftest_builder_brands.js      # if builder.php was touched
+node tools/selftest_builder_theme.js       # if builder.php was touched
 node tools/selftest_viewer.js              # if viewer.php was touched
 ```
 
@@ -170,9 +201,9 @@ MySQL refuses.** SQLite stores a word in a `DATETIME`, a non-member in an `ENUM`
 string wider than the column, and the check that reads each one back passes; MySQL's strict
 mode throws on all three. Mid-run, that ends the job — and takes down the *rehearsal step
 under it*, which is the only thing that exercises the publish transaction's
-`SELECT … FOR UPDATE` and convergence against a real catalogue. That is what had this
-branch's MySQL leg dead from 2026-08-11: it stopped after 593 of the suite's checks on an
-`UPDATE displays SET last_published_at = 'nonsense'`, and every local gate was green.
+`SELECT … FOR UPDATE` and convergence against a real catalogue. That is what had CI's MySQL
+leg dead from 2026-08-11: it stopped after 593 of the suite's checks on an
+`UPDATE displays SET last_published_at = 'nonsense'`, and every local gate was green (§4bk).
 
 So a check that needs an unusable value **hands it to the reader as a row** — both readers
 taking one — or uses a value the column can actually hold: a colour nobody can read has to
@@ -187,9 +218,13 @@ than a failed check: `AUTOINCREMENT` and `TEXT … DEFAULT` are correct here and
 there. So both spellings live in `test_fixture.php` — `createNullableDisplayIdElements()` and
 `createLegacyCanvasSettings()`, the two states that are not a schema at all — and a test that
 genuinely needs SQLite says `newSqliteTestDb()` and is believed. Invariant 32 covers this half
-too, and it can: a handle's engine *is* readable from how it was assigned.
+too, and it can: a handle's engine *is* readable from how it was assigned (§4bl).
 
-Whether the MySQL arm *finishes* is only ever answered by the run.
+Whether the MySQL arm *finishes* is only ever answered by the run — and a dead gate hides
+how much is still wrong behind it: fixing the first four took the leg from ~100 checks to
+1383, where four more of the same class were waiting. Both rounds landed and the arm went
+green on 2026-08-19, after eight days dead: a clean rehearsal on three PHP versions. It is a
+live gate again, which is the only state in which any of the above is worth anything.
 
 `check_doc_numbering.php` also prints the next free section letter. That is the
 question every branch cut from the same base has to answer before it writes a
@@ -197,25 +232,32 @@ write-up, and four of them once answered it with the same letter — ask the too
 rather than counting, and note that it will not let a document cite a section
 that does not exist yet, which is what a guess looks like from the outside.
 
-`php -l` cannot see inline JavaScript, and `builder.php` is ~3100 lines of it —
+`php -l` cannot see inline JavaScript, and `builder.php` is ~4100 lines of it —
 which is why the standing gate is not enough on its own. Extract the `<script>`
 block and run `node --check` over it after touching that file; the same goes for
 `viewer.php`, which runs unattended on a TV where a thrown exception is a blank
 sign rather than a stack trace anybody will read.
 
-The seven node suites go further and *run* that JavaScript, each under a premise the
+The nine node suites go further and *run* that JavaScript, each under a premise the
 others cannot hold — a page that may not edit, an admin uploading a file, an admin
 opening a Display whose stored data is already wrong, an admin working the controls the
 inspector puts on a block, an admin taking back the last thing they did, an admin
-filling a table from a file this app did not write, and a Screen whose server has
-stopped answering or whose blocks have nothing in them — because the
+filling a table from a file this app did not write, an admin deciding which venue a sign
+belongs to, somebody changing a setting about *themselves* with unpublished work on the
+canvas, and a Screen whose server has stopped answering or whose blocks have nothing in
+them — because the
 defects they exist for are invisible to a parse: a lookup for a control the edit lock
 took away, a `fetch` chain with no `.catch()`, a colour the CSSOM discarded in silence
 and the publish payload then sent as black, a field a rebuild forgot to carry, a
 `.catch()` that correctly ignores a dropped packet and therefore also ignored a failure
 that was never going to stop, a dropped file that navigates the tab away from an
-unpublished canvas, and a sentence written for whoever was building the
-layout, drawn on the board a customer reads prices off.
+unpublished canvas, a swatch that fills a control and changes nothing on the canvas
+because setting `.value` from script fires no event, a preference that repaints the
+screen and was never stored, and a sentence written for whoever was building the layout,
+drawn on the board a customer reads prices off. What the server puts on those pages comes
+from `tools/page_constants.js` and nowhere else — a suite that strips the PHP for itself
+leaves every value it did not think of as the literal `0`, which is how the edit lock's
+idle warning came to be unreachable in all eight at once (§4bh).
 
 - **`json_encode` is never called outside `lib/http_reply.php`.** It returns `false`,
   not a throw, and `echo false` prints the empty string — so a reply holding one byte
@@ -258,7 +300,7 @@ layout, drawn on the board a customer reads prices off.
 - **A colour in a `<style>` block is validated, never escaped.** Escaping is for a
   delimiter and a stylesheet has none — `#fff; } body { … }` survives `Markup::text()`
   intact and is a closed rule and a new one. The store's brand colours go through
-  `Brand::navBg()` and its three siblings, which answer `#rrggbb` or the documented
+  `SiteChrome::navBg()` and its three siblings, which answer `#rrggbb` or the documented
   default because `Color::read()` decided. No page names a `BRAND_*` constant. The same
   holds one boundary further in, inside a `style` **attribute**: escaping stops a value
   ending the attribute and not the declaration, so a stored Brand Standards row is drawn

@@ -143,6 +143,21 @@ $rules = [
                   . 'Standards reset every sign to black Arial 16',
     ],
     [
+        'name'   => '`brands` has one writer',
+        'regex'  => '/(INTO|UPDATE|FROM|JOIN|TABLE)\s+`?brands`?\b/i',
+        'in'     => '',
+        // lib/brands.php owns the table. lib/schema.php creates it and seeds the first
+        // Brand, exactly as it does for `displays`. BrandAdmin composes the two tables a
+        // Brand spans and writes no SQL itself, so it is deliberately *not* here — if it
+        // appears, it has started reaching past BrandStore.
+        'expect' => ['lib/brands.php', 'lib/schema.php',
+                     'tools/rehearse_phase1.php', 'tools/selftest_layout.php',
+                     'tools/test_fixture.php'],
+        'why'    => 'a Brand is what several signs read their typography, palette and logo '
+                  . 'from, so a second writer is a venue repainted by a page that did not '
+                  . 'know it was the one deciding (ADR-0011, invariant 35)',
+    ],
+    [
         'name'   => 'one module encodes JSON',
         'regex'  => '/json_encode\s*\(/',
         'in'     => '',
@@ -160,6 +175,49 @@ $rules = [
         'in'     => 'lib',
         'expect' => ['lib/error_policy.php'],
         'why'    => 'a second file setting any of these is a second opinion (invariant 16)',
+    ],
+    [
+        // The §4bi rule, and the PHP half of what `tools/page_constants.js` does for
+        // the node suites. Everything in this list is a value the *machine* supplies,
+        // which means it has exactly one value on any machine that runs the tests and
+        // whatever value the shop's server happens to hold everywhere else. That is not
+        // a reason to ban it — this app reports on its own host, so somebody has to read
+        // it — it is a reason for the list to be short, named, and to grow only on
+        // purpose. A new one appearing in a module nobody was watching is a sentence,
+        // a limit or a branch that the suite will assert about this container for as
+        // long as it exists, in green.
+        //
+        // The four here each pair the read with a seam beside it that takes the value
+        // instead: phpVersionNote(), phpZoneNoteFor(), uploadCeilingNoteFor(),
+        // smallestOf(), requestNameFor(). Adding a file to this list without one is
+        // adding a branch no arm of selftest_installed.php can reach.
+        //
+        // alerts.php is here for one `phpversion()` in an X-Mailer header — a string in
+        // an email, with no branch behind it. Listed rather than excused: the point of
+        // the rule is that the list is the whole set.
+        'name'   => 'every read of the machine is one somebody named',
+        // `ATTR_SERVER_VERSION` and `ATTR_DRIVER_NAME` are here because the engine's
+        // version is a fact about the machine in exactly the sense this rule is about,
+        // and the first draft of the rule missed them — which is how the MySQL row came
+        // to print a number with a hardcoded `''` beside it while the PHP row above had
+        // three bands and a declared floor. No-ops today, since only this module reads
+        // them; the point of a set is that it is the whole set.
+        'regex'  => '/ini_get\s*\(|\$_SERVER|\$_ENV|getenv\s*\(|PHP_VERSION|PHP_SAPI'
+                  . '|php_uname\s*\(|phpversion\s*\(|session_get_cookie_params\s*\('
+                  . '|ATTR_SERVER_VERSION|ATTR_DRIVER_NAME/',
+        'in'     => 'lib',
+        // displays.php is the fifth, and adding the two PDO attributes above is what
+        // found it: `limitPublishLockWait()` skips a MySQL-only `SET SESSION` on any other
+        // engine, which makes it a branch chosen by the machine **in the publish path** —
+        // the highest-consequence code here. It is the one read on this list that was
+        // already covered the right way before the rule existed: the suite asserts
+        // `checkSame(testIsMysql(), …)`, so the check states that the answer depends on
+        // the engine and is true in both arms rather than pinning either.
+        'expect' => ['lib/alerts.php', 'lib/displays.php', 'lib/error_policy.php',
+                     'lib/server_report.php', 'lib/upload_limits.php'],
+        'why'    => 'a value taken from the host is one the suite can only ever see this '
+                  . 'container\'s copy of, so the branch behind it is asserted in the one '
+                  . 'configuration no shop is running (§4bi)',
     ],
     [
         'name'   => 'one module knows what the upload ceiling is',
@@ -231,14 +289,20 @@ $rules = [
         // branding_config.php is the file itself. lib/branding.php holds the canonical
         // list of the eight names and renders the define() lines (§4y) — naming them is
         // what that module is for. admin_panel.php names four of them as the keys of a
-        // save, not as values it paints with. lib/brand.php is the only *reader*.
+        // save, not as values it paints with. lib/site_chrome.php is the only *reader*.
         //
         // A page other than these is a page that has gone back to interpolating
         // whatever the file holds into its own stylesheet. The self-test is listed
         // because it pins a value to prove a save leaves the other seven alone; the
         // rule is about pages, and there is nowhere else for a test of it to live.
-        'expect' => ['admin_panel.php', 'branding_config.php', 'lib/brand.php',
-                     'lib/branding.php', 'tools/selftest_layout.php'],
+        // `selftest_installed.php` is the other direction entirely: it *defines* the
+        // names, so that the suite runs as a shop that has set the app up rather than
+        // as a fresh checkout, and it paints nothing. A file that only writes them is
+        // not a second reader, and the two names it uses are checked against
+        // `BrandingConfig::DEFAULTS` on every run rather than typed and trusted.
+        'expect' => ['admin_panel.php', 'branding_config.php', 'lib/site_chrome.php',
+                     'lib/branding.php', 'tools/selftest_layout.php',
+                     'tools/selftest_installed.php'],
         'why'    => 'these land in a <style> block, where there is no delimiter to escape '
                   . 'and a value that is not a colour is CSS — Color::read() is what makes '
                   . 'them safe, and it is called once (§4ai)',
@@ -602,10 +666,13 @@ if (!$badInScript) {
 //                 urlencode(), rawurlencode(), and date() with a literal format. Each
 //                 returns only digits, or only characters no parser is looking for —
 //                 no quote, no angle bracket, no backslash — whatever it is handed.
-//   a colour      Brand::navBg() and its three siblings, which return `#rrggbb` or a
-//                 default because Color::read() decided (§4ai). The one case in this
-//                 app where escaping would have been the wrong tool: they land in a
-//                 <style> block, which has no delimiter to escape.
+//   a colour      SiteChrome::navBg() and its three siblings, SiteChrome::styleVariables()
+//                 which prints all thirteen roles at once, and Color::read() itself —
+//                 each answers `#rrggbb` (or nothing) because Color::read() decided
+//                 (§4ai). The one case in this app where escaping would have been the
+//                 wrong tool: they land in a <style> block or a style attribute, neither
+//                 of which has a delimiter an entity could close. Escaping stops a value
+//                 ending the attribute and does not stop it ending the *declaration*.
 //   a number      a constant whose declaration is a numeric literal — a class constant
 //                 declared in lib/, or a define() in config.php, which is where this
 //                 app declares a non-database setting. Resolved here, not assumed:
@@ -633,8 +700,32 @@ if (!$badInScript) {
 
 $SAFE_CALLS  = ['count', 'intval', 'intdiv', 'floatval', 'number_format',
                 'urlencode', 'rawurlencode', 'date'];
+// `SiteChrome::styleVariables()` prints every chrome role at once, and every value in it
+// has been through `Color::read()` inside `pick()`. Safe for the reason the four
+// accessors beside it are — a `<style>` block has no delimiter escaping could
+// neutralise, so being *a colour* is the only property that helps — and
+// `selftest_layout` asserts the shape of every line it emits, which is what makes this
+// entry a fact rather than a promise. The four accessors stay listed because the sign-in
+// page still interpolates them one at a time: it never wears a theme, so it has no
+// `:root` block to draw from.
 $SAFE_STATIC = ['Markup::text', 'Markup::jsInAttr', 'HttpReply::jsValue',
-                'Brand::navBg', 'Brand::navBorder', 'Brand::accent', 'Brand::text'];
+                'SiteChrome::navBg', 'SiteChrome::navBorder', 'SiteChrome::accent', 'SiteChrome::text',
+                'SiteChrome::styleVariables',
+                // `themeColor()` is what a theme's own colour resolves through, and like
+                // `pick()` underneath it it answers `#rrggbb` for every input — a value
+                // `Color::read()` refuses becomes the colour the store default paints.
+                // Reached directly by the theme list and the theme form, which draw a
+                // swatch per role and cannot go through a thirteen-way switch of named
+                // accessors. `pick()` itself is not listed: nothing echoes it, and an
+                // allowance nothing uses is a line that would be believed later.
+                'SiteChrome::themeColor',
+                // The validator itself, which the paragraph above already names as the
+                // reason the four accessors are safe. Its answer set is `#rrggbb` and the
+                // empty string, and an empty declaration in a `style` attribute is one a
+                // browser drops. Listed because a swatch drawn from a colour somebody
+                // stored is exactly the case: escaping it would stop the value ending the
+                // attribute and not stop it ending the declaration.
+                'Color::read'];
 
 /**
  * Every `define('NAME', <number>);` in config.php, as 'NAME'.
@@ -910,6 +1001,97 @@ if (!$axisProblems) {
     $failures[] = 'the grant matrix axes';
 }
 
+// ---- No canvas colour resolves through a Workspace Theme ------------------------
+// Decision 11 of the v2 roadmap, and the one decision written down *as* a check rather
+// than as a convention: "`#builder-canvas` and everything drawn on it belong to the
+// Brand. Enforced by a check, not by convention."
+//
+// Both halves are tempting, which is why it needs enforcing. What the canvas shows is
+// what the sign shows, so a theme colour reaching a block would make the Builder a
+// preview of something no Screen renders — and it would be invisible, because the person
+// who set the theme is the person looking at the canvas. The other half is the mirror
+// image: the selection outline and the resize handles *are* themable (decision 10),
+// being drawn over the canvas and reaching no Screen, and a rule that refused every role
+// anywhere near the canvas would have made that role undrawable.
+//
+// So two things are checked, and the second is the one a reviewer would not think of: no
+// role but `--selection` appears in a rule that paints the canvas, **and** `--selection`
+// appears nowhere else. A role that may only be used in one place is a fact only if the
+// other places are checked too.
+require_once $root . '/lib/site_chrome.php';
+
+// The selectors that draw on the canvas. A list, and its limit is stated at the bottom of
+// this file: a canvas rule written under a brand-new selector is invisible to it. The
+// count assertion below is what stops the list going stale in silence — a renamed
+// selector makes this rule check nothing, and checking nothing reads as a pass.
+$canvasSelectors = ['#builder-canvas', '.editable-block', '.rh', '.section-block',
+                    '.section-label', '.text-inner', '.hidden-badge', '.clip-badge',
+                    '.lock-icon', '.carousel-preview', '.marquee-preview'];
+
+$themeVars = [];
+foreach (array_keys(SiteChrome::ROLES) as $_role) { $themeVars[SiteChrome::varName($_role)] = $_role; }
+unset($_role);
+$overlayVar = SiteChrome::varName('selection');
+
+$canvasProblems = [];
+$canvasRules = $overlayUses = 0;
+preg_match_all('/<style>(.*?)<\/style>/s', file_get_contents($root . '/builder.php'), $blocks);
+foreach ($blocks[1] as $block) {
+    // Comments out first, and this is not tidiness: the text before a rule's `{` includes
+    // whatever comment sits above it, and the comments above these very rules explain
+    // which selectors are the selection outline and the handles. So a comment could
+    // satisfy the `.selected` test for a rule that is not one — the check agreeing with
+    // its own documentation, which is #50's complaint in a new costume. Found by
+    // hand-mutating the selector list and reading what the failure said.
+    $block = preg_replace('!/\*.*?\*/!s', ' ', $block);
+    preg_match_all('/([^{}]+)\{([^{}]*)\}/s', $block, $rules, PREG_SET_ORDER);
+    foreach ($rules as $rule) {
+        $selector = trim(preg_replace('/\s+/', ' ', $rule[1]));
+        $onCanvas = false;
+        foreach ($canvasSelectors as $frag) {
+            if (strpos($selector, $frag) !== false) { $onCanvas = true; break; }
+        }
+        if ($onCanvas) { $canvasRules++; }
+        preg_match_all('/var\((--[a-z0-9-]+)\)/i', $rule[2], $used);
+        foreach ($used[1] as $var) {
+            if (!isset($themeVars[$var])) { continue; }
+            if ($var === $overlayVar) {
+                $overlayUses++;
+                if (!$onCanvas || (strpos($selector, '.selected') === false
+                                   && strpos($selector, '.rh') === false)) {
+                    $canvasProblems[] = "`$var` is the canvas-overlay role and is used by `$selector`, "
+                                      . 'which is not the selection outline or a resize handle';
+                }
+                continue;
+            }
+            if ($onCanvas) {
+                $canvasProblems[] = "`$selector` paints the canvas and reaches the theme role "
+                                  . "`{$themeVars[$var]}` through `$var`";
+            }
+        }
+    }
+}
+if ($canvasRules < 8) {
+    $canvasProblems[] = "only $canvasRules rules in builder.php matched the canvas selector list, "
+                      . 'so this rule is checking almost nothing — the list has gone stale';
+}
+if ($overlayUses < 1) {
+    $canvasProblems[] = "`$overlayVar` is used nowhere, so the one themable thing on the canvas "
+                      . 'is not actually drawn from the theme';
+}
+$checked++;
+if (!$canvasProblems) {
+    echo "  ok   no canvas colour resolves through a theme, and the overlay role is used "
+       . "nowhere else (decision 11)\n";
+} else {
+    echo "  FAIL the canvas and the Workspace Theme have met (decision 11)\n";
+    foreach ($canvasProblems as $problem) { echo "       $problem\n"; }
+    echo "       What the canvas shows is what the sign shows, so its colours are the\n";
+    echo "       Brand's. The selection outline and the resize handles are the exception\n";
+    echo "       and the only one: they are drawn over a block and reach no Screen.\n";
+    $failures[] = 'a theme role on the canvas';
+}
+
 // ---- Convergence runs before anything that could hold a transaction --------------
 // The §5 note on this one is right that the *position* is the invariant and not the
 // call, and wrong that a pattern cannot decide it. DDL commits an open transaction in
@@ -920,7 +1102,7 @@ if (!$axisProblems) {
 // the line-number form would not have worked: its call is legitimately at line 128,
 // after the upload-limit and CSRF gates, because those send a reply and stop.
 $positions = [];
-foreach (['admin_panel.php', 'api.php', 'builder.php', 'crud.php'] as $entry) {
+foreach (['admin_panel.php', 'api.php', 'builder.php', 'crud.php', 'help.php'] as $entry) {
     $code = codeWithoutComments(file_get_contents($root . '/' . $entry));
     $call = strpos($code, 'ensureSignageSchema($pdo)');
     if ($call === false) {
@@ -1376,33 +1558,175 @@ foreach ($floorClean as $probe) {
     }
 }
 
-// ---- The instrument itself -------------------------------------------------------
-// Every rule above is read through codeWithoutComments(), so what that function drops
-// decides what all of them can see. Invariant 33, below, is the one that does not use
-// it — token_get_all() hands it comments as tokens and it drops them itself, which is
-// what lets it read a parameter list rather than a pattern. It gained HTML comments in
-// #50, and the decision it embodies — a comment holding PHP is code and stays — is
-// worth an assertion rather than a paragraph, because both halves fail silently:
-// dropping too little is the false positive #44 hit, and dropping too much blinds
-// every rule to whatever a page hid inside a comment.
-$commentProbes = [
-    ["<?php \$a = 1; ?>\n<!-- no strtotime() here -->\n",
-     'strtotime', false, 'an HTML comment is prose, and a rule does not match inside it'],
-    ["<?php \$a = 1; ?>\n<!-- <?= strtotime('x') ?> -->\n",
-     'strtotime', true, 'but one holding PHP is code, and that PHP still runs'],
-    ["<?php // no strtotime() here\n\$a = 1;\n",
-     'strtotime', false, 'and a PHP comment is dropped as it always was'],
+// ---- No parameter is implicitly nullable ----------------------------------------
+/**
+ * Every `Type $x = null` that should be `?Type $x = null` (invariant 33).
+ *
+ * The sibling of invariant 31 and the opposite direction. That one refuses syntax the
+ * shop's PHP cannot *parse* — a blank sign. This one refuses syntax that parses
+ * everywhere and is **deprecated from 8.4**, whose cost is a line in the error log on
+ * every request that compiles the file. `SiteChrome::wear()` was one, and it is called
+ * on every signed-in page load; `ServerReport::__construct()` was another, and
+ * `admin_panel.php` builds one every time the panel is opened.
+ *
+ * Three things could not see it, which is why it is a check and not a convention:
+ *
+ *   · `php -l` is clean on both spellings, on every version.
+ *   · The deprecation is emitted when a file is **compiled**, not when it is parsed —
+ *     so it fires at `require` time, before any error handler the self-test installs
+ *     exists, and the suite's "no PHP diagnostics during the run" check never sees it.
+ *   · This container's `error_reporting` is 22527, which excludes `E_DEPRECATED`
+ *     (`E_ALL` is 30719 here). So the suite runs green on PHP 8.4 while the notice is
+ *     being emitted. `ErrorPolicy::install()` does set `E_ALL` — on a real request,
+ *     which is the one place nobody is watching a console.
+ *
+ * So the rule has two halves and they overlap on purpose. `tools/check_deprecations.php`
+ * is the other: it compiles every file in a child process with `E_ALL` set and fails on
+ * whatever the engine says, which is the instrument that *found* these rather than a rule
+ * written afterwards, and it answers for the version running it — so it reports what 8.5
+ * deprecates without anybody teaching it. This half knows one shape and knows it on 8.2,
+ * where the engine says nothing at all. Both, because CI answers on a push and this
+ * answers before one.
+ *
+ * Only parameter lists are examined, and that is the whole difficulty. A scan that
+ * looks at every `$x = null` in the file reports `private static $bytes = null;` —
+ * `UploadLimit` has exactly that, and so does `ServerReport` — because the token before
+ * the variable is `static` either way. So this walks to a `function`/`fn`, finds its
+ * parameter list, and only reads variables at depth 1 inside it.
+ *
+ * @return array of ['line' => int, 'what' => string]
+ */
+function implicitNullableUses($source)
+{
+    $ts = array_values(array_filter(token_get_all($source), function ($t) {
+        return !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true);
+    }));
+
+    // A parameter type is these tokens and nothing else.
+    //
+    // `static` is absent because it is not legal as a parameter type — and **that is all
+    // it is**. It would be easy to write that excluding it is what stops a static property
+    // reading as one, and a mutation check says otherwise: putting `T_STATIC` back into
+    // this list changes nothing, because the parameter-list walk below never reaches a
+    // property or a `static $x = null` in the first place. The scoping is load-bearing and
+    // this line is not, which is worth saying rather than letting the comment take credit
+    // (invariant 30 — the mutant survived and the answer was to fix the sentence).
+    $typeTokens = [T_STRING, T_ARRAY, T_CALLABLE];
+    if (defined('T_NAME_QUALIFIED'))       { $typeTokens[] = T_NAME_QUALIFIED; }
+    if (defined('T_NAME_FULLY_QUALIFIED')) { $typeTokens[] = T_NAME_FULLY_QUALIFIED; }
+
+    $isType = function ($t) use ($typeTokens) {
+        if (is_array($t)) { return in_array($t[0], $typeTokens, true); }
+        return $t === '\\' || $t === '|' || $t === '&';
+    };
+
+    $out   = [];
+    $count = count($ts);
+    for ($i = 0; $i < $count; $i++) {
+        $t = $ts[$i];
+        if (!is_array($t) || ($t[0] !== T_FUNCTION && !(defined('T_FN') && $t[0] === T_FN))) {
+            continue;
+        }
+        // Walk to this function's own '('. A name or `&` may sit between.
+        $open = $i + 1;
+        while ($open < $count && $ts[$open] !== '(') { $open++; }
+        if ($open >= $count) { continue; }
+
+        $depth = 0;
+        for ($j = $open; $j < $count; $j++) {
+            if ($ts[$j] === '(') { $depth++; continue; }
+            if ($ts[$j] === ')') { $depth--; if ($depth === 0) { $i = $j; break; } continue; }
+            if ($depth !== 1 || !is_array($ts[$j]) || $ts[$j][0] !== T_VARIABLE) { continue; }
+
+            // Does it default to null?
+            if (!isset($ts[$j + 1], $ts[$j + 2]) || $ts[$j + 1] !== '='
+                || !is_array($ts[$j + 2]) || $ts[$j + 2][0] !== T_STRING
+                || strcasecmp($ts[$j + 2][1], 'null') !== 0) { continue; }
+
+            // Collect the type immediately before it.
+            $type = [];
+            for ($k = $j - 1; $k >= $open; $k--) {
+                if ($ts[$k] === '?') { $type[] = '?'; continue; }
+                if ($isType($ts[$k])) { $type[] = is_array($ts[$k]) ? $ts[$k][1] : $ts[$k]; continue; }
+                break;
+            }
+            if (!$type) { continue; }                                  // untyped: legal forever
+            $spelled = implode('', array_reverse($type));
+            if (strpos($spelled, '?') !== false) { continue; }          // already explicit
+            if (preg_match('/\bnull\b/i', $spelled)) { continue; }      // union already holds null
+
+            $out[] = ['line' => $ts[$j][2], 'what' => $spelled . ' ' . $ts[$j][1] . ' = null'];
+        }
+    }
+    return $out;
+}
+
+$implicit = [];
+// phpFilesUnder() already skips this file, which is what lets the probes below spell
+// the deprecated form out in full without the sweep above reporting them. This loop
+// carried a second `continue` for the same file until the merge with main, where the
+// same rule had been written without one: a guard that cannot fire, in a checker whose
+// own invariant 30 is that a line ships having been seen to matter.
+foreach (phpFilesUnder($root, '', []) as $rel) {
+    foreach (implicitNullableUses(file_get_contents($root . '/' . $rel)) as $hit) {
+        $implicit[] = $rel . ':' . $hit['line'] . '  ' . $hit['what'];
+    }
+}
+$checked++;
+if (!$implicit) {
+    echo "  ok   no parameter is implicitly nullable, so nothing logs a deprecation on 8.4 (invariant 33)\n";
+} else {
+    echo "  FAIL a parameter is implicitly nullable, which 8.4 deprecates (invariant 33)\n";
+    foreach ($implicit as $where) { echo "       $where\n"; }
+    echo "       Write it `?Type \$x = null`. Understood back to 7.1, so it costs nothing\n";
+    echo "       below the floor. `php -l` is clean either way and the deprecation fires\n";
+    echo "       when the file is compiled — before any handler the suite installs — so\n";
+    echo "       this and tools/check_deprecations.php are the only two things here\n";
+    echo "       that can see it.\n";
+    $failures[] = 'an implicitly nullable parameter (invariant 33)';
+}
+
+// ---- And that detector, seen to fail --------------------------------------------
+// Invariant 30, and the negative half carries the weight: every `no` below is a shape a
+// scan of `$x = null` really does hit, and the first two are live code in this repo.
+$nullableProbes = [
+    ['function f(array $x = null) {}',                     1, 'array $x = null',
+     'a built-in type defaulting to null is the deprecated form'],
+    ['function f(WorkspaceTheme $t = null) {}',            1, 'WorkspaceTheme $t = null',
+     'and so is a class type — the one SiteChrome::wear() had'],
+    ['class A { function f(int $n = null) {} }',            1, 'int $n = null',
+     'inside a class body as well as at top level'],
+    ['function f(?Foo $a = null, Bar $b = null) {}',        1, 'Bar $b = null',
+     'and only the offending one of two, so a mixed signature reports once'],
+    ['function f(?array $x = null) {}',                     0, '',
+     'the explicit form is what this exists to leave alone'],
+    ['function f($x = null) {}',                            0, '',
+     'an untyped parameter has always been legal and is not touched'],
+    ['function f(array|null $x = null) {}',                 0, '',
+     'a union already naming null is explicit enough for 8.4'],
+    ['function f(array $x = []) {}',                        0, '',
+     'a default that is not null is not the deprecation'],
+    ['class A { private static $bytes = null; }',           0, '',
+     'a static property is not a parameter — the false positive a naive scan gives'],
+    ['function f() { static $c = null; return $c; }',       0, '',
+     'and neither is a static variable, which reads identically to one'],
+    ['$x = null;',                                          0, '',
+     'nor a plain assignment, which is most of what the pattern would hit'],
 ];
-foreach ($commentProbes as $probe) {
-    list($source, $needle, $shouldMatch, $label) = $probe;
+foreach ($nullableProbes as $probe) {
+    list($snippet, $expected, $needle, $label) = $probe;
     $checked++;
-    $found = strpos(codeWithoutComments($source), $needle) !== false;
-    if ($found === $shouldMatch) {
+    $hits = implicitNullableUses("<?php\n" . $snippet . "\n");
+    $ok = count($hits) === $expected
+          && ($expected === 0 || ($hits[0]['line'] === 2 && $hits[0]['what'] === $needle));
+    if ($ok) {
         echo "  ok   $label\n";
     } else {
-        echo "  FAIL $label\n";
-        echo "       expected " . ($shouldMatch ? 'a match' : 'no match') . " for `$needle`\n";
-        $failures[] = 'codeWithoutComments: ' . $label;
+        echo "  FAIL the implicit-nullable detector is wrong about: $label\n";
+        echo "       expected $expected hit(s)"
+           . ($expected ? " on line 2 reading `$needle`" : '') . ', got ' . count($hits) . "\n";
+        foreach ($hits as $hit) { echo "         line {$hit['line']}: {$hit['what']}\n"; }
+        $failures[] = "implicit-nullable detector: $label";
     }
 }
 
@@ -1534,11 +1858,11 @@ function refusedLiteralWrites($source, $types)
 // a given statement is on is not something this can read — the suite holds several, two
 // of them deliberately SQLite-only — so it asks the narrower question that needs no such
 // answer: would the engine the shop runs accept this literal at all? For eight days the
-// answer was no in two places here, and nothing local could say so, because SQLite
-// stores both and the check that reads each one back passes (invariant 32).
+// answer was no in four places, and nothing local could say so, because SQLite stores
+// every one of them and the check that reads it back passes (§4bk).
 $writeTypes = schemaColumnTypes(file_get_contents($root . '/schema.sql'));
 $checked++;
-if (isset($writeTypes['displays']['bg_type']) && count($writeTypes) >= 7) {
+if (isset($writeTypes['brands']['bg_type']) && count($writeTypes) >= 8) {
     echo "  ok   schema.sql's column types were read, so the rule below has something to check against\n";
 } else {
     echo "  FAIL schema.sql's column types were not read — " . count($writeTypes) . " tables\n";
@@ -1562,36 +1886,39 @@ if (!$refusedWrites) {
 }
 
 // ---- And that detector, seen to fail --------------------------------------------
-// Invariant 30. The first two are the writes this branch removed, in the order CI hit
-// them: the ENUM spelling that failed as a check and the stamp that ended the run as a
-// fatal. The negative half is where the care is, because the two easy ways to write this
-// rule both break real lines in the suite — an ENUM match that respected lettercase
-// would condemn `role = 'admin'` reads that MySQL has always accepted, and a length rule
-// that did not read the declared width would condemn every colour.
+// Invariant 30. The first four are the four writes §4bk removed, in the order CI would
+// have hit them; the negative half is where the care is, because the two easy ways to
+// write this rule both break real lines in the suite — an ENUM match that respects
+// lettercase would condemn `role = 'Admin'`, which MySQL has always accepted, and a
+// length rule that did not read the declared width would condemn every colour.
 $writeProbes = [
-    ['$p->exec("UPDATE users SET role = \'Admin\' WHERE id = 1");', 0,
-     'an ENUM member in another lettercase is left alone — MySQL folds it, and always has'],
+    ['$p->exec("UPDATE brands SET bg_type = \'nonsense\' WHERE id = 1");', 1,
+     'the ENUM write that ended the MySQL leg is refused'],
     ['$p->exec("UPDATE users SET role = \'root\' WHERE id = 1");', 1,
-     'a word the ENUM never offered is refused — the check that failed on main'],
+     'and a word an ENUM never offered, on the table main\'s arm died on'],
+    ['$p->exec("UPDATE users SET role = \'Admin\' WHERE id = 1");', 0,
+     'but a member in another lettercase is left alone — MySQL folds it, and always has'],
+    ['$p->exec("UPDATE block_styles SET font_color = \'linear-gradient(to right, #ffffff 0%, #000000 100%)\' WHERE id = 1");', 1,
+     'and a value past a VARCHAR(50), which is the same refusal a wider column still makes'],
     ['$p->exec("UPDATE displays SET last_published_at = \'nonsense\' WHERE id = 1");', 1,
-     'and so is the stamp that is not a date — the fatal that ended the run'],
+     'and so is the stamp that is not a date — the one before it on main'],
+    ['$p->exec("UPDATE workspace_themes SET nav_bg = \'darkblue\' WHERE id = 1");', 1,
+     'and eight characters in a VARCHAR(7), which no database client could have stored either'],
     ['$p->exec("UPDATE displays SET last_published_at = \'0000-00-00 00:00:00\' WHERE id = 1");', 1,
      'and the zero date, which is a date and still refused'],
-    ['$p->exec("UPDATE block_styles SET font_color = \'linear-gradient(to right, #ffffff 0%, #000000 100%)\' WHERE id = 1");', 1,
-     'and a value wider than the column, which no database client could have stored either'],
-    ['$p->exec("INSERT INTO displays (screen_name, bg_type) VALUES (\'Drive-Thru\', \'nonsense\');");', 1,
+    ['$p->exec("INSERT INTO brands (name, bg_type) VALUES (\'Salmon House\', \'nonsense\');");', 1,
      'an INSERT is read the same way as an UPDATE, by column position'],
-    ['$p->exec("UPDATE displays SET bg_type = \'image\' WHERE id = 1");', 0,
+    ['$p->exec("UPDATE brands SET bg_type = \'image\' WHERE id = 1");', 0,
      'a member of the ENUM is left alone'],
-    ['$p->exec("UPDATE displays SET bg_type = \'Image\' WHERE id = 1");', 0,
+    ['$p->exec("UPDATE brands SET bg_type = \'Image\' WHERE id = 1");', 0,
      'and so is one in another lettercase, because MySQL matches a member case-insensitively'],
-    ['$p->exec("UPDATE block_styles SET font_color = \'gold\' WHERE id = 1");', 0,
+    ['$p->exec("UPDATE workspace_themes SET nav_bg = \'gold\' WHERE id = 1");', 0,
      'a colour that will not read but fits the column is exactly the state a check wants'],
     ['$p->exec("UPDATE displays SET last_published_at = \'2026-08-19 12:00:00\' WHERE id = 1");', 0,
      'a real stamp is not a refusal'],
     ['$p->exec("UPDATE nothing_declared SET bg_type = \'nonsense\' WHERE id = 1");', 0,
      'and a table schema.sql does not declare is not this rule\'s business'],
-    ['// UPDATE displays SET bg_type = \'nonsense\' — what this branch removed', 0,
+    ['// UPDATE brands SET bg_type = \'nonsense\' — what §4bk removed', 0,
      'a write-up quoting the statement it is about is prose, not a write'],
 ];
 foreach ($writeProbes as $probe) {
@@ -1612,10 +1939,10 @@ foreach ($writeProbes as $probe) {
 /**
  * SQLite-only SQL handed to a connection the MySQL leg can also be holding.
  *
- * The other half of invariant 37, and the half that cost the run once the literals
+ * The other half of invariant 32, and the half that cost the run once the literals
  * were fixed: a value MySQL refuses is one statement failing, but a `CREATE TABLE`
  * in the wrong dialect is a *fatal* — it throws where no check is looking, the suite
- * ends without reporting, and the rehearsal step under it never starts.
+ * ends without reporting, and the rehearsal step under it never starts (§4bl).
  *
  * Which connection a statement is on *is* readable here, unlike for the literals
  * above, because the suite names them: a handle assigned from `newSqliteTestDb()` or
@@ -1707,7 +2034,7 @@ if (!$dialectHits) {
 // all, since the same text is correct on a connection that is pinned to SQLite.
 $dialectProbes = [
     ['$midPdo = newTestDb();' . "\n" . '$midPdo->exec("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT)");',
-     1, 'the CREATE TABLE that ended the MySQL leg at check 1187 is refused'],
+     1, 'the CREATE TABLE that ended the MySQL leg at check 1383 is refused'],
     ['$racePdo = newTestDb();' . "\n" . '$racePdo->exec("CREATE TRIGGER seed_race BEFORE INSERT ON displays BEGIN");',
      1, 'and so is a trigger, which MySQL spells nothing like'],
     ['$midPdo = newTestDb();' . "\n" . '$midPdo->exec("CREATE TABLE t (type TEXT NOT NULL DEFAULT \'text\')");',
@@ -1718,7 +2045,7 @@ $dialectProbes = [
      0, 'including one opened directly rather than through the fixture'],
     ['$midPdo = newTestDb();' . "\n" . '$midPdo->exec("CREATE TABLE t (id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY)");',
      0, 'and the portable spelling is not mistaken for the SQLite one'],
-    ['// CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT) — what this branch removed',
+    ['// CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT) — what §4bl removed',
      0, 'a write-up quoting the statement it is about is prose, not a statement'],
 ];
 foreach ($dialectProbes as $probe) {
@@ -1735,168 +2062,188 @@ foreach ($dialectProbes as $probe) {
     }
 }
 
-// ---- No parameter is implicitly nullable -----------------------------------------
+// ---- The instrument itself -------------------------------------------------------
+// Every rule above is read through codeWithoutComments(), so what that function drops
+// decides what all thirty-two of them can see. Invariant 33, above, is the one that does
+// not use it — token_get_all() hands it comments as tokens and it drops them itself,
+// which is what lets it read a parameter list rather than a pattern. It gained HTML
+// comments in
+// #50, and the decision it embodies — a comment holding PHP is code and stays — is
+// worth an assertion rather than a paragraph, because both halves fail silently:
+// dropping too little is the false positive #44 hit, and dropping too much blinds
+// every rule to whatever a page hid inside a comment.
+$commentProbes = [
+    ["<?php \$a = 1; ?>\n<!-- no strtotime() here -->\n",
+     'strtotime', false, 'an HTML comment is prose, and a rule does not match inside it'],
+    ["<?php \$a = 1; ?>\n<!-- <?= strtotime('x') ?> -->\n",
+     'strtotime', true, 'but one holding PHP is code, and that PHP still runs'],
+    ["<?php // no strtotime() here\n\$a = 1;\n",
+     'strtotime', false, 'and a PHP comment is dropped as it always was'],
+];
+foreach ($commentProbes as $probe) {
+    list($source, $needle, $shouldMatch, $label) = $probe;
+    $checked++;
+    $found = strpos(codeWithoutComments($source), $needle) !== false;
+    if ($found === $shouldMatch) {
+        echo "  ok   $label\n";
+    } else {
+        echo "  FAIL $label\n";
+        echo "       expected " . ($shouldMatch ? 'a match' : 'no match') . " for `$needle`\n";
+        $failures[] = 'codeWithoutComments: ' . $label;
+    }
+}
+
+// ---- Every gate in tools/ is a step in the workflow that runs it ------------------
 /**
- * Every `Type $x = null` that should be `?Type $x = null` (invariant 33).
+ * Suites and gates that CI does not run, and steps that name a file that is not there.
  *
- * The sibling of invariant 31 and the opposite direction. That one refuses syntax the
- * shop's PHP cannot *parse* — a blank sign. This one refuses syntax that parses
- * everywhere and is **deprecated from 8.4**, whose cost is a line in the error log on
- * every request that compiles the file. `ServerReport::__construct()` was one, and
- * `admin_panel.php` builds one every time the panel is opened.
+ * The hole this closes was found by the merge that produced it. The node job's comment
+ * said "six suites" while its step list ran eight, and the count had already been
+ * corrected twice — each time by a merge, because two branches each adding a suite is
+ * two clean diffs and no conflict. `selftest_builder_readonly.js` does assert there are
+ * eight, but it counts `selftest_*.js` **files**: a ninth added without a step here
+ * passed every gate in the repo and never ran, which is a suite in the same state as a
+ * check that cannot fail (invariant 30) — it costs its minutes and answers nothing.
  *
- * Three things could not see it, which is why it is a check and not a convention:
+ * Both directions, because they fail differently. A suite with no step is **silent**:
+ * green everywhere, running nowhere. A step naming a file that is not there is loud —
+ * CI goes red — but it goes red on a push, after the review, and the answer to it is
+ * one line in this file away from whoever renamed the suite.
  *
- *   · `php -l` is clean on both spellings, on every version.
- *   · The deprecation is emitted when a file is **compiled**, not when it is parsed —
- *     so it fires at `require` time, before any error handler the self-test installs
- *     exists, and the suite's "no PHP diagnostics during the run" check never sees it.
- *   · This container's `error_reporting` is 22527, which excludes `E_DEPRECATED`
- *     (`E_ALL` is 30719 here). So the suite runs green on PHP 8.4 while the notice is
- *     being emitted. `ErrorPolicy::install()` does set `E_ALL` — on a real request,
- *     which is the one place nobody is watching a console.
+ * Comments are stripped from the workflow first, and that is the check inside the check:
+ * this file's own YAML discusses `tools/check_deprecations.php` and `mutate.php` in
+ * prose, and a scan that read those as steps would report a clean CI for a suite nobody
+ * runs. A step is a `run:` line. Naming one in a sentence is not running it.
  *
- * So the five this found were found by compiling the tree, not by reading it, and the
- * `Deprecations on 8.4` step in `php-lint.yml` is that instrument promoted to a gate:
- * it asks the engine and therefore covers deprecations nobody here has heard of yet,
- * where this check is a pattern and covers exactly one. Both, because CI answers on a
- * push and this answers before one.
+ * The exemptions carry their reasons and are held to existing, so the list cannot rot
+ * into a name nobody has run since a rename. A gate is anything that asserts; `mutate.php`
+ * is deliberately not one — it takes minutes rather than seconds and is a tool to point at
+ * what you changed (§4aq) — and a fixture is not a gate at all.
  *
- * Only parameter lists are examined, and that is the whole difficulty. A scan that
- * looks at every `$x = null` in the file reports `private static $bytes = null;` —
- * `UploadLimit` has exactly that, and so does `ServerReport` — because the token before
- * the variable is `static` either way. So this walks to a `function`/`fn`, finds its
- * parameter list, and only reads variables at depth 1 inside it.
- *
- * @return array of ['line' => int, 'what' => string]
+ * @return array ['unrun' => [...], 'missing' => [...], 'stale' => [...]]
  */
-function implicitNullableUses($source)
+function toolsNotRunByCi(array $toolFiles, $workflow, array $notGates)
 {
-    $ts = array_values(array_filter(token_get_all($source), function ($t) {
-        return !is_array($t) || !in_array($t[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true);
-    }));
-
-    // A parameter type is these tokens and nothing else.
-    //
-    // `static` is absent because it is not legal as a parameter type — and **that is all
-    // it is**. It would be easy to write that excluding it is what stops a static property
-    // reading as one, and a mutation check says otherwise: putting `T_STATIC` back into
-    // this list changes nothing, because the parameter-list walk below never reaches a
-    // property or a `static $x = null` in the first place. The scoping is load-bearing and
-    // this line is not, which is worth saying rather than letting the comment take credit
-    // (invariant 30 — the mutant survived and the answer was to fix the sentence).
-    $typeTokens = [T_STRING, T_ARRAY, T_CALLABLE];
-    if (defined('T_NAME_QUALIFIED'))       { $typeTokens[] = T_NAME_QUALIFIED; }
-    if (defined('T_NAME_FULLY_QUALIFIED')) { $typeTokens[] = T_NAME_FULLY_QUALIFIED; }
-
-    $isType = function ($t) use ($typeTokens) {
-        if (is_array($t)) { return in_array($t[0], $typeTokens, true); }
-        return $t === '\\' || $t === '|' || $t === '&';
-    };
-
-    $out   = [];
-    $count = count($ts);
-    for ($i = 0; $i < $count; $i++) {
-        $t = $ts[$i];
-        if (!is_array($t) || ($t[0] !== T_FUNCTION && !(defined('T_FN') && $t[0] === T_FN))) {
-            continue;
-        }
-        // Walk to this function's own '('. A name or `&` may sit between.
-        $open = $i + 1;
-        while ($open < $count && $ts[$open] !== '(') { $open++; }
-        if ($open >= $count) { continue; }
-
-        $depth = 0;
-        for ($j = $open; $j < $count; $j++) {
-            if ($ts[$j] === '(') { $depth++; continue; }
-            if ($ts[$j] === ')') { $depth--; if ($depth === 0) { $i = $j; break; } continue; }
-            if ($depth !== 1 || !is_array($ts[$j]) || $ts[$j][0] !== T_VARIABLE) { continue; }
-
-            // Does it default to null?
-            if (!isset($ts[$j + 1], $ts[$j + 2]) || $ts[$j + 1] !== '='
-                || !is_array($ts[$j + 2]) || $ts[$j + 2][0] !== T_STRING
-                || strcasecmp($ts[$j + 2][1], 'null') !== 0) { continue; }
-
-            // Collect the type immediately before it.
-            $type = [];
-            for ($k = $j - 1; $k >= $open; $k--) {
-                if ($ts[$k] === '?') { $type[] = '?'; continue; }
-                if ($isType($ts[$k])) { $type[] = is_array($ts[$k]) ? $ts[$k][1] : $ts[$k]; continue; }
-                break;
-            }
-            if (!$type) { continue; }                                  // untyped: legal forever
-            $spelled = implode('', array_reverse($type));
-            if (strpos($spelled, '?') !== false) { continue; }          // already explicit
-            if (preg_match('/\bnull\b/i', $spelled)) { continue; }      // union already holds null
-
-            $out[] = ['line' => $ts[$j][2], 'what' => $spelled . ' ' . $ts[$j][1] . ' = null'];
-        }
+    // A `#` comment in YAML is a line whose first non-space character is `#`. Trailing
+    // comments cannot appear on a `run:` line here without becoming part of the shell
+    // command, so line-leading is the whole rule.
+    $lines = [];
+    foreach (explode("\n", $workflow) as $line) {
+        if (preg_match('/^\s*#/', $line)) { continue; }
+        $lines[] = $line;
     }
-    return $out;
+    $steps = [];
+    if (preg_match_all('~\b(?:php|node)\s+tools/([A-Za-z0-9_.-]+\.(?:php|js))~',
+                       implode("\n", $lines), $m)) {
+        $steps = array_unique($m[1]);
+    }
+
+    $unrun = [];
+    foreach ($toolFiles as $file) {
+        if (in_array($file, array_keys($notGates), true)) { continue; }
+        if (!in_array($file, $steps, true))              { $unrun[] = $file; }
+    }
+    $missing = [];
+    foreach ($steps as $step) {
+        if (!in_array($step, $toolFiles, true)) { $missing[] = $step; }
+    }
+    $stale = [];
+    foreach (array_keys($notGates) as $exempt) {
+        if (!in_array($exempt, $toolFiles, true)) { $stale[] = $exempt; }
+    }
+    sort($unrun);
+    sort($missing);
+    sort($stale);
+    return ['unrun' => $unrun, 'missing' => $missing, 'stale' => $stale];
 }
 
-// phpFilesUnder() already skips this file, which is what lets the probes below spell
-// the deprecated form out in full without the sweep above reporting them.
-$implicit = [];
-foreach (phpFilesUnder($root, '', []) as $rel) {
-    foreach (implicitNullableUses(file_get_contents($root . '/' . $rel)) as $hit) {
-        $implicit[] = $rel . ':' . $hit['line'] . '  ' . $hit['what'];
-    }
+// Not a gate, and why. Each of these is asked to exist, so a rename cannot leave a name
+// here that means nothing.
+$notGates = [
+    'mutate.php'         => 'minutes rather than seconds — a tool to point at what you changed (§4aq)',
+    'audit_colors.php'   => 'reports what is stored, and asserts nothing about it',
+    'test_fixture.php'   => 'the fixture every PHP suite requires, not a suite',
+    'page_constants.js'  => 'what the server puts on a page, read by the node suites',
+];
+$toolFiles = [];
+foreach (scandir($root . '/tools') as $entry) {
+    if (!is_file($root . '/tools/' . $entry)) { continue; }
+    $ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
+    if ($ext === 'php' || $ext === 'js') { $toolFiles[] = $entry; }
 }
+$ciFile = '.github/workflows/php-lint.yml';
+$ci     = toolsNotRunByCi($toolFiles, (string) file_get_contents($root . '/' . $ciFile), $notGates);
 $checked++;
-if (!$implicit) {
-    echo "  ok   no parameter is implicitly nullable, so nothing logs a deprecation on 8.4 (invariant 33)\n";
+if (!$ci['unrun'] && !$ci['missing'] && !$ci['stale']) {
+    echo '  ok   every gate in tools/ is a step in ' . $ciFile
+       . ', and every step names a file that is there' . "\n";
 } else {
-    echo "  FAIL a parameter is implicitly nullable, which 8.4 deprecates (invariant 33)\n";
-    foreach ($implicit as $where) { echo "       $where\n"; }
-    echo "       Write it `?Type \$x = null`. Understood back to 7.1, so it costs nothing\n";
-    echo "       below the floor. `php -l` is clean either way and the deprecation fires\n";
-    echo "       when the file is compiled — before any handler the suite installs — so\n";
-    echo "       this and the CI compile sweep are the only two things here that see it.\n";
-    $failures[] = 'an implicitly nullable parameter (invariant 33)';
+    echo "  FAIL tools/ and $ciFile disagree about what runs\n";
+    foreach ($ci['unrun'] as $f) {
+        echo "       + tools/$f asserts something and no step runs it — green here, running nowhere\n";
+    }
+    foreach ($ci['missing'] as $f) {
+        echo "       - a step runs tools/$f, which does not exist\n";
+    }
+    foreach ($ci['stale'] as $f) {
+        echo "       ? tools/$f is on the not-a-gate list and is not there either\n";
+    }
+    echo "       Add the step, or add the file to \$notGates above with the reason it is\n";
+    echo "       not a gate. A suite CI does not run costs its minutes and answers nothing.\n";
+    $failures[] = 'a gate in tools/ that CI does not run, or a step with no file';
 }
 
 // ---- And that detector, seen to fail --------------------------------------------
-// Invariant 30, and the negative half carries the weight: every `no` below is a shape a
-// scan of `$x = null` really does hit, and the first two are live code in this repo.
-$nullableProbes = [
-    ['function f(array $x = null) {}',                     1, 'array $x = null',
-     'a built-in type defaulting to null is the deprecated form'],
-    ['function f(Background $bg = null) {}',               1, 'Background $bg = null',
-     'and so is a class type — the one publishAs() had'],
-    ['class A { function f(int $n = null) {} }',            1, 'int $n = null',
-     'inside a class body as well as at top level'],
-    ['function f(?Foo $a = null, Bar $b = null) {}',        1, 'Bar $b = null',
-     'and only the offending one of two, so a mixed signature reports once'],
-    ['function f(?array $x = null) {}',                     0, '',
-     'the explicit form is what this exists to leave alone'],
-    ['function f($x = null) {}',                            0, '',
-     'an untyped parameter has always been legal and is not touched'],
-    ['function f(array|null $x = null) {}',                 0, '',
-     'a union already naming null is explicit enough for 8.4'],
-    ['function f(array $x = []) {}',                        0, '',
-     'a default that is not null is not the deprecation'],
-    ['class A { private static $bytes = null; }',           0, '',
-     'a static property is not a parameter — the false positive a naive scan gives'],
-    ['function f() { static $c = null; return $c; }',       0, '',
-     'and neither is a static variable, which reads identically to one'],
-    ['$x = null;',                                          0, '',
-     'nor a plain assignment, which is most of what the pattern would hit'],
+// Invariant 30. The first probe is the hole itself, and the fourth is the one that made
+// stripping comments worth doing rather than assuming: this workflow talks about tools it
+// does not run, in prose, a few lines above the steps that run other ones.
+$ciYaml = "jobs:\n  a:\n    steps:\n      - run: php tools/selftest_layout.php\n"
+        . "      - run: node tools/selftest_viewer.js\n";
+$ciProbes = [
+    [['selftest_layout.php', 'selftest_viewer.js', 'selftest_ghost.js'], $ciYaml, [],
+     ['selftest_ghost.js'], [], [],
+     'a suite with no step in the workflow is reported — the hole this was written for'],
+    [['selftest_layout.php', 'selftest_viewer.js'], $ciYaml, [],
+     [], [], [],
+     'and a tools/ directory the workflow covers exactly is clean'],
+    [['selftest_layout.php'], $ciYaml, [],
+     [], ['selftest_viewer.js'], [],
+     'a step naming a file that is not there is reported too, which is a rename half done'],
+    [['selftest_layout.php', 'selftest_viewer.js', 'selftest_ghost.js'],
+     $ciYaml . "      # node tools/selftest_ghost.js is what this used to run\n", [],
+     ['selftest_ghost.js'], [], [],
+     'and a comment naming a suite does not count as running it'],
+    [['selftest_layout.php', 'selftest_viewer.js', 'mutate.php'], $ciYaml,
+     ['mutate.php' => 'minutes rather than seconds'],
+     [], [], [],
+     'a file the list says is not a gate is left alone'],
+    [['selftest_layout.php', 'selftest_viewer.js'], $ciYaml,
+     ['gone.php' => 'renamed away three merges ago'],
+     [], [], ['gone.php'],
+     'but an exemption for a file that no longer exists is reported, so the list cannot rot'],
+    [['selftest_layout.php', 'rehearse_phase1.php'],
+     "jobs:\n  a:\n    steps:\n      - run: php tools/selftest_layout.php\n"
+     . "      - run: |\n          mysql -e \"CREATE DATABASE x;\"\n"
+     . "          php tools/rehearse_phase1.php \\\n            --host=127.0.0.1 --confirm-copy\n",
+     [], [], [], [],
+     'a multi-line run block counts, which is the shape the rehearsal is written in'],
 ];
-foreach ($nullableProbes as $probe) {
-    list($snippet, $expected, $needle, $label) = $probe;
+foreach ($ciProbes as $probe) {
+    list($files, $yaml, $exempt, $wantUnrun, $wantMissing, $wantStale, $label) = $probe;
     $checked++;
-    $hits = implicitNullableUses("<?php\n" . $snippet . "\n");
-    $ok = count($hits) === $expected
-          && ($expected === 0 || ($hits[0]['line'] === 2 && $hits[0]['what'] === $needle));
-    if ($ok) {
+    $got = toolsNotRunByCi($files, $yaml, $exempt);
+    if ($got['unrun'] === $wantUnrun && $got['missing'] === $wantMissing
+        && $got['stale'] === $wantStale) {
         echo "  ok   $label\n";
     } else {
-        echo "  FAIL the implicit-nullable detector is wrong about: $label\n";
-        echo "       expected $expected hit(s)"
-           . ($expected ? " on line 2 reading `$needle`" : '') . ', got ' . count($hits) . "\n";
-        foreach ($hits as $hit) { echo "         line {$hit['line']}: {$hit['what']}\n"; }
-        $failures[] = "implicit-nullable detector: $label";
+        echo "  FAIL the CI-coverage detector is wrong about: $label\n";
+        echo '       expected unrun ' . json_encode($wantUnrun)
+           . ', missing ' . json_encode($wantMissing)
+           . ', stale ' . json_encode($wantStale) . "\n";
+        echo '       got      unrun ' . json_encode($got['unrun'])
+           . ', missing ' . json_encode($got['missing'])
+           . ', stale ' . json_encode($got['stale']) . "\n";
+        $failures[] = "CI-coverage detector: $label";
     }
 }
 
@@ -1920,7 +2267,13 @@ foreach ([
         . 'something to do on a copy of live data (§5, and a deploy-day step)',
     'anything a browser draws — interact.js is un-run by any suite (§4al), and a CSS '
         . 'rule that does not apply or a button that overlaps another at 1080p is '
-        . 'invisible to all six of them',
+        . 'invisible to all seven of them',
+    'a canvas rule under a selector the theme check has never heard of (decision 11) — '
+        . 'that check classifies a rule by a LIST of canvas selectors, so a new class '
+        . 'drawn inside #builder-canvas is chrome as far as it knows. What stops the '
+        . 'list rotting silently is its own count assertion: if a rename made it match '
+        . 'almost nothing, it fails rather than passing. A genuinely new selector still '
+        . 'has to be added by whoever writes it',
     'whether a check can fail at all — `php tools/mutate.php <file>` answers that one '
         . 'file at a time, and is the thing #50 was filed about (§4aq). It is a tool to '
         . 'run, not a gate, because a full sweep is hours',
@@ -1935,15 +2288,32 @@ foreach ([
 }
 
 // ---- And that every one of them ran ---------------------------------------------
-// Not a count of rules: a count of what actually *ran*, so a rule that stops being
-// reached is the same failure as one that was deleted. The suite next door has had this
-// since #48 (`reportChecks()`); this file went without it until invariant 33 arrived,
-// and the gap was not theoretical — a `continue` landing above a block, a probe list
-// losing an entry to a merge, or a detector guarded by a `defined()` that is false on
-// the host all read as one fewer `ok` line in three hundred, against a total nobody
-// knows. Update this number when a check is added on purpose. That is the point: it
-// makes adding one deliberate and losing one loud.
-$expectedChecks = 93;
+// Both branches that met here added this independently, which is its own small argument
+// for it. Not a count of rules: a count of what actually *ran*, so a rule that stops
+// being reached is the same failure as one that was deleted. §4bi found this file
+// without one — delete the rule that keeps `json_encode` in a single module, one of the
+// most load-bearing lines in the repo, and this printed "60 consistency checks, 0
+// failed" and exited 0. A checker whose own coverage can shrink silently is the failure
+// it exists to prevent, wearing its own uniform. §4bh found the same hole in four of the
+// eight node suites; this was the third place it was hiding, and `selftest_layout.php`
+// has had the same anchor since #48 (`reportChecks()`).
+//
+// The ways it goes wrong are not theoretical: a `continue` landing above a block, a
+// probe list losing an entry to a merge — this merge dropped 494 duplicate lines and
+// with them a whole probe list, twice — or a detector guarded by a `defined()` that is
+// false on the host. Each reads as one fewer `ok` line in three hundred, against a total
+// nobody knows. Update the number when a check is added on purpose. That is the point:
+// it makes adding one deliberate and losing one loud.
+//
+// It counts itself, which is main's half of this and the better one: an anchor that
+// prints nothing when it passes is a check whose own presence is unreadable.
+//
+// 98 reconciled the merge that deleted 553 duplicated lines, and that is the only reason
+// the deletion was trustworthy: 94 before it, plus the three probes main's copy had that
+// this one did not, plus one for the anchor now counting itself. A duplicate detector
+// removed by hand is exactly the edit that takes a rule with it, and this number is what
+// noticed it had not. 106 is that plus the CI-coverage rule and its seven probes.
+$expectedChecks = 106;
 $checked++;
 if ($checked === $expectedChecks) {
     echo "  ok   this checker ran every check it is supposed to ($checked)\n";

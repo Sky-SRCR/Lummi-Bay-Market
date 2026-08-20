@@ -45,7 +45,7 @@
 // what every deployment before this change already used.
 //
 // Pure, and takes the directory rather than reading `__DIR__`, for the reason
-// `Brand::pick()` takes the stored value and `ServerReport::phpVersionNote()` takes
+// `SiteChrome::pick()` takes the stored value and `ServerReport::phpVersionNote()` takes
 // the version id (§4o): the interesting cases are all directories this machine is
 // not sitting in, so a rule that could only be exercised against the real one could
 // only ever be tested with the one answer it happens to give.

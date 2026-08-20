@@ -40,8 +40,12 @@ require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/layout_store.php';
 require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/brand_styles.php';
+require_once __DIR__ . '/lib/brands.php';
 require_once __DIR__ . '/lib/display_request.php';
 require_once __DIR__ . '/lib/assets.php';
+// The Workspace Theme an account chose, for `choose_theme`. `accounts.php` arrives with
+// auth.php, and is named there rather than here for that reason.
+require_once __DIR__ . '/lib/workspace_themes.php';
 require_once __DIR__ . '/lib/upload_limits.php';
 // Every reply below leaves through HttpReply::json(), which owns the three things
 // that travel with it: the status code (derived from the payload's own `reason`, so
@@ -270,6 +274,37 @@ function backgroundFromPost(bool $isAdmin): Background {
 }
 
 /**
+ * Turn the Brand half of a publish POST into a BrandChoice.
+ *
+ * Only an admin may change which Brand a sign wears — the Builder gives a basic account
+ * and a read-only page the venue's name and logo and no control (decision 5 of the v2
+ * roadmap, and the same shape as the background above). Not sending the field is the
+ * courtesy; this is the check.
+ *
+ * An absent or blank field is `unchanged`, and that is load-bearing rather than
+ * defensive. It is what a Builder on a database whose convergence has not run sends:
+ * `displays.brand_id` is 0 there, no Brand control is drawn, and the page deliberately
+ * omits the field rather than publishing an id naming nothing — which `BrandChoice`
+ * would rightly refuse, turning a lagging schema into a sign nobody can publish to
+ * (invariant 10).
+ */
+function brandFromPost(bool $isAdmin): BrandChoice
+{
+    if (!$isAdmin) {
+        return BrandChoice::unchanged();
+    }
+    $raw = $_POST['brand_id'] ?? '';
+    // Only a *blank string* is the absent field. `brand_id[]=1` arrives as an array,
+    // which is emphatically not "the Builder sent nothing" — it goes to
+    // `BrandChoice::brand()` to be refused by name, along with `7abc` and every other
+    // thing that is not an id.
+    if (is_string($raw) && $raw === '') {
+        return BrandChoice::unchanged();
+    }
+    return BrandChoice::brand($raw);
+}
+
+/**
  * The edit lock as the Builder consumes it (ADR-0007).
  *
  * Answers only what that page needs to decide: do I hold this Display, and if not,
@@ -355,6 +390,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get_editor_layout') {
     if (!$resolution->isFound()) { failResolution($resolution); exit; }
 
     $payload = $layouts->snapshot($resolution->display());
+
+    // The Brand this sign wears, for the Builder's Brand control — the name it prints,
+    // the palette it offers as swatches, and the logo the Venue Logo item places.
+    //
+    // Added here rather than inside the snapshot both clients share, because the Screen's
+    // read is `get_layout`: polled every thirty seconds by every TV in the building, for
+    // a client that draws no logo (decision 5) and gets its typography under
+    // `block_styles` already. A Brand read there would be a query per poll per sign for
+    // a key nothing opens.
+    //
+    // `null` when the row's `brand_id` names nothing — a database whose convergence has
+    // not run (invariant 10). The Builder draws no Brand control for that, which is the
+    // honest answer: there is no Brand to name yet.
+    $wearing = (new BrandStore($pdo))->forId($resolution->display()->brandId());
+    $payload['brand']  = $wearing ? $wearing->toClientArray() : null;
     $payload['status'] = 'success';
     HttpReply::json($payload);
     exit;
@@ -433,6 +483,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'publish') {
     $request = PublishRequest::fromPostedJson(
         $_POST['layout_data'] ?? '[]',
         backgroundFromPost($isAdmin),
+        brandFromPost($isAdmin),
         currentUser()['id'],
         $isAdmin,
         // The stamp the Builder captured when it loaded this Display. A publish
@@ -550,31 +601,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'take_over_lock') {
 // ============================================================
 // POST: save_brand_styles  (admin only)
 // ============================================================
-// Brand Standards typography is shared by every Display, so this endpoint is
-// deliberately not Display-scoped.
+// Brand Standards typography belongs to a Brand rather than to a Display, so this
+// endpoint is scoped to a Brand and deliberately not Display-scoped (ADR-0011).
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_brand_styles') {
     if (!$isAdmin) { HttpReply::json(['status'=>'error','message'=>'Admins only.'], 403); exit; }
 
-    // Brand Standards is the edit that reaches every sign without a publish, so the
-    // edit lock covers it too — see DisplayStore::editedByAnyoneElse. Refused while
-    // anybody else is mid-edit anywhere, because the typography they are sizing
-    // blocks against would change under them within 30 seconds and nothing would
-    // tell them.
-    $busy = $displays->editedByAnyoneElse(currentUser()['id']);
+    // Which Brand's standards, asked before anything else: it is the scope every
+    // check below is about. An id that names no Brand is refused rather than
+    // defaulted — falling back to the first Brand would edit a venue nobody named.
+    $brand = (new BrandStore($pdo))->forId($_POST['brand_id'] ?? 0);
+    if (!$brand) {
+        HttpReply::json(['status' => 'error', 'reason' => 'invalid',
+                         'message' => 'That brand does not exist. Nothing was saved.']);
+        exit;
+    }
+
+    // Editing a Brand reaches every sign wearing it without a publish, so the edit
+    // lock covers it too — see DisplayStore::editedByAnyoneElseUsingBrand. Refused
+    // while anybody else is mid-edit *on a sign wearing this Brand*, because the
+    // typography they are sizing blocks against would change under them within 30
+    // seconds and nothing would tell them. Narrowed from "anyone editing anything"
+    // by ADR-0011: somebody working a casino floor board cannot be affected by the
+    // Salmon House red changing.
+    $busy = $displays->editedByAnyoneElseUsingBrand(currentUser()['id'], $brand->id());
     if ($busy) {
         HttpReply::json([
             'status'  => 'error',
             'reason'  => 'locked',
             'message' => $busy->editingSentence()
-                       . ' Brand standards apply to every display, and reach every screen'
-                       . ' within 30 seconds without a publish, so they cannot change while'
-                       . ' somebody is editing. Try again once they are finished.',
+                       . ' That display wears the ' . $brand->name() . ' brand, and a brand'
+                       . ' change reaches every screen wearing it within 30 seconds without a'
+                       . ' publish, so it cannot change while somebody is editing one.'
+                       . ' Try again once they are finished.',
         ]);
         exit;
     }
 
     $data  = json_decode($_POST['styles_data'] ?? '[]', true) ?: [];
-    $saved = (new BrandStyles($pdo))->save($data);
+    $saved = (new BrandStyles($pdo))->save($brand->id(), $data);
 
     // Reporting how many rows were written, rather than an unconditional success.
     // The UPDATE matches on block_type, so on a database missing a row it wrote
@@ -588,6 +652,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save_brand_styles') {
         // there is nothing the admin at the keyboard did wrong or can do about it.
         : ['status' => 'error', 'reason' => 'failed',
            'message' => 'Nothing was saved — those block types are missing from the database.']);
+    exit;
+}
+
+// ============================================================
+// POST: choose_theme — which Workspace Theme paints this account's screens
+// ============================================================
+// The one endpoint here that is about the person rather than about a sign, which is why
+// it takes no Display and resolves none. **Every role, basic and admin, and a read-only
+// Builder too**: somebody who may not touch a layout may still want their own screen
+// legible, and nothing this writes reaches a Screen or another account.
+//
+// `theme_id` of 0 is not a missing value, it is the answer "use the store default"
+// (decision 14: a preference you cannot reverse is not a preference). An id naming a
+// theme that is not there is refused by name rather than falling back to the default —
+// silently doing something adjacent to what was asked is what #21 was about, and the
+// Builder puts the page back to the theme it was actually wearing when it hears this.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'choose_theme') {
+    $wantedTheme = $_POST['theme_id'] ?? '';
+    // Only the exact string '0' is the store default. `intval()` would read '0abc', 'no'
+    // and an array as 0 and quietly hand back a reset nobody asked for.
+    if ($wantedTheme === '0' || $wantedTheme === 0) {
+        $themeId = 0;
+    } else {
+        $theme = (new WorkspaceThemeStore($pdo))->forId($wantedTheme);
+        if (!$theme) {
+            HttpReply::json(['status' => 'error', 'reason' => 'invalid',
+                             'message' => 'That theme does not exist any more — somebody may have '
+                                        . 'deleted it. Nothing was changed.']);
+            exit;
+        }
+        $themeId = $theme->id();
+    }
+
+    // Through AccountStore because the column is on `users`: which themes exist is a
+    // fact about a theme, which one somebody chose is a fact about their account.
+    if (!(new AccountStore($pdo))->chooseWorkspaceTheme($actor->id(), $themeId)) {
+        HttpReply::json(['status' => 'error', 'reason' => 'invalid',
+                         'message' => 'That account is no longer there, so nothing was saved.']);
+        exit;
+    }
+    HttpReply::json(['status' => 'success', 'theme_id' => $themeId]);
     exit;
 }
 
