@@ -436,8 +436,8 @@ class LayoutStore
              (display_id, section_id, type, block_subtype, x_pos, y_pos, width, height,
               manual_content, asset_id, section_bg,
               font_family, font_size, font_color, font_weight, font_style, line_height,
-              text_align, locked, sort_order, z_index, hidden)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+              text_align, locked, sort_order, z_index, hidden, corner_radius)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         );
 
         // Sections come first in the result set, so a child's parent is always
@@ -492,6 +492,7 @@ class LayoutStore
                 intval($row['sort_order']),
                 max(1, intval($row['z_index'])),
                 intval($row['hidden']) ? 1 : 0,
+                self::cornerRadius($row),
             ]);
 
             if ($row['type'] === 'section') {
@@ -1059,8 +1060,9 @@ class LayoutStore
     {
         $this->pdo->prepare(
             "INSERT INTO canvas_elements
-             (display_id, type, x_pos, y_pos, width, height, section_bg, locked, sort_order, z_index, hidden)
-             VALUES (?, 'section', ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+             (display_id, type, x_pos, y_pos, width, height, section_bg, locked, sort_order,
+              z_index, hidden, corner_radius)
+             VALUES (?, 'section', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )->execute([
             $display->id(),
             intval($el['x_pos']  ?? 0),
@@ -1072,6 +1074,7 @@ class LayoutStore
             intval($el['sort_order'] ?? 0),
             max(1, intval($el['z_index'] ?? 1)),
             intval($el['hidden'] ?? 0) ? 1 : 0,
+            self::cornerRadius($el),
         ]);
     }
 
@@ -1099,8 +1102,8 @@ class LayoutStore
              (id, display_id, section_id, type, block_subtype, x_pos, y_pos, width, height,
               manual_content, asset_id,
               font_family, font_size, font_color, font_weight, font_style, line_height,
-              text_align, locked, sort_order, z_index, hidden)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+              text_align, locked, sort_order, z_index, hidden, corner_radius)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         );
 
         // Read once, outside the loop: the answer is the same for every element and
@@ -1177,8 +1180,27 @@ class LayoutStore
                 $order++,
                 max(1, intval($el['z_index'] ?? 1)),
                 intval($el['hidden'] ?? 0) ? 1 : 0,
+                self::cornerRadius($el),
             ]);
         }
+    }
+
+    /**
+     * A block's corner radius as it will be stored: a whole number of pixels, never
+     * negative, never past what a radius can mean.
+     *
+     * One reader for the three inserts, because three `intval()`s would be three places
+     * to disagree about what an absent value means — and it means square, which is what
+     * every row written before the column existed means (§4by). `LayoutRules` has already
+     * refused anything outside the range on the publish path; this is the floor under the
+     * paths that do not go through it, `copyLayout()` among them.
+     */
+    private static function cornerRadius(array $el)
+    {
+        $n = intval($el['corner_radius'] ?? 0);
+        if ($n < LayoutRules::CORNER_RADIUS_MIN) { return LayoutRules::CORNER_RADIUS_MIN; }
+        if ($n > LayoutRules::CORNER_RADIUS_MAX) { return LayoutRules::CORNER_RADIUS_MAX; }
+        return $n;
     }
 
     /**

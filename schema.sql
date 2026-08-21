@@ -321,6 +321,9 @@ CREATE TABLE IF NOT EXISTS canvas_elements (
     text_align     VARCHAR(16) NOT NULL DEFAULT '',
     z_index        INT(11) NOT NULL DEFAULT 1,
     hidden         TINYINT(1) NOT NULL DEFAULT 0,
+    -- Corner radius in canvas pixels; 0 is square. Offered for every block type except
+    -- text, which has no visible box for a radius to round.
+    corner_radius  INT(11) NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
     KEY asset_id (asset_id),
     KEY section_id (section_id),

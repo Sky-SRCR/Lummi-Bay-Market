@@ -373,7 +373,8 @@ function newSqliteTestDb($withAccounts = true)
         sort_order INTEGER NOT NULL DEFAULT 0,
         text_align TEXT NOT NULL DEFAULT '',
         z_index INTEGER NOT NULL DEFAULT 1,
-        hidden INTEGER NOT NULL DEFAULT 0
+        hidden INTEGER NOT NULL DEFAULT 0,
+        corner_radius INTEGER NOT NULL DEFAULT 0
     )");
 
     // The Brand every fixture Display wears. Id 1, matching what schema.sql seeds
@@ -615,6 +616,7 @@ function convergedSchemaShape()
                 'text_align'    => $col('varchar(16)'),
                 'z_index'       => $col('int(11)'),
                 'hidden'        => $col('tinyint(1)'),
+                'corner_radius' => $col('int(11)'),
                 'display_id'    => $col('int(11)'),
             ],
             'assets'   => ['id' => $col('int(11)'), 'auto_pooled' => $col('tinyint(1)')],

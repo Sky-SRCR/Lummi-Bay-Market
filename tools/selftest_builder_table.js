@@ -168,6 +168,11 @@ function parseMarkup(html, parent) {
             else if (k === 'value')    { node.value = v; }
             else if (k === 'type')     { node.type = v; }
             else if (k === 'selected') { node._selected = true; }
+            // A boolean attribute a browser reflects onto the element, so this stub
+            // reflects it too. Written as an attribute in markup, read as `.disabled` by
+            // anything asking whether a control is live — and a stub that only stored the
+            // attribute would answer "not disabled" for a button a browser will not fire.
+            else if (k === 'disabled') { node.disabled = true; node.setAttribute(k, v); }
             else                       { node.setAttribute(k, v); }
         }
         stack[stack.length - 1].appendChild(node);
@@ -657,6 +662,51 @@ checkDeep([40, 0], td.widths, 'and its width goes with it');
 deleteTableRow(2);
 checkSame(2, getTableEditorData().rows.length, 'and a row can be deleted');
 
+// ---- Moving a row (asked for from the field) --------------------------------------
+// The property that matters is not that the array reorders — it is that a cell edited a
+// moment ago and *not saved* moves with its row, because the arrows go through
+// getTableEditorData() like every other button here. A version reading the block's stored
+// data instead would look right on a table nobody had touched and silently discard the
+// typing on one somebody had.
+rebuildTableEditor({ headers: ['item_title', 'price'],
+                     rows: [['Coho', '18.99'], ['Sockeye', '24.99'], ['Pink', '9.99']],
+                     valigns: ['top', 'top'], haligns: ['left', 'right'], widths: [0, 0] });
+const rowInputs = () => Array.from(document.getElementById('table-editor-body')
+    .querySelectorAll('tr')).map(tr => Array.from(tr.querySelectorAll('td input[type="text"]'))
+    .map(i => i.value));
+// Type into the top row without saving, then move it down past the next one.
+document.getElementById('table-editor-body').querySelectorAll('tr')[0]
+    .querySelectorAll('td input[type="text"]')[1].value = '21.50';
+moveTableRow(0, 1);
+checkDeep([['Sockeye', '24.99'], ['Coho', '21.50'], ['Pink', '9.99']], rowInputs(),
+          'a row moves down, and the price typed into it a moment ago moves with it');
+moveTableRow(2, -1);
+checkDeep([['Sockeye', '24.99'], ['Pink', '9.99'], ['Coho', '21.50']], rowInputs(),
+          'and up, swapping with the row above rather than sorting anything');
+checkSame(3, getTableEditorData().rows.length, 'the table is still three rows either way');
+
+// The ends. Disabled buttons rather than a silent no-op, and the call is a no-op too —
+// belt and braces, because the index comes from the markup and a rebuild that got the
+// disabling wrong would otherwise reorder by one off the end.
+const arrowsOf = (i) => Array.from(document.getElementById('table-editor-body')
+    .querySelectorAll('tr')[i].querySelectorAll('.row-order-btn'));
+check(arrowsOf(0)[0].disabled, 'the first row cannot be moved up');
+check(!arrowsOf(0)[1].disabled, 'but it can be moved down');
+check(arrowsOf(2)[1].disabled, 'and the last row cannot be moved down');
+check(!arrowsOf(2)[0].disabled, 'while it can still be moved up');
+check(!arrowsOf(1)[0].disabled && !arrowsOf(1)[1].disabled, 'a row in the middle has both');
+moveTableRow(0, -1);
+moveTableRow(2, 1);
+checkDeep([['Sockeye', '24.99'], ['Pink', '9.99'], ['Coho', '21.50']], rowInputs(),
+          'and a move off either end changes nothing at all');
+
+// The move is not an undo step. The modal is one step, committed by Save Table — a step
+// per arrow press would put edits in the history that Cancel exists to discard.
+const stepsBeforeMove = undoStack.length;
+moveTableRow(0, 1);
+moveTableRow(0, 1);
+checkSame(stepsBeforeMove, undoStack.length, 'moving rows commits no undo step of its own');
+
 // The two refusals the editor has always had, still standing after an import.
 rebuildTableEditor({ headers: ['item_title'], rows: [['only']] });
 deleteTableRow(0);
@@ -685,7 +735,7 @@ check(!document.getElementById('table-modal-overlay').classList.contains('open')
 // ============================================================
 // The expected total, for the same reason the other five suites carry one:
 // without it, deleting half this file still reports a clean run.
-const expected = 123;
+const expected = 133;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

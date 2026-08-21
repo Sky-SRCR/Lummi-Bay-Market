@@ -64,6 +64,19 @@ class LayoutRules
     const FONT_SIZE_MIN = 1;
     const FONT_SIZE_MAX = 2000;
 
+    /**
+     * Corner radius, in canvas pixels (§4by).
+     *
+     * Checked for every element rather than for the types that offer the control, and the
+     * asymmetry with `font_size` above is on purpose: a *rule* about what may be stored
+     * should not depend on which controls a page happens to draw, or a payload from
+     * anywhere else — an older Builder tab, a hand-built request — would be judged by
+     * today's inspector. Zero is square. Larger than half the block is a pill rather than
+     * an error, so the ceiling is only here to refuse a value that cannot be a radius.
+     */
+    const CORNER_RADIUS_MIN = 0;
+    const CORNER_RADIUS_MAX = 2000;
+
     /** z_index is stored as written but floored at 1 by the insert; sort_order is re-numbered. */
     const Z_INDEX_MIN  = 1;
     const Z_INDEX_MAX  = 100000;
@@ -187,6 +200,8 @@ class LayoutRules
             self::checkInt($problems, $where, $el, 'height', 'height',              self::SIZE_MIN, self::SIZE_MAX);
             self::checkInt($problems, $where, $el, 'z_index', 'layer',              self::Z_INDEX_MIN, self::Z_INDEX_MAX);
             self::checkInt($problems, $where, $el, 'sort_order', 'order',           self::SORT_ORDER_MIN, self::SORT_ORDER_MAX);
+            self::checkInt($problems, $where, $el, 'corner_radius', 'corner radius',
+                           self::CORNER_RADIUS_MIN, self::CORNER_RADIUS_MAX);
 
             if ($type !== 'section') {
                 self::checkInt($problems, $where, $el, 'font_size', 'text size',

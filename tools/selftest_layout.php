@@ -3835,7 +3835,7 @@ checkSame(['seed_first_brand', 'seed_block_styles', 'seed_legacy_display'], plan
 // The fallback has to be the old behaviour exactly, or a host whose catalogue
 // cannot be read would quietly stop converging.
 $blind = signageSchemaPlan(SchemaFacts::unknown());
-checkSame(38, count(planStatements($blind)),
+checkSame(39, count(planStatements($blind)),
           'a database whose catalogue cannot be read is issued every statement, as before');
 checkSame(7, count(planSteps($blind)), 'and every step');
 checkSame(false, SchemaFacts::unknown()->known(), 'and it says so rather than answering false');
@@ -3929,7 +3929,7 @@ checkSame(false, schemaFactsFrom($kGone)->needsPrimaryKey('block_styles', ['bran
 // that has them all.
 $empty = readSchemaFacts(fakeCatalogue(['columns' => [], 'indexes' => [], 'constraints' => []]));
 checkSame(false, $empty->known(), 'a catalogue with nothing to say about this app is unknown, not empty');
-checkSame(38, count(planStatements(signageSchemaPlan($empty))),
+checkSame(39, count(planStatements(signageSchemaPlan($empty))),
           'so it falls back to trying everything rather than creating what already exists');
 
 // Two things about a catalogue this app does not control, both of which decide
@@ -5114,7 +5114,7 @@ foreach ($blindPlan as $entry) {
     if ($entry['need'] === null) { $guessed[] = $entry['why']; }
     if ($entry['need'] === true) { $certain[] = $entry['why']; }
 }
-checkSame(42, count($guessed), 'with no catalogue, every statement in the plan is a guess');
+checkSame(43, count($guessed), 'with no catalogue, every statement in the plan is a guess');
 checkSame(['seed_first_brand', 'seed_block_styles', 'seed_legacy_display'], $certain,
           'and the only certainties are the three steps that ask the rows, not the catalogue');
 $statementNeeds = [];
@@ -6327,6 +6327,32 @@ check(refuses(layoutWithField(1, 'font_size', 100000)), 'and text taller than an
 check(refuses(layoutWithField(0, 'z_index', 0)),
       'a layer below the floor is refused rather than quietly raised to 1');
 check(refuses(layoutWithField(0, 'sort_order', -1)), 'and so is a negative order');
+
+// ---- Corner radius (§4by) --------------------------------------------------------
+// Checked for every element and not only the types whose inspector offers it, which is
+// the difference between a rule about what may be stored and a rule about which controls
+// a page drew. `0` is the field's absence in every layout published before it existed, so
+// it has to be accepted rather than refused as too small.
+check(LayoutRules::check(layoutWithField(0, 'corner_radius', 0))->isOk(),
+      'a square corner is a corner radius');
+check(LayoutRules::check(layoutWithField(1, 'corner_radius', 24))->isOk(),
+      'and so is a rounded one, on a block');
+check(LayoutRules::check(layoutWithField(0, 'corner_radius', LayoutRules::CORNER_RADIUS_MAX))->isOk(),
+      'the ceiling itself is inside');
+check(refuses(layoutWithField(0, 'corner_radius', LayoutRules::CORNER_RADIUS_MAX + 1)),
+      'and one past it is not');
+check(refuses(layoutWithField(0, 'corner_radius', -1)),
+      'a negative radius is refused rather than clamped — the CSSOM discards one in '
+      . 'silence, which is how a value nobody can see becomes a value nobody can find');
+check(refuses(layoutWithField(1, 'corner_radius', 'round')),
+      'and a word is not a radius');
+check(refuses(layoutWithField(1, 'corner_radius', [8])),
+      'nor a list — `intval` on one is 1, which would round every corner by a pixel');
+check(refuses(layoutWithField(0, 'corner_radius', 12.5)),
+      'and a fraction is refused, because the column cannot hold it');
+checkMentions(LayoutRules::check(layoutWithField(0, 'corner_radius', 99999))->message(),
+              'corner radius',
+              'and the refusal names the thing that is wrong in the words the rail uses');
 checkMentions(LayoutRules::check(layoutWithField(0, 'width', 999999))->message(), 'outside',
               'an out-of-range value is reported as out of range, not as the wrong shape');
 
@@ -6589,6 +6615,48 @@ checkMentions($publicJson, 'Sockeye 18.99', 'while what is actually on the sign 
 checkMentions($publicJson, 'Open daily', 'including a block at root level');
 checkMentions(json_encode($editor), 'NEXT MONTH',
               'and the Builder still receives it, or nothing could ever unhide it');
+
+// ---- The corner radius, through a real publish (§4by) ---------------------------
+// A column added to `canvas_elements` has to be written by all three inserts and read by
+// both snapshots, and the way that goes wrong is one statement out of three — which looks
+// like a feature that works until you duplicate a Display.
+$rSign = makeTestDisplay($hPdo, 'rounded', 'Rounded Board');
+check($hLayouts->publish($rSign, new PublishRequest([
+        ['type' => 'section', 'temp_id' => 'box', 'x_pos' => 0, 'y_pos' => 0,
+         'width' => 600, 'height' => 400, 'corner_radius' => 18],
+        ['type' => 'image', 'parent_temp_id' => 'box', 'manual_content' => 'uploads/a.png',
+         'corner_radius' => 40],
+        ['type' => 'text', 'manual_content' => 'Square by default'],
+      ], Background::unchanged(), BrandChoice::unchanged(), 1, true, $rSign->layoutStamp()))->isOk(),
+      'a layout carrying corner radii publishes');
+$rSign = $hStore->forId($rSign->id());
+$rEls  = $hLayouts->snapshot($rSign)['elements'];
+$rBy   = [];
+foreach ($rEls as $rEl) { $rBy[$rEl['type']] = $rEl; }
+checkSame(18, intval($rBy['section']['corner_radius']),
+          'a section keeps the radius it was published with — insertSections() writes it');
+checkSame(40, intval($rBy['image']['corner_radius']),
+          'and a block keeps its own — insertContent() writes it, which is a second statement');
+checkSame(0, intval($rBy['text']['corner_radius']),
+          'while an element that named no radius is square, which is what every row '
+          . 'published before this column existed means');
+$rPublic = $hLayouts->publicSnapshot($rSign)['elements'];
+$rSeen = 0;
+foreach ($rPublic as $rEl) { if (intval($rEl['corner_radius']) > 0) { $rSeen++; } }
+checkSame(2, $rSeen, 'and a Screen is told both of them — the payload a television reads '
+                   . 'is where the radius has to arrive');
+
+// The third statement: duplicating a Display. A radius written by two inserts out of three
+// is a feature that works until somebody copies a sign.
+$rCopy = makeTestDisplay($hPdo, 'rounded-2', 'Rounded Copy');
+check($hLayouts->copyLayout($rSign, $rCopy) > 0, 'the rounded layout copies to another sign');
+$rCopyBy = [];
+foreach ($hLayouts->snapshot($hStore->forId($rCopy->id()))['elements'] as $rEl) {
+    $rCopyBy[$rEl['type']] = $rEl;
+}
+checkSame(18, intval($rCopyBy['section']['corner_radius']),
+          'and the copy is rounded too — copyLayout() is the third writer of that column');
+checkSame(40, intval($rCopyBy['image']['corner_radius']), 'for the block as well as the section');
 
 // The Display's own facts survive an empty layout: a Screen showing nothing must
 // show a blank sign of the right size and colour, not an error.
@@ -9370,4 +9438,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2574 : 2549);
+reportChecks(testIsMysql() ? 2591 : 2566);

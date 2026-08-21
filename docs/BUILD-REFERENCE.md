@@ -8699,6 +8699,77 @@ accepted an `outline` on `.section-block.targeted` as evidence that the ordinary
 drawn; it wants the plain selector. A rule that cannot tell a state from the thing it is a
 state of is a rule that can be satisfied by the wrong half of what it is checking.
 
+### 4by. Rounded corners, and moving a table row
+
+Two asks from the field, both small, and each with one decision worth writing down.
+
+**A corner radius on every block type but text.** `canvas_elements.corner_radius`, an `INT`
+in canvas pixels, `0` meaning square — which is what every row written before the column
+existed means, so convergence cannot round a corner on a sign that is already up. Walked
+against a database built from the previous commit's `schema.sql`: the column arrives with
+default `'0'`, the existing element's geometry is byte-identical, it reads back square, and
+the second convergence asks for no `ALTER` at all.
+
+Text is left out because a text block paints no box: a radius on one would be a control that
+does nothing. The control is *hidden* for text rather than disabled, which is the rule the
+Brand control already follows — a control that is on the page and does nothing is a control
+somebody keeps pressing.
+
+**`border-radius: inherit` on the content, not a second copy of the number.** An image or a
+video fills its block, so a radius on the block alone rounds a frame around a square
+picture. `inherit` puts the same value on the child with nothing to keep in step — and it is
+what makes the two pages agree, because both do exactly this from the same stored number.
+No `overflow: hidden` anywhere near it: the resize handles are children of the block and sit
+outside its edge, so clipping the parent would clip the handles off.
+
+**The bug that was latent in that loop for about ten minutes.** A section's children are the
+*blocks inside it*, so `inherit` on every child would round a block because the section it
+sits in is rounded. It did not bite, and the reason it did not is worth more than the fix:
+sections are rendered before their children, so the loop found none. That is correctness by
+the order two loops happen to run in. Both pages now ask whether a child is content or
+another block, and the suite asserts it on a section holding a block, a label, a handle and a
+content pane — the one that must inherit and the four that must not.
+
+**Three inserts, and the way that goes wrong is one of them.** `insertSections()`,
+`insertContent()` and `copyLayout()` all write this column, through one private
+`cornerRadius()` so that "absent means square" is decided once. A column written by two out
+of three is a feature that works until somebody duplicates a Display, which is why the
+round-trip check publishes a rounded layout, reads it back from *both* snapshots, and then
+copies the sign and reads it again.
+
+**`LayoutRules` checks it for every element, not for the types that offer the control**, and
+that asymmetry with `font_size` above it is deliberate: a rule about what may be *stored*
+must not depend on which controls a page happened to draw, or a payload from an older
+Builder tab would be judged by today's inspector. A negative radius is **refused rather than
+clamped** on that path — the CSSOM discards one in silence, which is §4ax's defect, so the
+publish that carries it is where it has to be answered.
+
+---
+
+**Moving a table row.** Arrows, not dragging, and the reason is what a row is made of: every
+cell in it is a text input, so a drag has to begin somewhere that is not one — which means a
+handle, which is the same two clicks the arrows are, minus any way to say you have reached
+the end of the list. The arrows disable at the ends instead. Dragging is a fair thing to want
+and can be added; it is a strictly larger change for the same outcome.
+
+**They go through `getTableEditorData()`, like every other button in that modal**, and that
+is the whole of why the function is three lines: it reads the *inputs*, so a price typed a
+moment ago and not yet saved moves with its row. A version that reordered the block's stored
+data instead would look right on a table nobody had touched and silently discard the typing
+on one somebody had — which is what the check asserts, by typing into a row and then moving
+it.
+
+No undo step per press: the modal is one step, committed by *Save Table*, the same as the
+slide editor. A step per arrow would fill the history with edits that *Cancel* exists to
+discard.
+
+**Two stubs learned something a browser already knew.** The suite's DOM stub routed every
+unrecognised attribute to `setAttribute`, so a `disabled` written in markup did not appear as
+`.disabled` — and the check that the first row's up-arrow is dead passed the attribute and
+failed the property. And its `style` object had no `borderRadius`, so "left alone" and
+"cleared" both read as `undefined`. Both are now what a browser answers. A stub that is
+wrong in the same direction as the code is a suite that agrees with a defect.
+
 ---
 ## 5. Verification
 

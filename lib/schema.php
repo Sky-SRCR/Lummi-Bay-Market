@@ -620,6 +620,11 @@ function signageSchemaPlan(SchemaFacts $facts)
          "ALTER TABLE canvas_elements ADD COLUMN z_index INT NOT NULL DEFAULT 1");
     $sql($facts->needsColumn('canvas_elements', 'hidden'), 'canvas_elements.hidden',
          "ALTER TABLE canvas_elements ADD COLUMN hidden TINYINT(1) NOT NULL DEFAULT 0");
+    // A block's corner radius, in canvas pixels (§4by). Zero is square, which is what
+    // every row that predates the column means and what the default gives them — so
+    // convergence cannot round a corner on a sign that is already up.
+    $sql($facts->needsColumn('canvas_elements', 'corner_radius'), 'canvas_elements.corner_radius',
+         "ALTER TABLE canvas_elements ADD COLUMN corner_radius INT NOT NULL DEFAULT 0");
 
     // Two of the three ALTERs that used to run on every single request, whatever
     // the column already said. See the header.

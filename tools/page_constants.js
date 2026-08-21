@@ -75,6 +75,17 @@ function chromeRoleVars() {
     return out;
 }
 
+/** `LayoutRules::CORNER_RADIUS_MAX`, read from the module, never repeated here. */
+function cornerRadiusMax() {
+    const src = fs.readFileSync(path.join(REPO, 'lib', 'layout_rules.php'), 'utf8');
+    const m = src.match(/const\s+CORNER_RADIUS_MAX\s*=\s*(\d+)\s*;/);
+    if (!m) {
+        throw new Error('page_constants: no CORNER_RADIUS_MAX in lib/layout_rules.php — the '
+                        + 'constant moved and this reader did not');
+    }
+    return parseInt(m[1], 10);
+}
+
 /**
  * Every value the server interpolates, and what it is on a page somebody is looking at.
  *
@@ -118,6 +129,11 @@ const PAGE_DEFAULTS = {
 
     // How far back Undo reaches (ADR-0010). Five is `BrandingConfig::DEFAULTS`.
     UNDO_LIMIT:         5,
+
+    // The largest corner radius the publish path will accept (§4by). Read out of the
+    // module that owns it rather than written here, for the reason the role names are:
+    // a number copied into this file agrees with the app until somebody changes one.
+    CORNER_RADIUS_MAX:  cornerRadiusMax,
 
     // The person's own workspace (v2 step 5). No themes exist until an admin makes one,
     // so nobody is wearing one and the store default is what the page was rendered in.

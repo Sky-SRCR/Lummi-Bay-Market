@@ -6,6 +6,10 @@ require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/grants.php';
 require_once __DIR__ . '/lib/display_request.php';
 require_once __DIR__ . '/lib/upload_limits.php';
+// For CORNER_RADIUS_MAX on the inspector's number input: the module that owns the
+// bound is the one place the page may learn it from, or the form and the refusal behind
+// it are two numbers that agree until somebody changes one.
+require_once __DIR__ . '/lib/layout_rules.php';
 // The Brand this sign wears, its standards, and the library row its logo points at —
 // three modules because they are three tables, and each is the only writer of its own.
 require_once __DIR__ . '/lib/brands.php';
@@ -973,6 +977,23 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 .col-align-sel { flex:1; padding:2px 4px; background:var(--work-area); color:var(--work-area-text); border:1px solid var(--panel-border); border-radius:3px; font-size:10px; }
 .del-col-btn { width:100%; font-size:10px; padding:2px 4px; }
 .del-row-td  { width:32px; text-align:center; background:#0d1b24; }
+/* ── Moving a row up or down ──
+   Arrows rather than dragging, and the reason is what the row is made of: every cell in
+   it is a text input, so a drag has to begin on something that is not one — which means a
+   handle, which means the same two clicks the arrows are, minus the ability to say when
+   you have reached the end of the list. These disable at the ends instead. */
+/* Two classes, so it beats `.table-editor thead th { min-width:120px }` — which is for a
+   column of content and made this 120px wide until it was overridden. */
+.table-editor .row-order-td {
+    width:26px; min-width:26px; background:#0d1b24; text-align:center; padding:2px;
+}
+.row-order-btn {
+    display:block; width:100%; padding:0; margin:1px 0; font-size:9px; line-height:12px;
+    background:#22303c; border:1px solid #33475a; color:var(--panel-text);
+    border-radius:2px; cursor:pointer;
+}
+.row-order-btn:hover:not(:disabled) { background:#2d3e4f; }
+.row-order-btn:disabled { opacity:.3; cursor:default; }
 
 /* ── Table modal: the CSV drop zone ── */
 #table-csv-drop {
@@ -1618,6 +1639,21 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
         <div id="sel-count" style="font-size:11px; color:var(--panel-text); opacity:.72; margin-top:6px;"></div>
     </div>
 
+    <!-- Corner radius. Every block type but text: a text block paints no box, so a
+         radius on one would be a control that does nothing (§4by). -->
+    <div class="insp-section" id="insp-radius">
+        <label>Corner Radius</label>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+            <input type="number" id="insp-corner-radius" value="0" min="0"
+                   max="<?= intval(LayoutRules::CORNER_RADIUS_MAX) ?>" style="width:70px;"
+                   oninput="updateCornerRadius()" onchange="commitUndoStep()">
+            <span style="font-size:11px;color:var(--panel-text);opacity:.78;">px</span>
+        </div>
+        <div style="font-size:11px;color:var(--panel-text);opacity:.72;margin-top:4px;">
+            0 is square. A radius past half the shorter side rounds as far as it can.
+        </div>
+    </div>
+
     <!-- Layer / Z-index -->
     <div class="insp-section" id="insp-zindex">
         <label>Layer Order</label>
@@ -1757,6 +1793,9 @@ var DISPLAY_ID    = <?= intval($display->id()) ?>;
 var DISPLAY_TITLE = <?= HttpReply::jsValue($display->title()) ?>;
 var CANVAS_W      = <?= intval($canvasW) ?>;
 var CANVAS_H      = <?= intval($canvasH) ?>;
+// The same ceiling the publish path refuses past, from the module that owns it, so the
+// number input's `max` and the clamp in the script are one value rather than two.
+var CORNER_RADIUS_MAX = <?= intval(LayoutRules::CORNER_RADIUS_MAX) ?>;
 
 // Whether somebody else holds this Display's edit lock (ADR-0007). Decided by the
 // server before this page was built, and constant for its life: every control that
@@ -2491,7 +2530,8 @@ function createSection() {
     var center = getCanvasDropCenter(def.w, def.h, null);
     renderSection({
         type:'section', temp_id: tmpId(), db_id: null,
-        x_pos: center.x, y_pos: center.y, width: def.w, height: def.h, section_bg: null, locked: 0, z_index: 1
+        x_pos: center.x, y_pos: center.y, width: def.w, height: def.h, section_bg: null,
+        locked: 0, z_index: 1, corner_radius: 0
     });
     commitUndoStep();
 }
@@ -2522,6 +2562,10 @@ function renderSection(el) {
     s.style.transform = 'translate('+el.x_pos+'px,'+el.y_pos+'px)';
     s.setAttribute('data-x', el.x_pos);
     s.setAttribute('data-y', el.y_pos);
+    // A section's own radius. Its label and lock icon are `.section-label`/`.lock-icon`
+    // children, and they are not content — `applyCornerRadius()` would put an `inherit` on
+    // them, which is harmless on a box that small and simpler than a second exclusion list.
+    applyCornerRadius(s, el.corner_radius);
     if (_bgPath) {
         s.style.backgroundImage = "url('"+_bgPath+"')";
         applySectionBgFit(s, _bgFit);
@@ -2613,7 +2657,7 @@ function createBlock(type, subtype, extra) {
         type: type, block_subtype: subtype || 'free',
         x_pos: center.x, y_pos: center.y, width: def.w, height: def.h,
         manual_content: type==='text' ? (subtype ? 'Enter text here' : 'Double-click to edit') : '',
-        asset_id: null, locked: 0, z_index: 1,
+        asset_id: null, locked: 0, z_index: 1, corner_radius: 0,
         font_family: 'Arial', font_size: 16, font_color: '#000000',
         font_weight: 'normal', font_style: 'normal', line_height: 1.4
     };
@@ -2651,6 +2695,9 @@ function renderBlock(el, parent, isNew) {
     block.style.transform = 'translate('+el.x_pos+'px,'+el.y_pos+'px)';
     block.setAttribute('data-x', el.x_pos);
     block.setAttribute('data-y', el.y_pos);
+    // Before the content is built, so the `inherit` in applyCornerRadius() has something
+    // to inherit from — and again after, for the children that did not exist yet.
+    applyCornerRadius(block, el.corner_radius);
 
     var content = el.asset_id ? el.db_content : el.manual_content;
 
@@ -2771,6 +2818,9 @@ function renderBlock(el, parent, isNew) {
     });
 
     addResizeHandles(block);
+    // Again, now the content child exists: `border-radius: inherit` has to be *on* it, and
+    // the first call ran before it was made.
+    applyCornerRadius(block, el.corner_radius);
     parent.appendChild(block);
     return block;   // see renderSection()
 }
@@ -3019,6 +3069,12 @@ function showInspector(block) {
     if (!hideAsset) populateAssetLinkOptions(type);
     document.getElementById('asset-link').value = block.dataset.assetId || '';
 
+    // Corner radius. Hidden for text, because a text block has no box to round — and
+    // hidden rather than disabled for the reason the Brand control gives: a control that
+    // is on the page and does nothing is a control somebody keeps pressing.
+    document.getElementById('insp-radius').style.display = (type === 'text') ? 'none' : 'block';
+    document.getElementById('insp-corner-radius').value = parseInt(block.dataset.cornerRadius) || 0;
+
     // Z-index / layer order
     document.getElementById('insp-zindex-val').textContent = parseInt(block.dataset.zIndex) || 1;
 
@@ -3120,6 +3176,59 @@ function moveBlock(block, nx, ny) {
     block.style.transform = 'translate(' + nx + 'px,' + ny + 'px)';
     block.setAttribute('data-x', nx);
     block.setAttribute('data-y', ny);
+}
+
+/**
+ * Put a block's corner radius on it — one writer, so the render path and the control
+ * cannot disagree about what a stored value looks like (§4by).
+ *
+ * `border-radius: inherit` on the content child is what makes the *content* follow the
+ * box: an image or a video fills the block, and a radius on the block alone would round a
+ * frame with a square picture inside it. Inherit rather than a second copy of the number,
+ * so there is nothing to keep in step. `viewer.php` does the same, from the same stored
+ * value, which is the only reason the two agree.
+ *
+ * No `overflow: hidden` here on purpose: the resize handles are children of the block and
+ * sit outside its edge, so clipping the block would clip the handles off — the reason the
+ * radius is put on the content instead of clipping the parent.
+ */
+function applyCornerRadius(block, px) {
+    var n = Math.max(0, Math.min(CORNER_RADIUS_MAX, parseInt(px) || 0));
+    // `String(n)`, because a DOMStringMap stores strings and the stub the node suites run
+    // against stores whatever it is handed — so an assignment that looked the same in a
+    // browser and in a suite is one where the two agree by accident.
+    block.dataset.cornerRadius = String(n);
+    block.style.borderRadius   = n ? n + 'px' : '';
+    Array.from(block.children).forEach(function (child) {
+        if (!isRoundableContent(child)) { return; }
+        child.style.borderRadius = n ? 'inherit' : '';
+    });
+}
+
+/**
+ * Whether a child of a block is *content* — the thing the radius should clip — rather
+ * than another block or a piece of Builder furniture.
+ *
+ * A section's children are the blocks inside it, and `inherit` on one of those would round
+ * a block because the section it sits in is rounded. It happened not to bite when this was
+ * written, purely because sections are rendered before their children, so the loop found
+ * none — which is the kind of correctness that stops being true when somebody reorders two
+ * lines. `viewer.php` asks the same question of its own class names.
+ */
+function isRoundableContent(child) {
+    var not = ['rh', 'editable-block', 'section-block', 'section-label',
+               'lock-icon', 'hidden-badge', 'clip-badge'];
+    for (var i = 0; i < not.length; i++) {
+        if (child.classList.contains(not[i])) { return false; }
+    }
+    return true;
+}
+
+/** The number input in the rail, on the block it belongs to. */
+function updateCornerRadius() {
+    if (!activeBlock) { return; }
+    if (refuseIfLocked(activeBlock, 'restyled')) { return; }
+    applyCornerRadius(activeBlock, document.getElementById('insp-corner-radius').value);
 }
 
 /**
@@ -4102,6 +4211,7 @@ function serializeSection(s) {
         sort_order: 0,
         z_index:    Math.max(1, parseInt(s.dataset.zIndex) || 1),
         hidden:     s.dataset.hidden === '1' ? 1 : 0,
+        corner_radius: Math.max(0, parseInt(s.dataset.cornerRadius) || 0),
     };
 }
 
@@ -4140,6 +4250,10 @@ function serializeBlock(block, sortOrder) {
         sort_order:      sortOrder,
         z_index:         Math.max(1, parseInt(block.dataset.zIndex) || 1),
         hidden:          block.dataset.hidden === '1' ? 1 : 0,
+        // Read from the dataset rather than from `style.borderRadius`, for the reason the
+        // font colour is read from a dataset marker: the style is what rendered, the
+        // dataset is what was meant, and a radius of 0 renders as the empty string.
+        corner_radius:   Math.max(0, parseInt(block.dataset.cornerRadius) || 0),
     };
 
     if (block.dataset.brandTypography !== '1') {
@@ -6056,6 +6170,12 @@ function rebuildTableEditor(data) {
     var HALIGNS = [{value:'left',label:'Left'},{value:'center',label:'Ctr'},{value:'right',label:'Right'}];
 
     var htr = document.createElement('tr');
+    // The row-order column's own header: empty, because the arrows below it are about a
+    // row rather than about a column, and a label here would be the only word in this
+    // table that names something you cannot set.
+    var thOrder = document.createElement('th');
+    thOrder.className = 'row-order-td';
+    htr.appendChild(thOrder);
     headers.forEach(function(style, ci) {
         var va = valigns[ci] || 'top';
         var ha = haligns[ci] || 'left';
@@ -6081,6 +6201,18 @@ function rebuildTableEditor(data) {
 
     rows.forEach(function(row, ri) {
         var tr = document.createElement('tr');
+        // Up and down, disabled at the ends. Disabled rather than absent so the column
+        // does not change width on the first and last rows, and rather than a silent
+        // no-op so that pressing it at the end is answered.
+        var tdOrder = document.createElement('td');
+        tdOrder.className = 'row-order-td';
+        tdOrder.innerHTML =
+            '<button class="row-order-btn" title="Move this row up"' +
+            (ri === 0 ? ' disabled' : '') + ' onclick="moveTableRow(' + ri + ',-1)">&#9650;</button>' +
+            '<button class="row-order-btn" title="Move this row down"' +
+            (ri === rows.length - 1 ? ' disabled' : '') +
+            ' onclick="moveTableRow(' + ri + ',1)">&#9660;</button>';
+        tr.appendChild(tdOrder);
         headers.forEach(function(_, ci) {
             var td = document.createElement('td');
             var inp = document.createElement('input');
@@ -6135,6 +6267,27 @@ function deleteTableCol(ci) {
     td.haligns.splice(ci, 1);
     td.widths.splice(ci, 1);
     td.rows.forEach(function(r) { r.splice(ci, 1); });
+    rebuildTableEditor(td);
+}
+
+/**
+ * Swap a row with the one above or below it.
+ *
+ * Through `getTableEditorData()` like every other button in this modal, which is the whole
+ * reason this is three lines: that function reads the *inputs*, so whatever has been typed
+ * and not yet saved moves with the row rather than being read back from the block's stored
+ * data and lost. `rebuildTableEditor()` then redraws from the moved array, which is also
+ * what re-disables the arrows at the new ends.
+ *
+ * No undo step: nothing has changed on the canvas yet. The modal is one step, committed by
+ * `saveTable()`, the same as the slide editor — a step per arrow press would fill the
+ * history with edits that Cancel is supposed to discard.
+ */
+function moveTableRow(ri, delta) {
+    var td = getTableEditorData();
+    var to = ri + delta;
+    if (to < 0 || to >= td.rows.length) { return; }
+    td.rows.splice(to, 0, td.rows.splice(ri, 1)[0]);
     rebuildTableEditor(td);
 }
 

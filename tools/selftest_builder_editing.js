@@ -149,7 +149,11 @@ function el(tag, className) {
         // fontFamily and friends start as strings: showInspector calls .replace()
         // on one, which is a throw rather than a failed check if it is undefined.
         style: { fontFamily: '', fontSize: '', color: '', fontWeight: '',
-                 fontStyle: '', lineHeight: '', textAlign: '', display: '' },
+                 fontStyle: '', lineHeight: '', textAlign: '', display: '',
+                 // Empty string rather than absent, because that is what a browser
+                 // answers for a property nobody has set — and `undefined` would make
+                 // "this was left alone" and "this was cleared" the same reading.
+                 borderRadius: '' },
         dataset: {}, children: [], files: [],
         value: '', textContent: '', innerHTML: '', checked: false, disabled: false,
         offsetWidth: 0, offsetHeight: 0, clientWidth: 0, clientHeight: 0,
@@ -1182,12 +1186,92 @@ check(!/#inspector\s*\{[^}]*position:\s*fixed/.test(php),
 check(/#workbench\s*\{[^}]*display:\s*flex/.test(php),
       'it is a column of the workbench row instead');
 
+// ---- Corner radius (§4by) --------------------------------------------------------
+// Two questions: whether the control is offered on the right block types, and whether
+// what it writes is what publish reads. The second is the one worth the lines — the value
+// lives on the *dataset*, because `style.borderRadius` renders 0 as the empty string and a
+// serializer reading the style back would publish "square" as "no answer".
+const radiusBox = byId('insp-radius');
+const radiusInp = byId('insp-corner-radius');
+
+const roundMe = el('div', 'editable-block');
+roundMe.dataset.type = 'image';
+roundMe.offsetWidth = 300; roundMe.offsetHeight = 200;
+roundMe.setAttribute('data-x', 0); roundMe.setAttribute('data-y', 0);
+const pic = el('img');
+roundMe.appendChild(pic);
+
+showInspector(roundMe);
+checkSame('block', radiusBox.style.display, 'an image block is offered a corner radius');
+checkSame(0, radiusInp.value, 'starting square');
+
+showInspector(railBlock);
+checkSame('none', radiusBox.style.display,
+          'a text block is not — it paints no box, so the control would do nothing');
+
+// Setting it: the block, its picture, and the dataset publish reads.
+selectBlock(roundMe);
+radiusInp.value = '24';
+updateCornerRadius();
+checkSame('24px', roundMe.style.borderRadius, 'typing a radius rounds the block');
+checkSame('inherit', pic.style.borderRadius,
+          'and the picture inside it, or the frame would be round with a square photo in it');
+checkSame('24', roundMe.dataset.cornerRadius, 'and the value publish reads is on the block');
+checkSame(24, serializeBlock(roundMe, 0).corner_radius, 'which is what publish sends');
+
+// Back to square: the empty string rather than `0px`, so nothing is left declaring a
+// radius — and the dataset still says 0 rather than nothing.
+radiusInp.value = '0';
+updateCornerRadius();
+checkSame('', roundMe.style.borderRadius, 'zero clears the radius rather than declaring 0px');
+checkSame('', pic.style.borderRadius, 'on the picture too');
+checkSame(0, serializeBlock(roundMe, 0).corner_radius, 'and publish sends square');
+
+// The ceiling is the publish path's own, handed to the page by the server.
+radiusInp.value = String(CORNER_RADIUS_MAX + 500);
+updateCornerRadius();
+checkSame(CORNER_RADIUS_MAX, serializeBlock(roundMe, 0).corner_radius,
+          'a radius past what publish accepts is clamped here rather than refused there');
+radiusInp.value = '-8';
+updateCornerRadius();
+checkSame(0, serializeBlock(roundMe, 0).corner_radius,
+          'and a negative one is square, not a value the CSSOM drops in silence');
+
+// A locked block refuses, like every other control in the rail.
+roundMe.dataset.locked = '1';
+radiusInp.value = '40';
+updateCornerRadius();
+checkSame(0, serializeBlock(roundMe, 0).corner_radius, 'a locked block keeps its corners');
+check(/is locked/.test(byId('toast').textContent), 'and says so');
+roundMe.dataset.locked = '0';
+
+// A section's children are blocks, and rounding a section must not round them. Sections
+// are rendered before their children, so this loop finds none today — which is exactly why
+// it is asserted rather than left to the order two renderers happen to run in.
+const roundSec = el('div', 'section-block');
+roundSec.dataset.type = 'section';
+roundSec.offsetWidth = 800; roundSec.offsetHeight = 300;
+const inside = el('div', 'editable-block');
+inside.dataset.type = 'text';
+const label = el('div', 'section-label');
+const handle = el('div', 'rh');
+const pane = el('div', 'carousel-preview');
+[inside, label, handle, pane].forEach(n => roundSec.appendChild(n));
+applyCornerRadius(roundSec, 30);
+checkSame('30px', roundSec.style.borderRadius, 'a section can be rounded');
+checkSame('', inside.style.borderRadius,
+          'and a block inside it is not rounded with it — that would be a section\'s '
+          + 'radius deciding a block\'s shape');
+checkSame('', label.style.borderRadius, 'nor is the section label');
+checkSame('', handle.style.borderRadius, 'nor a resize handle');
+checkSame('inherit', pane.style.borderRadius, 'while content inside the box follows it');
+
 // ============================================================
 // Result
 // ============================================================
 // The expected total, for the same reason the other two suites carry one:
 // without it, deleting half this file still reports a clean run.
-const expected = 182;
+const expected = 201;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

@@ -27,6 +27,9 @@ require_once __DIR__ . '/db_connect.php';
 require_once __DIR__ . '/lib/displays.php';
 require_once __DIR__ . '/lib/display_request.php';
 require_once __DIR__ . '/lib/http_reply.php';
+// For CORNER_RADIUS_MAX. This page loads neither auth.php nor config.php — it runs
+// unattended on a television — so every module it needs is named here.
+require_once __DIR__ . '/lib/layout_rules.php';
 
 // Nothing this page serves may be held (#28). Two of the three notices below exist
 // in order to stop being true — a sign gets turned back on, a tag gets corrected —
@@ -267,6 +270,37 @@ $canvasH = $display->canvasHeight();
     // script down and leaves a blank television with nothing in any log (#26).
     var DISPLAY_TAG = <?= HttpReply::jsValue($display->tag()) ?>;
 
+    // The publish path's own ceiling, from the module that owns it. This page never loads
+    // `auth.php` or `config.php` (it runs unattended on a television), so the constant is
+    // required explicitly at the top of the file rather than arriving with the app.
+    var CORNER_RADIUS_MAX = <?= intval(LayoutRules::CORNER_RADIUS_MAX) ?>;
+
+    /**
+     * A block's corner radius, and the same three lines `builder.php` uses (§4by).
+     *
+     * `border-radius: inherit` on the content child is what rounds the *picture* rather
+     * than a frame around a square one. Clamped here as well as on the publish path,
+     * because this page renders whatever the database holds — including a row edited by
+     * hand — and a negative radius is a value the CSSOM discards in silence, which is the
+     * shape of defect §4ax was about.
+     */
+    function applyCornerRadius(node, px) {
+        var n = parseInt(px) || 0;
+        if (n < 0) { n = 0; }
+        if (n > CORNER_RADIUS_MAX) { n = CORNER_RADIUS_MAX; }
+        node.style.borderRadius = n ? n + 'px' : '';
+        for (var i = 0; i < node.children.length; i++) {
+            var child = node.children[i];
+            // A section's children are the blocks inside it, and a block must not be
+            // rounded because the section it sits in is. Sections happen to be rendered
+            // before their children here, so the loop finds none — this is what makes that
+            // an intention rather than an accident of the order two loops run in.
+            if (child.classList.contains('element-block')
+                || child.classList.contains('section-block')) { continue; }
+            child.style.borderRadius = n ? 'inherit' : '';
+        }
+    }
+
     // Scale the canvas to fill the actual Screen. Letterboxed on a shape
     // mismatch — min() preserves proportions rather than distorting prices.
     function scaleToFit() {
@@ -428,6 +462,7 @@ $canvasH = $display->canvasHeight();
                     s.style.width   = el.width   + 'px';
                     s.style.height  = el.height  + 'px';
                     s.style.zIndex  = Math.max(1, parseInt(el.z_index) || 1);
+                    applyCornerRadius(s, el.corner_radius);
                     if (el.section_bg) {
                         var _vbgP = el.section_bg.split('|');
                         var _vbgPath = _vbgP[0];
@@ -473,6 +508,7 @@ $canvasH = $display->canvasHeight();
                     block.style.width  = el.width   + 'px';
                     block.style.height = el.height  + 'px';
                     block.style.zIndex = Math.max(1, parseInt(el.z_index) || 1);
+                    applyCornerRadius(block, el.corner_radius);
 
                     var content = el.asset_id ? el.db_content : el.manual_content;
                     var subtype = el.block_subtype || 'free';
@@ -517,6 +553,9 @@ $canvasH = $display->canvasHeight();
                         renderMarquee(block, content);
                     }
 
+                    // Again once the content is in it: the child carries
+                    // `border-radius: inherit`, and it did not exist for the first call.
+                    applyCornerRadius(block, el.corner_radius);
                     parent.appendChild(block);
                   } catch (e) {
                     // Skip this element. The block is appended last, so a throw
