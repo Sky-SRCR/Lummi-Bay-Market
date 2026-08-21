@@ -8082,10 +8082,26 @@ values it already had is a risk taken for no reason. Seven more in
 `tools/rehearse_install.php`, where the foreign key from `brands.logo_asset_id` into `assets`
 is one MySQL actually enforces and SQLite treats as a suggestion.
 
-What none of it reaches is a browser with a real file picker in it. The upload path's last
-line — `move_uploaded_file()` — cannot be exercised outside a real multipart request, so it is
-the same owed walk as the rest of §4bo, with one thing added to look for: whether a logo
-uploaded here appears on the sign-in page, in the Asset Library, and on the venue's Brand.
+**And then it was walked, which is new.** With a database on the container there was no
+reason left not to drive the thing, so the whole install went over HTTP with `curl` — both
+forms, and a **real multipart upload**, which is the one line no suite can reach because
+`move_uploaded_file()` requires a genuine request. What landed: nine tables, one Display
+seeded by convergence, `uploads/install_e10f225919f1f81a.png` — nothing of the sent filename
+in it — the `assets` row labelled *Store logo*, the Brand renamed and carrying that asset id
+through the foreign key, `branding_config.php` holding all six settings with `BRAND_TEXT`
+derived to white on a dark green, one administrator, and `install.php` a 404 afterwards.
+
+Both refusals were walked as well, and they are the ones worth having seen: a PHP file named
+`.png` was refused **by its type**, with no `uploads/` folder created and no account made —
+the refusal lands before anything is written, which is what the `refusalFor()` split is for —
+and `nav_bg=greenish` came back naming *where that colour shows* rather than which input it
+was.
+
+What is still owed is now only what a container cannot be: a real host, an FTP client in the
+wrong mode, a real certificate, a cPanel database form, a browser's own file picker, and a
+person reading ten steps to see whether they are followable. That is a much shorter list than
+§4bo left, and it is short because the gate that had been red for four days was worth
+chasing to the bottom rather than patching at the anchor.
 
 ---
 ## 5. Verification
