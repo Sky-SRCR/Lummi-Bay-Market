@@ -2283,6 +2283,117 @@ foreach ($ciProbes as $probe) {
     }
 }
 
+// ---- Invariant 41 — install.php reads DB_* only where it owns the file --------------
+// The rule this makes mechanical: the installer connects through a credentials file only
+// when something on disk says the file is this folder's, and it never names the database
+// behind a file that is not (§4bt). Both halves used to be decided further down the page
+// — a `$database` variable read at the top and printed by whichever screen the request
+// reached — which is how §4bp's install ended up naming another install's database on a
+// form, and §4br ended up asking for its password.
+//
+// It is a *placement* rule, not a file rule, so it cannot live in the probe table above:
+// the reads are legitimate, and where they are is the whole of it. The gate line and the
+// window are read out of the file rather than assumed, and a read outside that window —
+// anywhere else in 1,200 lines — fails. The window is deliberately tight: six lines is
+// enough for the two reads that are there and nothing like enough to smuggle a branch in.
+$installSrc   = (string) file_get_contents($root . '/install.php');
+$installLines = explode("\n", $installSrc);
+
+// The branch's extent comes from the tokenizer rather than a line count. A window of "the
+// gate plus N lines" was the first version of this and it was already off by one against
+// the comment inside the branch — a number that has to be widened whenever somebody
+// explains themselves is a number that will be widened until it means nothing. The token
+// stream also gets braces inside strings and comments right, which a brace count over raw
+// text does not.
+$tokens = token_get_all($installSrc);
+
+// The gate is an `if` whose condition names `Installer::OWN`, and all three parts are
+// required. Latching onto the first bare `OWN` token was the version before this, and the
+// mutation that removed the gate showed why it was not good enough: it silently re-anchored
+// to the `$ownership = Installer::OWN;` further down and measured *that* statement's block.
+// It still failed, and it failed by luck rather than by knowing what it was looking at.
+$gateAt  = -1;
+$count    = count($tokens);
+for ($i = 0; $i < $count; $i++) {
+    $t = $tokens[$i];
+    if (!is_array($t) || $t[0] !== T_STRING || $t[1] !== 'OWN') { continue; }
+    if (!isset($tokens[$i - 2]) || !is_array($tokens[$i - 2])
+        || $tokens[$i - 2][1] !== 'Installer') { continue; }
+    // Walk back to the statement's own keyword. Anything other than `if`/`elseif` on the
+    // way — a `=`, a `,`, a `return` — means this mention is not a gate.
+    $keyword = -1;
+    for ($j = $i; $j >= 0; $j--) {
+        $back = $tokens[$j];
+        if (is_array($back) && ($back[0] === T_IF || $back[0] === T_ELSEIF)) { $keyword = $j; break; }
+        if (!is_array($back) && ($back === ';' || $back === '{' || $back === '}')) { break; }
+    }
+    if ($keyword < 0) { continue; }
+
+    // And the *sense* of it, which the version before this could not see: `!==` in place of
+    // `===` left the reads sitting inside the branch that had established the file is **not**
+    // this folder's — the defect itself — and the check said ok. So the condition has to
+    // compare identically and must not negate. A rewrite to something this cannot read (a
+    // predicate call, say) fails rather than passing, which is the right way round: the
+    // person doing the rewrite is the one who can say whether the rule still holds.
+    $identical = false;
+    $negated   = false;
+    for ($k = $keyword; $k < $count; $k++) {
+        $tok = $tokens[$k];
+        if (!is_array($tok) && $tok === '{') { break; }
+        if (is_array($tok) && $tok[0] === T_IS_IDENTICAL)     { $identical = true; }
+        if (is_array($tok) && $tok[0] === T_IS_NOT_IDENTICAL) { $negated   = true; }
+        if (!is_array($tok) && $tok === '!')                  { $negated   = true; }
+    }
+    if (!$identical || $negated) { continue; }
+
+    $gateAt = $keyword;
+    break;
+}
+
+// The line of a `{` or `}` has to be counted rather than read: the tokenizer hands a line
+// number only with the array tokens, and both braces come back as single characters.
+$ownFrom = 0;
+$ownTo   = 0;
+if ($gateAt >= 0) {
+    $ownFrom = $tokens[$gateAt][2];
+    $depth   = 0;
+    $opened  = false;
+    $line    = $ownFrom;
+    for ($i = $gateAt; $i < $count; $i++) {
+        $t    = $tokens[$i];
+        $text = is_array($t) ? $t[1] : $t;
+        if (!is_array($t)) {
+            if ($t === '{') { $depth++; $opened = true; }
+            elseif ($t === '}' && $opened) {
+                $depth--;
+                if ($depth === 0) { $ownTo = $line; break; }
+            }
+        }
+        $line += substr_count((string) $text, "\n");
+    }
+}
+
+$dbReads = [];
+foreach ($installLines as $i => $text) {
+    if (preg_match('/\bDB_(HOST|NAME|USER|PASS)\b/', $text)) { $dbReads[] = $i + 1; }
+}
+$strayReads = [];
+foreach ($dbReads as $at) {
+    if ($ownFrom === 0 || $ownTo === 0 || $at < $ownFrom || $at > $ownTo) { $strayReads[] = $at; }
+}
+$checked++;
+if ($ownFrom > 0 && $ownTo > $ownFrom && $dbReads && !$strayReads) {
+    echo '  ok   install.php reads DB_* only inside the branch that established the '
+       . 'credentials file is this folder\'s (' . count($dbReads) . ' reads, lines '
+       . $ownFrom . '-' . $ownTo . ")\n";
+} else {
+    echo "  FAIL install.php reads DB_* where it has not established whose file it is\n";
+    echo '       branch ' . ($ownFrom ?: '?') . '-' . ($ownTo ?: '?') . ', reads at '
+       . ($dbReads ? implode(', ', $dbReads) : 'none') . ', outside it: '
+       . ($strayReads ? implode(', ', $strayReads) : 'none') . "\n";
+    $failures[] = 'install.php reads DB_* only inside the branch that owns the file';
+}
+
 // ---- What this does not cover ---------------------------------------------------
 // The five §5 greps that used to be listed here are checked above as of #50. Four were
 // mechanised outright; the fifth kept the half of itself that is a judgement. What is
@@ -2349,8 +2460,9 @@ foreach ([
 // this one did not, plus one for the anchor now counting itself. A duplicate detector
 // removed by hand is exactly the edit that takes a rule with it, and this number is what
 // noticed it had not. 107 is that plus the CI-coverage rule and its seven probes,
-// and plus invariant 40's one door rule (§4bq).
-$expectedChecks = 107;
+// and plus invariant 40's one door rule (§4bq). 108 adds invariant 41, which is the first
+// rule here about *where* in a file a line is rather than which file it is in (§4bt).
+$expectedChecks = 108;
 $checked++;
 if ($checked === $expectedChecks) {
     echo "  ok   this checker ran every check it is supposed to ($checked)\n";

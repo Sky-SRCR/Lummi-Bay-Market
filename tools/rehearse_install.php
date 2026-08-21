@@ -320,11 +320,15 @@ is_it(strpos($twice->message(), 'Sign in') !== false,
 is_it($accounts->total() === 1, 'and nothing was created by the attempt');
 
 // ---- The state that reached the store, on a database that really has an admin ----
-// §4br. The unit checks hand `mustAskWhose()` a number; this asks it about a database
-// whose administrator was created two steps above, through an *unstamped* shared file of
-// the shape every credentials file written before the stamp existed has — including the
-// live one. Both halves have to be real for this to mean anything: an unstamped file on
-// disk read by a process that did not write it, and an account count from MySQL.
+// §4bt. An *unstamped* shared file, of the shape every credentials file written before the
+// stamp existed has — including the live one — over a database whose administrator was
+// created two steps above. What has to be true here is a negative, and it is the reason
+// this step is on real MySQL rather than in the unit checks: the file is on disk, the
+// database is reachable through it, it holds an administrator, and **none of that is
+// touched**. §4bp adopted it and reported the install finished; §4br asked which database
+// the folder used and offered to adopt as one of the two answers. Both of those are
+// reachable only if something connects through this file, so the check that matters is
+// that the answer is decided from the file alone.
 step('A shared file over a database that already has an administrator');
 
 $sharedApp = sys_get_temp_dir() . '/lbm-rehearse-shared-' . getmypid() . '/public_html/first';
@@ -349,13 +353,27 @@ $secondFolder = dirname($sharedApp) . '/second';
 is_it($probe2($secondFolder, $sharedFile) === Installer::UNKNOWN,
       'a second folder reads it in a fresh process and cannot tell whose it is — which is '
       . 'the answer, not a failure to get one');
-is_it(Installer::mustAskWhose(Installer::UNKNOWN, $accounts->total()),
-      'and over this database — which has the administrator created above — that is asked '
-      . 'about rather than adopted, because adopting it is what reported a second copy of '
-      . 'the app "Installed" against the first one\'s signs');
-is_it(!Installer::mustAskWhose(Installer::OWN, $accounts->total()),
-      'while the same database behind a file that names this folder is just an install '
-      . 'being opened again');
+is_it($probe2($sharedApp, $sharedFile) === Installer::UNKNOWN,
+      'and so does the folder that *wrote* it — a file with no stamp says nothing about '
+      . 'whose it is, and the page does not get to guess from the fact that it works');
+
+// That the sentence cannot name the database is settled by its signature, which the suite
+// asserts by reflection — a check for the absence of a string in prose passes for the wrong
+// reason as soon as the fixture path contains it, which this one did: the password here is
+// `lbm` and every path in this rehearsal has `lbm` in it. What is worth asking on a real
+// filesystem is the *write* side, because it is the half that depends on a file being there.
+$saidTo = Installer::sharingNote(Installer::UNKNOWN, $secondFolder, $sharedFile);
+is_it(strpos($saidTo, InstallPaths::credentialsCandidates($secondFolder)[0]) !== false,
+      'the sentence names the file to write, which is the one action that settles this '
+      . 'without anything connecting');
+is_it(Installer::canOwnCredentials($secondFolder),
+      'and that folder can be given one, so the database form is safe to offer it');
+is_it(Installer::credentialsTarget($secondFolder) !== $sharedFile
+      && Installer::credentialsTarget($secondFolder)
+         === InstallPaths::credentialsCandidates($secondFolder)[0],
+      'and the form would write the name-specific file rather than over the shared one — '
+      . 'the branch that decides this is `is_file()` on a shared file that is really there, '
+      . 'which is why it is asked here and not in the suite');
 
 @unlink($sharedFile);
 @rmdir(dirname($sharedFile));
@@ -446,13 +464,13 @@ is_it($built === 1, 'with one Display in the database, the way the typed route l
 //
 // **A sum of declared terms, not a number**, and it is written this way because the flat
 // number was wrong the day it landed and stayed wrong through a second edit (§4bq). There
-// are 39 `is_it` call sites (this sentence deliberately writes the name without its
+// are 41 `is_it` call sites (this sentence deliberately writes the name without its
 // bracket, so a naive count of the file does not include the comment about the count);
 // one of them is the nine-table loop, which is a multiplier a
 // reader cannot see from a total; and this check counts itself. `33` was written where 35
 // was true, and **nothing local can run this file** — it needs a MySQL server — so the only
 // place that disagreement could show up was the CI leg it was added to guard.
-$expected = 43     // call sites that run once
+$expected = 45     // call sites that run once
           + 9      // the nine tables schema.sql builds, one call site
           + 1;     // this check, counting itself
 $checked++;

@@ -170,32 +170,37 @@ edited in place and every change reaches the sign by hand.
   refused. **CI installs from nothing on every MySQL leg** (`tools/rehearse_install.php`);
   the browser half — an FTP client in the wrong mode, a real certificate, ten steps somebody
   has to follow — is an owed walk. And **whose database it is, is not assumed either**
-  (§4bp): the credentials file is read for its own `DB_INSTALL_FOLDER` stamp *before*
-  anything connects, and one naming a different folder is refused rather than adopted —
-  a second install used to connect through the shared file, find the first install's
-  administrator, print *Installed* and delete itself, with every line working as written.
-  An unstamped file (every one written before this, including the live one) cannot be told
-  apart from this install's own — and **§4bp answered that with a sentence, which was the
-  wrong half to get wrong.** `sharingNote()` printed what it reached and the install went
-  ahead: on the store's own account a second folder adopted the first one's database, was
-  told it was finished, and deleted the installer, so the first reader of that sentence was
-  the server card, days later. The assumption the app itself refutes is that this is the
-  first install reloading — **an install that is finished has no `install.php`**, so for the
-  page to run at all somebody put it there deliberately. `mustAskWhose()` now stops on the
-  one ambiguous state (unstamped file, database that already holds an administrator) and
-  asks; `repointRefusal()` is what replaces the self-delete as the guard, because giving the
-  folder a *different* database is a takeover if anybody passing can do it, and the password
-  of the database in use is the one fact the page can check and cannot leak — a blank one is
-  a refusal, not a pass (§4br). The write side of that rule — `credentialsTarget()` — had
-  been right since the day it landed, which is what made the missing read side invisible. And
-  §4bs is the same shape one boundary in and the plainest of the three: a folder whose
+  (§4bp, §4br, §4bt): the credentials file is read for its own `DB_INSTALL_FOLDER` stamp
+  *before* anything connects, and **only a file that can be shown to be this folder's is used
+  at all** — the one named after the folder, or the shared one carrying this folder's stamp.
+  Everything else is refused identically: no connection through it, no database named on the
+  page, and the ordinary database form for a database of this folder's own. That took three
+  goes and each was smaller than the last, because each earlier one was the page trying to
+  settle a question it has no facts for. §4bp adopted an unstamped file and printed a
+  sentence — and on the store's own account a second folder adopted the first one's database,
+  was told it was finished, and deleted the installer, so the first reader of that sentence
+  was the server card, days later. §4br asked *which database does this folder use?* with two
+  answers, one of which was still "adopt" and the other of which asked a person to fetch the
+  password of the database in use. §4bt refuses. The cost is stated rather than hidden: an
+  install whose credentials really are in that unstamped shared file no longer recognises
+  itself, and the way in is the stamp — one line, in a file they already have, spelled out on
+  the screen. The write side of the same rule — `credentialsTarget()` — had been right since
+  the day it landed, which is what made the missing read side invisible; and
+  `canOwnCredentials()` is the state that had no screen at all, a folder whose name
+  `InstallPaths` refuses, whose only credentials candidate *is* the shared file, so offering
+  it the form would overwrite another install's credentials with this one's. It gets a
+  refusal with no form on it. **Invariant 41 is the mechanical half**, and it is the first
+  rule in `check_invariants.php` about *where in a file* a line is rather than which file it
+  is in: `install.php` may read `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASS` only inside the branch
+  that identically compared ownership to `OWN`, whose extent is taken from the token stream,
+  and no reads at all fails too. And §4bs is the plainest of the four: a folder whose
   credentials file was already written and already works, over an empty database, was shown
-  the **four-field database form** — a page holding the file's name, the database's name and
-  a live connection, asking a person to retype all four, where a typo repoints the folder
-  because `installerDoDatabase()` rewrites that file from whatever is typed. That state has
-  a screen of its own now (`tablesNote()`, one button, `installerBuildTables()` split out at
-  the line where credentials stop being written), and the recommended manual route no longer
-  ends at the only form that could lose the file it was given.
+  the **four-field database form** — a page holding the file's name, the database's name and a
+  live connection, asking a person to retype all four, where a typo repoints the folder
+  because `installerDoDatabase()` rewrites that file from whatever is typed. That state has a
+  screen of its own now (`tablesNote()`, one button, `installerBuildTables()` split out at the
+  line where credentials stop being written), and the recommended manual route no longer ends
+  at the only form that could lose the file it was given.
 - **A file arrives from a browser through one of four doors, and none writes the name it was
   given** (invariant 40, §4bq). `crud.php`, `api.php`, `admin_panel.php` and `install.php`;
   `check_invariants.php` fails on a fifth. `uploads/` is the only folder in the webroot with

@@ -153,10 +153,11 @@ a different screen in front of it, and neither is an error:
   writes nothing above the webroot on that route, so the file you placed stays exactly as
   you wrote it. The form below is still on that screen, under *Or use a different database*,
   for the case where the file names the wrong one.
-- **A credentials file from another install is above the webroot and the database it names
-  has an administrator in it.** Then you get *Which database does this folder use?*, because
-  the installer will not decide that for you. **Installing a second copy**, further down, is
-  what that screen is about.
+- **A credentials file that is not this folder's is above the webroot** — the shared
+  `db_credentials.php` written by another install, or one that names a different folder.
+  Then this form is still what you get, with a paragraph above it saying which file it found
+  and that **nothing was read from the database that file names**. Fill the form in for this
+  install's own database. **Installing a second copy**, further down, is what that is about.
 
 The four values from step 1. What happens when you press the button:
 
@@ -327,9 +328,10 @@ disabled and deleted itself — which is what it does on any database that alrea
 account in it. What you were then looking at was **the other install's app**, on the other
 install's database. Nothing was overwritten, and nothing was installed either.
 
-**This build asks instead.** In that situation it stops on a screen headed *Which database
-does this folder use?* and will not go on until you answer. If you are meeting the silent
-version, the installer you uploaded predates this — rebuild the package, or follow the
+**This build refuses instead.** A credentials file it cannot show belongs to this folder is
+not used at all: it names the file, says nothing was read from the database that file points
+at, and offers the database form for a database of this folder's own. If you are meeting the
+silent version, the installer you uploaded predates this — rebuild the package, or follow the
 paragraph below.
 
 To get the install you meant from where you are now: create the credentials file for *this*
@@ -356,14 +358,13 @@ The app looks for its credentials in two places, in this order:
 install in `public_html/signs-test/`. So to move one install onto its own database, create
 the name-specific file with that database's host, name, user and password.
 
-**Or let the installer write it.** Upload `install.php` into that folder and open it: where
-the folder has no file of its own and the shared one reaches a database that already has an
-administrator, the installer asks which database the folder uses and offers the database
-form as one of the two answers — and writes the file for you, stamped. It asks for the
-current database's password first; the rest of this section is the route that needs no
-password because you are editing the file directly. It is looked
-for first, the shared file stops applying to that folder, and every other install on the
-account is unaffected. Copy `private/db_credentials.php` out of the package for the shape,
+**Or let the installer write it.** Upload `install.php` into that folder and open it. Where
+the folder has no credentials file of its own, the installer says so, names the file it
+found, and offers the database form — it will not use a file it cannot show is this
+folder's, and it asks for no password belonging to whatever that file points at. Fill in the
+new database and it writes `db_credentials_<folder>.php` for you, stamped. It is looked for
+first, the shared file stops applying to that folder, and every other install on the account
+is unaffected. Copy `private/db_credentials.php` out of the package for the shape,
 or copy the file that is already there and change the four values.
 
 Two things to know before you do it:
@@ -393,12 +394,14 @@ a database of its own. Add the line to the file that is already there:
 define('DB_INSTALL_FOLDER', 'signs');   // the folder this app is installed in
 ```
 
-Nothing in the app reads it. What it buys is that the next install in a second folder is
-**refused** that file — no connection made through it, and a database form instead — rather
-than being asked about it. Without the line the installer still will not adopt the file
-silently: where it reaches a database that already has an administrator, it stops and asks
-which database the folder uses (see *Installing a second copy*). The line is the difference
-between a question and no question, not between safe and unsafe.
+Nothing in the app reads it, and no page will be wrong without it. What it buys is that
+**this** install keeps recognising itself. Since this build the installer uses a credentials
+file only where something on disk says the file is that folder's — the name-specific file, or
+the shared one carrying that folder's stamp — and refuses every other one rather than
+adopting it. So an unstamped shared file is refused *for the install that owns it too*: put
+`install.php` back into that folder and you get the database form instead of *Installed*.
+Adding the line is what prevents that, and it is worth doing now rather than the day you need
+an installer in a hurry.
 
 ---
 
@@ -416,27 +419,30 @@ no connection is made through it, and you are asked for a database for this inst
 instead. The file it then writes is named after this folder, so the two stay apart from
 that point on.
 
-The one case it cannot decide is a credentials file written **before** this build, or by
-hand — the shared one on an install that predates the stamp. Nothing on disk says whether
-that file belongs to this folder or the one next to it. Where the database it names already
-has an administrator in it, **the installer stops and asks**, on a screen with two answers:
+A credentials file written **before** this build, or by hand, does not say which folder it
+belongs to — and that is treated the same way: **not this folder's, so not used.** The
+installer does not try to work out whether it might be; nothing on disk says so, and the two
+earlier builds that tried both got it wrong in the same direction. One adopted the file and
+printed a warning that nobody read until the install had finished and the installer deleted
+itself. The next asked which database the folder used and offered to adopt as one of its two
+answers, with the other asking for the password of the database in use. Neither is here now.
 
-- **It is this one.** One button. Nothing the app reaches changes; the four values are
-  written into `db_credentials_<folder>.php` so this folder's answer is recorded, and this
-  screen never appears again — for this install or any later one on the account.
-- **No — this folder needs its own.** The ordinary database form, plus one extra field: the
-  password of the database this folder is reaching *now*. It is asked because pointing a
-  folder somewhere else is a change to an install that already has an administrator in it,
-  and that password is the one thing the page can check about whoever is asking. It is in
-  the credentials file above the webroot, and in your control panel. Get it wrong and
-  nothing is written — no credentials file, no tables.
+What you get instead, for any file that is not demonstrably this folder's:
 
-Answer it either way and the ambiguity is gone: both answers write a file naming this
-folder, and both stamp it.
+- the paragraph names the file it found and says nothing was read from the database that
+  file names — **the database's name is not printed, and no password for it is asked for**;
+- the ordinary database form, for this install's own database;
+- the file it writes is `db_credentials_<folder>.php`, named after this folder, so the two
+  installs stay apart from that point on. The shared file is not touched.
 
-Where the shared file names a database that is **empty**, there is nothing to be wrong
-about yet and no question is asked — the install proceeds into it, which is what would have
-happened with no credentials file at all.
+This applies whether the database behind that file is empty or full — one rule, one screen,
+nothing to judge.
+
+**One folder cannot be helped this way, and it says so.** If the folder's name has anything
+in it but letters, digits, dots, dashes and underscores — a space, say — then it cannot be
+given a credentials file of its own, because the only filename the app would look for is the
+shared one. There the installer shows the sentence and **no form at all**: filling one in
+could only write over the other install's credentials. Rename the folder and reload.
 
 Either way, check it before signing in a second time, not after: **Admin Panel → Settings
 → This Server** names the install folder and the database it reached. If the database is

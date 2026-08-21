@@ -445,22 +445,33 @@ class Installer
      *     and its stamp names this folder. Trust it; this is the install it describes.
      *   * `BORROWED` — the shared file's stamp names a **different** folder. Decided, not
      *     guessed: do not adopt it, do not connect through it, ask for a database.
-     *   * `UNKNOWN` — the shared file carries no stamp, so it is either this install's or
-     *     somebody else's and nothing on disk can tell. Every credentials file written
-     *     before this change is in this state, including the live one, so the answer has
-     *     to be the old behaviour *plus a sentence*. Adopting it silently is the defect;
-     *     refusing it would put a database form on a working install.
+     *   * `UNKNOWN` — the shared file carries no stamp, so nothing on disk says whose it
+     *     is. **Treated exactly like `BORROWED`** (§4bt): not adopted, not connected
+     *     through, a database of this folder's own asked for. Every credentials file
+     *     written before the stamp existed is in this state, including the live one, so
+     *     this is the state the field reports come from — and the two answers that
+     *     preceded this one both went wrong in the same direction. §4bp adopted it with a
+     *     sentence, which reached nobody until the install was finished and the installer
+     *     gone. §4br asked which database this folder used and offered to adopt or to
+     *     repoint, the second gated on the password of the database in use — a question
+     *     with a wrong answer on the menu, and a page asking for the credentials of a
+     *     database it should not have been touching. What is left is the only reading that
+     *     needs no judgement: a file that cannot be shown to be this folder's is not this
+     *     folder's. The way in for the install that really does own it is the stamp, which
+     *     is one line in a file they already have, and `sharingNote()` spells it.
      *
      * The stamp is a parameter rather than a `defined()` call for invariant 37's reason:
      * the interesting cases are all files this machine does not have, so a rule that could
      * only be asked about the one file sitting here could only ever give the one answer it
      * happens to give.
      *
-     * On why `BORROWED` may show a form at all, given that install.php is a public URL:
-     * the form cannot act without working database credentials. `installerDoDatabase()`
+     * On why anything but `OWN` may show a form at all, given that install.php is a public
+     * URL: the form cannot act without working database credentials. `installerDoDatabase()`
      * connects before it writes anything, so a visitor who does not already hold a MySQL
      * user and password cannot repoint an install with it — and one who does needs no
-     * form.
+     * form. That reasoning was written for `BORROWED` and it covers `UNKNOWN` unchanged;
+     * what it does *not* cover is a folder that cannot own a file, where the form's only
+     * possible target is somebody else's credentials — `canOwnCredentials()` is that gate.
      *
      * @param string      $appDir          the folder the app is installed in
      * @param string      $credentialsFile the path `InstallPaths::credentialsFile()` gave
@@ -493,158 +504,79 @@ class Installer
      * What to say about a credentials file that is not demonstrably this install's.
      *
      * '' for the two states with nothing to report, so a caller prints it or does not
-     * without asking a second question. Pure, and it takes the database name rather than
-     * reading `DB_NAME`, because the sentence is only worth anything when it names the
-     * database somebody did not expect.
+     * without asking a second question.
+     *
+     * **It does not name the database that file points at, and that is the point** (§4bt).
+     * It used to, because the sentence seemed only worth printing when it named the
+     * database somebody did not expect — which was true while the installer went on to
+     * *use* it. Nothing reaches that database now: the page names the file, not what is
+     * behind it, because a name printed beside a form is a thing to try, and there is
+     * nothing here to try it with.
      *
      * The path is spelled by `InstallPaths` rather than here. This module already refuses
      * to know what that file is called (`credentialsSource()` asks the same way) — the one
      * place the two could disagree is a directory outside the webroot that nothing in this
      * repo can see.
      */
-    public static function sharingNote($ownership, $appDir, $credentialsFile, $databaseName)
+    public static function sharingNote($ownership, $appDir, $credentialsFile)
     {
         if ($ownership === self::OWN || $ownership === self::NONE) { return ''; }
 
         $candidates = InstallPaths::credentialsCandidates($appDir);
         $mine       = $candidates[0];
         $folder     = InstallPaths::installName($appDir);
-        $database   = ((string) $databaseName === '') ? 'the database it names' : (string) $databaseName;
+        $file       = basename((string) $credentialsFile);
 
+        // The folder cannot be given a file of its own, so there is no form to offer: the
+        // only path this page could write is the shared file itself, which is another
+        // install's credentials. A rename first, then everything else works.
         if ($folder === '') {
-            return 'This install reads ' . basename((string) $credentialsFile) . ' and reached '
-                 . $database . '. Its folder name cannot be used to give it a credentials '
-                 . 'file of its own, so if another copy of this app is on this account, both '
-                 . 'are using that one database. Rename the folder to letters, digits, dots, '
-                 . 'dashes and underscores only.';
+            return 'The only credentials file this folder can read is ' . $file . ', which '
+                 . 'belongs to whichever install wrote it, and this folder\'s name cannot be '
+                 . 'used to give it one of its own. Nothing was read from that database and '
+                 . 'nothing here will write to it. Rename this folder to letters, digits, '
+                 . 'dots, dashes and underscores only, then reload this page.';
         }
 
-        // The `unknown` arm carries a second remedy, and it is the one that matters on a
-        // host that predates the stamp: a person who can see that this *is* the right
-        // database can say so in one line, in a file they already have, and every later
-        // install in a second folder is then decided rather than adopted. Without it the
-        // only door out of `unknown` is the installer rewriting that file, which is the one
-        // thing nobody should do to a working install.
         $shared = ($ownership === self::BORROWED)
             ? 'That file was written for an install in a folder called something else.'
-            : 'That file does not say which install it belongs to, so it may be another '
-              . 'copy of this app\'s.';
+            : 'That file does not say which install it belongs to, so it is not this '
+              . 'folder\'s to use.';
 
         // Spelled out rather than described as "the commented line in that file": the files
         // this describes are the ones written *before* the stamp existed, so there is no
-        // comment in them to point at.
+        // comment in them to point at. It is the way back for the install that really does
+        // own that file — one line, in a file they already have — and it is the only way,
+        // because this page will not decide it for them by connecting.
         $andIfItIsMine = ($ownership === self::BORROWED) ? '' :
-            ' If that database is this install\'s, add the line   define(\''
-            . self::STAMP . '\', \'' . $folder . '\');   to that file, and this page will '
-            . 'know next time instead of printing this.';
+            ' If that file is this install\'s own — if this folder is the app you have been '
+            . 'using — add the line   define(\'' . self::STAMP . '\', \'' . $folder
+            . '\');   to it, and reload. That is the only thing that makes this page use it.';
 
         return 'This install is in ' . $folder . ' and has no credentials file of its own. '
-             . 'It read ' . basename((string) $credentialsFile) . ' and reached ' . $database
-             . '. ' . $shared . ' If this install was meant to have its own database, create '
-             . $mine . ' with that database\'s details — it is looked for first, and nothing '
-             . 'in the app folder changes.' . $andIfItIsMine;
+             . 'The nearest one is ' . $file . '. ' . $shared . ' Nothing was read from the '
+             . 'database it names and nothing here will write to it. Give this install a '
+             . 'database of its own below — that writes ' . $mine . ', which is looked for '
+             . 'first, and nothing in the app folder changes.' . $andIfItIsMine;
     }
 
     /**
-     * Does this install have to ask whose database it is looking at, before using it?
+     * Can this folder be given a credentials file of its own?
      *
-     * The state this exists for was observed on the store's own account, twice, and the
-     * behaviour it replaces was a deliberate decision that turned out to be wrong about
-     * which reading is the likely one (§4bp).
+     * The whole of §4bt rests on this being asked before a form is offered. A folder whose
+     * name `InstallPaths` refuses has exactly one candidate — the shared file — so
+     * `credentialsTarget()` would answer with *that* path, and the database form would
+     * overwrite another install's credentials with this one's. The refusal is a rename,
+     * which the sentence names, and it is a real dead end until somebody does it: there is
+     * no file this page could write that only this folder would read.
      *
-     * An unstamped shared credentials file has two possible meanings and `sharingNote()`
-     * was the whole answer to both: adopt the database, print a sentence, and let the
-     * person work out which meaning applied. On a database that **already holds an
-     * administrator** the two meanings are not close together:
-     *
-     *   * this install reloading — nothing to do, and the sentence was noise; or
-     *   * a *second* copy of the app in a second folder, which has just been told it is
-     *     finished, has deleted its own installer, and is now serving the first install's
-     *     signs from the first install's database.
-     *
-     * The assumption that made adopting reasonable was that the first reading is the
-     * common one. It is not: **an install that is finished has no `install.php`** — the
-     * finished screen deletes it and reads the filesystem back to prove it. So for this
-     * page to be running at all, somebody has put it in this folder deliberately, and
-     * what they are trying to do is install *this folder*. Adopting is the answer to the
-     * question nobody asked.
-     *
-     * It is only asked when the database has an administrator in it, and that is the whole
-     * of the condition. An empty database reached through a shared file is not ambiguous
-     * in any way that matters — installing into it is what `none` would do anyway — and a
-     * question with no consequence attached to either answer is furniture.
-     *
-     * Pure, and it takes the count rather than a `PDO`, because the interesting values are
-     * the ones no test database is in: `-1` is "the tables are not there", which is not
-     * "no administrator" and must not read as one.
+     * Pure, and it takes the folder rather than a flag because the answer is a property of
+     * the path and nothing else — `installName()` is the same rule that decides the
+     * filename, asked once so the two cannot drift apart.
      */
-    public static function mustAskWhose($ownership, $accountCount)
+    public static function canOwnCredentials($appDir)
     {
-        return $ownership === self::UNKNOWN && (int) $accountCount > 0;
-    }
-
-    /**
-     * The question itself — what was found, and why this page cannot answer it.
-     *
-     * Separate from `sharingNote()` even though both describe one situation, because they
-     * are printed at different moments and only one of them is a question. The note is a
-     * warning beside a screen that is going ahead anyway; this is the screen that has
-     * stopped. A warning that has become the whole content of a page should read like one.
-     */
-    public static function whoseQuestion($appDir, $credentialsFile, $databaseName)
-    {
-        $folder   = InstallPaths::installName($appDir);
-        $where    = ($folder === '') ? 'This folder' : 'The folder ' . $folder;
-        $database = ((string) $databaseName === '')
-            ? 'a database' : 'the database ' . (string) $databaseName;
-
-        return $where . ' has no credentials file of its own, so it read '
-             . basename((string) $credentialsFile) . ' — which does not say which install '
-             . 'it was written for — and found ' . $database . ' that already has an '
-             . 'administrator in it. That is either this install being opened again, or a '
-             . 'second copy of the app about to serve the first one\'s signs, and nothing '
-             . 'on this server can tell those apart. So it is being asked rather than '
-             . 'guessed.';
-    }
-
-    /**
-     * May this page point the folder at a *different* database? '' if it may.
-     *
-     * The gate exists because of what the question above costs. Answering "no, this folder
-     * needs its own" writes `db_credentials_<folder>.php`, which takes precedence for this
-     * folder from the next request on — so on a live install, that form is a way to repoint
-     * a working app at a database somebody else controls, and every account in it. The old
-     * behaviour closed that door by never opening it: it adopted the database, found an
-     * administrator, and deleted this file on the first request from anybody at all.
-     *
-     * What is asked for instead is proof of holding the database the app is *already*
-     * using. The installer can check it — the credentials file was read into `DB_PASS` —
-     * and cannot leak it: that file is above the webroot and nothing here prints it.
-     * Somebody who created the database has it; somebody who found `install.php` on a
-     * server does not.
-     *
-     * `hash_equals` rather than `===` for the ordinary reason, and a blank stored password
-     * is a **refusal rather than a pass**: there is nothing to prove, so proving it means
-     * nothing, and a gate that cannot distinguish anybody is not one. The way through is
-     * then the same file written by hand, which is the one route that has never needed
-     * this page's permission.
-     */
-    public static function repointRefusal($given, $current)
-    {
-        if ((string) $current === '') {
-            return 'The database this folder is already using has no password recorded, so '
-                 . 'there is nothing this page can ask you to prove — and it will not '
-                 . 'repoint a working app on nobody\'s word. Write the credentials file '
-                 . 'named above by hand instead.';
-        }
-        if (!hash_equals((string) $current, (string) $given)) {
-            return 'That is not the password of the database this folder is using now. It '
-                 . 'is asked for because pointing this folder somewhere else is a change to '
-                 . 'a database that already has an administrator in it, and the password is '
-                 . 'the one thing this page can check. It is in the credentials file above '
-                 . 'the webroot, and in your control panel.';
-        }
-        return '';
+        return InstallPaths::installName($appDir) !== '';
     }
 
     /**

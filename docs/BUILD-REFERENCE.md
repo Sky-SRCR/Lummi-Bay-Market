@@ -808,6 +808,23 @@ through the app again:
     listed — and that one turned out to be the best of them, so the installer was rewritten
     to match it rather than the other way round.
 
+41. **The installer connects through a credentials file only where it has established the
+    file is this folder's, and `install.php` reads `DB_*` nowhere else** (§4bt). Ownership
+    has four answers and only `OWN` — the file named after this folder, or the shared file
+    carrying this folder's stamp — is used. `BORROWED` and `UNKNOWN` are refused
+    identically: no connection through the file, no database named on the page, and a
+    database of this folder's own asked for instead. The invariant is the mechanical half,
+    and it is the first rule here about **where in a file a line is** rather than which file
+    it is in: `check_invariants.php` finds the `if` whose condition identically compares
+    ownership to `OWN`, takes that branch's extent from the token stream, and fails on a
+    `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASS` outside it — or on no reads at all, which is how
+    a rule about a line survives the line being deleted. It was seen to fail four ways: a
+    read moved out of the branch, the gate removed, the gate negated to `!==`, and every
+    read gone. The two versions this replaces both read the database name at the top of the
+    request and let a screen further down decide what to do with it, which is how one of
+    them printed another install's database on a form (§4bp) and the other asked for its
+    password (§4br).
+
 ---
 
 ## 3. Which Display does a request with no tag mean?
@@ -8276,6 +8293,94 @@ sentence does not print the folder above the webroot.
 
 **What this does not fix.** The preflight above still says this folder is *writable, so the
 app can be unpacked here* on a screen where it demonstrably already has been.
+
+### 4bt. Three answers to "whose database is this?", and the right one was to refuse
+
+Reported from the field, and it is the shortest requirement in this document: *all
+references to that database should be removed. No option to connect to it. No input db
+password. Complete disconnection from it.*
+
+Right, and it undoes a decision made a day earlier rather than adjusting it.
+
+The state is one folder on a shared account with no credentials file of its own, walking up
+to a `db_credentials.php` that another install wrote and that carries no stamp — the shape
+of every credentials file written before §4bp, the live one included. Three answers have now
+been shipped for it:
+
+| | what it did | how it failed |
+|---|---|---|
+| §4bp | adopted the file, printed a warning | the install was already finished and the installer already deleted by the time anybody read the warning |
+| §4br | asked *which database does this folder use?* — adopt, or repoint behind the password of the database in use | one of the two answers was still "adopt", and the other asked a person to go and fetch the credentials of a database this page should not have been touching |
+| §4bt | refuses the file | — |
+
+Each was smaller than the last, and the reason is the same each time: the page was trying to
+settle a question it has no facts for. It has one fact — the file says this folder, or it
+does not. `credentialsOwnership()` already answered that in four values; what changed is that
+only `OWN` is now used. `BORROWED` and `UNKNOWN` are refused identically: no connection
+through the file, no database named on the page, no password asked for, and the ordinary
+database form offered for a database of this folder's own.
+
+**What that costs, stated plainly.** An install whose credentials really are in that
+unstamped shared file no longer recognises itself. Uploading `install.php` into it shows the
+database form rather than *Installed*. The way in is the stamp — `define('DB_INSTALL_FOLDER',
+'<folder>');`, one line in a file they already have — and `sharingNote()` spells it on the
+screen. That is a worse reload and a better refusal, and the trade only looks close until you
+notice which of the two mistakes is silent: a folder told it is finished over somebody else's
+database says nothing, and a folder shown a form says exactly what it is doing.
+
+**Three things came out with it, and one of them was load-bearing.** `mustAskWhose()`,
+`whoseQuestion()` and `repointRefusal()` are gone, with the `whose` stage, the `adopt` POST
+branch and the `current_pass` field — 19 checks and a screen. So are two paragraphs in
+`installerPage()`: the sharing sentence printed a second time as a `stop`, and the
+finished-screen note about this file deleting itself over a database that might belong to
+somebody else. Both were unreachable the moment nothing connects through a foreign file, and
+an unreachable warning is worse than none — nobody notices it has stopped applying.
+
+**And a state that had no screen at all.** A folder whose name `InstallPaths` refuses has
+exactly *one* credentials candidate: the shared file. So `credentialsTarget()` answers with
+that path, and offering the database form there would overwrite another install's credentials
+with this one's — the precise write the second-install rule exists to prevent, reached from
+the screen that exists to prevent it. `canOwnCredentials()` is the gate, and that folder gets
+a refusal with **no form on it**: rename, then reload. Walked: zero form fields on that page.
+
+**Invariant 41, and it is a new shape for this checker.** Every rule in
+`check_invariants.php` until now has been about which *file* a line may appear in. This one is
+about where in a file: the `if` whose condition identically compares ownership to `OWN`, its
+extent taken from the token stream, and every `DB_*` read required to be inside it. The first
+version used "the gate plus six lines" and was already off by one against the comment inside
+the branch — a window that has to be widened whenever somebody explains themselves will be
+widened until it means nothing. The second latched onto the first bare `OWN` token, and the
+mutation that removed the gate showed why that was not good enough: it silently re-anchored
+to the `$ownership = Installer::OWN;` assignment further down and measured *that* block. It
+failed, but by luck. The third reads the statement keyword and the sense of the comparison,
+because `!==` in place of `===` leaves the reads inside the branch that established the file
+is **not** this folder's — the defect itself — and the version before that said `ok`.
+
+Seen to fail four ways: a read moved out of the branch, the gate removed, the gate negated,
+and every read deleted. The last one matters most: a rule about a line has to fail when the
+line is gone, or it is a rule that outlives what it was protecting.
+
+**Two checks that could not fail, deleted rather than kept.** The rehearsal first asserted
+that the sentence does not name the database and does not contain the password. Neither can:
+`sharingNote()` no longer takes either. Worse, the password one *failed* — the password in
+that rehearsal is `lbm` and every path in it contains `lbm`, so a search for a short secret
+in prose finds the fixture. What replaced them is the write side, which only a real
+filesystem can answer: with a shared file actually on disk, `credentialsTarget()` for the
+second folder is the name-specific path and not the shared one. The no-database-name property
+is asserted where it belongs instead — by reflection, on the parameter count, so a fourth
+parameter coming back fails rather than a wording being reviewed.
+
+**Walked over HTTP on MariaDB, four states.** An unstamped shared file over a database
+holding an administrator: the database form, and **zero** occurrences of that database's name
+on the page, no `adopt`, no password field. Submitting it: nine tables in the new database, a
+folder-specific credentials file written, the shared file untouched, and the old database
+still 9 tables / 1 administrator / 1 Display — byte for byte the numbers it started with.
+The same shared file with the stamp added: recognised, *Installed*, self-deleted. A folder
+called `we b`: the refusal, no form.
+
+**What this does not fix.** The preflight still says this folder is *writable, so the app can
+be unpacked here* on a screen where it already has been (§4bs), and the stamp is still
+something a person has to add by hand to a file only they can see.
 
 ---
 ## 5. Verification

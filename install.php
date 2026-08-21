@@ -316,20 +316,23 @@ function installerMain()
     // A wizard that remembers where it thinks it is disagrees with the server the moment
     // somebody reloads, presses back, or opens it in a second tab.
     //
-    // One question comes before all three, and it did not used to be asked at all:
-    // **whose credentials file is this?** A second install in a second folder resolves the
-    // *shared* file, connects to the first install's database, finds an administrator in
-    // it, and reports a finished install — every line working as written (§4bp). So the
-    // file is read for its stamp first, and a file that names a different folder is not
-    // adopted: no connection is made through it, and this install is asked for a database
-    // of its own. A file with no stamp cannot be told apart from this install's own, so it
-    // is still adopted — with a sentence, on every screen below, naming what it reached.
+    // One question comes before all three: **is this credentials file this folder's?** Not
+    // whose it might be, and not whether it happens to work — whether anything on disk says
+    // it belongs here. A file named after this folder does. The shared file does when its
+    // stamp names this folder. Nothing else does, and nothing else is used: no connection
+    // is made through it, its database is never named on this page, and the install is
+    // asked for a database of its own (§4bt).
+    //
+    // That is a smaller rule than the two it replaces. §4bp adopted an unstamped file and
+    // printed a warning nobody read until the installer had deleted itself. §4br asked the
+    // person which database this folder used — and one of the two answers it offered was to
+    // adopt, while the other asked for the password of the database being left behind. Both
+    // were the page trying to settle a question it has no facts for. It has one fact: the
+    // file says this folder, or it does not.
     $pdo       = null;
     $ownership = Installer::NONE;
-    $database  = '';
     if ($credentialsFile !== '') {
         require_once $credentialsFile;
-        $database  = defined('DB_NAME') ? (string) DB_NAME : '';
         $ownership = Installer::credentialsOwnership(
             $appDir,
             $credentialsFile,
@@ -337,17 +340,15 @@ function installerMain()
         );
     }
 
-    $accounts = -1;
-    // Held rather than pushed into `$notes`, because it is the question this screen *is*
-    // and not a remark that travels with the request: a note added during resolution is
-    // still printed on the screen the answer leads to, where it reads as the question
-    // being asked again about a folder that has just answered it.
-    $whose    = '';
-    if ($ownership === Installer::BORROWED) {
-        $notes[] = Installer::sharingNote($ownership, $appDir, $credentialsFile, $database);
-        $notes[] = 'Nothing was read from that database, and nothing here will write to '
-                 . 'it. Give this install its own below.';
-    } elseif ($credentialsFile !== '') {
+    $accounts    = -1;
+    $ownDatabase = '';
+    if ($ownership === Installer::OWN) {
+        // The only two lines in this file that read DB_*, and they are inside the one
+        // branch that has established the file is this folder's. The name is copied into a
+        // variable here rather than read again further down, so "this page never names a
+        // database it does not own" is true by construction rather than by a condition
+        // somewhere else agreeing with this one.
+        $ownDatabase = defined('DB_NAME') ? (string) DB_NAME : '';
         $pdo = Installer::connectDatabase(DB_HOST, DB_NAME, DB_USER, DB_PASS, $why);
         if ($pdo === null) {
             $errors[] = 'The credentials file is there, but the database refused the '
@@ -358,67 +359,22 @@ function installerMain()
             if     ($accounts > 0)  { $stage = 'finished'; }
             elseif ($accounts === 0) { $stage = 'admin'; }
             else                     { $stage = 'schema'; }
-
-            // And then the one state where none of those three is an answer. An unstamped
-            // shared file over a database that already holds an administrator is either
-            // this install being reopened or a second copy about to serve the first one's
-            // signs, and `finished` is a *verdict* on which — delivered by deleting this
-            // file, so there is nothing left to correct it with (§4br). It asks instead.
-            if (Installer::mustAskWhose($ownership, $accounts)) {
-                $stage = 'whose';
-                $whose = Installer::whoseQuestion($appDir, $credentialsFile, $database);
-            }
+        }
+    } elseif ($credentialsFile !== '') {
+        $notes[] = Installer::sharingNote($ownership, $appDir, $credentialsFile);
+        if (!Installer::canOwnCredentials($appDir)) {
+            // No form: the only path this page could write is the shared file, and that is
+            // the other install's credentials. The sentence above names the rename.
+            $stage = 'rename';
         }
     }
 
-    // Captured before any form below moves the stage on: the gate on repointing has to be
-    // asked about the state the *request arrived in*, not the state it is trying to reach.
-    $askedWhose = ($stage === 'whose');
-    // And the same capture for the state above, for the same reason: the one-button form
-    // may only build tables on a connection this request resolved for itself.
+    // Captured before any form below moves the stage on: the one-button route may only
+    // build tables on a connection this request resolved for itself.
     $askedSchema = ($stage === 'schema' && $pdo !== null);
 
     // ---- Acting on a form -----------------------------------------------------
-    // No CSRF token on either branch here, and the reason is not that it was forgotten.
-    // `adopt` writes down the values this folder is *already using*, so a request forged
-    // by somebody else changes nothing about which database anything reaches; and the
-    // repoint below is gated on a password that a forged request cannot know, which is a
-    // stronger thing than a token and is checked in the same place.
-    if ($posted && ($_POST['step'] ?? '') === 'adopt' && $askedWhose) {
-        // "Yes — this folder is that install." Nothing about the running app changes: the
-        // four values written are the four it just read. What changes is that the question
-        // is settled, here and for every later install in a second folder, because the file
-        // this writes carries the stamp and is looked for before the shared one.
-        $target = Installer::credentialsTarget($appDir);
-        $source = Installer::credentialsSource($appDir, ['host' => DB_HOST, 'name' => DB_NAME,
-                                                         'user' => DB_USER, 'pass' => DB_PASS]);
-        if (Installer::writeFile($target, $source, $writeWhy)) {
-            $notes[]   = 'Written: ' . $target . ' now says this folder uses ' . DB_NAME
-                       . '. Nothing else changed, and this page will not ask again.';
-            $ownership = Installer::OWN;
-            $stage     = ($accounts > 0) ? 'finished' : 'admin';
-        } else {
-            $errors[] = 'That could not be written: ' . $writeWhy;
-            $errors[] = 'Create that file by hand with the contents below, or use the other '
-                      . 'answer if this folder needs a database of its own.';
-            $errors[] = $source;
-        }
-    } elseif ($posted && ($_POST['step'] ?? '') === 'database') {
-        // "No — this folder needs its own." On a folder that reached somebody's live
-        // database, that is a repoint rather than an install, so it is asked to prove it
-        // holds the database being left behind. Every other route to this form has nothing
-        // to prove: there is no database in use to be taken away from anybody.
-        $gate = $askedWhose
-            ? Installer::repointRefusal((string) ($_POST['current_pass'] ?? ''),
-                                        defined('DB_PASS') ? (string) DB_PASS : '')
-            : '';
-        if ($gate !== '') {
-            $errors[] = $gate;
-            array_unshift($notes, $whose);
-            installerPage($appDir, 'whose', $errors, $notes, $token, $pdo, '', $redraw,
-                          $database);
-            return;
-        }
+    if ($posted && ($_POST['step'] ?? '') === 'database') {
         $stage = installerDoDatabase($appDir, $errors, $notes);
         if ($stage === 'admin' || $stage === 'schema') {
             // The file it just wrote is this install's own by construction — that is what
@@ -427,7 +383,6 @@ function installerMain()
             $credentialsFile = InstallPaths::credentialsFile($appDir);
             $token           = installerToken($credentialsFile);
             $ownership       = Installer::OWN;
-            $database        = trim((string) ($_POST['name'] ?? ''));
         }
     } elseif ($posted && ($_POST['step'] ?? '') === 'tables' && $askedSchema) {
         // "Build them" — no values typed, and no credentials file written: the one on disk
@@ -509,25 +464,15 @@ function installerMain()
         }
     }
 
-    // `borrowed` passes '' rather than the sentence: it is already in `$notes` above, where
-    // it is the reason the database form is on screen rather than a warning beside it.
-    // Every other state hands it to the page, which prints it on whichever screen it is.
-    if ($stage === 'whose') { array_unshift($notes, $whose); }
-
     // Whether the tables can be built from what is already on disk. Asked of this
     // request's own findings — a credentials file, an open connection, no tables — and not
     // of anything a form said, so a failed build falls back to the form rather than
     // offering the button that just failed.
     $tables = ($stage === 'schema' && $pdo !== null && $credentialsFile !== '' && !$posted)
-        ? Installer::tablesNote($credentialsFile, $database)
+        ? Installer::tablesNote($credentialsFile, $ownDatabase)
         : '';
 
-    // `whose` passes '' for the same reason `borrowed` does: its sentence is the screen.
-    installerPage($appDir, $stage, $errors, $notes, $token, $pdo,
-                  ($ownership === Installer::BORROWED || $stage === 'whose')
-                      ? ''
-                      : Installer::sharingNote($ownership, $appDir, $credentialsFile, $database),
-                  $redraw, $database, $tables);
+    installerPage($appDir, $stage, $errors, $notes, $token, $pdo, $redraw, $tables);
 }
 
 // ============================================================
@@ -793,7 +738,7 @@ function installerBarePage($which)
 
 /** The one screen, in whichever of its four states this install is in. */
 function installerPage($appDir, $stage, array $errors, array $notes, $token, ?PDO $pdo = null,
-                      $sharing = '', array $redraw = [], $database = '', $tables = '')
+                      array $redraw = [], $tables = '')
 {
     installerHead('Install');
 
@@ -807,40 +752,25 @@ function installerPage($appDir, $stage, array $errors, array $notes, $token, ?PD
         echo '<p class="stop">' . Markup::text($error) . '</p>';
     }
 
-    // Whose database this is, on whichever screen this is. It matters most on the two where
-    // being wrong about it costs something — the one about to make an administrator in that
-    // database, and the one about to declare the install finished and delete this file — but
-    // it is worth saying on the others too: *"the database refused the connection"* is a
-    // different problem when the credentials being refused belong to the install next door.
-    // A `stop` rather than a `note` deliberately: the states it describes are the ones where
-    // the page *works* and the person is looking at the wrong install (§4bp). The caller
-    // hands '' for a `borrowed` file, whose sentence is already a note above the form.
-    if ((string) $sharing !== '') {
-        echo '<p class="stop">' . Markup::text($sharing) . '</p>';
-    }
-
-    // And the way out, on the one screen where this file is about to stop existing. The
-    // deletion is not softened for this case on purpose: "the database already has an
-    // administrator, so this page disables itself" is the guard that keeps a public
-    // first-administrator form from being a public first-administrator form, and it does
-    // not get to depend on a judgement about whose install it is. Re-uploading one file is
-    // the cost, and it is named here rather than left to be worked out.
-    if ($stage === 'finished' && (string) $sharing !== '') {
-        echo '<p class="stop">This file deletes itself below, because the database it '
-           . 'reached now holds an administrator — a guard that does not depend on which '
-           . 'install that database belongs to. If the line above is describing a '
-           . 'mistake rather than a deliberate arrangement, write that credentials file, '
-           . 'upload install.php again, and this page will pick up on the database that '
-           . 'file names.</p>';
-    }
+    // The sharing sentence used to be printed here as well as in `$notes`, and on the
+    // finished screen it was followed by a paragraph about this file deleting itself over
+    // somebody else's database. Both are gone with the state they described: a file that is
+    // not this folder's is never connected through, so no screen past the database form can
+    // be reached with one (§4bt). Two paragraphs that cannot be printed are not a warning
+    // that has been kept, they are a warning nobody will notice has stopped applying.
 
     if ($stage === 'database' || $stage === 'schema') {
         installerPreflight($appDir);
     }
 
-    if ($stage === 'whose') {
-        installerWhoseForm($database);
-    } elseif ($stage === 'schema' && (string) $tables !== '') {
+    if ($stage === 'rename') {
+        // Deliberately no form. The sentence above is the whole screen, because the only
+        // credentials path this folder has is another install's file.
+        installerFoot();
+        return;
+    }
+
+    if ($stage === 'schema' && (string) $tables !== '') {
         installerTablesForm($tables, $token);
     } elseif ($stage === 'database' || $stage === 'schema') {
         installerDatabaseForm();
@@ -881,7 +811,7 @@ function installerPreflight($appDir)
     }
 }
 
-function installerDatabaseForm($currentDatabase = '')
+function installerDatabaseForm()
 {
     // The privileges are named *here*, on the screen where somebody realises they have to
     // go back to the control panel — not only in INSTALL.md, which they read before they
@@ -915,59 +845,10 @@ function installerDatabaseForm($currentDatabase = '')
        . '<label>Database user<input name="user" required></label>'
        . '<label>Database password<input name="pass" type="password"></label>';
 
-    // Only when there is something to take away. Pointing this folder at a new database
-    // while it is reaching a working one is a change to *that* install, and this page has
-    // exactly one fact it can check about whoever is asking for it: the password of the
-    // database in use. `Installer::repointRefusal()` is the check; this is the field.
-    if ((string) $currentDatabase !== '') {
-        echo '<label>Password of ' . Markup::text((string) $currentDatabase)
-           . ' &mdash; the database this folder is using now'
-           . '<input name="current_pass" type="password" required>'
-           . '<small>Asked because this folder is already reaching a database with an '
-           . 'administrator in it, and pointing it elsewhere is a change to that install. '
-           . 'It is in the credentials file above the webroot, and in your control '
-           . 'panel.</small></label>';
-    }
-
     echo '<button type="submit">Connect and create the tables</button>'
        . '</form>';
 }
 
-/**
- * The one question this page will not answer for itself.
- *
- * Two answers, side by side, and each of them writes the *same* thing — a credentials file
- * named after this folder, carrying the stamp. That is what makes this screen appear once
- * rather than on every reload: whichever way it is answered, the ambiguity that produced it
- * is gone afterwards.
- *
- * The order is deliberate. "This is that install" is the harmless answer and comes first,
- * because it is one click and because a person who reads no further than the first button
- * should not thereby repoint a live app. The other one is the whole database form, with the
- * privileges and the cPanel prose it always carries, plus the field that gates it.
- */
-function installerWhoseForm($database)
-{
-    $named = ((string) $database === '') ? 'that database' : (string) $database;
-
-    echo '<h2>Which database does this folder use?</h2>';
-
-    echo '<h3>It is this one</h3>'
-       . '<p>Choose this if the app you have been using lives in this folder, and '
-       . '<strong>' . Markup::text($named) . '</strong> is its database. Nothing changes '
-       . 'except that it gets written down, so this page stops guessing &mdash; and so does '
-       . 'any later copy of the app on this account.</p>'
-       . '<form method="post"><input type="hidden" name="step" value="adopt">'
-       . '<button type="submit">Yes &mdash; this folder uses '
-       . Markup::text($named) . '</button></form>';
-
-    echo '<h3>No &mdash; this folder needs its own</h3>'
-       . '<p>Choose this if you are installing a <em>second</em> copy of the app. Create an '
-       . 'empty database for it first, then fill this in. '
-       . Markup::text($named) . ' is left exactly as it is: nothing below writes to it, and '
-       . 'the install it belongs to keeps using it.</p>';
-    installerDatabaseForm($named);
-}
 
 /**
  * The tables, for a folder whose credentials are already on disk and already work.
@@ -1175,10 +1056,10 @@ function installerSteps($stage)
 {
     $order = ['database' => 'Database', 'schema' => 'Tables',
               'admin' => 'Administrator', 'finished' => 'Done'];
-    // `whose` is a question *about* the database rather than a step of its own: it is the
-    // first step, refusing to be assumed. A fifth box would say an install has five steps
-    // to somebody who will only ever see four.
-    if ($stage === 'whose') { $stage = 'database'; }
+    // `rename` is the database step refusing to start — the folder cannot be given a
+    // credentials file of its own — so it lights the same box. A fifth would tell somebody
+    // an install has five steps when they will only ever see four.
+    if ($stage === 'rename') { $stage = 'database'; }
     echo '<div class="steps">';
     foreach ($order as $key => $label) {
         echo '<span class="' . ($key === $stage ? 'at' : '') . '">' . Markup::text($label)

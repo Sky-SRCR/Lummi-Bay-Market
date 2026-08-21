@@ -8642,101 +8642,75 @@ checkSame(Installer::UNKNOWN,
           Installer::credentialsOwnership($signs, '/somewhere/else/entirely.php', 'signs'),
           'and a path that is neither candidate is not read as either');
 
-checkSame('', Installer::sharingNote(Installer::OWN, $signs, $mine, 'shop_signs'),
+checkSame('', Installer::sharingNote(Installer::OWN, $signs, $mine),
           'an install on its own credentials file has nothing to be told');
-checkSame('', Installer::sharingNote(Installer::NONE, $signs, '', ''),
+checkSame('', Installer::sharingNote(Installer::NONE, $signs, ''),
           'and neither has one that has not got a database yet');
-$borrowed = Installer::sharingNote(Installer::BORROWED, $signs, $ours, 'shop_signs');
-checkMentions($borrowed, 'shop_signs',
-              'the sentence names the database that was reached, which is the fact that '
-              . 'makes it worth reading');
-checkMentions($borrowed, 'signs', 'and the folder this install is in');
+
+// The sentence takes three facts and no database name, and that is asserted rather than
+// left to the eye. It took four until §4bt: it named the database the file pointed at,
+// because while the installer went on to *use* that database the name was the fact worth
+// printing. Nothing reaches it now, so the name would be a thing to try with a form that
+// cannot try it — and the two versions before this one both ended up doing something with
+// that name (printing it beside a form; asking for its password). A fourth parameter coming
+// back is the shape to catch, not a wording to review.
+checkSame(3, (new ReflectionMethod('Installer', 'sharingNote'))->getNumberOfParameters(),
+          'sharingNote takes the ownership, the folder and the file — and not the name of a '
+          . 'database this page has no business naming (§4bt)');
+
+$borrowed = Installer::sharingNote(Installer::BORROWED, $signs, $ours);
+checkMentions($borrowed, 'signs', 'the sentence names the folder this install is in');
 checkMentions($borrowed, $mine,
               'and the file to create, in full — the fix is one file above the webroot and '
               . 'nothing in the app folder');
 checkMentions($borrowed, 'folder called something else',
               'and says the stamp decided it, rather than leaving a person to wonder how '
               . 'much of this is a guess');
-$unstamped = Installer::sharingNote(Installer::UNKNOWN, $signs, $ours, 'shop_signs');
-checkMentions($unstamped, 'does not say which install',
-              'an unstamped file says so instead — this is every credentials file written '
-              . 'before the stamp existed, including the live one');
+checkMentions($borrowed, 'Nothing was read',
+              'and that nothing was read from the database it names, which is the half a '
+              . 'person cannot check for themselves');
+
+$unstamped = Installer::sharingNote(Installer::UNKNOWN, $signs, $ours);
+checkMentions($unstamped, 'not this folder',
+              'an unstamped file is not adopted either — every credentials file written '
+              . 'before the stamp existed is in this state, including the live one, and '
+              . '§4bp adopting it is what put one install on another\'s signs');
+checkMentions($unstamped, 'Nothing was read',
+              'and it says the same thing about the database it did not touch');
 checkMentions($unstamped, "define('DB_INSTALL_FOLDER', 'signs');",
-              'and it carries the second remedy, spelled out: one line in a file they '
-              . 'already have, after which a later install in another folder is decided '
-              . 'rather than adopted');
+              'and carries the one way in for the install that really does own that file: '
+              . 'one line, in a file they already have');
 check(strpos($borrowed, 'DB_INSTALL_FOLDER') === false,
       'the borrowed sentence does not offer it — that file belongs to another install and '
       . 'stamping it for this one would be a lie about somebody else\'s database');
-checkMentions(Installer::sharingNote(Installer::BORROWED, $signs, $ours, ''),
-              'the database it names',
-              'and a file that named no database still produces a sentence rather than a '
-              . 'gap where the name should be');
-checkMentions(Installer::sharingNote(Installer::UNKNOWN, '/home/acct/public_html/we b',
-                                     $ours, 'shop_signs'),
-              'Rename',
+
+$nameless = Installer::sharingNote(Installer::UNKNOWN, '/home/acct/public_html/we b', $ours);
+checkMentions($nameless, 'Rename',
               'the folder that cannot have its own file gets the fix it actually needs, '
               . 'which is a different one');
+checkMentions($nameless, 'Nothing was read',
+              'and the same assurance, because it is the state where a person has the least '
+              . 'way of checking');
+check(strpos($nameless, 'below') === false,
+      'and it does not point at a form: that folder has one candidate path — the shared '
+      . 'file — so the only thing the database form could write is another install\'s '
+      . 'credentials');
 
-// ---- The question that replaces adopting it (§4br) --------------------------------
-// The state these describe is the one that reached the store: an unstamped shared file,
-// a database with an administrator already in it, and an installer that called that
-// `finished` and deleted itself before anybody could say otherwise.
-check(Installer::mustAskWhose(Installer::UNKNOWN, 1),
-      'an unstamped file over a database that already has an administrator is asked about '
-      . 'rather than adopted');
-check(!Installer::mustAskWhose(Installer::UNKNOWN, 0),
-      'the same file over an empty database is not — installing into it is what "no '
-      . 'credentials file at all" would do anyway, and a question with the same answer '
-      . 'either way is furniture');
-check(!Installer::mustAskWhose(Installer::UNKNOWN, -1),
-      'and -1 is "the tables are not there", which must not read as "no administrator": '
-      . 'that is the schema step, not an ambiguity about whose database this is');
-check(!Installer::mustAskWhose(Installer::OWN, 12),
-      'a file this folder owns is never ambiguous, however many accounts are in it');
-check(!Installer::mustAskWhose(Installer::BORROWED, 12),
-      'and a borrowed one is already refused a connection, so it never gets this far');
-check(!Installer::mustAskWhose(Installer::NONE, 12),
-      'no file at all is the ordinary first install');
-
-// A folder name that appears nowhere in the sentence's own prose. The obvious fixture
-// here is `$signs`, and it is the wrong one: this sentence says "the first one's signs",
-// so a check for "signs" passes on the prose and survives deleting the folder name
-// altogether — which is exactly what it did, until this line named the folder something
-// the sentence would never say by itself (invariant 30).
-$second   = '/home/acct/public_html/second-copy';
-$question = Installer::whoseQuestion($second, $ours, 'shop_signs');
-checkMentions($question, 'The folder second-copy',
-              'the question names the folder being installed');
-checkMentions($question, 'shop_signs', 'and the database it reached');
-checkMentions($question, basename($ours), 'and the file it read to get there');
-checkMentions($question, 'already has an administrator',
-              'and why that is a question rather than a finished install');
-checkMentions(Installer::whoseQuestion($signs, $ours, ''), 'a database',
-              'a file naming no database still asks a whole sentence');
-checkMentions(Installer::whoseQuestion('/home/acct/public_html/we b', $ours, 'shop_signs'),
-              'This folder',
-              'and a folder whose name cannot be used says "this folder" rather than '
-              . 'printing a name it is about to refuse');
-
-checkSame('', Installer::repointRefusal('hunter2', 'hunter2'),
-          'the password of the database in use is what this page can check, and holding it '
-          . 'is what lets somebody point the folder somewhere else');
-check(Installer::repointRefusal('hunter3', 'hunter2') !== '',
-          'a wrong one is refused — this is the gate that stops a stray install.php on a '
-          . 'live app being a way to repoint it at somebody else\'s database');
-check(Installer::repointRefusal('', 'hunter2') !== '',
-          'and so is an empty answer, which is what a forged request carries');
-checkMentions(Installer::repointRefusal('hunter3', 'hunter2'), 'credentials file',
-              'and the refusal says where to find it rather than only that it was wrong');
-check(Installer::repointRefusal('', '') !== '',
-          'a database with no password recorded is a refusal, not a pass: there is nothing '
-          . 'to prove, so proving it means nothing');
-check(Installer::repointRefusal('anything', '') !== '',
-          'and no answer gets through that door either — a gate that cannot tell anybody '
-          . 'apart is not one');
-checkMentions(Installer::repointRefusal('anything', ''), 'by hand',
-              'so it names the one route that has never needed this page\'s permission');
+// ---- Whether a folder can be given a file of its own at all (§4bt) ----------------
+// The gate in front of the database form, and the reason the sentence above has no "below"
+// in it. `credentialsTarget()` answers with the *shared* path for a folder with one
+// candidate, so offering the form there would overwrite somebody else's database name with
+// this one's — the exact write the second-install rule exists to prevent, reached from the
+// screen that exists to prevent it.
+check(Installer::canOwnCredentials($signs),
+      'an ordinary folder can be given a credentials file of its own');
+check(!Installer::canOwnCredentials('/home/acct/public_html/we b'),
+      'a folder whose name InstallPaths refuses cannot, so no form is offered to it');
+check(!Installer::canOwnCredentials('/home/acct/public_html/..'),
+      'and neither can one that is not a name at all');
+check(Installer::canOwnCredentials('/home/acct/public_html/lbm-test'),
+      'while dashes are a name — this is the rule that decides the filename, asked once so '
+      . 'the two cannot drift apart');
 
 // `tablesNote()` — the state where the only thing missing is the tables, which used to be
 // shown the four-field form and told nothing (§4bs). The file is named by its basename on
@@ -9280,4 +9254,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2545 : 2520);
+reportChecks(testIsMysql() ? 2533 : 2508);
