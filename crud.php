@@ -388,7 +388,7 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
         nav a { color:var(--nav-text); opacity:.72; text-decoration:none; font-size:13px;
                padding:6px 10px; border-radius:4px; }
         nav a:hover, nav a.active { background:var(--work-area); color:var(--work-area-text); opacity:1; }
-        .role-tag { background: <?= isAdmin() ? '#e74c3c' : '#3498db' ?>; color:#fff; font-size:10px;
+        .role-tag { background: <?= isAdmin() ? '#e74c3c' : '#207ab6' ?>; color:#fff; font-size:10px;
                     font-weight:bold; padding:1px 6px; border-radius:8px; margin-left:4px; }
 
         body { background: #f0f2f5; padding: 24px; color: #333; }
@@ -439,7 +439,7 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
             cursor: pointer; font-weight: bold; font-size: 14px;
         }
         .btn-green  { background: #2ecc71; color: #fff; }
-        .btn-green:hover  { background: #27ae60; }
+        .btn-green:hover  { background: #1e8449; }
         .btn-blue   { background: var(--accent); color: var(--fill-text); }
         .btn-blue:hover   { background: #2980b9; }
         .btn-red    { background: #e74c3c; color: #fff; }

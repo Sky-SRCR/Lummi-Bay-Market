@@ -8,7 +8,7 @@
 defined('BRAND_LOGO')        || define('BRAND_LOGO',        '');
 defined('BRAND_NAV_BG')      || define('BRAND_NAV_BG',      '#1a252f');
 defined('BRAND_NAV_BORDER')  || define('BRAND_NAV_BORDER',  '#0d1b24');
-defined('BRAND_ACCENT')      || define('BRAND_ACCENT',      '#3498db');
+defined('BRAND_ACCENT')      || define('BRAND_ACCENT',      '#207ab6');
 defined('BRAND_TEXT')        || define('BRAND_TEXT',        '#ffffff');
 defined('SITE_NAME')         || define('SITE_NAME',         'Store Display System');
 defined('MAIL_FROM')         || define('MAIL_FROM',         'noreply@yourdomain.com');

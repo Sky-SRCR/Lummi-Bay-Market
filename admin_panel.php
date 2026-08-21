@@ -2476,7 +2476,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             working quietly rather than saying so — this is where that shows up.
         </p>
         <?php if ($server->isConverged()): ?>
-            <p style="color:#27ae60; font-size:13px; font-weight:600;">
+            <p style="color:#1e8449; font-size:13px; font-weight:600;">
                 &#10003; Everything this version of the app expects is in place.
             </p>
         <?php else: ?>
@@ -2491,7 +2491,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                 <td style="padding:6px 10px 6px 0; white-space:nowrap;">
                     <code><?= Markup::text($col['table']) ?>.<?= Markup::text($col['column']) ?></code>
                 </td>
-                <td style="padding:6px 0; color:<?= $col['ok'] ? '#27ae60' : '#c0392b' ?>; font-weight:600;">
+                <td style="padding:6px 0; color:<?= $col['ok'] ? '#1e8449' : '#c0392b' ?>; font-weight:600;">
                     <?= $col['ok'] ? '&#10003; present' : '&#10007; missing' ?>
                     <?php if ($col['note'] !== ''): ?>
                         <span style="color:#7f8c8d; font-weight:normal;">— <?= Markup::text($col['note']) ?></span>

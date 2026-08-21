@@ -166,7 +166,7 @@ if (isset($_GET['restart'])) {
         .sub { color: #7f8c8d; font-size: 13px; margin-bottom: 22px; }
         label { display: block; font-weight: 600; font-size: 13px; color: #555; margin-bottom: 5px; }
         input { width: 100%; padding: 10px 12px; border: 1px solid #ccc; border-radius: 5px; font-size: 15px; margin-bottom: 16px; }
-        .btn { width: 100%; padding: 12px; background: #3498db; color: #fff; border: none; border-radius: 5px; font-size: 15px; font-weight: bold; cursor: pointer; }
+        .btn { width: 100%; padding: 12px; background: <?= SiteChrome::accent() ?>; color: #fff; border: none; border-radius: 5px; font-size: 15px; font-weight: bold; cursor: pointer; }
         .btn:hover { background: #2980b9; }
         .msg { padding: 10px 14px; border-radius: 5px; margin-bottom: 16px; font-size: 13px; }
         .error   { background: #fdecea; color: #c0392b; border: 1px solid #e74c3c; }

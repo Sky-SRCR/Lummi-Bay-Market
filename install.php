@@ -1074,7 +1074,7 @@ function installerHead($title)
        . 'label{display:block;font-weight:600;font-size:13px;color:#4a5b68;margin-bottom:14px}'
        . 'input{display:block;width:100%;margin-top:4px;padding:10px 12px;border:1px solid #ccd4da;'
        . 'border-radius:5px;font-size:15px;font-weight:400;color:#20303c}'
-       . 'button{width:100%;padding:12px;background:#27ae60;color:#fff;border:0;border-radius:5px;'
+       . 'button{width:100%;padding:12px;background:#1e8449;color:#fff;border:0;border-radius:5px;'
        . 'font-size:15px;font-weight:700;cursor:pointer}button:hover{background:#219a52}'
        . '.note{background:#e8f5ec;border:1px solid #b8dfc6;border-radius:5px;padding:9px 12px;'
        . 'font-size:14px}'

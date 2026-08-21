@@ -2918,7 +2918,7 @@ function showInspector(block) {
         var _ta = block.style.textAlign || 'left';
         ['left','center','right','justify'].forEach(function(a) {
             var btn = document.getElementById('ta-' + a);
-            if (btn) btn.style.background = (a === _ta) ? '#3498db' : '';
+            if (btn) btn.style.background = (a === _ta) ? 'var(--accent)' : '';
         });
     }
 
@@ -6196,7 +6196,7 @@ function applyTextAlign(align) {
     activeBlock.dataset.textAlign = align;
     ['left','center','right','justify'].forEach(function(a) {
         var btn = document.getElementById('ta-' + a);
-        if (btn) btn.style.background = (a === align) ? '#3498db' : '';
+        if (btn) btn.style.background = (a === align) ? 'var(--accent)' : '';
     });
     commitUndoStep();
 }

@@ -8540,12 +8540,11 @@ form that warned only about the banner it happens to show would be quietest abou
 somebody reads hardest. Capped at three sentences and a count: nine at once is a box nobody
 finishes.
 
-What it found is that **the store's own defaults fail two of the nine** at 4.5:1 — white on
-the default accent `#3498db` is 3.2:1, and on the default green `#27ae60` is 2.9:1. So a
-brand-new theme form opens with a warning on it. That is true, it has always been true, and
-the defaults were left alone: changing them would repaint every install's buttons and
-banners, which is the one thing step 5 promised not to do. Worth a decision from the owner
-rather than a quiet edit here.
+What it found is that **the store's own defaults failed two of the nine** at 4.5:1 — white on
+the accent `#3498db` was 3.2:1, and on the green `#27ae60` 2.9:1 — so a brand-new theme form
+opened with a warning on it. True, and always had been. Left alone here on purpose, because
+changing them repaints every install's buttons and banners and that is the one thing step 5
+promised not to do; put to the owner instead, who said nudge them. §4bw is what that cost.
 
 **What this does not fix, and it is visible in the screenshots.** The palette's buttons, the
 Brand control, the CSV drop zone and Help's feature cards have *literal* backgrounds —
@@ -8554,6 +8553,70 @@ repaints the rail behind them and they stay dark chips on a light rail. Their te
 literal too, because a chip whose surface is fixed and whose text follows the theme is the
 one combination that can be unreadable. Fixing it properly means a role for a raised
 surface, which is a fourth text pair and a wider change than this one.
+
+### 4bw. The two default fills white text could not be read on
+
+§4bv's widened contrast warning found that the store's own defaults fail two of its nine
+pairs, and the owner's answer was to nudge them. So:
+
+| role | was | is | white on it |
+|------|-----|----|-------------|
+| `accent` | `#3498db` | `#207ab6` | 3.15:1 → **4.65:1** |
+| `status_good` | `#27ae60` | `#1e8449` | 2.87:1 → **4.72:1** |
+
+Both are the *shallowest* darkening that clears 4.5:1 on the original hue and saturation,
+found by walking the lightness down rather than reaching for a colour that looked about
+right. That matters because of the trade-off below.
+
+**The trade-off, with the arithmetic, because it cannot be avoided.** A filled button needs
+two things: a label you can read on it (4.5:1) and an edge you can find against what is
+behind it (3:1 for a UI component, WCAG 1.4.11). On the dark work area those two pull in
+opposite directions, and not a little:
+
+```
+white text ≥ 4.5:1   requires  L ≤ 0.1833
+edge on #2c3e50 ≥ 3:1 requires L ≥ 0.2734
+```
+
+**No colour satisfies both.** The old accent sat on the other side of that gap — 3.15:1 for
+its label and 3.48:1 for its edge — so what changed is which of the two bars is met, not
+whether both could be. The label was chosen because a filled button with white text on it is
+identified by its text, and because the alternative is a button whose *words* fail. The cost
+is real and named: the Publish button's edge against the work area goes from 3.48:1 to
+2.36:1, and the green's from 3.82:1 to 2.33:1.
+
+**It also makes `fill_text` as one role honest.** Four of the six fills were already dark —
+`status_warn` `#7d6608`, `status_bad` `#7b3f3f`, `status_busy` `#4b3869`, `status_note`
+`#7a4a12` — and the two light-ish ones were the two that failed. One text colour over six
+fills is a compromise while they disagree about how dark they are, and a description while
+they do not.
+
+**The accent has two doors and only one of them is a default.** `SiteChrome::DEFAULTS`
+answers for the accent *only when `branding_config.php` does not*, and that file always
+defines `BRAND_ACCENT` — it is one of the four Site Branding has always held. So changing
+the documented default alone would have changed the colour on **no running install at all**.
+The generated file's stock value and `BrandingConfig`'s own default moved with it, which
+reaches a new install because the installer ships that file; an install that is already
+running keeps the value in *its* copy, and the way to move it there is one save in **Site
+Branding** (or one line in that file, which `docs/DEPLOY-SKIP.md` is the authority on).
+`status_good` is not config-backed, so its nudge reaches everybody on the first page load.
+
+**Five checks failed for a reason that had nothing to do with contrast**, and that is the
+part worth keeping. Every one of them wrote `'#3498db'` out as the expected value of "the
+documented default", so moving the constant broke five assertions about *fallback*
+behaviour. A check that repeats a constant is a copy of it, not an assertion about it; they
+name `SiteChrome::DEFAULTS['accent']` now. The two that pass a value *in* keep a literal,
+because what they assert is that a usable value survives and any usable value does.
+
+**Nine literals of the same two colours moved with them**, and they were the same colour
+doing the same job in another file: the role badge on two pages, the reset-password page's
+only button (`login.php`'s was already the role, this one was a hex), the installer's own
+button, and two green-on-white readouts in the Admin Panel at 2.87:1. The active text-align
+button in the Builder's rail was `#3498db` set from script; it is `var(--accent)` now, so it
+follows a theme rather than agreeing with the old default for ever. Left alone deliberately:
+`#27ae60` as a *border* on the CSV drop zone, the seeded `item_title_2` block colour — that
+one is a Brand's, drawn on a sign, and has nothing to do with white on a fill — and the blue
+in Help's tip rule and link text, which is text on a dark surface rather than a fill.
 
 ---
 ## 5. Verification

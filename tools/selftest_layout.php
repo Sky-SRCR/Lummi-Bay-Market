@@ -7594,19 +7594,27 @@ section('The colours that are not in the database at all (#15, second half)');
 // through the constants could only ever be tested with the one value this machine
 // holds.
 
-checkSame('#3498db', SiteChrome::pick('accent', '#3498db'), 'a colour that reads is the colour');
-checkSame('#3498db', SiteChrome::pick('accent', '#3498DB'), 'in the one case this app stores it in');
-checkSame('#3498db', SiteChrome::pick('accent', null),      'an absent value is the documented default');
-checkSame('#3498db', SiteChrome::pick('accent', ''),        'and so is a blank one');
+// The default is named as `DEFAULTS['accent']` rather than written out, and that is the
+// lesson of the day the accent moved: every one of these lines held the hex, so nudging the
+// default for contrast (§4bw) failed five checks that were not about the value at all. A
+// check that repeats a constant is a check somebody has to edit to change the constant,
+// which makes it a copy rather than an assertion. The two pass-through lines keep a literal
+// on purpose — what they assert is that a usable value survives, and any usable value does.
+checkSame('#207ab6', SiteChrome::pick('accent', '#207ab6'), 'a colour that reads is the colour');
+checkSame('#207ab6', SiteChrome::pick('accent', '#207AB6'), 'in the one case this app stores it in');
+checkSame(SiteChrome::DEFAULTS['accent'], SiteChrome::pick('accent', null),
+          'an absent value is the documented default');
+checkSame(SiteChrome::DEFAULTS['accent'], SiteChrome::pick('accent', ''),
+          'and so is a blank one');
 checkSame('#1a252f', SiteChrome::pick('nav_bg', 'darkblue'),
           'a CSS colour keyword is not a colour this app stores, so it is the default');
-checkSame('#3498db', SiteChrome::pick('accent', ['#fff']),
+checkSame(SiteChrome::DEFAULTS['accent'], SiteChrome::pick('accent', ['#fff']),
           'and neither is an array, which is what a hand-built config could hold');
 
 // The shape that made this worth doing: escaped, it is still a closed rule and a new
 // one, because nothing in a stylesheet is looking for an entity.
 $aInject = '#fff; } body { background: url(https://example.invalid/x)';
-checkSame('#3498db', SiteChrome::pick('accent', $aInject),
+checkSame(SiteChrome::DEFAULTS['accent'], SiteChrome::pick('accent', $aInject),
           'a value that closes the rule and opens another is refused, not escaped');
 checkSame(true, strpos(Markup::text($aInject), 'body {') !== false,
           'which matters because escaping leaves that value doing exactly what it said');
@@ -7688,7 +7696,8 @@ checkSame(3, count($found), 'a brand colour nobody can read joins the audit');
 checkSame(ColorAudit::WRONG_IN_APP, $found[2]['kind'], 'under the kind that touches no sign');
 checkSame('', $found[2]['scope'], 'belonging to no Display');
 checkMentions($found[2]['what'], 'branding_config.php', 'named by the file a person would open');
-checkMentions($found[2]['consequence'], '#3498db', 'saying which colour is being drawn instead');
+checkMentions($found[2]['consequence'], SiteChrome::DEFAULTS['accent'],
+              'saying which colour is being drawn instead');
 checkMentions($found[2]['consequence'], 'nothing on the shop floor',
               'and saying plainly that no sign is affected');
 checkMentions($found[2]['fix'], 'Branding', 'pointing at the tab that rewrites the file');

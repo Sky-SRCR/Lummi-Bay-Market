@@ -57,7 +57,7 @@ body { background: var(--work-area); color: var(--work-area-text); min-height: 1
              padding: 5px 9px; border-radius: 3px; }
 #top-nav a:hover { background: var(--work-area); color: var(--work-area-text); opacity: 1; }
 #top-nav a.active { background: var(--accent); color: var(--fill-text); opacity: 1; }
-.role-tag { background: <?= $isAdmin ? '#e74c3c' : '#3498db' ?>; color: #fff;
+.role-tag { background: <?= $isAdmin ? '#e74c3c' : '#207ab6' ?>; color: #fff;
             font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
             text-transform: uppercase; margin-left: 4px; }
 

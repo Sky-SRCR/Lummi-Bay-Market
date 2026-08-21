@@ -118,7 +118,7 @@ class BrandingConfig
         'BRAND_LOGO'       => '',
         'BRAND_NAV_BG'     => '#1a252f',
         'BRAND_NAV_BORDER' => '#0d1b24',
-        'BRAND_ACCENT'     => '#3498db',
+        'BRAND_ACCENT'     => '#207ab6',
         'BRAND_TEXT'       => '#ffffff',
         'SITE_NAME'        => 'Store Display System',
         'MAIL_FROM'        => 'noreply@yourdomain.com',
