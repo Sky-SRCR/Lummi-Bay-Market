@@ -8385,6 +8385,55 @@ checkSame(0, count(array_filter($schemaStatements, function ($one) {
               return strpos($one, '--') === 0 || $one === ''; })),
           'and no statement is a comment or empty');
 
+// ---- Running that script, which nothing here used to do (§4bq) -----------------
+// `sqlStatements()` had eleven checks above and `applySchemaScript()` had **none** — the
+// function the installer's schema step actually calls was never called by any local gate.
+// Its only caller outside the installer is `tools/rehearse_install.php`, which needs a MySQL
+// server and therefore only ever ran on CI, where it was a fatal. Four days of red legs, and
+// what it was fatal on is the *ordinary* call shape:
+//
+//     applySchemaScript($pdo, $script, $failures)      // $failures never initialised
+//
+// with `array &$failures = []` in the signature. An undefined variable passed by reference is
+// created as `null`, the declared type rejects `null`, and the call dies before the body runs
+// — so the shape the `= []` default exists for was the one shape that could not work. The
+// first check below is that call, deliberately spelled with a variable this file has never
+// mentioned, because writing `$x = []` above it is exactly what hid this.
+$probeDb = newSqliteTestDb(false);
+checkSame(true, applySchemaScript($probeDb, 'CREATE TABLE probe_one (id INTEGER);',
+                                  $failuresNeverInitialised),
+          'a script the engine accepts returns true — called the way both real callers call '
+          . 'it, with an out-parameter that does not exist yet');
+checkSame([], $failuresNeverInitialised,
+          'and the out-parameter is an array afterwards, which the function guarantees rather '
+          . 'than the signature');
+
+$twoBad = [];
+checkSame(false, applySchemaScript($probeDb,
+              "CREATE TABLE probe_two (id INTEGER);\nNOT SQL AT ALL;\nALSO NOT SQL;", $twoBad),
+          'a refused statement is reported as a failure rather than thrown');
+checkSame(2, count($twoBad),
+          'and **every** refusal is collected, not just the first — the installer prints them '
+          . 'all, because one missing privilege is eleven "command denied" errors and a person '
+          . 'shown one of them goes and fixes one thing');
+check(isset($twoBad[0]['statement']) && isset($twoBad[0]['error']),
+      'each one carries the statement and the engine\'s own message');
+$probeTables = [];
+foreach ($probeDb->query("SELECT name FROM sqlite_master WHERE type='table'")->fetchAll() as $row) {
+    $probeTables[] = $row['name'];
+}
+check(in_array('probe_two', $probeTables, true),
+      'and the statements before the refusal really ran — this reports what happened rather '
+      . 'than rolling back, which is why the installer refuses to go on to the administrator');
+
+$delimiter = [];
+checkSame(false, applySchemaScript($probeDb, "DELIMITER //\nCREATE TABLE x (id INTEGER)//",
+                                   $delimiter),
+          'a script setting its own delimiter is refused as a whole rather than mis-split');
+checkMentions($delimiter ? (string) $delimiter[0]['error'] : '', 'phpMyAdmin',
+              'naming a tool that can import it, because refusing without an alternative is '
+              . 'where somebody starts editing schema.sql by hand');
+
 // ---- Where an archive may write ------------------------------------------------
 // A zip is data. An unpacker that joins a path out of data onto a directory without
 // looking at it writes wherever the data says — and the entry this refuses,
@@ -9152,4 +9201,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2512 : 2487);
+reportChecks(testIsMysql() ? 2520 : 2495);

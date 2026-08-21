@@ -1696,10 +1696,21 @@ function sqlStatements($script)
  * continue, rather than continuing to the first admin over half a schema.
  *
  * @param string $script the contents of schema.sql
+ * **The out-parameter is deliberately untyped**, which is the opposite of what it looks
+ * like and cost four days of red CI (§4bq). It was `array &$failures = []`, and PHP 8
+ * refuses that: passing an *undefined* variable by reference creates it as `null`, the
+ * declared type rejects `null`, and the call is a fatal `TypeError` — so the natural call
+ * shape, the one both real callers use and the one the `= []` default exists for, was the
+ * one shape that could not work. Both callers are the installer's schema step; the suite
+ * only ever passed an initialised array, so every local gate was green while the installer
+ * could not install. Every other out-parameter in this codebase (`&$error`, `&$why`) is
+ * untyped for the same reason, and this one now matches them. What guarantees the array is
+ * the line below, not the signature.
+ *
  * @param array  $failures out: one ['statement' => …, 'error' => …] per refusal
  * @return bool true when the engine accepted every statement
  */
-function applySchemaScript(PDO $pdo, $script, array &$failures = [])
+function applySchemaScript(PDO $pdo, $script, &$failures = [])
 {
     $failures = [];
 

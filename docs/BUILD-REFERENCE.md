@@ -8003,24 +8003,65 @@ The check that would have covered it does not exist because there is nothing to 
 exists instead is the paragraph on `readableTextOn()` saying so, so the next person does not
 write it again.
 
-**And the gate that had been red for four commits.** Invariant 40 was written for the
-installer's upload door and immediately named a *fourth* door nobody had listed —
-`admin_panel.php`'s Site Branding logo, which turned out to be the strongest of the four, so
-the installer was rewritten to match it rather than the reverse. That was the intended kind
-of find. The unintended one came from the anchor beside it: `tools/rehearse_install.php`
-declared `$expected = 33` where **35** was true, on the day it landed, and 35 where 37 was
-true after the next edit. Nothing local can run that file — it needs a MySQL server — so the
-only place the disagreement could appear was the CI leg it had been added to guard, and
-**every push since `38ec68c` has been red on all five MySQL legs** for `Rehearsal —
-installing from nothing`. The green line under it was `Document numbering`, which carries
-`if: !cancelled()` and so runs after a failure and prints last.
+**Invariant 40 found the fourth door.** It was written for the installer's upload and
+immediately named one nobody had listed — `admin_panel.php`'s Site Branding logo, which
+turned out to be the strongest of the four, so the installer was rewritten to match it rather
+than the reverse. That was the intended kind of find.
 
-The arithmetic is now written out rather than totalled — `32 + 9 + 1`, naming the call sites,
-the nine-table loop that is a multiplier a reader cannot see in a total, and the check
-counting itself. `docs/BUILD-REFERENCE.md` §4bk says that whether the MySQL arm *finishes* is
-only ever answered by the run; this is the same lesson one level up. **A gate nothing local
-can execute is a gate whose own arithmetic has to be legible**, because the first thing it
-will ever tell you is that it disagrees with itself.
+**And then: the installer could not install, and had not been able to since the day it
+landed.** CI's five MySQL legs had been red for four commits on `Rehearsal — installing from
+nothing`, which is easy to miss for a specific reason — the step under it is `Document
+numbering`, which carries `if: !cancelled()`, so it runs after a failure and its green output
+is the last thing in the log.
+
+The cause was one word in a signature:
+
+```php
+function applySchemaScript(PDO $pdo, $script, array &$failures = [])
+```
+
+and one call, in `install.php`'s schema step and in `rehearse_install.php`, both written the
+way the `= []` default invites:
+
+```php
+applySchemaScript($pdo, $script, $failures)      // $failures never initialised
+```
+
+An undefined variable passed **by reference** is created as `null`; the declared `array` type
+rejects `null`; the call is a fatal `TypeError` before the body runs. The body's own first
+line is `$failures = [];` — so the type declaration guaranteed nothing and forbade the exact
+shape it was written for. Every other out-parameter here (`&$error`, `&$why`) is untyped, and
+this one now matches them.
+
+**Why no local gate could see it.** `sqlStatements()` had eleven checks. `applySchemaScript()`
+had **none** — not one. The function the installer's schema step calls was never called by
+anything but the installer and `tools/rehearse_install.php`, which needs a MySQL server and
+therefore only ever ran on CI. So the practical shape of it was: a page that unpacks 49 files,
+writes credentials outside the webroot, reports what it checked at every step — and dies on
+the statement that makes the tables, with no local gate able to notice, for four days. §4bk's
+sentence was *whether the MySQL arm finishes is only ever answered by the run*; this is the
+same lesson about a **function**, and the answer is the same one: the check that exists now is
+the ordinary call, written with a variable this suite has never mentioned, because `$x = []`
+above the call is exactly what would have hidden it again.
+
+**A second defect was hiding behind the first.** The anchor beside it was also wrong:
+`$expected = 33` where 35 was true on the day it landed, and 35 where 37 was true after the
+next edit — never reached, because the fatal came first. It is now a sum of declared terms,
+`32 + 9 + 1`, naming the call sites, the nine-table loop that is a multiplier no total shows,
+and the check counting itself. **A gate nothing local can execute is a gate whose own
+arithmetic has to be legible**, because the first thing it ever tells you may be that it
+disagrees with itself.
+
+**And a database was finally installed here.** A MariaDB was put on the container to settle
+which of the two defects CI was hitting, which makes this the first time in this project that
+`rehearse_install.php` has run anywhere but CI: **42 checks, 0 failed** — a database built
+from nothing, nine tables, convergence seeding one Display, the credentials file, the logo
+row, the Brand carrying it through the foreign key, `branding_config.php` written and parsed,
+and the administrator. The MySQL arm of `selftest_layout.php` ran too — **2520 checks, 0
+failed** — and so did `rehearse_phase1.php`. One caveat worth keeping: it is **MariaDB
+10.11**, which `HANDOFF.md` and `INSTALL.md` both call untested, so this is a new data point
+rather than a substitute for CI's real MySQL. It is the first green run of anything in this
+project on MariaDB.
 
 **What checks the branding half.** Thirty-six in `selftest_layout.php`, and the shape of them
 is the point: `storeProblem()`, `readableTextOn()`, `logoFileProblem()`, `logoStoredName()`
