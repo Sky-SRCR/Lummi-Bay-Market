@@ -8618,6 +8618,87 @@ follows a theme rather than agreeing with the old default for ever. Left alone d
 one is a Brand's, drawn on a sign, and has nothing to do with white on a fill — and the blue
 in Help's tip rule and link text, which is text on a dark surface rather than a fill.
 
+### 4bx. The Builder was not drawing what the sign draws
+
+Two screenshots from the field, the same block on both pages: in the Builder *WELCOME TO
+EXIT 260* fits on one line, on the television *260* wraps and *ORDER HERE* is gone. And
+separately: *center on parent appears to make the child off centre to the right by 2–3px.*
+
+One report, three defects, and every one of them is the same shape — a box in `builder.php`
+that is not the box `viewer.php` draws. Measured rather than argued: the layout was seeded
+into a scratch database and the same element read out of both pages in a real Chromium.
+
+**1. The Builder drew every text block in the interface's font.**
+
+```
+BUILDER  72px/86.4px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif
+VIEWER   72px/86.4px Arial
+```
+
+`applyTextStyles()` puts the Brand's `font-family` on the **block**, and the text lives in a
+`.text-inner` child — so the child only ever had that family by *inheritance*. The
+stylesheet opened with `* { … font-family: -apple-system, … }`, which **matches that child
+directly**, and a directly-matched declaration beats an inherited value however low its
+specificity. So the canvas was drawn in Segoe UI or SF while the television drew Arial:
+different metrics, so a different wrap point and a different apparent size, on the one page
+whose entire job is to show what the sign will show.
+
+The fix is where the font lives, not a patch on `.text-inner`: `*` no longer sets a family,
+`body` does, and form controls are named because they do not inherit one from an ancestor.
+Then a block's own family wins inside the block, which is what inheritance is for — and it
+fixes the whole class at once rather than the one selector today's screenshot was of.
+
+**Why nothing here had caught it, and why it was invisible on this machine.** The container
+has neither Arial nor Segoe UI, so `fontconfig` substitutes the same physical font for both
+and the two pages measure *identically* — same `oneLineW`, same wrap. The defect is only
+visible where the fonts exist, which is every machine in the shop and none of the ones this
+repo runs on. What the browser could still show is the **computed `font-family`**, and that
+differed plainly. A check on the rendering would have proved nothing; a check on the cascade
+proves it everywhere.
+
+**2. `.text-inner` had 4px of padding the sign does not.** Content box eight pixels
+narrower, first line four pixels lower. A block sized to just fit its text on the canvas
+wrapped on the sign, and the Builder was the last place anybody would look for the reason.
+
+**3. `.section-block` had a 2px border and the Viewer has none** — and this is the one that
+answers the centring report. A `position: absolute` box with a border is the containing
+block for its children at its **padding** box, so:
+
+| | Builder | Viewer |
+|---|---|---|
+| child at `x=40` rendered at | **42** | 40 |
+| `Center in parent` stored | 350 (right) | — |
+| …and rendered at | **352** | — |
+| section `clientWidth` | **1596** | 1600 |
+
+So *every* block inside a section was two pixels right and two down of where the television
+draws it, and *Center in parent* stored the correct number and drew it two pixels off —
+which is why it read as an arithmetic bug in the button rather than a stylesheet one.
+`_parentContainer()` measures `offsetWidth`, the border box, and the code was right. Worse
+while a section was **targeted**: that state's border is 3px, so clicking a section visibly
+shifted the blocks inside it. That is the *2–3* in the report, and it was two separate
+numbers rather than a rounding error.
+
+The purple edge is an `outline` now, with `outline-offset: -2px` so it draws where the border
+did. An outline is painted and takes no space — which is what Builder-only chrome should do,
+and what the blocks themselves had been doing all along. `overflow: hidden` now clips at the
+true edge too, which is where the television clips.
+
+**Invariant 42 is the mechanical half**, and it is the first rule in `check_invariants.php`
+about a stylesheet's *geometry* rather than its colours: on the four boxes the two pages
+share — `#builder-canvas`, `.section-block`, `.editable-block`, `.text-inner` — no `border`
+and no `padding`, and `.section-block` must draw its edge with an `outline`. It reads the
+**subject** of each selector rather than searching the text of it, because `.section-block
+.rh-nw` is a resize handle and may have any border it likes: nothing is positioned inside a
+handle.
+
+Seen to fail five ways: the border restored, the padding restored, a single `border-left`
+longhand on the targeted state, the outline deleted — and one that must *not* fail, a border
+put on a resize handle. The fourth of those passed on the first attempt, because the flag
+accepted an `outline` on `.section-block.targeted` as evidence that the ordinary edge was
+drawn; it wants the plain selector. A rule that cannot tell a state from the thing it is a
+state of is a rule that can be satisfied by the wrong half of what it is checking.
+
 ---
 ## 5. Verification
 

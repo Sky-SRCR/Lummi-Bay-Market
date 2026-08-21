@@ -87,7 +87,8 @@ if (!$resolution->isFound()) {
 :root {
 <?= SiteChrome::styleVariables() ?>
 }
-* { box-sizing:border-box; margin:0; padding:0;
+* { box-sizing:border-box; margin:0; padding:0; }
+body, input, select, button, textarea, optgroup {
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
 body { background:var(--work-area); color:var(--work-area-text); min-height:100vh; padding:40px 20px; }
 .wrap { max-width:640px; margin:0 auto; }
@@ -382,8 +383,24 @@ $gearNeedsChip = Color::hardToRead('#bdc3c7', SiteChrome::navBg());
 :root {
 <?= SiteChrome::styleVariables() ?>
 }
-* { box-sizing: border-box; margin: 0; padding: 0;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+/* ── The interface's font, on `body` and not on `*` ──
+   This is a canvas-fidelity rule, not a tidiness one, and it was a real defect (§4bx).
+   `applyTextStyles()` puts the Brand's `font-family` on the *block* and the text lives in
+   a `.text-inner` child, so the child only ever had the family by **inheritance** — and a
+   universal selector matching that child directly beats any inherited value, whatever its
+   specificity. So every text block on the canvas was drawn in Segoe UI or SF while the
+   television drew it in the Brand's Arial: different metrics, so a different wrap point and
+   a different apparent size, on the one page whose whole job is to show what the sign will
+   show. On `body` the family reaches the chrome by inheritance exactly as before and a
+   block's own family wins inside the block, which is what inheritance is for.
+
+   Form controls do not inherit a font family from their ancestors — that is a UA
+   stylesheet default rather than a cascade rule — so they are named. Nothing on the canvas
+   is a form control. */
+body, input, select, button, textarea, optgroup {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
 
 body { background: var(--work-area); display: flex; flex-direction: column; height: 100vh; overflow: hidden; color: var(--work-area-text); }
 
@@ -746,11 +763,28 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 }
 
 /* Section blocks */
+/* ── An outline, not a border, and it is a correctness fix (§4bx) ──
+   The purple edge is Builder chrome: `viewer.php`'s `.section-block` has no border at all.
+   As a *border* it took up layout, and a bordered, `position: absolute` box is the
+   containing block for its children at its **padding** box — so every block inside a
+   section was drawn two pixels right and two pixels down of where the sign draws it, and
+   `Center in parent` landed two pixels right of centre because `_parentContainer()` measures
+   `offsetWidth`, which is the border box. Worse while a section was *targeted*: three
+   pixels, so children visibly shifted when you clicked the section they were in.
+
+   An outline is painted and takes no space, which is exactly what Builder-only chrome
+   should do — the blocks themselves have used one for the same reason all along.
+   `outline-offset: -2px` draws it inside the box, where the border was, so nothing looks
+   different. `overflow: hidden` now clips at the true edge as well, which is where the
+   television clips. */
 .section-block {
-    border: 2px solid #8e44ad; overflow: hidden;
+    outline: 2px solid #8e44ad; outline-offset: -2px; overflow: hidden;
     background-size: cover; background-position: center;
 }
-.section-block.targeted { border: 3px solid #e67e22; box-shadow: 0 0 12px rgba(230,126,34,.6); }
+.section-block.targeted {
+    outline: 3px solid #e67e22; outline-offset: -3px;
+    box-shadow: 0 0 12px rgba(230,126,34,.6);
+}
 .section-label {
     position: absolute; top: 2px; left: 4px; font-size: 10px; color: rgba(255,255,255,.7);
     background: rgba(142,68,173,.7); padding: 1px 5px; border-radius: 2px;
@@ -759,7 +793,13 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 
 /* Text blocks */
 .text-inner {
-    width: 100%; height: 100%; padding: 4px; outline: none;
+    /* No padding, and that is deliberate (§4bx). Four pixels of it made this box eight
+       pixels narrower than the one `viewer.php` wraps the same string in, and pushed the
+       first line down by four — so a block sized to just fit its text on the canvas
+       wrapped on the sign, and the Builder was the last place anybody would look for the
+       reason. `viewer.php` draws the text on the block itself with `* { padding: 0 }`;
+       this is that geometry, exactly. */
+    width: 100%; height: 100%; outline: none;
     word-break: break-word; overflow: hidden; user-select: none;
 }
 .text-inner[contenteditable="true"] { cursor: text; }

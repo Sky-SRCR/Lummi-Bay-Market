@@ -1128,6 +1128,89 @@ if (!$canvasProblems) {
     $failures[] = 'a theme role on the canvas';
 }
 
+// ---- The canvas boxes are the geometry the sign has, not a pixel more ------------
+// Invariant 42, and it is the mechanical half of §4bx. `builder.php` and `viewer.php` draw
+// the same three boxes — the canvas, a section, a block — and the Builder's whole job is to
+// show what the sign will show. So those boxes must lay out identically in both, and there
+// are exactly two properties that quietly stop that being true:
+//
+//   * **`border`** takes up layout, and a bordered `position: absolute` box is the
+//     containing block for its children at its **padding** box. A 2px border on
+//     `.section-block` therefore drew every block inside a section two pixels right and two
+//     down of where the television draws it, and made *Center in parent* land two pixels
+//     right of centre — because the code measures `offsetWidth`, which is the border box.
+//     Builder-only edges are `outline`, which is painted and takes no space; the blocks
+//     themselves had used one all along, which is what made the section's border look
+//     ordinary.
+//   * **`padding`** does the same to the box's inside. Four pixels of it on `.text-inner`
+//     made the Builder wrap the same string in a box eight pixels narrower than the sign's,
+//     so a block sized to just fit its text on the canvas wrapped on the sign.
+//
+// Neither is visible by looking at a screenshot of one page. Both are one grep.
+//
+// The subject of the selector is what matters, not whether the name appears in it:
+// `.section-block .rh-nw` is a resize handle, which may have any border it likes because
+// nothing is positioned inside it. So this reads the last compound of each selector.
+$geomSelectors = ['#builder-canvas', '.section-block', '.editable-block', '.text-inner'];
+$geomProblems  = [];
+$geomRules     = 0;
+$sectionOutline = false;
+preg_match_all('/<style>(.*?)<\/style>/s', file_get_contents($root . '/builder.php'), $geomBlocks);
+foreach ($geomBlocks[1] as $geomBlock) {
+    // Comments first, for the reason the decision-11 rule gives above: the prose over these
+    // very rules explains why an outline is used instead of a border, and the word `border`
+    // in it would satisfy a naive search.
+    $geomBlock = preg_replace('!/\*.*?\*/!s', ' ', $geomBlock);
+    preg_match_all('/([^{}]+)\{([^{}]*)\}/s', $geomBlock, $geomRuleSet, PREG_SET_ORDER);
+    foreach ($geomRuleSet as $rule) {
+        foreach (explode(',', $rule[1]) as $one) {
+            $one   = trim(preg_replace('/\s+/', ' ', $one));
+            if ($one === '') { continue; }
+            $parts = explode(' ', $one);
+            $last  = end($parts);
+            $isSubject = false;
+            foreach ($geomSelectors as $frag) {
+                // `.editable-block.selected` and `.section-block.targeted` are the same box.
+                if ($last === $frag || strpos($last, $frag . '.') === 0
+                    || strpos($last, $frag . ':') === 0) { $isSubject = true; break; }
+            }
+            if (!$isSubject) { continue; }
+            $geomRules++;
+            // The *plain* selector, not a state of it: `.section-block.targeted` declares an
+            // outline too, and accepting that let the ordinary edge be deleted with this
+            // rule still printing ok — seen, by deleting it.
+            if ($last === '.section-block' && preg_match('/\boutline\s*:/', $rule[2])) {
+                $sectionOutline = true;
+            }
+            foreach (preg_split('/;/', $rule[2]) as $decl) {
+                if (preg_match('/^\s*(border|padding)(-[a-z]+)*\s*:/', $decl, $bad)) {
+                    $geomProblems[] = "`$one` sets `" . trim($decl) . "`, and `viewer.php` draws "
+                                    . 'that box without it';
+                }
+            }
+        }
+    }
+}
+if ($geomRules < 8) {
+    $geomProblems[] = "only $geomRules rules in builder.php had one of these boxes as their "
+                    . 'subject, so this rule is checking almost nothing — the names have moved';
+}
+if (!$sectionOutline) {
+    $geomProblems[] = 'no rule draws `.section-block`\'s edge with an `outline`, so either the '
+                    . 'purple edge is gone or it went back to being a border under another name';
+}
+$checked++;
+if (!$geomProblems) {
+    echo "  ok   the canvas boxes lay out exactly as viewer.php lays them out "
+       . "($geomRules rules, invariant 42)\n";
+} else {
+    echo "  FAIL a canvas box in builder.php is not the shape the sign draws\n";
+    foreach ($geomProblems as $problem) { echo "       $problem\n"; }
+    echo "       A border moves a positioned box's children by its width; padding moves\n";
+    echo "       its contents. Builder-only edges are outlines, which take no space.\n";
+    $failures[] = 'a canvas box the sign does not have';
+}
+
 // ---- Convergence runs before anything that could hold a transaction --------------
 // The §5 note on this one is right that the *position* is the invariant and not the
 // call, and wrong that a pattern cannot decide it. DDL commits an open transaction in
@@ -2461,8 +2544,10 @@ foreach ([
 // removed by hand is exactly the edit that takes a rule with it, and this number is what
 // noticed it had not. 107 is that plus the CI-coverage rule and its seven probes,
 // and plus invariant 40's one door rule (§4bq). 108 adds invariant 41, which is the first
-// rule here about *where* in a file a line is rather than which file it is in (§4bt).
-$expectedChecks = 108;
+// rule here about *where* in a file a line is rather than which file it is in (§4bt); 109
+// adds invariant 42, the first about a *stylesheet's* geometry rather than its colours
+// (§4bx).
+$expectedChecks = 109;
 $checked++;
 if ($checked === $expectedChecks) {
     echo "  ok   this checker ran every check it is supposed to ($checked)\n";
