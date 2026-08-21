@@ -245,12 +245,32 @@ is_it($probe(dirname($fakeApp) . '/signs-test') === Installer::BORROWED,
 @rmdir(dirname($fakeApp));
 @rmdir(dirname(dirname($fakeApp)));
 
-// ---- The first administrator, and the venue ------------------------------------
+// ---- The first administrator, the venue, and the store's own identity -----------
 step('The first administrator');
+
+// The logo goes in first, the way the page does it: `install.php` moves the file and asks
+// `AssetLibrary` for the row, then hands the id down. Nothing is uploaded here — what this
+// leg is for is the *chain* on a real engine, where `brands.logo_asset_id` is a foreign key
+// into `assets` and SQLite's version of that check is a suggestion.
+$logoId = (new AssetLibrary($pdo))->create('image', 'uploads/install_rehearsal.png',
+                                           Installer::LOGO_LABEL);
+is_it($logoId > 0, 'the logo row is created through the module that owns the table');
+
+$brandingDir = sys_get_temp_dir() . '/lbm-rehearse-branding-' . getmypid();
+@mkdir($brandingDir, 0700, true);
+$config = new BrandingConfig($brandingDir);
+
 $made = $installer->createFirstAdmin('rehearsal', 'rehearsal@example.com',
                                      'a-long-enough-password', 'a-long-enough-password',
-                                     'Rehearsal Venue');
-is_it($made->isOk(), 'the administrator and the venue are created'
+                                     'Rehearsal Venue',
+                                     ['site_name' => 'Rehearsal Store',
+                                      'mail_from' => 'signs@example.com',
+                                      'nav_bg'    => '#2E5C3A',
+                                      'bg_val'    => '#101820',
+                                      'logo_asset_id' => $logoId,
+                                      'logo_path'     => 'uploads/install_rehearsal.png'],
+                                     $config);
+is_it($made->isOk(), 'the administrator, the venue and the store details are created'
       . ($made->isOk() ? '' : ' — ' . $made->message()));
 foreach ($made->detail() as $line) { echo '       ' . $line . "\n"; }
 
@@ -262,6 +282,18 @@ $brands = (new BrandStore($pdo))->all();
 is_it(count($brands) === 1 && $brands[0]->name() === 'Rehearsal Venue',
       'the seeded Brand is renamed to the venue rather than a second one being made — '
       . '"Store Brand" beside a real venue reads like an install that stopped half way');
+is_it(count($brands) === 1 && $brands[0]->logoAssetId() === $logoId,
+      'wearing the logo, through the foreign key MySQL actually enforces');
+is_it(count($brands) === 1 && $brands[0]->backgroundValue() === '#101820',
+      'and the background a sign wearing it starts with');
+
+$brandingSource = @file_get_contents($config->path());
+is_it(is_string($brandingSource) && strpos((string) $brandingSource, "'Rehearsal Store'") !== false,
+      'branding_config.php was written with the store name in it');
+is_it(is_string($brandingSource) && strpos((string) $brandingSource, "'#ffffff'") !== false,
+      'and with the text colour derived from the navigation colour rather than asked for');
+@unlink($config->path());
+@rmdir($brandingDir);
 
 // The refusal that makes the installer safe to leave on a server for the minutes before
 // it deletes itself: once an account exists there is no first administrator to create.
@@ -276,7 +308,18 @@ is_it($accounts->total() === 1, 'and nothing was created by the attempt');
 // ---- And that every one of them ran --------------------------------------------
 // The anchor `rehearse_phase1.php` did not have until §4bk, for the reason that write-up
 // is about: this printed "clean" whether it ran every check or stopped after four.
-$expected = 35;
+//
+// **A sum of declared terms, not a number**, and it is written this way because the flat
+// number was wrong the day it landed and stayed wrong through a second edit (§4bq). There
+// are 33 `is_it` call sites (this sentence deliberately writes the name without its
+// bracket, so a naive count of the file does not include the comment about the count);
+// one of them is the nine-table loop, which is a multiplier a
+// reader cannot see from a total; and this check counts itself. `33` was written where 35
+// was true, and **nothing local can run this file** — it needs a MySQL server — so the only
+// place that disagreement could show up was the CI leg it was added to guard.
+$expected = 32     // call sites that run once
+          + 9      // the nine tables schema.sql builds, one call site
+          + 1;     // this check, counting itself
 $checked++;
 if ($checked === $expected) {
     ok("this rehearsal ran every check it is supposed to ($checked)");

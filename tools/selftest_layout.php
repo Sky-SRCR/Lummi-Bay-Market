@@ -8678,6 +8678,125 @@ checkSame('0700', substr(sprintf('%o', fileperms(dirname($writeTarget))), -4),
 @rmdir(dirname($writeTarget));
 @rmdir(dirname(dirname($writeTarget)));
 
+// ---- The store's own identity, on the same form (§4bq) -------------------------
+// The fieldset is optional end to end, so the first thing to pin is that *absent* means
+// "leave the shipped default alone" rather than "clear it" — the #21 line, in the one place
+// where clearing it would write a file every page requires.
+checkSame('', Installer::storeProblem([]), 'a skipped fieldset is not a problem');
+checkSame('', Installer::storeProblem(['site_name' => '', 'mail_from' => '', 'nav_bg' => '',
+                                       'bg_val' => '']),
+          'and neither are four empty boxes, which is what a browser actually sends');
+checkMentions(Installer::storeProblem(['site_name' => str_repeat('x', Installer::SITE_NAME_MAX + 1)]),
+              (string) Installer::SITE_NAME_MAX,
+              'too long names the limit rather than describing it');
+checkSame('', Installer::storeProblem(['site_name' => str_repeat('x', Installer::SITE_NAME_MAX)]),
+          'and the limit itself is allowed — the boundary, because `>` and `>=` are one '
+          . 'character apart');
+checkMentions(Installer::storeProblem(['site_name' => "Bay\tMarket"]), 'control characters',
+              'a control character is refused, because this lands in generated PHP and in a '
+              . 'browser tab');
+checkMentions(Installer::storeProblem(['mail_from' => 'not-an-address']), 'email address',
+              'an address that is not one is refused rather than written into the file the '
+              . 'password-reset mail is sent from');
+checkSame('', Installer::storeProblem(['mail_from' => 'signs@example.com']),
+          'and a real one is accepted');
+$navBad = Installer::storeProblem(['nav_bg' => 'reddish']);
+checkMentions($navBad, 'across the top',
+              'a colour is refused by *where it shows*, because "invalid colour" on a form '
+              . 'with two of them is a sentence nobody can act on');
+checkMentions(Installer::storeProblem(['bg_val' => '#12345']), 'sign starts with',
+              'and the other one names its own place — five hex digits is the near-miss '
+              . 'that makes this worth checking');
+checkSame('', Installer::storeProblem(['nav_bg' => '#1A252F', 'bg_val' => '#1a1a2e']),
+          'two readable colours are no problem, upper case included');
+
+// The one value this form derives. Both bands, and the refusal.
+checkSame('#000000', Installer::readableTextOn('#ffffff'),
+          'white needs black text on it');
+checkSame('#ffffff', Installer::readableTextOn('#1a252f'),
+          'and the shipped navy needs white — which is the shipped default, so this is the '
+          . 'case where deriving must agree with what was already there');
+checkSame('#ffffff', Installer::readableTextOn('not a colour'),
+          'anything unreadable answers white rather than throwing: a form that refused the '
+          . 'colour already said so, and this is not the place it is reported');
+
+// ---- The logo ------------------------------------------------------------------
+// Every arm takes its facts as parameters, which is the only reason the 20 MB file, the
+// truncated upload and the SVG-named-.png can be asked about at all (invariant 37).
+checkSame('', Installer::logoFileProblem(['error' => UPLOAD_ERR_OK, 'size' => 2048,
+                                          'name' => 'logo.PNG'], 10485760, 'image/png'),
+          'an ordinary PNG is accepted, and the extension is matched case-insensitively');
+checkMentions(Installer::logoFileProblem(['error' => UPLOAD_ERR_INI_SIZE, 'size' => 0,
+                                          'name' => 'logo.png'], 1048576, ''),
+              'larger than this server accepts',
+              'a file the server itself refused says so, naming the limit — the arm that '
+              . 'arrives with no file content at all');
+checkMentions(Installer::logoFileProblem(['error' => UPLOAD_ERR_PARTIAL, 'size' => 10,
+                                          'name' => 'logo.png'], 1048576, 'image/png'),
+              'did not finish uploading', 'a truncated upload is not read as an image');
+checkMentions(Installer::logoFileProblem(['error' => UPLOAD_ERR_OK, 'size' => 20971520,
+                                          'name' => 'logo.png'], 10485760, 'image/png'),
+              'accepts up to', 'too big names both sizes');
+checkMentions(Installer::logoFileProblem(['error' => UPLOAD_ERR_OK, 'size' => 100,
+                                          'name' => 'shell.php'], 10485760, 'image/png'),
+              'has to be a', 'an extension outside the list is refused before the type is');
+checkMentions(Installer::logoFileProblem(['error' => UPLOAD_ERR_OK, 'size' => 100,
+                                          'name' => 'logo.png'], 10485760, 'image/svg+xml'),
+              'named like an image and is not one',
+              'and a file whose *type* disagrees with its name is refused too — the check '
+              . 'the extension alone cannot make');
+
+// The line that stops a logo being a PHP file. `uploads/` has no .htaccess of its own, so
+// what matters is that **nothing the browser sent reaches the filename** — not the basename
+// and not the extension. The name is looked up from the type the file really is, which is
+// the shape admin_panel.php's branding upload already had (invariant 40).
+checkSame('install_deadbeef.png', Installer::logoStoredName('image/png', 'DEADbeef'),
+          'the stored name is the type\'s own extension and the caller\'s token, lower case');
+checkSame('install_ab12.jpg', Installer::logoStoredName('image/jpeg', 'ab12'),
+          'and JPEG is stored as .jpg, the spelling this app uses');
+checkSame('', Installer::logoStoredName('image/svg+xml', 'ab12'),
+          'SVG produces no filename — it can carry <script> and would be stored XSS served '
+          . 'from this app\'s own origin');
+checkSame('', Installer::logoStoredName('text/x-php', 'ab12'),
+          'and so does anything else: a type this does not know is refused rather than '
+          . 'sanitised, because sanitising is where the interesting failures live');
+checkSame('', Installer::logoStoredName('', 'ab12'),
+          'including the empty type mime_content_type() answers for a file it could not read');
+checkSame('', Installer::logoStoredName('image/png', ''),
+          'no token, no filename');
+checkSame('', Installer::logoStoredName('image/png', '../..'),
+          'and a token that is not hex is left with nothing rather than escaped');
+check(!in_array('svg', AssetLibrary::IMAGE_EXTENSIONS, true)
+      && !array_key_exists('image/svg+xml', Installer::LOGO_TYPES),
+      'the two lists agree that SVG is not an image this app stores — asserted rather than '
+      . 'assumed, because they are declared in two files');
+
+// ---- What reaches branding_config.php ------------------------------------------
+checkSame([], Installer::brandingChanges([]),
+          'nothing given is nothing written — `save()` is not called at all, because writing '
+          . 'a file every page requires in order to change nothing in it is a risk taken for '
+          . 'no reason');
+$named = Installer::brandingChanges(['site_name' => 'Lummi Bay Market']);
+checkSame('Lummi Bay Market', $named['SITE_NAME'] ?? '', 'a store name becomes SITE_NAME');
+checkSame('Lummi Bay Market', $named['MAIL_FROM_NAME'] ?? '',
+          'and the name beside the address, so one place does not end up with two names');
+$coloured = Installer::brandingChanges(['nav_bg' => '#EEEEEE']);
+checkSame('#eeeeee', $coloured['BRAND_NAV_BG'] ?? '',
+          'a colour is normalised to the six-digit lower-case form the file is read with');
+checkSame('#000000', $coloured['BRAND_TEXT'] ?? '',
+          'and the text on it comes along, which is the whole reason a pale brand colour is '
+          . 'not a vanished menu');
+// The protection invariant 14's exemption was granted on: this module may name two of the
+// four colour constants, so every name it can emit is held to being one the file holds.
+$everything = Installer::brandingChanges(['site_name' => 'S', 'mail_from' => 'a@b.com',
+                                          'logo_path' => 'uploads/x.png', 'nav_bg' => '#123456']);
+check(count($everything) === 6,
+      'the fullest form of this fieldset writes six settings');
+foreach ($everything as $settingName => $ignored) {
+    check(array_key_exists($settingName, BrandingConfig::DEFAULTS),
+          'the setting ' . $settingName . ' is one branding_config.php actually holds');
+}
+
 // ---- The first administrator ---------------------------------------------------
 // The validation order is setup.php's, kept deliberately: a person filling in a form wants
 // the first thing that is wrong with it, and these checks are what stops that order being
@@ -8710,6 +8829,87 @@ checkSame(false, $onSeeded->isOk(),
           'and a database that already holds accounts has no first administrator to create');
 checkMentions($onSeeded->message(), 'Sign in',
               'which is a sentence saying what to do instead, not a refusal');
+
+// ---- And the whole of it, once, on a database with nobody in it (§4bq) ---------
+// The only place `createFirstAdmin()`'s *success* path runs: everything above hands it a
+// database that already has accounts, which is the refusal. What this pins is the chain —
+// a logo row, a Brand carrying it, a generated PHP file, and an account — and the order,
+// which is the part that decides what a failure leaves behind.
+$fresh     = newTestDb(false);
+$freshInst = new Installer($fresh);
+checkSame(0, $freshInst->accountCount(), 'the accountless fixture really has no accounts');
+
+// `refusalFor()` is what the page asks before it moves a file, so it is asked here the same
+// way round: a form that would be refused must be refused *without* the database being
+// touched, or the whole point of the split is lost.
+check($freshInst->refusalFor('me', 'a@b.com', 'short', 'short', 'Venue') !== null,
+      'a form that would fail is refused before anything is written');
+checkSame(null, $freshInst->refusalFor('me', 'a@b.com', 'longenough', 'longenough', 'Venue'),
+          'and a form that would succeed answers null, which is the page\'s green light to '
+          . 'move the uploaded logo');
+checkSame(0, $freshInst->accountCount(),
+          'and asking created nothing — the refusal check is a read');
+
+$logoId = (new AssetLibrary($fresh))->create('image', 'uploads/install_abc.png',
+                                             Installer::LOGO_LABEL);
+check($logoId > 0, 'a logo goes into the Asset Library through the module that owns it');
+
+$brandingDir = sys_get_temp_dir() . '/lbm-branding-' . getmypid();
+@mkdir($brandingDir, 0700, true);
+$config = new BrandingConfig($brandingDir);
+$made   = $freshInst->createFirstAdmin('owner', 'owner@example.test', 'longenough',
+    'longenough', 'Bay Market',
+    ['site_name' => 'Lummi Bay Market', 'mail_from' => 'signs@example.test',
+     'nav_bg' => '#2E5C3A', 'bg_val' => '#101820', 'logo_asset_id' => $logoId,
+     'logo_path' => 'uploads/install_abc.png'],
+    $config);
+checkSame(true, $made->isOk(), 'the whole form lands: ' . $made->message());
+checkSame(1, $freshInst->accountCount(), 'with exactly one account, which is the administrator');
+
+$brandRows = (new BrandStore($fresh))->all();
+checkSame(1, count($brandRows),
+          'and one Brand still — the venue was *renamed*, not added beside the seeded one');
+checkSame('Bay Market', $brandRows[0]->name(), 'wearing the venue name that was typed');
+checkSame($logoId, $brandRows[0]->logoAssetId(),
+          'and the logo, which rides in the same write because BrandStore::updateDetails '
+          . 'writes every column it knows and a second call would erase the first');
+checkSame('#101820', $brandRows[0]->backgroundValue(),
+          'and the background a sign starts with');
+
+// The generated file, read back off disk rather than from the object that wrote it.
+$written = @file_get_contents($config->path());
+check(is_string($written) && $written !== '', 'branding_config.php was written');
+checkMentions((string) $written, "'Lummi Bay Market'", 'holding the store name');
+checkMentions((string) $written, "'signs@example.test'",
+              'and the address mail comes from, which is the setting this fieldset exists for');
+checkMentions((string) $written, "'#2e5c3a'", 'and the navigation colour, normalised');
+checkMentions((string) $written, "'#ffffff'",
+              'and white text, derived from that colour rather than asked for');
+checkMentions((string) $written, "'uploads/install_abc.png'",
+              'and the logo path, so the sign-in page draws it too — one upload, three places');
+$lint = [];
+$lintStatus = 0;
+exec(escapeshellarg(PHP_BINARY) . ' -l ' . escapeshellarg($config->path()) . ' 2>&1',
+     $lint, $lintStatus);
+checkSame(0, $lintStatus,
+          'and PHP can parse what was written, which is the whole of why BrandingConfig is '
+          . 'the only writer of that file — every page in the app requires it');
+@unlink($config->path());
+@rmdir($brandingDir);
+
+// Skipping the fieldset writes no file at all, which is the other half of "absent means
+// leave it alone". A separate database, because the one above now has an administrator.
+$second   = new Installer(newTestDb(false));
+$bareDir  = sys_get_temp_dir() . '/lbm-branding-bare-' . getmypid();
+@mkdir($bareDir, 0700, true);
+$bare     = new BrandingConfig($bareDir);
+$skipped  = $second->createFirstAdmin('owner', 'owner@example.test', 'longenough',
+                                      'longenough', 'Bay Market', [], $bare);
+checkSame(true, $skipped->isOk(), 'an install that skipped the store details still works');
+checkSame(false, is_file($bare->path()),
+          'and wrote no branding file — the risk of touching a file every page requires is '
+          . 'not taken to store the values it already had');
+@rmdir($bareDir);
 
 // ─────────────────────────────────────────────────────────────
 // Everything above this line runs on both engines. What follows can only be asked
@@ -8952,4 +9152,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2453 : 2428);
+reportChecks(testIsMysql() ? 2512 : 2487);

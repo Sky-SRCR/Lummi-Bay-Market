@@ -72,7 +72,9 @@ hosting is create the *database* — cPanel owns that — so it offers, and says
 when it is refused. A **second** install on the same account gets asked for a database of
 its own rather than adopting the first one's: credentials files carry the install folder
 they were written for, and one naming a different folder is refused before anything
-connects (§4bp).
+connects (§4bp). The administrator form also asks — optionally — for the store name, the
+address mail is sent from, a logo and two colours, so an install does not end with a shop
+called *Store Display System* mailing from a domain this server does not own (§4bq).
 
 The build refuses to write a package holding a path no rule classifies, because a `lib/`
 module left out is a blank sign in the shop and a `.md` put in is the live database name

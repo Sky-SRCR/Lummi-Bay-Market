@@ -9,13 +9,17 @@ folder, open it in a browser, and it unpacks the app, writes the database creden
 above the webroot, creates the tables, makes your account and your first venue, and then
 deletes itself.
 
-**What it does not ask you for: your colours, your logo, your prices, or anything about a
-screen.** The installer's whole job is a working app with one account and one venue in it.
-Everything a customer will actually see is set afterwards, signed in — Admin Panel → Site
-Branding for the name and the mail-from address, Display Branding for a venue's colours and
-logo, Displays for what each sign is called, and the Builder for what is on it. Step 6 and
-the checks after it say which to do first, and why the mail-from address is the one that
-costs weeks if it is skipped.
+**It asks for four things about your store, and all four are optional:** the store name, the
+address mail is sent from, a logo file, and two colours. Skip any of them and the app ships
+with a default you can change signed in. One is worth doing at install time even so — the
+**mail-from address**, because left at its default a password reset is sent from a domain
+this server does not own, is dropped as spam, and so is the alert that would have told you.
+
+**What it does not ask for: your prices, or anything about a screen.** Those are the work the
+app exists for rather than part of installing it — Admin Panel → Displays names each sign,
+and the Builder is where a layout is made. Typography and a venue's full six-colour palette
+are also left to Display Branding, which has a preview beside every swatch; a colour typed
+blind into an install form is a colour you would set twice.
 
 One thing it cannot do for you, and it is worth knowing before you start: **on shared
 hosting it cannot create the database.** cPanel owns that — the names carry your account
@@ -167,10 +171,29 @@ name** — the shop or restaurant this sign belongs to. Every display wears a **
 which is its typography, palette and logo; naming the venue names the first one. You can
 add more later, one per venue.
 
-The venue is saved first and the account second, deliberately. If the venue cannot be
-saved, no account is created and you are offered the form again. If the account cannot be
-saved, the venue is named and this page still works, because it is the account that
-switches the installer off.
+Under it, **your store — all optional**:
+
+| | |
+|---|---|
+| **Store name** | Shown in the browser tab, on the sign-in page, and as the name mail comes from. Not the same as the venue above: the venue is one Brand, this is the whole installation. On a single-site shop they are usually the same words; on a property with several restaurants they are not. |
+| **Email address mail is sent from** | **The one worth doing now.** Use an address on this domain. Left at the shipped `noreply@yourdomain.com`, password-reset codes are sent from a domain this server does not own, are dropped as spam — and so is the alert that would have told you. |
+| **Logo** | JPG, PNG, GIF or WEBP, up to 2 MB. One file, three places: the Asset Library as *Store logo*, the sign-in page, and the venue's Brand. A display only shows it when a layout puts it there. |
+| **Colour across the top of the admin pages** | Six-digit hex. The text on it is set to black or white, whichever can be read on what you choose — that one value is worked out rather than asked for, and the form says so. |
+| **Background a new sign starts with** | Six-digit hex, and this one a customer sees. It is the venue Brand's default, so every sign wearing that Brand starts here. |
+
+A colour that is not a colour is **refused, not corrected** — you are told which of the two
+it was and what a hex colour looks like. Nothing is stored that you did not choose.
+
+Everything on this form is applied in one order, and the order is what decides what a
+failure leaves behind: the venue, then the store details, then the account. If the venue
+cannot be saved, nothing else is attempted. If the store details cannot be written, the
+venue is named and there is still no account. **The account is last because it is the
+account that switches the installer off** — so anything that fails above it leaves a page
+you can simply fill in again.
+
+One thing that follows from that: the logo is moved into `uploads/` only once every other
+field has been checked. A password that does not match its confirmation does not leave a
+file behind.
 
 ### 6. It deletes itself
 
@@ -197,9 +220,11 @@ A folder listing cannot answer check 3: an `.htaccess` in a directory where
 
 Then one thing that is not a check but is the setting most likely to cost you weeks:
 **Admin Panel → Site Branding**, and set the site name and the address mail is sent from.
-Left at the shipped `noreply@yourdomain.com`, password-reset codes are sent from a domain
-this server does not own and are dropped as spam — and so is the alert that would have
-told you.
+If you filled those in on the install form, this is already done — open the page and read
+them back rather than skipping it, because a wrong address behaves exactly like a right one
+until somebody needs a password reset. Left at the shipped `noreply@yourdomain.com`,
+password-reset codes are sent from a domain this server does not own and are dropped as spam
+— and so is the alert that would have told you.
 
 ---
 

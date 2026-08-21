@@ -179,6 +179,27 @@ edited in place and every change reaches the sign by hand.
   reached on the two screens where being wrong costs something. The write side of that
   rule — `credentialsTarget()` — had been right since the day it landed, which is what made
   the missing read side invisible.
+- **A file arrives from a browser through one of four doors, and none writes the name it was
+  given** (invariant 40, §4bq). `crud.php`, `api.php`, `admin_panel.php` and `install.php`;
+  `check_invariants.php` fails on a fifth. `uploads/` is the only folder in the webroot with
+  no `.htaccess` of its own, so a `.php` written there is executed by the server, by anybody,
+  for ever — which is why the stored filename is always built here rather than cleaned. The
+  two strongest doors look the extension up from the type `mime_content_type()` reports, so
+  nothing that arrived survives into the name; the other two match the arriving extension
+  against `AssetLibrary::IMAGE_EXTENSIONS` and write the matched entry. No match is a
+  **refusal, not a sanitised name**. SVG is out of all four: it carries `<script>` and would
+  be stored XSS from this app's own origin. The rule was written for the installer's door and
+  named the fourth one nobody had listed.
+- **The installer asks for the store's own identity, and refuses rather than corrects it**
+  (§4bq). Store name, mail-from address, a logo and two colours, on the administrator form —
+  not a step of their own, because the state after an account exists is the state that makes
+  the installer delete itself, and a step there would need remembered state and a live public
+  installer past the guard that kills it. Venue, then the store details, then the account,
+  because the account switches the installer off and everything above it can be filled in
+  again; and the logo is moved only after `refusalFor()` has answered, because
+  `move_uploaded_file()` cannot be rolled back. Colours are refused with the place they show
+  named, never substituted (#21). The one derived value — the navigation's text colour, from
+  `Color::contrastRatio()` and not a second luminance rule — is **stated on the form**.
 - **Nothing that has been published can be taken back.** Publishing overwrites; a
   deleted Display, a swept asset row and a saved brand standard are gone. Prefer
   refusing a write to merging one. The **one** exception is the Builder's Undo

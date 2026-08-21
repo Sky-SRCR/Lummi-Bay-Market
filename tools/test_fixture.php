@@ -181,9 +181,15 @@ function grantTestAccess(PDO $pdo, $displayId, $accountId)
  * two that cannot — the ones that need a catalogue which *disagrees* with the
  * tables — call newSqliteTestDb() and say why.
  */
-function newTestDb()
+/**
+ * @param bool $withAccounts false for a database with the structure and **no accounts** —
+ *        the one state the installer's own success path can be asked about, because
+ *        `createFirstAdmin()` refuses a database that already holds one. Both builders make
+ *        a fresh database per call, so this cannot leak into another test (§4bq).
+ */
+function newTestDb($withAccounts = true)
 {
-    return testIsMysql() ? newMysqlTestDb() : newSqliteTestDb();
+    return testIsMysql() ? newMysqlTestDb($withAccounts) : newSqliteTestDb($withAccounts);
 }
 
 /**
@@ -199,7 +205,7 @@ function seedTestAccounts(PDO $pdo)
 }
 
 /** A fresh in-memory SQLite database with the live structure. */
-function newSqliteTestDb()
+function newSqliteTestDb($withAccounts = true)
 {
     $pdo = new PDO('sqlite::memory:', null, null, [
         PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
@@ -383,7 +389,7 @@ function newSqliteTestDb()
         (1,'price_2',       'Arial',30,'#e74c3c','bold','normal',1.20),
         (1,'description',   'Arial',16,'#bdc3c7','normal','normal',1.40)");
 
-    seedTestAccounts($pdo);
+    if ($withAccounts) { seedTestAccounts($pdo); }
 
     return $pdo;
 }
@@ -407,7 +413,7 @@ function newSqliteTestDb()
  * full of `checkSame(1, $row['hidden'])` would be asserting against a fixture
  * that behaves differently from the app it is testing.
  */
-function newMysqlTestDb()
+function newMysqlTestDb($withAccounts = true)
 {
     static $n = 0;
 
@@ -427,7 +433,7 @@ function newMysqlTestDb()
     foreach (sqlStatements(file_get_contents(__DIR__ . '/../schema.sql')) as $sql) {
         $pdo->exec($sql);
     }
-    seedTestAccounts($pdo);
+    if ($withAccounts) { seedTestAccounts($pdo); }
 
     return $pdo;
 }

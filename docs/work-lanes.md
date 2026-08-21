@@ -210,7 +210,12 @@ and the reservation only settles who renumbers on the merge.** As settled:
 - **Lane C took 30**, and only 30 — a check ships having been seen to fail (§4aq). It was
   expected to add several; what it actually needed was one rule about how a check earns
   its line, because the four mechanised greps are rules the *checker* enforces rather than
-  invariants a reader has to hold. **38 is now the next free number**: 31 went to the
+  invariants a reader has to hold. **41 is now the next free number** — 38 went to the
+  installer package assembled from the tracked file list (§4bn), 39 to the one
+  first-administrator door (§4bo, extended in §4bp), and 40 to the four doors a browser's
+  file may arrive through (§4bq), which is the first invariant here that found something
+  *while being written*: it was written for a third door and named a fourth nobody had
+  listed. Before those: 31 went to the
   above-floor syntax check, 32 to a value the shop's engine would refuse (§4bk) — which
   grew a second half in §4bl, under the same number, because SQLite dialect on a portable
   handle is the same rule failing a different way and a reader holding one holds both — 33

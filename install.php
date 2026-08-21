@@ -308,6 +308,7 @@ function installerMain()
     $stage           = 'database';
     $errors          = [];
     $notes           = [];
+    $redraw          = [];
 
     // ---- What state is this install in? Asked of the world, never remembered ----
     // No session and no hidden step counter: the credentials file either exists or does
@@ -372,17 +373,65 @@ function installerMain()
         } elseif ($pdo === null) {
             $errors[] = 'The database is not reachable, so no account was created.';
         } else {
-            $result = (new Installer($pdo))->createFirstAdmin(
+            $installer = new Installer($pdo);
+            $store     = [
+                'site_name' => $_POST['site_name'] ?? '',
+                'mail_from' => $_POST['mail_from'] ?? '',
+                'nav_bg'    => $_POST['nav_bg']    ?? '',
+                'bg_val'    => $_POST['bg_val']    ?? '',
+            ];
+
+            // Everything that would refuse this form, asked **before** the logo is moved.
+            // `move_uploaded_file()` cannot be rolled back, so a file accepted and then
+            // followed by "the two passwords are not the same" leaves an image in `uploads/`
+            // and a row in the Asset Library that nobody asked for. `crud.php` puts its own
+            // gate above the file handling for exactly this reason, and `refusalFor()` exists
+            // so that the rules are asked twice rather than written twice.
+            $refusal = $installer->refusalFor(
                 $_POST['username'] ?? '', $_POST['email'] ?? '',
                 $_POST['password'] ?? '', $_POST['confirm'] ?? '',
-                $_POST['venue'] ?? ''
+                $_POST['venue'] ?? '', $store
             );
-            if ($result->isOk()) {
-                $stage   = 'finished';
-                $notes[] = $result->message();
+            $logoProblem = installerLogoProblem();
+
+            if ($refusal !== null) {
+                $errors[] = $refusal->message();
+                foreach ($refusal->detail() as $line) { $errors[] = $line; }
+            } elseif ($logoProblem !== '') {
+                $errors[] = $logoProblem;
             } else {
-                $errors[] = $result->message();
-                foreach ($result->detail() as $line) { $errors[] = $line; }
+                $kept = installerKeepLogo($appDir, $pdo, $why);
+                if ($why !== '') {
+                    $errors[] = $why;
+                } else {
+                    $store['logo_asset_id'] = $kept['id'];
+                    $store['logo_path']     = $kept['path'];
+                    $result = $installer->createFirstAdmin(
+                        $_POST['username'] ?? '', $_POST['email'] ?? '',
+                        $_POST['password'] ?? '', $_POST['confirm'] ?? '',
+                        $_POST['venue'] ?? '', $store, new BrandingConfig($appDir)
+                    );
+                    if ($result->isOk()) {
+                        $stage   = 'finished';
+                        $notes[] = $result->message();
+                    } else {
+                        $errors[] = $result->message();
+                        foreach ($result->detail() as $line) { $errors[] = $line; }
+                    }
+                }
+            }
+            // What to put back in the boxes. Not the passwords — a browser does not send
+            // them back either and a form that redraws one has stored it somewhere.
+            if ($stage !== 'finished') {
+                $redraw = [
+                    'username'  => (string) ($_POST['username'] ?? ''),
+                    'email'     => (string) ($_POST['email'] ?? ''),
+                    'venue'     => (string) ($_POST['venue'] ?? ''),
+                    'site_name' => (string) $store['site_name'],
+                    'mail_from' => (string) $store['mail_from'],
+                    'nav_bg'    => (string) $store['nav_bg'],
+                    'bg_val'    => (string) $store['bg_val'],
+                ];
             }
         }
     }
@@ -393,7 +442,102 @@ function installerMain()
     installerPage($appDir, $stage, $errors, $notes, $token, $pdo,
                   $ownership === Installer::BORROWED
                       ? ''
-                      : Installer::sharingNote($ownership, $appDir, $credentialsFile, $database));
+                      : Installer::sharingNote($ownership, $appDir, $credentialsFile, $database),
+                  $redraw);
+}
+
+// ============================================================
+// The logo — the one file this page accepts from a browser
+// ============================================================
+// Two functions, and the split is where the machine ends. `$_FILES`, `ini_get` and
+// `mime_content_type()` are readable only here, on a request that really carried an upload;
+// what is *decidable* about them is `Installer::logoFileProblem()` and
+// `Installer::logoStoredName()`, which take those readings as parameters and can therefore
+// be asked about a 20 MB SVG named `.png` on a host nobody has (invariant 37).
+//
+// On this being an upload form with no account behind it. It is only ever drawn while the
+// database holds **zero accounts** — the same window in which anybody reaching this page can
+// make themselves the administrator. An attacker who is inside that window already owns the
+// installation, so accepting an image does not widen it; what would widen it is accepting an
+// image *badly*, and that is why every question `crud.php` asks is asked here, from the same
+// lists, and why the stored filename is built from the matched extension rather than from
+// anything that arrived.
+
+/** What is wrong with the uploaded logo, or '' — including '' for "there wasn't one". */
+function installerLogoProblem()
+{
+    $file = $_FILES['logo'] ?? null;
+    if (!is_array($file)) { return ''; }
+    if (intval($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) { return ''; }
+
+    // Read here, decided there. `mime_content_type()` needs a file that is really on disk,
+    // so it is asked only once the upload is known to have arrived.
+    $mime = '';
+    if (intval($file['error']) === UPLOAD_ERR_OK && is_readable((string) ($file['tmp_name'] ?? ''))) {
+        $found = @mime_content_type((string) $file['tmp_name']);
+        $mime  = ($found === false) ? '' : (string) $found;
+    }
+    return Installer::logoFileProblem($file, UploadLimit::logoBytes(), $mime);
+}
+
+/**
+ * Move the logo into `uploads/` and put it in the Asset Library.
+ *
+ * Called only after `installerLogoProblem()` has answered '' and after every other refusal
+ * has been ruled out, because this is the step that cannot be undone.
+ *
+ * @return array ['id' => int, 'path' => string] — zeros and '' when there was no logo
+ */
+function installerKeepLogo($appDir, PDO $pdo, &$error = null)
+{
+    $error = '';
+    $none  = ['id' => 0, 'path' => ''];
+
+    $file = $_FILES['logo'] ?? null;
+    if (!is_array($file) || intval($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        return $none;
+    }
+
+    // Asked again rather than carried from `installerLogoProblem()`. The two calls are one
+    // request apart and cost one stat each; what they buy is that the name is derived from
+    // the file that is about to be moved rather than from a value threaded through a page.
+    $found = @mime_content_type((string) ($file['tmp_name'] ?? ''));
+    $name  = Installer::logoStoredName(($found === false) ? '' : (string) $found,
+                                       bin2hex(random_bytes(8)));
+    if ($name === '') {
+        $error = 'That logo is not a type this app stores, so it was not kept. Nothing else '
+               . 'was affected.';
+        return $none;
+    }
+
+    // 0755 rather than 0700: the web server reads what is in here to serve it, and on a
+    // shared host that is a different user from the one PHP runs as. Same mode `crud.php`
+    // creates it with, because it is the same folder.
+    $dir = $appDir . '/uploads';
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) {
+        $error = 'The uploads folder could not be created, so the logo was not kept. '
+               . 'Nothing else was affected.';
+        return $none;
+    }
+    if (!@move_uploaded_file((string) $file['tmp_name'], $dir . '/' . $name)) {
+        $error = 'The logo could not be written into the uploads folder, so it was not kept. '
+               . 'Nothing else was affected.';
+        return $none;
+    }
+
+    // Through the module that owns the table, never an INSERT of this page's own
+    // (invariant 3). The path is relative because that is what the app stores and what a
+    // browser is given.
+    $relative = 'uploads/' . $name;
+    $assetId  = (new AssetLibrary($pdo))->create('image', $relative, Installer::LOGO_LABEL);
+    if ($assetId <= 0) {
+        $error = 'The logo was uploaded and could not be added to the Asset Library, so '
+               . 'nothing was saved. The file is at ' . $relative . ' if you want to add it '
+               . 'by hand later.';
+        return $none;
+    }
+
+    return ['id' => $assetId, 'path' => $relative];
 }
 
 /**
@@ -551,7 +695,7 @@ function installerBarePage($which)
 
 /** The one screen, in whichever of its four states this install is in. */
 function installerPage($appDir, $stage, array $errors, array $notes, $token, ?PDO $pdo = null,
-                      $sharing = '')
+                      $sharing = '', array $redraw = [])
 {
     installerHead('Install');
 
@@ -599,7 +743,7 @@ function installerPage($appDir, $stage, array $errors, array $notes, $token, ?PD
     if ($stage === 'database' || $stage === 'schema') {
         installerDatabaseForm();
     } elseif ($stage === 'admin') {
-        installerAdminForm($token);
+        installerAdminForm($token, $redraw);
     } else {
         installerFinished($appDir, $pdo);
     }
@@ -672,23 +816,79 @@ function installerDatabaseForm()
        . '</form>';
 }
 
-function installerAdminForm($token)
+function installerAdminForm($token, array $was = [])
 {
+    // `multipart/form-data` because of the logo, and it is worth one sentence: a POST that
+    // arrives with the wrong encoding carries no `$_FILES` entry at all and looks exactly
+    // like a person who chose not to upload one. The form and the branch that reads it are
+    // the only two places that could disagree about this, so they are written together.
     echo '<h2>Your account, and the venue</h2>'
        . '<p>Every display wears a <strong>Brand</strong> — its typography, palette and '
        . 'logo. Naming the venue names the first one. You can add more later, one per '
        . 'venue.</p>'
-       . '<form method="post"><input type="hidden" name="step" value="admin">'
+       . '<form method="post" enctype="multipart/form-data">'
+       . '<input type="hidden" name="step" value="admin">'
        . '<input type="hidden" name="token" value="' . Markup::text($token) . '">'
-       . '<label>Username<input name="username" required autofocus></label>'
-       . '<label>Email address<input name="email" type="email" required></label>'
+       . '<label>Username<input name="username" required autofocus value="'
+       . Markup::text((string) ($was['username'] ?? '')) . '"></label>'
+       . '<label>Email address<input name="email" type="email" required value="'
+       . Markup::text((string) ($was['email'] ?? '')) . '"></label>'
        . '<label>Password<input name="password" type="password" required '
        . 'minlength="' . intval(Installer::PASSWORD_MIN) . '"></label>'
        . '<label>Password again<input name="confirm" type="password" required></label>'
        . '<label>Venue name<input name="venue" placeholder="Salmon House" required '
-       . 'maxlength="' . intval(BrandStore::NAME_MAX) . '"></label>'
-       . '<button type="submit">Create the administrator</button>'
-       . '</form>';
+       . 'maxlength="' . intval(BrandStore::NAME_MAX) . '" value="'
+       . Markup::text((string) ($was['venue'] ?? '')) . '"></label>';
+
+    // ---- The store's own identity ------------------------------------------------
+    // Everything else about how this looks is set signed in, with a preview beside it, and
+    // that is the right place for it. These four are here because a person installing has
+    // them in hand already, and because one of them is the most expensive default in the app.
+    echo '<h2>Your store &mdash; all optional</h2>'
+       . '<p>Skip any of these and the app ships with a sensible default you can change in '
+       . '<strong>Admin Panel &rarr; Site Branding</strong> and <strong>Display '
+       . 'Branding</strong>, where there is a preview beside every colour. One of them is '
+       . 'worth doing now.</p>'
+       . '<label>Store name<input name="site_name" placeholder="Lummi Bay Market" '
+       . 'maxlength="' . intval(Installer::SITE_NAME_MAX) . '" value="'
+       . Markup::text((string) ($was['site_name'] ?? '')) . '">'
+       . '<small>Shown in the browser tab, on the sign-in page, and as the name mail comes '
+       . 'from. Not the same as the venue above: the venue is one Brand, this is the whole '
+       . 'installation.</small></label>'
+       . '<label>Email address mail is sent from<input name="mail_from" type="email" '
+       . 'placeholder="noreply@your-domain.com" value="'
+       . Markup::text((string) ($was['mail_from'] ?? '')) . '">'
+       . '<small><strong>This is the one worth doing now.</strong> Left at its default, a '
+       . 'password reset is sent from a domain this server does not own, is dropped as '
+       . 'spam &mdash; and so is the alert that would have told you. Use an address on this '
+       . 'domain.</small></label>';
+
+    // Both lists come from `Installer::LOGO_TYPES`, which is the map that decides what is
+    // actually written — so the picker's filter, the sentence under it and the refusal behind
+    // it cannot drift apart. `AssetLibrary::IMAGE_EXTENSIONS` would have been the wrong list
+    // to quote here even though it is the wider one: it holds `jpg` *and* `jpeg`, and a form
+    // telling somebody it accepts both spellings of one format is noise.
+    echo '<label>Logo<input name="logo" type="file" accept="'
+       . Markup::text(implode(',', array_keys(Installer::LOGO_TYPES))) . '">'
+       . '<small>' . Markup::text(strtoupper(implode(', ', array_values(Installer::LOGO_TYPES))))
+       . ', up to ' . Markup::text(UploadLimit::describeLogo()) . '. It goes into the Asset '
+       . 'Library as &ldquo;' . Markup::text(Installer::LOGO_LABEL) . '&rdquo;, on the '
+       . 'sign-in page, and on the venue&rsquo;s Brand &mdash; one file, three places. A '
+       . 'display only shows it when a layout puts it there.</small></label>';
+
+    echo '<label>Colour across the top of the admin pages<input name="nav_bg" '
+       . 'placeholder="' . Markup::text(Installer::navBgDefault()) . '" value="'
+       . Markup::text((string) ($was['nav_bg'] ?? '')) . '">'
+       . '<small>Six-digit hex. The text on it is set to black or white, whichever can be '
+       . 'read on what you choose &mdash; that one value is worked out rather than '
+       . 'asked for.</small></label>'
+       . '<label>Background a new sign starts with<input name="bg_val" '
+       . 'placeholder="' . Markup::text(Background::DEFAULT_COLOR) . '" value="'
+       . Markup::text((string) ($was['bg_val'] ?? '')) . '">'
+       . '<small>Six-digit hex, and this one a customer sees. It is the venue '
+       . 'Brand&rsquo;s default, so every sign wearing that Brand starts here.</small></label>';
+
+    echo '<button type="submit">Create the administrator</button></form>';
 }
 
 /** Done — so this file goes, and then says what is left to check. */

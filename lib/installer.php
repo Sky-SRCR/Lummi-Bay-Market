@@ -33,6 +33,9 @@ require_once __DIR__ . '/brand_styles.php';
 require_once __DIR__ . '/brand_admin.php';
 require_once __DIR__ . '/displays.php';
 require_once __DIR__ . '/schema.php';
+require_once __DIR__ . '/assets.php';
+require_once __DIR__ . '/branding.php';
+require_once __DIR__ . '/upload_limits.php';
 
 /**
  * One thing the installer looked at, and what it makes of it.
@@ -137,6 +140,41 @@ class Installer
     const UNKNOWN = 'unknown';
     /** No credentials file exists yet. */
     const NONE = 'none';
+
+    /** How long a store name may be. `BrandStore`'s column width, for one reason: the
+     *  venue name beside it on the same form is held to that, and two limits on one
+     *  screen is a refusal somebody cannot predict. `SITE_NAME` is a `define()` with no
+     *  column behind it, so this is a rule rather than a constraint being reported. */
+    const SITE_NAME_MAX = BrandStore::NAME_MAX;
+
+    /**
+     * What a logo may be, and what it is stored as — a map rather than a list, and the
+     * direction is the point: **the extension written to disk comes from the type the file
+     * really is, not from the name the browser sent.** That is the shape `admin_panel.php`'s
+     * branding upload already had, found by invariant 40 rather than remembered, and it is
+     * strictly better than sanitising a filename because there is no filename left to
+     * sanitise. SVG is excluded deliberately and for the same reason it is there: an SVG can
+     * carry `<script>` and would be stored XSS served from this app's own origin.
+     */
+    const LOGO_TYPES = ['image/jpeg' => 'jpg', 'image/png' => 'png',
+                        'image/gif'  => 'gif', 'image/webp' => 'webp'];
+
+    /** The label the logo gets in the Asset Library, so it is findable later. */
+    const LOGO_LABEL = 'Store logo';
+
+    /**
+     * The shipped navigation colour, for the form to show as its placeholder.
+     *
+     * A method rather than the page reading `BrandingConfig::DEFAULTS` for itself, and the
+     * reason is the rule that caught this whole fieldset: `BRAND_NAV_BG` may be named in
+     * this module and four others, and a page that spells it is a page that has started
+     * having its own opinion about the store's colours (invariant 14). Asking keeps the
+     * placeholder and the value that would be written the same thing by construction.
+     */
+    public static function navBgDefault()
+    {
+        return (string) BrandingConfig::DEFAULTS['BRAND_NAV_BG'];
+    }
 
     private $pdo;
 
@@ -630,6 +668,183 @@ class Installer
     }
 
     // ============================================================
+    // Stage 4a — the store's own identity
+    // ============================================================
+    // Everything a customer eventually sees is set on four different pages of the signed-in
+    // app, and none of them is reachable until an account exists. That is the right shape
+    // for colours and typography, which want a preview beside them — and the wrong shape
+    // for the three facts a person installing already has in their hand: what the place is
+    // called, what address its mail comes from, and the logo file on their desktop.
+    //
+    // The mail-from address is the one that earns its place on this form. Left at the
+    // shipped `noreply@yourdomain.com`, a password reset is sent from a domain this server
+    // does not own, is dropped as spam, and **so is the alert that would have said so** —
+    // which is the worst shape a default can have. It is still not *required* here: an
+    // install held hostage for an address somebody has to go and decide is an install
+    // abandoned half way, and the finished screen goes on saying what a default costs.
+    //
+    // Colours are offered and refused rather than corrected, which is the same stance
+    // `BrandAdmin::checkFields()` takes: storing `#ffffff` for something somebody typed and
+    // reporting success is #21. The one substitution made here is **stated on the form** —
+    // the navigation's text colour follows the background it sits on, because a light
+    // colour typed into a dark-themed bar is white text on white and nothing else in this
+    // app would ever mention it.
+
+    /**
+     * What is wrong with the store details on the form, or '' if nothing is.
+     *
+     * Pure, and every field optional: this whole fieldset is skippable, so "absent" has to
+     * mean "leave the shipped default alone" rather than "clear it". A value that is
+     * *present and unusable* is a different answer and gets a sentence.
+     *
+     * @param array $store site_name, mail_from, nav_bg, bg_val — any subset
+     */
+    public static function storeProblem(array $store)
+    {
+        $name = trim((string) ($store['site_name'] ?? ''));
+        if ($name !== '') {
+            if (strlen($name) > self::SITE_NAME_MAX) {
+                return 'The store name has to be ' . self::SITE_NAME_MAX
+                     . ' characters or fewer.';
+            }
+            if (preg_match('/[\x00-\x1f\x7f]/', $name)) {
+                return 'The store name cannot contain control characters.';
+            }
+        }
+
+        $mail = trim((string) ($store['mail_from'] ?? ''));
+        if ($mail !== '' && !filter_var($mail, FILTER_VALIDATE_EMAIL)) {
+            return 'That does not look like an email address for mail to come from.';
+        }
+
+        // Two colours, each named by where a person will see it, because "invalid colour"
+        // on a form with two of them is a sentence nobody can act on.
+        $colours = ['nav_bg' => 'The colour across the top of the admin pages',
+                    'bg_val' => 'The background a new sign starts with'];
+        foreach ($colours as $key => $where) {
+            $raw = (string) ($store[$key] ?? '');
+            if ($raw === '') { continue; }
+            if (Color::read($raw) === '') {
+                return $where . ' is not a colour (' . Color::describe($raw)
+                     . '). Use a six-digit hex colour such as #1a252f, or leave it empty.';
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * Black or white, whichever can be read on this background.
+     *
+     * The one value this form derives rather than asks for, and it is derived because the
+     * alternative is invisible: `BRAND_TEXT` ships as white for a dark navigation bar, and
+     * a person typing their brand's pale grey into the colour box would get white text on
+     * pale grey with nothing on any screen to say why the menu had vanished. Stated on the
+     * form, so it is a substitution somebody was told about rather than #21 again.
+     *
+     * Decided with `Color::contrastRatio()` rather than a luminance rule of its own. The
+     * first draft had the sRGB coefficients and a midpoint written out here, which is a
+     * second opinion about legibility in an app that already has one — and `Color` holds
+     * the threshold this project chose (`READABLE_RATIO`, WCAG AA) as well as the
+     * arithmetic. Two answers to "can this be read" is how one of them comes to disagree
+     * with the warning an admin is shown.
+     *
+     * Pure, and white for anything it cannot read: that is the shipped default and it is
+     * right for the shipped background. A tie goes to white for the same reason.
+     *
+     * **No warning goes with this, and that was checked rather than assumed.** The first
+     * draft added one — "the colour you chose is hard to read against black *and* white" —
+     * and then the arithmetic was run over 4096 backgrounds: not one of them is hard to
+     * read under the better of the two. It cannot be: a background dark enough to fail
+     * against white passes against black at the same threshold, and the two bands meet with
+     * no gap. So the sentence would have been an `ok` line nobody could ever produce
+     * (invariant 30), and it was deleted instead of shipped.
+     */
+    public static function readableTextOn($background)
+    {
+        $hex = Color::read($background);
+        if ($hex === '') { return '#ffffff'; }
+        $onBlack = Color::contrastRatio('#000000', $hex);
+        $onWhite = Color::contrastRatio('#ffffff', $hex);
+        return ($onBlack > $onWhite) ? '#000000' : '#ffffff';
+    }
+
+    /**
+     * What is wrong with the uploaded logo, or '' if nothing is.
+     *
+     * Pure, and takes the cap and the detected type rather than reading either: `ini_get`
+     * has one value on this machine and `mime_content_type()` needs a file that is really
+     * there, so a rule that read them could only ever be asked in the one configuration
+     * the tests happen to run in (invariant 37).
+     *
+     * The same four questions `crud.php` asks, in the same order, because they are the same
+     * question — is this an image this app is willing to keep. The extension list is
+     * `AssetLibrary`'s, so a type added there is accepted here without anybody remembering
+     * to. What this does **not** do is trust the extension afterwards: the stored name is
+     * built by `logoStoredName()` from the matched list entry, never from what arrived.
+     *
+     * @param array  $file     one entry of $_FILES
+     * @param int    $maxBytes UploadLimit::logoBytes(), passed in
+     * @param string $mime     mime_content_type() of the temporary file, passed in
+     */
+    public static function logoFileProblem(array $file, $maxBytes, $mime)
+    {
+        $error = isset($file['error']) ? intval($file['error']) : UPLOAD_ERR_NO_FILE;
+        if ($error === UPLOAD_ERR_INI_SIZE || $error === UPLOAD_ERR_FORM_SIZE) {
+            return 'That logo is larger than this server accepts in one upload ('
+                 . UploadLimit::describeBytes($maxBytes) . ').';
+        }
+        if ($error !== UPLOAD_ERR_OK) {
+            return 'That logo did not finish uploading. Nothing else was affected.';
+        }
+        if (intval($file['size'] ?? 0) > intval($maxBytes)) {
+            return 'That logo is ' . UploadLimit::describeBytes(intval($file['size'] ?? 0))
+                 . ' and this server accepts up to ' . UploadLimit::describeBytes($maxBytes)
+                 . '.';
+        }
+        $ext = strtolower((string) pathinfo((string) ($file['name'] ?? ''), PATHINFO_EXTENSION));
+        if (!in_array($ext, AssetLibrary::IMAGE_EXTENSIONS, true)) {
+            return 'A logo has to be a ' . strtoupper(implode(', ', AssetLibrary::IMAGE_EXTENSIONS))
+                 . ' image. Nothing else was affected.';
+        }
+        if (!isset(self::LOGO_TYPES[(string) $mime])) {
+            return 'That file is named like an image and is not one (' . (string) $mime
+                 . '). Nothing else was affected.';
+        }
+        return '';
+    }
+
+    /**
+     * The name that file will be stored under, or '' if it may not be stored at all.
+     *
+     * **This is the line that stops a logo being a PHP file.** `uploads/` is the one folder
+     * in the webroot with no `.htaccess` of its own — the three in this app are the root,
+     * `lib/` and `tools/` — so a `.php` written there is executed by the web server, by
+     * anybody, for ever.
+     *
+     * So **nothing the browser sent reaches the filename**. Not the basename, and not the
+     * extension: the extension is looked up from the type the file actually is, and a type
+     * that is not in `LOGO_TYPES` produces no filename rather than a carefully cleaned one.
+     * `shell.php`, `shell.php.png` and `logo.png` with PHP inside it all end at the same
+     * place — either a `.png` holding whatever the file held, which the server serves as an
+     * image, or nothing.
+     *
+     * The random half is a parameter for the reason every other decision here is: a name
+     * built from `random_bytes()` cannot be asserted, and what wants asserting is the shape
+     * and the extension rather than the entropy.
+     *
+     * @param string $mime  mime_content_type() of the temporary file, passed in
+     * @param string $token hex from the caller's own random_bytes()
+     */
+    public static function logoStoredName($mime, $token)
+    {
+        if (!isset(self::LOGO_TYPES[(string) $mime])) { return ''; }
+        $token = preg_replace('/[^a-f0-9]/', '', strtolower((string) $token));
+        if ($token === '') { return ''; }
+        return 'install_' . $token . '.' . self::LOGO_TYPES[(string) $mime];
+    }
+
+    // ============================================================
     // Stage 4 — the first administrator, and the venue Brand
     // ============================================================
 
@@ -673,7 +888,23 @@ class Installer
      * person filling in a form wants the first thing that is wrong with it, and moving
      * that order about changes which sentence they get for no reason anybody can name.
      */
-    public function createFirstAdmin($username, $email, $password, $confirm, $brandName)
+    /**
+     * Everything that would refuse this form, or null if nothing would.
+     *
+     * Extracted so it can be asked **before** a file is moved. `move_uploaded_file()` cannot
+     * be rolled back, so a logo accepted and then followed by "the two passwords are not the
+     * same" leaves a file in `uploads/` and a row in the library that nobody asked for — the
+     * same shape `crud.php` puts its grant check above the file handling for. One writer of
+     * the rules, two callers: this page asks first, and `createFirstAdmin()` asks again
+     * rather than trusting that it did.
+     *
+     * The order is `setup.php`'s and is kept deliberately: a person filling in a form wants
+     * the first thing that is wrong with it. The store details come last of the validations
+     * because they are the optional half — being told about a colour before being told the
+     * password is too short is the wrong first sentence.
+     */
+    public function refusalFor($username, $email, $password, $confirm, $brandName,
+                               array $store = [])
     {
         $username  = trim((string) $username);
         $email     = trim((string) $email);
@@ -698,8 +929,12 @@ class Installer
             return InstallResult::failed('The two passwords are not the same.');
         }
 
-        $accounts = new AccountStore($this->pdo);
-        $existing = $accounts->total();
+        $storeProblem = self::storeProblem($store);
+        if ($storeProblem !== '') {
+            return InstallResult::failed($storeProblem);
+        }
+
+        $existing = (new AccountStore($this->pdo))->total();
         if ($existing < 0) {
             return InstallResult::failed('The users table is not there, so the schema has not '
                 . 'been applied to this database yet.');
@@ -708,23 +943,59 @@ class Installer
             return InstallResult::failed('This database already holds accounts, so there is no '
                 . 'first administrator to create. Sign in instead.');
         }
+        return null;
+    }
+
+    public function createFirstAdmin($username, $email, $password, $confirm, $brandName,
+                                     array $store = [], ?BrandingConfig $branding = null)
+    {
+        $refusal = $this->refusalFor($username, $email, $password, $confirm, $brandName, $store);
+        if ($refusal !== null) { return $refusal; }
+
+        $username  = trim((string) $username);
+        $email     = trim((string) $email);
+        $password  = (string) $password;
+        $brandName = BrandStore::cleanName($brandName);
+        $accounts  = new AccountStore($this->pdo);
 
         // The venue first. `schema.sql` seeds one generically-named Brand so that
         // `displays.brand_id` has something to point at from the first moment; naming a
         // venue is renaming that one. Creating a second would leave "Store Brand" on the
         // Display Branding tab, reading like an install that stopped half way.
+        //
+        // The logo and the background ride along in the same write rather than in one of
+        // their own, because `BrandStore::updateDetails()` writes **every** column it knows
+        // about — that is its documented contract, and the reason is that it cannot tell a
+        // slot somebody cleared from one the form never carried. So a second call would be
+        // the first call's values erased. The palette is carried through the same way and
+        // for the same reason: this form does not offer palette slots, and passing none
+        // would null the six the seeded Brand has.
         try {
             $brands = new BrandStore($this->pdo);
             $brandAdmin = new BrandAdmin($this->pdo, $brands, new BrandStyles($this->pdo),
                                          new DisplayStore($this->pdo));
             $rows   = $brands->all();
-            $named  = (count($rows) === 1)
-                ? $brandAdmin->updateDetails($rows[0], [
-                      'name'    => $brandName,
-                      'bg_type' => $rows[0]->backgroundType(),
-                      'bg_val'  => $rows[0]->backgroundValue(),
-                  ])
-                : $brandAdmin->create(['name' => $brandName]);
+            $logoId = intval($store['logo_asset_id'] ?? 0);
+            if (count($rows) === 1) {
+                $was    = $rows[0];
+                $bg     = trim((string) ($store['bg_val'] ?? ''));
+                $fields = [
+                    'name'          => $brandName,
+                    'logo_asset_id' => ($logoId > 0) ? $logoId : $was->logoAssetId(),
+                    'bg_type'       => ($bg === '') ? $was->backgroundType() : 'color',
+                    'bg_val'        => ($bg === '') ? $was->backgroundValue() : $bg,
+                ];
+                foreach (BrandStore::paletteFields() as $index => $field) {
+                    $fields[$field] = $was->paletteSlot($index);
+                }
+                $named = $brandAdmin->updateDetails($was, $fields);
+            } else {
+                $fields = ['name' => $brandName];
+                if ($logoId > 0) { $fields['logo_asset_id'] = $logoId; }
+                $bg = trim((string) ($store['bg_val'] ?? ''));
+                if ($bg !== '') { $fields['bg_type'] = 'color'; $fields['bg_val'] = $bg; }
+                $named = $brandAdmin->create($fields);
+            }
             if (!$named->isOk()) {
                 return InstallResult::failed('The venue "' . $brandName . '" could not be saved, '
                     . 'so no account was created either.', [$named->message()]);
@@ -732,6 +1003,28 @@ class Installer
         } catch (Throwable $e) {
             return InstallResult::failed('The venue could not be saved, so no account was '
                 . 'created either.', [$e->getMessage()]);
+        }
+
+        // Then the site's own identity, which is a *file* rather than a row — and the one
+        // file in this app whose syntax every page depends on. `BrandingConfig` renders it,
+        // parses what it rendered, writes a temporary file, reads it back and renames it
+        // into place, so the failure it reports is always "the site is still running on
+        // exactly what it had" (#36). Nothing here reimplements a byte of that.
+        //
+        // Before the account and after the venue, for the same reason the venue is where it
+        // is: the account is what switches this installer off, so everything that could
+        // still be retried happens above it. A refusal here leaves a named venue, no
+        // account, and this page still working.
+        if ($branding !== null) {
+            $changes = self::brandingChanges($store);
+            if ($changes) {
+                $written = $branding->save($changes);
+                if (!$written->isOk()) {
+                    return InstallResult::failed('The venue "' . $brandName . '" was saved and '
+                        . 'the store details were not, so no account was created either — this '
+                        . 'page still works.', [$written->message()]);
+                }
+            }
         }
 
         try {
@@ -745,5 +1038,46 @@ class Installer
 
         return InstallResult::ok('The administrator and the venue "' . $brandName
             . '" are created.');
+    }
+
+    /**
+     * The `branding_config.php` settings this form actually asked for.
+     *
+     * Pure, and it returns **only what was given** — an empty array when the fieldset was
+     * skipped, so `save()` is not called at all rather than called with the file's own
+     * values. Writing a file every page requires in order to change nothing in it is a risk
+     * taken for no reason.
+     *
+     * `MAIL_FROM_NAME` follows the store name because it is the name a recipient sees beside
+     * the address, and an install that named the store and left "Display System" on its mail
+     * has two names for one place. `BRAND_TEXT` follows the background it sits on — the one
+     * derived value on this form, and the form says so.
+     */
+    public static function brandingChanges(array $store)
+    {
+        $changes = [];
+
+        $name = trim((string) ($store['site_name'] ?? ''));
+        if ($name !== '') {
+            $changes['SITE_NAME']      = $name;
+            $changes['MAIL_FROM_NAME'] = $name;
+        }
+
+        $mail = trim((string) ($store['mail_from'] ?? ''));
+        if ($mail !== '') { $changes['MAIL_FROM'] = $mail; }
+
+        $logo = trim((string) ($store['logo_path'] ?? ''));
+        if ($logo !== '') { $changes['BRAND_LOGO'] = $logo; }
+
+        // Read, not passed through. `storeProblem()` has already refused anything that is
+        // not a colour, so this cannot substitute for a value somebody typed — what it does
+        // is normalise `#ABC` and `abcdef` into the six-digit form the file is read with.
+        $nav = Color::read((string) ($store['nav_bg'] ?? ''));
+        if ($nav !== '') {
+            $changes['BRAND_NAV_BG'] = $nav;
+            $changes['BRAND_TEXT']   = self::readableTextOn($nav);
+        }
+
+        return $changes;
     }
 }

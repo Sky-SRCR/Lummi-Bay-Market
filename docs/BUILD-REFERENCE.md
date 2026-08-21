@@ -790,6 +790,24 @@ through the app again:
     it costs something.
 
 
+40. **A file arrives from a browser through one of four doors, and none of them writes the
+    name it was given** (§4bq). `crud.php` (the Library's add form), `api.php` (the
+    Builder's upload), `admin_panel.php` (Site Branding's logo) and `install.php` (the
+    install form's logo) are the four, and `check_invariants.php` fails on a fifth. The
+    reason is one fact about this app's layout: **`uploads/` is the only folder in the
+    webroot with no `.htaccess` of its own** — the three are the root, `lib/` and `tools/` —
+    so a `.php` written there is executed by the web server, by anybody, for ever. Every
+    door therefore builds the stored filename itself: `admin_panel.php` and `install.php`
+    look the extension up from the type `mime_content_type()` reports, so nothing the
+    browser sent survives into the name at all; `crud.php` and `api.php` match the arriving
+    extension against `AssetLibrary::IMAGE_EXTENSIONS` and write the matched entry. A name
+    that matches nothing is **refused rather than sanitised**, because sanitising is where
+    the interesting failures live. SVG is excluded from all four on purpose: it can carry
+    `<script>` and would be stored XSS served from this app's own origin. The invariant was
+    written for the installer's door and immediately found the fourth, which nobody had
+    listed — and that one turned out to be the best of them, so the installer was rewritten
+    to match it rather than the other way round.
+
 ---
 
 ## 3. Which Display does a request with no tag mean?
@@ -7919,6 +7937,114 @@ And one that is a docblock being right rather than a gap, in §4am's sense:
 `clearstatcache(true, $path)` survives because the path being read back was written in the
 same request and PHP's stat cache does not hold an entry it never made — the line is there
 for the caller who writes over a file that was stat'ed earlier, which no test does.
+
+---
+### 4bq. The install form now asks what the app looks like, and asking found two things
+
+The owner's third question in a row about the installer: *"can you add the branding and logo
+setup to the installer?"* The two before it were about a page that said too little, and this
+one is about a page that asked too little — the install ended with a working app and a store
+that was still called **Store Display System**, mailing from `noreply@yourdomain.com`.
+
+**What was worth moving forward, and what was not.** Everything a customer eventually sees
+lives on four signed-in pages, and for most of it that is the right place: a palette wants a
+preview beside it, and a colour typed blind into a form you see once is a colour somebody
+sets twice. Four things are different, because a person installing already has them in hand:
+
+| | |
+|---|---|
+| Store name | `SITE_NAME`, and `MAIL_FROM_NAME` with it — an install that named the store and left *Display System* on its mail has two names for one place |
+| Mail-from address | The most expensive default in the app, and the reason this fieldset exists at all |
+| A logo file | One upload, three places: an `assets` row, `brands.logo_asset_id`, and `BRAND_LOGO` |
+| Two colours | The admin chrome's bar, and the background a sign starts with — one each side of the Brand/Workspace-Theme line, named by where they show |
+
+The mail-from address is the one that earns the form. Left at its shipped value a password
+reset is sent from a domain this server does not own, is dropped as spam, **and so is the
+alert that would have said so** — a default whose failure suppresses its own report. It is
+still not *required*: an install held hostage for an address somebody has to go and decide is
+an install abandoned half way, and the finished screen goes on saying what the default costs.
+
+**Where the fields went, and why not a fifth step.** Onto the administrator form, applied in
+the same request. A step of its own would have to come *after* the account — and the state
+the installer observes after an account exists is "finished", which is what makes it delete
+itself. A branding step there would need remembered state, against the one design decision
+this page is built on (state is observed, never remembered), and it would keep a public
+installer alive past the guard that exists to kill it. One form, one guard: zero accounts.
+
+**The order inside the write is the whole of what a failure leaves behind.** Venue, then the
+store details, then the account — because the account is what switches the installer off, so
+everything above it can be simply filled in again. And the logo is moved *last of the
+checks*: `refusalFor()` was extracted from `createFirstAdmin()` so the page can ask every
+refusal **before** `move_uploaded_file()`, which cannot be rolled back. Without that split, a
+mistyped password confirmation leaves an orphan image in `uploads/` and a row in the Library
+that nobody asked for — which is the shape `crud.php` puts its own grant check above the file
+handling for. One writer of the rules, two callers.
+
+**A colour is refused, never corrected** — `BrandAdmin::checkFields()`'s stance, for
+`#21`'s reason: storing `#ffffff` for something somebody typed and reporting success is the
+defect, not the fix. And the refusal names *where the colour shows* rather than which field
+it was, because "invalid colour" on a form with two of them is a sentence nobody can act on.
+
+**The one derived value is stated on the form.** `BRAND_TEXT` follows the bar it sits on: a
+person typing their brand's pale grey into a field whose shipped partner is white text would
+get an invisible menu, and nothing else in this app would ever mention it. Derived with
+`Color::contrastRatio()` — the first draft had the sRGB coefficients and a midpoint written
+out inline, which is a second opinion about legibility in an app that already holds one.
+
+Then two things this turned up, neither of them branding.
+
+**The warning that could not fire.** Choosing the better of black and white is not the same
+as choosing a *good* one, so a sentence was written for the mid-grey case: *"hard to read
+against both."* Then the arithmetic was run over 4096 backgrounds and **not one** of them is
+hard to read under the better of the two — a background dark enough to fail against white
+passes against black at the same threshold, and the two bands meet with no gap. So it was an
+`ok` line nobody could ever produce (invariant 30), and it was deleted rather than shipped.
+The check that would have covered it does not exist because there is nothing to cover; what
+exists instead is the paragraph on `readableTextOn()` saying so, so the next person does not
+write it again.
+
+**And the gate that had been red for four commits.** Invariant 40 was written for the
+installer's upload door and immediately named a *fourth* door nobody had listed —
+`admin_panel.php`'s Site Branding logo, which turned out to be the strongest of the four, so
+the installer was rewritten to match it rather than the reverse. That was the intended kind
+of find. The unintended one came from the anchor beside it: `tools/rehearse_install.php`
+declared `$expected = 33` where **35** was true, on the day it landed, and 35 where 37 was
+true after the next edit. Nothing local can run that file — it needs a MySQL server — so the
+only place the disagreement could appear was the CI leg it had been added to guard, and
+**every push since `38ec68c` has been red on all five MySQL legs** for `Rehearsal —
+installing from nothing`. The green line under it was `Document numbering`, which carries
+`if: !cancelled()` and so runs after a failure and prints last.
+
+The arithmetic is now written out rather than totalled — `32 + 9 + 1`, naming the call sites,
+the nine-table loop that is a multiplier a reader cannot see in a total, and the check
+counting itself. `docs/BUILD-REFERENCE.md` §4bk says that whether the MySQL arm *finishes* is
+only ever answered by the run; this is the same lesson one level up. **A gate nothing local
+can execute is a gate whose own arithmetic has to be legible**, because the first thing it
+will ever tell you is that it disagrees with itself.
+
+**What checks the branding half.** Thirty-six in `selftest_layout.php`, and the shape of them
+is the point: `storeProblem()`, `readableTextOn()`, `logoFileProblem()`, `logoStoredName()`
+and `brandingChanges()` all take their facts as parameters, so the 20 MB file, the truncated
+upload, the SVG named `.png` and the type `mime_content_type()` could not read are all
+askable on a machine nobody has (invariant 37). One of them is the protection invariant 14's
+exemption was granted on: this module may name two of the four colour constants, so **every
+key `brandingChanges()` can emit is asserted to be a name `BrandingConfig::DEFAULTS` holds** —
+a typo is a failing check rather than a setting written into a file nothing reads.
+
+Then the chain, once, end to end: `newTestDb(false)` is a new fixture mode — the structure
+with **no accounts**, the one state `createFirstAdmin()`'s success path can be asked about at
+all, since everything else in the suite hands it a database that already has one. A logo row,
+a Brand carrying it, a generated `branding_config.php` read back off disk and put through
+PHP's own parser, and an account. And the negative: an install that skipped the fieldset
+writes **no file at all**, because touching a file every page requires in order to store the
+values it already had is a risk taken for no reason. Seven more in
+`tools/rehearse_install.php`, where the foreign key from `brands.logo_asset_id` into `assets`
+is one MySQL actually enforces and SQLite treats as a suggestion.
+
+What none of it reaches is a browser with a real file picker in it. The upload path's last
+line — `move_uploaded_file()` — cannot be exercised outside a real multipart request, so it is
+the same owed walk as the rest of §4bo, with one thing added to look for: whether a logo
+uploaded here appears on the sign-in page, in the Asset Library, and on the venue's Brand.
 
 ---
 ## 5. Verification

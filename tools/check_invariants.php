@@ -109,6 +109,28 @@ $rules = [
         'why'    => 'a grant is the row\'s existence; GrantStore decides what that means',
     ],
     [
+        'name'   => 'a browser\'s file lands through one of four doors',
+        'regex'  => '/move_uploaded_file\s*\(/',
+        'in'     => '',
+        // The app's only write of bytes a stranger chose, and `uploads/` is the one folder
+        // in the webroot with no `.htaccess` of its own — the three are the root, `lib/` and
+        // `tools/` — so a `.php` written there is executed, by anybody, for ever. Two doors
+        // `install.php` is the newest and is the reason this rule exists (§4bq) — and writing
+        // it is what found the **fourth**, which nobody had listed: `admin_panel.php`'s Site
+        // Branding logo. That one turned out to be the best of them, and the installer was
+        // rewritten to match it rather than the other way round: it derives the stored
+        // extension from `mime_content_type()` and never touches the name the browser sent,
+        // so there is no filename left to sanitise. `crud.php` and `api.php` build theirs
+        // from an extension matched against `AssetLibrary::IMAGE_EXTENSIONS`, which is the
+        // same guarantee reached the longer way.
+        //
+        // A fifth door would be a filename built somewhere nobody had thought about it,
+        // which is precisely how a `.php` gets into a folder the server executes.
+        'expect' => ['admin_panel.php', 'api.php', 'crud.php', 'install.php'],
+        'why'    => 'uploads/ is served by the web server and has no .htaccess of its own, '
+                  . 'so the filename a browser suggested is never the filename written',
+    ],
+    [
         'name'   => 'an account with no sign is refused the shared writes by one predicate',
         'regex'  => '/holdsASign\s*\(|NO_SIGN_REFUSAL/',
         'in'     => '',
@@ -300,8 +322,15 @@ $rules = [
         // as a fresh checkout, and it paints nothing. A file that only writes them is
         // not a second reader, and the two names it uses are checked against
         // `BrandingConfig::DEFAULTS` on every run rather than typed and trusted.
+        //
+        // `lib/installer.php` is the same exemption as `admin_panel.php` and was caught
+        // by this rule rather than granted it (§4bq): `brandingChanges()` names two of
+        // the four as keys of a save it hands to `BrandingConfig`, and paints nothing.
+        // It gets the same protection `selftest_installed.php` has — every key that
+        // method can emit is asserted to be a name `DEFAULTS` holds, so a typo is a
+        // failing check rather than a setting written into a file nothing reads.
         'expect' => ['admin_panel.php', 'branding_config.php', 'lib/site_chrome.php',
-                     'lib/branding.php', 'tools/selftest_layout.php',
+                     'lib/branding.php', 'lib/installer.php', 'tools/selftest_layout.php',
                      'tools/selftest_installed.php'],
         'why'    => 'these land in a <style> block, where there is no delimiter to escape '
                   . 'and a value that is not a colour is CSS — Color::read() is what makes '
@@ -2319,8 +2348,9 @@ foreach ([
 // the deletion was trustworthy: 94 before it, plus the three probes main's copy had that
 // this one did not, plus one for the anchor now counting itself. A duplicate detector
 // removed by hand is exactly the edit that takes a rule with it, and this number is what
-// noticed it had not. 106 is that plus the CI-coverage rule and its seven probes.
-$expectedChecks = 106;
+// noticed it had not. 107 is that plus the CI-coverage rule and its seven probes,
+// and plus invariant 40's one door rule (§4bq).
+$expectedChecks = 107;
 $checked++;
 if ($checked === $expectedChecks) {
     echo "  ok   this checker ran every check it is supposed to ($checked)\n";
