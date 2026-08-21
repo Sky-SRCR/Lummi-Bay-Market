@@ -7839,13 +7839,17 @@ reached, and the full path of the file that would settle it. Refusing to adopt a
 file would be the "ask every time" mistake; adopting it silently was the defect. Saying so
 is the only remaining option, and it is the right one.
 
-**Where the sentence goes matters more than the sentence.** On the two screens where being
-wrong about this costs something: the one about to create an administrator in that database,
-and the one about to declare the install finished and delete this file. Not the database
-screen — a `BORROWED` file is the reason that form is on screen at all, so repeating it
-beside the form would be the same fact twice. Five of the seven defects §4ay's browser pass
-found were things a page did not *say* rather than wrong answers, and this is that shape
-exactly: a working page, a correct answer, and a person looking at the wrong install.
+**Where the sentence goes matters more than the sentence.** It matters most on the two
+screens where being wrong about this costs something — the one about to create an
+administrator in that database, and the one about to declare the install finished and delete
+this file — and it is printed on the others too, because *"the database refused the
+connection"* is a different problem when the credentials being refused belong to the install
+next door. The one screen it is left off is the database form under a `BORROWED` file, and
+only because it is already the note *above* that form explaining why the form is there;
+printing it twice on one screen is how a warning becomes furniture. Five of the seven defects
+§4ay's browser pass found were things a page did not *say* rather than wrong answers, and
+this is that shape exactly: a working page, a correct answer, and a person looking at the
+wrong install.
 
 **The stamp is left commented out in the blank form**, and that is the careful half. A
 placeholder somebody leaves alone reads as *"this file belongs to another folder"*, which

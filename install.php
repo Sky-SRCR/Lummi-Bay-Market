@@ -387,8 +387,13 @@ function installerMain()
         }
     }
 
+    // `borrowed` passes '' rather than the sentence: it is already in `$notes` above, where
+    // it is the reason the database form is on screen rather than a warning beside it.
+    // Every other state hands it to the page, which prints it on whichever screen it is.
     installerPage($appDir, $stage, $errors, $notes, $token, $pdo,
-                  Installer::sharingNote($ownership, $appDir, $credentialsFile, $database));
+                  $ownership === Installer::BORROWED
+                      ? ''
+                      : Installer::sharingNote($ownership, $appDir, $credentialsFile, $database));
 }
 
 /**
@@ -560,15 +565,15 @@ function installerPage($appDir, $stage, array $errors, array $notes, $token, ?PD
         echo '<p class="stop">' . Markup::text($error) . '</p>';
     }
 
-    // Whose database this is, said on the two screens where being wrong about it costs
-    // something — the one that is about to make an administrator in it, and the one that
-    // is about to declare the install finished and delete this file. It is a `stop` rather
-    // than a `note` deliberately: the states it describes are the ones where the page
-    // *works* and the person is looking at the wrong install (§4bp). The database screen is
-    // the one exception, and the reason it is excluded rather than repeated: a `borrowed`
-    // file is the reason that form is on screen at all, so the sentence has already been
-    // printed as a note above it.
-    if ((string) $sharing !== '' && $stage !== 'database') {
+    // Whose database this is, on whichever screen this is. It matters most on the two where
+    // being wrong about it costs something — the one about to make an administrator in that
+    // database, and the one about to declare the install finished and delete this file — but
+    // it is worth saying on the others too: *"the database refused the connection"* is a
+    // different problem when the credentials being refused belong to the install next door.
+    // A `stop` rather than a `note` deliberately: the states it describes are the ones where
+    // the page *works* and the person is looking at the wrong install (§4bp). The caller
+    // hands '' for a `borrowed` file, whose sentence is already a note above the form.
+    if ((string) $sharing !== '') {
         echo '<p class="stop">' . Markup::text($sharing) . '</p>';
     }
 
