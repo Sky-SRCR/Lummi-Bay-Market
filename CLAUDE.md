@@ -159,7 +159,18 @@ edited in place and every change reaches the sign by hand.
 - **`install.php` is the whole install, and the only door that makes an administrator**
   (invariant 39, §4bo). It carries `app/` inside itself, unpacks it, writes the credentials
   above the webroot, runs `schema.sql`, converges, names the venue, creates the account and
-  deletes itself. `setup.php` is gone and `build_installer.php` fails if it returns. Every
+  deletes itself. `setup.php` is gone and `build_installer.php` fails if it returns. The
+  account is **always typed** — one statement in the app creates a first administrator, it
+  runs only on that form, and `schema.sql` seeds none — but the step is skipped entirely when
+  the database already holds accounts, which is what makes a re-uploaded installer harmless
+  on a running install. Both endings printed *Installed*, so an owner who had never typed a
+  username had nothing on the screen to tell them this folder created nothing (§4bu).
+  `administratorOutcome()` answers the heading, the sentence and whether it is a refusal in
+  one call, because those three had to agree; and its third case is the one `accountCount()`
+  cannot see — a database whose accounts are all closed, suspended or `basic`, which used to
+  get *Installed* and a sign-in link that cannot let anybody in. It still refuses to create
+  an account there rather than offering the form: that page has no account behind it, so over
+  live data the form is an administrator for whoever finds the file. Every
   step reports what it *checked* — the delete reads the filesystem back, the write reads the
   file back, a refused schema statement is printed with the engine's own message and never
   swallowed by `schemaTry()`, and every archive entry is checked against its CRC and against

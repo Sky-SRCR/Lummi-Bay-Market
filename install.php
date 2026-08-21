@@ -309,6 +309,7 @@ function installerMain()
     $errors          = [];
     $notes           = [];
     $redraw          = [];
+    $created         = '';
 
     // ---- What state is this install in? Asked of the world, never remembered ----
     // No session and no hidden step counter: the credentials file either exists or does
@@ -375,7 +376,8 @@ function installerMain()
 
     // ---- Acting on a form -----------------------------------------------------
     if ($posted && ($_POST['step'] ?? '') === 'database') {
-        $stage = installerDoDatabase($appDir, $errors, $notes);
+        $stage = installerDoDatabase($appDir, $errors, $notes, $opened);
+        if ($opened !== null) { $pdo = $opened; }
         if ($stage === 'admin' || $stage === 'schema') {
             // The file it just wrote is this install's own by construction — that is what
             // `credentialsTarget()` decides — so the sharing note stops applying from here
@@ -442,6 +444,11 @@ function installerMain()
                     if ($result->isOk()) {
                         $stage   = 'finished';
                         $notes[] = $result->message();
+                        // The name the account was created under, for the last screen to
+                        // say out loud. Trimmed here because `createFirstAdmin()` trims
+                        // before it writes, and a screen naming an account the database
+                        // does not hold under that name is worse than naming none.
+                        $created = trim((string) ($_POST['username'] ?? ''));
                     } else {
                         $errors[] = $result->message();
                         foreach ($result->detail() as $line) { $errors[] = $line; }
@@ -472,7 +479,8 @@ function installerMain()
         ? Installer::tablesNote($credentialsFile, $ownDatabase)
         : '';
 
-    installerPage($appDir, $stage, $errors, $notes, $token, $pdo, $redraw, $tables);
+    installerPage($appDir, $stage, $errors, $notes, $token, $pdo, $redraw, $tables,
+                  $created);
 }
 
 // ============================================================
@@ -579,7 +587,7 @@ function installerKeepLogo($appDir, PDO $pdo, &$error = null)
  * applied, so a schema that fails half way leaves an install that can be reloaded rather
  * than one that has forgotten what it just learned.
  */
-function installerDoDatabase($appDir, array &$errors, array &$notes)
+function installerDoDatabase($appDir, array &$errors, array &$notes, ?PDO &$open = null)
 {
     $host = trim((string) ($_POST['host'] ?? ''));
     $name = trim((string) ($_POST['name'] ?? ''));
@@ -648,6 +656,13 @@ function installerDoDatabase($appDir, array &$errors, array &$notes)
         $errors[] = $source;
         return 'database';
     }
+
+    // Handed back to the caller, because the screen this route can end on needs it. Typing
+    // the credentials of a database that already holds accounts lands on the last screen,
+    // and that screen has to say whether anybody in there can actually sign in (§4bu). It
+    // is set here rather than at the top: every `return` above this line is a failure, and
+    // a connection handed back beside an error message is a connection somebody will use.
+    $open = $pdo;
 
     return installerBuildTables($pdo, $appDir, $errors, $notes);
 }
@@ -738,7 +753,7 @@ function installerBarePage($which)
 
 /** The one screen, in whichever of its four states this install is in. */
 function installerPage($appDir, $stage, array $errors, array $notes, $token, ?PDO $pdo = null,
-                      array $redraw = [], $tables = '')
+                      array $redraw = [], $tables = '', $created = '')
 {
     installerHead('Install');
 
@@ -777,7 +792,7 @@ function installerPage($appDir, $stage, array $errors, array $notes, $token, ?PD
     } elseif ($stage === 'admin') {
         installerAdminForm($token, $redraw);
     } else {
-        installerFinished($appDir, $pdo);
+        installerFinished($appDir, $pdo, $created);
     }
 
     installerFoot();
@@ -953,11 +968,28 @@ function installerAdminForm($token, array $was = [])
 }
 
 /** Done — so this file goes, and then says what is left to check. */
-function installerFinished($appDir, ?PDO $pdo = null)
+function installerFinished($appDir, PDO $pdo, $created)
 {
     $gone = installerRemoveSelf();
 
-    echo '<h2>Installed</h2>';
+    // What this install actually did about the account, before anything else on the screen.
+    // Two histories arrive here and they used to read identically: an account this page
+    // created from a form, and a database that already held one — which skips the
+    // administrator step, asks for nothing, creates nothing, and used to be told
+    // "Installed" all the same (§4bu). The heading, the sentence and whether it is a
+    // refusal come from one call so they cannot drift apart, and the count of
+    // administrators who could sign in is read here rather than guessed: a database can
+    // hold accounts that no longer open the app at all.
+    $outcome = Installer::administratorOutcome($created,
+                                               (new Installer($pdo))->openAdminCount());
+
+    echo '<h2>' . Markup::text($outcome['heading']) . '</h2>';
+    if ($outcome['stop']) {
+        echo '<p class="stop">' . Markup::text($outcome['note']) . '</p>';
+    } else {
+        echo '<p class="note">' . Markup::text($outcome['note']) . '</p>';
+    }
+
     echo $gone
         ? '<p class="note">This installer has deleted itself. Nothing to remember.</p>'
         : '<p class="stop">This installer could not delete itself — the host did not allow '
@@ -965,6 +997,11 @@ function installerFinished($appDir, ?PDO $pdo = null)
         . 'While it is still being served, pointing the app at an empty database turns it '
         . 'back into a public form for creating an administrator.</p>';
 
+    // Printed in every case, the refusal included. It looks wrong beside a paragraph that
+    // says no administrator can sign in, and it is the choice that cannot be wrong: this
+    // page knows how many *administrators* that database can admit and nothing about its
+    // `basic` accounts, so a link hidden on that count would be hidden from the one person
+    // it was for.
     echo '<p><a href="login.php">Sign in &rarr;</a></p>';
 
     // The sign's own address, from the Display the schema seeded. Named rather than
@@ -974,14 +1011,17 @@ function installerFinished($appDir, ?PDO $pdo = null)
     // writes SQL against that table, and this page asking it directly would have been the
     // second reader — which is how a page comes to disagree with the app about which sign
     // is which.
+    // The connection is a required parameter rather than a nullable one, and that is the
+    // whole guarantee: every route to this screen has opened a database — the credentials
+    // file this folder owns, the four-field form, or the one-button build — so a null here
+    // would be a route that reached "installed" without one. The try/catch stays, because a
+    // query failing is a different thing from having nothing to query.
     $tag = '';
-    if ($pdo !== null) {
-        try {
-            $signs = (new DisplayStore($pdo))->all();
-            if ($signs) { $tag = $signs[0]->tag(); }
-        } catch (Throwable $e) {
-            $tag = '';
-        }
+    try {
+        $signs = (new DisplayStore($pdo))->all();
+        if ($signs) { $tag = $signs[0]->tag(); }
+    } catch (Throwable $e) {
+        $tag = '';
     }
 
     echo '<h2>Four things to check, then you are done</h2><ol class="todo">';

@@ -8382,6 +8382,89 @@ called `we b`: the refusal, no form.
 be unpacked here* on a screen where it already has been (§4bs), and the stamp is still
 something a person has to add by hand to a file only they can see.
 
+### 4bu. "Where did it get the username and password? I never set one"
+
+Reported from the field, and it is a question rather than a bug report: an administrator is
+in the database, the install is working, and the person who ran it never typed a username or
+a password. *That should be created, not assumed — and it works instead of not working.*
+
+The answer to the literal question is that nothing assumed anything. There is exactly one
+statement in this app that creates a first account — `AccountStore::createAdmin()`, one
+caller, `Installer::createFirstAdmin()`, one caller, the `step=admin` POST branch — and it
+runs only on a form carrying a username, an email address and a password typed twice.
+`schema.sql` seeds nine tables and a Brand and **no account at all**. So the row they found
+was not created by that folder's install.
+
+What put it there is the other way into the last screen, and that is the defect:
+
+```php
+$accounts = $installer->accountCount();
+if     ($accounts > 0)   { $stage = 'finished'; }   // asks for nothing, creates nothing
+elseif ($accounts === 0) { $stage = 'admin'; }      // the form
+else                     { $stage = 'schema'; }
+```
+
+A database that already holds accounts skips the administrator step entirely — which is
+right, and is the safety net §4bo relies on: `install.php` re-uploaded onto a running install
+self-disables and deletes itself rather than offering a public account-creating form over live
+data. What was wrong is that both paths then printed the same screen. **Installed**, a
+sign-in link, four things to check. One of them had created the account it was talking about
+and the other had created nothing, and the screen said the same words either way — so the
+store owner's question had no answer on the very page that had just told them the install was
+finished.
+
+`Installer::administratorOutcome($created, $openAdmins)` answers it, and answers the heading,
+the sentence and whether it is a refusal in one call, because those three had to agree and
+agreeing was exactly what they had not been doing:
+
+| | heading | says |
+|---|---|---|
+| this page created the account | *Installed* | sign in as **that name**, with the password you typed |
+| the database already had accounts, some usable | *This database was already installed* | no account was created here and nothing was asked for; N of the accounts already there can sign in as an administrator |
+| the database already had accounts, none usable | *This database was already installed* | a refusal: none of them can sign in, the installer will not add one, here is what will |
+
+**The third row is the one that had no name before.** `accountCount()` counts rows, and a
+database can hold accounts that no longer open the app: closed, suspended, or `basic`. That
+database got *Installed* and a sign-in link that cannot let anybody in. `openAdminCount()`
+already existed in `lib/accounts.php` — it is the guard against closing the last
+administrator — and the installer now asks it too. It still will not create an account there,
+and the reason is worth stating rather than leaving as caution: this page has no account
+behind it, so that form over a database with live accounts in it is an administrator for
+whoever finds the file. So it says what is true and what to do instead.
+
+**The connection is now handed back out of the four-field route.** `installerDoDatabase()`
+takes a `?PDO &$open` and sets it on the last line before the tables are built — after every
+`return` that is a failure, because a connection handed back beside an error message is a
+connection somebody will use. That closes the state the new screen would otherwise have had
+to guess at: typing the credentials of a database that already holds accounts lands on the
+finished screen, and before this the page arrived there with `$pdo === null` and nothing to
+ask. `installerFinished()` takes a **required** `PDO` now rather than a nullable one, and that
+is the whole guarantee — every route to that screen has opened a database, so a null there
+would be a route that reached *installed* without one.
+
+**One link is deliberately printed under the refusal.** *Sign in →* looks wrong beside a
+paragraph saying no administrator can sign in, and it is the choice that cannot be wrong:
+this page knows how many *administrators* that database can admit and nothing whatever about
+its `basic` accounts, so a link hidden on that count would be hidden from the one person it
+was for.
+
+**What the mutation sweep said about the new code.** Thirteen mutants over the two methods;
+five survived the first run. One was a real coverage hole — `Installer::openAdminCount()` was
+reachable only from the rehearsal, which needs a MySQL nobody has locally, so the suite could
+not see it stop working; it has a check on a SQLite fixture now, and the check is the useful
+pair rather than the easy one (one account, suspended, so the row count says 1 and the
+signable count says 0). One was the `(string)` cast, and writing its check was worth more than
+writing it off: without it a caller handing this `null` gets *"Sign in as ., with the password
+you typed"*, a sentence naming no account, which is #21's family. The remaining three are
+`!== → !=` and `=== → ==` under those two coercions, where PHP 8 makes the two operators
+identical — that is the coercion being right rather than a check missing, and it is written
+down in the docblock instead of left as three quiet survivors (invariant 30).
+
+**What this does not fix.** Nothing tells the owner *which* account is in there. Naming it
+would mean this page reading a username out of a database it did not install and printing it
+to whoever loaded the file, which is the shape §4bt just spent three attempts removing. The
+count is the most this screen should know.
+
 ---
 ## 5. Verification
 

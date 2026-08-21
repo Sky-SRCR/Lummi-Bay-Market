@@ -927,6 +927,102 @@ class Installer
     }
 
     /**
+     * How many administrators this database holds who could actually sign in.
+     *
+     * Beside `accountCount()` and not folded into it, because they answer different
+     * questions and the installer needs both: the count decides which *screen* comes next,
+     * and this decides whether the screen that says the install is over is telling the
+     * truth. A database can hold accounts that no longer open the app — closed, suspended,
+     * or `basic` — and `accountCount()` counts every one of them.
+     */
+    public function openAdminCount()
+    {
+        $accounts = new AccountStore($this->pdo);
+        return $accounts->openAdminCount();
+    }
+
+    /**
+     * What the last screen says, given what this install actually did about the account.
+     *
+     * The heading, the sentence and whether it is a refusal, from one call — because the
+     * three had to agree and the way they disagreed was the defect (§4bu). `install.php`
+     * reaches its final screen two ways. One is a form somebody filled in: a username, an
+     * email, a password typed twice, and this page created the account. The other is a
+     * database that already held accounts when the page first loaded, which skips the
+     * administrator step altogether — nothing is asked for and nothing is created. Both
+     * printed **Installed** and offered a sign-in link, so the store owner's question
+     * ("where did it get the username and password? I never set one") had no answer on the
+     * screen that had just told them the install was finished.
+     *
+     * The third case is the one worth a refusal: a database holding accounts, none of which
+     * is an administrator who can sign in. The installer will not create one there and this
+     * is not timidity — the administrator form is public, drawn on a page with no account
+     * behind it, and offering it over a database that already holds accounts is offering
+     * anybody who finds the file an administrator on live data. So it says what is true and
+     * what to do about it instead.
+     *
+     * Pure, and it takes the two facts rather than a `PDO`: the whole point is that the
+     * sentence can be asked for on a machine where neither state exists.
+     *
+     * The two coercions below are why the comparisons under them are strict for nothing —
+     * `!== ''` behaves identically to `!=` once the value is a string, and `=== 1` to `== 1`
+     * once it is an int, so mutating either survives the suite. That is the coercion being
+     * right rather than a check missing: what the cast prevents is a caller handing this
+     * `null` and getting "Sign in as ." — a sentence naming no account — and that one is
+     * checked. Written down rather than left as three quiet survivors (invariant 30).
+     *
+     * @param string $created    the username this page created, '' if it created none
+     * @param int    $openAdmins administrators in that database who can sign in
+     * @return array{heading: string, note: string, stop: bool}
+     */
+    public static function administratorOutcome($created, $openAdmins)
+    {
+        $created    = (string) $created;
+        $openAdmins = intval($openAdmins);
+
+        if ($created !== '') {
+            return [
+                'heading' => 'Installed',
+                'note'    => 'Sign in as ' . $created . ', with the password you typed on the '
+                           . 'last page. That is the only account in this database and it is '
+                           . 'an administrator; every other account is made from inside the '
+                           . 'app, in Admin Panel → Accounts.',
+                'stop'    => false,
+            ];
+        }
+
+        $signable = ($openAdmins === 1)
+            ? 'one of them can sign in as an administrator'
+            : $openAdmins . ' of them can sign in as an administrator';
+
+        if ($openAdmins > 0) {
+            return [
+                'heading' => 'This database was already installed',
+                'note'    => 'No account was created here and nothing was asked for: that '
+                           . 'database already held accounts before this installer ran, and '
+                           . $signable . '. So there is no username or password from this '
+                           . 'install to remember — this folder runs on the accounts that '
+                           . 'were already there. For an administrator of its own, point a '
+                           . 'fresh copy of this installer at an empty database.',
+                'stop'    => false,
+            ];
+        }
+
+        return [
+            'heading' => 'This database was already installed',
+            'note'    => 'No account was created here, and none of the accounts that database '
+                       . 'already held can sign in as an administrator — they are closed, '
+                       . 'suspended, or not administrators. This installer will not add one to '
+                       . 'a database that already holds accounts: this page has no account '
+                       . 'behind it, so over live data that form is an administrator for '
+                       . 'whoever finds the file. Give one of those accounts back its '
+                       . 'administrator role and its active flag in the database, or point a '
+                       . 'fresh copy of this installer at an empty database.',
+            'stop'    => true,
+        ];
+    }
+
+    /**
      * Name the venue, then create the administrator.
      *
      * **In that order, and with no transaction of its own** — which is the opposite of

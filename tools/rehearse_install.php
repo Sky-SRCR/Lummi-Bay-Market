@@ -319,6 +319,41 @@ is_it(strpos($twice->message(), 'Sign in') !== false,
       'and the refusal says what to do instead');
 is_it($accounts->total() === 1, 'and nothing was created by the attempt');
 
+// ---- What the last screen says, over a database that answers (§4bu) --------------------
+// The store owner found an administrator in the database and had never typed a username or
+// a password, and the screen that had said "Installed" said nothing about it. The sentences
+// are pure and checked above; what needs a real engine is the *fact* they are chosen by —
+// how many administrators can still sign in — because it is a `role`, an `is_active` and a
+// `closed_at` in three states, and SQLite agreeing is not the answer.
+is_it($installer->openAdminCount() === 1,
+      'the install that just created an administrator has one who can sign in');
+is_it(Installer::administratorOutcome('rehearsal', $installer->openAdminCount())['heading']
+      === 'Installed',
+      'so its last screen says Installed, and names the account it made');
+is_it(Installer::administratorOutcome('', $installer->openAdminCount())['stop'] === false,
+      'and a second folder pointed at this database is told it was already installed '
+      . 'rather than refused — those accounts work');
+
+// Then the state nobody would build on purpose and every restored database can arrive in:
+// accounts in there, none of which opens the app. Suspended through the module that owns
+// the column, because the point is the predicate the app itself uses.
+$onlyAdmin = $accounts->findByNameOrEmail('rehearsal', '');
+is_it($onlyAdmin !== null
+      && $accounts->updateProfile(intval($onlyAdmin['id']), 'admin', 0,
+                                  (string) $onlyAdmin['email']),
+      'the one administrator is suspended, through the module that owns that column');
+is_it($accounts->total() === 1 && $installer->openAdminCount() === 0,
+      'the database still holds an account and holds no administrator who can sign in — '
+      . 'which is the pair of facts a count of rows cannot tell apart');
+is_it(Installer::administratorOutcome('', $installer->openAdminCount())['stop'] === true,
+      'so the last screen refuses instead of sending somebody to a sign-in page that '
+      . 'cannot let them in');
+is_it($onlyAdmin !== null
+      && $accounts->updateProfile(intval($onlyAdmin['id']), 'admin', 1,
+                                  (string) $onlyAdmin['email'])
+      && $installer->openAdminCount() === 1,
+      'and the suspension is lifted, because the steps below are about this same install');
+
 // ---- The state that reached the store, on a database that really has an admin ----
 // §4bt. An *unstamped* shared file, of the shape every credentials file written before the
 // stamp existed has — including the live one — over a database whose administrator was
@@ -470,7 +505,7 @@ is_it($built === 1, 'with one Display in the database, the way the typed route l
 // reader cannot see from a total; and this check counts itself. `33` was written where 35
 // was true, and **nothing local can run this file** — it needs a MySQL server — so the only
 // place that disagreement could show up was the CI leg it was added to guard.
-$expected = 45     // call sites that run once
+$expected = 52     // call sites that run once
           + 9      // the nine tables schema.sql builds, one call site
           + 1;     // this check, counting itself
 $checked++;

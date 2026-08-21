@@ -8731,6 +8731,55 @@ checkMentions(Installer::tablesNote($laneTwo, ''), 'the database it names',
 check(strpos(Installer::tablesNote($laneTwo, ''), 'naming  ') === false,
       'and does not leave a hole where the database name would have been');
 
+// ---- What the last screen says it did about the account (§4bu) -------------------------
+// The store owner's question, and it had no answer on the screen: an account existed in the
+// database and they had never typed a username or a password. Two histories reach that
+// screen and they read identically — a form somebody filled in, and a database that already
+// held accounts, which skips the administrator step and asks for nothing. One call answers
+// the heading, the sentence and whether it is a refusal, so the three cannot disagree about
+// which of the two happened.
+$made = Installer::administratorOutcome('ada', 1);
+checkSame('Installed', $made['heading'], 'an install that created the account says so');
+check($made['stop'] === false, 'and it is not a refusal');
+checkMentions($made['note'], 'ada',
+              'and names the account it created, which is the thing nobody can look up later');
+
+$inherited = Installer::administratorOutcome('', 3);
+check($inherited['heading'] !== 'Installed',
+      'a database that was already installed does not get the word Installed — the '
+      . 'install this page did was unpacking files, and the account it found was not its');
+check($inherited['stop'] === false,
+      'but it is not a refusal either: those accounts work, they are simply not this '
+      . 'installer\'s doing');
+checkMentions($inherited['note'], 'No account was created here',
+              'and it says the thing the old screen left to be inferred');
+checkMentions($inherited['note'], '3 of them',
+              'and how many of the accounts already there can sign in as an administrator');
+checkMentions(Installer::administratorOutcome('', 1)['note'], 'one of them',
+              'counted in words when there is one of it');
+check(strpos(Installer::administratorOutcome('', 1)['note'], '1 of them') === false,
+      'and not in both forms at once');
+
+// The third case, and the only one that refuses: accounts in there, none of which opens
+// the app. The installer will not add one, and the reason is not caution — this page has no
+// account behind it, so that form over live data is an administrator for whoever finds it.
+$locked = Installer::administratorOutcome('', 0);
+check($locked['stop'] === true,
+      'a database holding accounts that cannot sign in as an administrator is a refusal');
+checkSame($inherited['heading'], $locked['heading'],
+          'under the same heading: what happened is the same, what to do next is not');
+checkMentions($locked['note'], 'empty database',
+              'and the refusal says what would work instead');
+check(strpos($locked['note'], 'No account was created here') === 0,
+      'and leads with the fact, because a person reading this typed a password somewhere '
+      . 'and needs to know it went nowhere');
+check(strpos($made['note'], 'No account was created here') === false,
+      'while the install that did create one never says that sentence');
+check(Installer::administratorOutcome(null, 3)['heading'] === $inherited['heading'],
+      'and a caller handing this nothing at all is a caller that created nothing — the '
+      . 'alternative is a screen reading "Sign in as ., with the password you typed", '
+      . 'which names no account and is the worst of the three sentences');
+
 // The stamp itself, in the file the installer writes.
 $stampedFile = Installer::credentialsSource($signs, ['host' => 'localhost',
                    'name' => 'shop_signs', 'user' => 'shop_u', 'pass' => 'p']);
@@ -8967,6 +9016,29 @@ $made   = $freshInst->createFirstAdmin('owner', 'owner@example.test', 'longenoug
     $config);
 checkSame(true, $made->isOk(), 'the whole form lands: ' . $made->message());
 checkSame(1, $freshInst->accountCount(), 'with exactly one account, which is the administrator');
+
+// Beside it, the other count, because the last screen of the install is chosen by the two
+// together and one row can answer them differently (§4bu). This is also the only place the
+// suite reaches `Installer::openAdminCount()` at all — the rehearsal asks it on MySQL, and a
+// method whose only caller is a step this container cannot run is a method nothing here can
+// see stop working.
+checkSame(1, $freshInst->openAdminCount(),
+          'and that account can sign in as an administrator, which is what the finished '
+          . 'screen tells somebody to go and do');
+
+$onlyOne = (new AccountStore($fresh))->findByNameOrEmail('owner', '');
+check($onlyOne !== null && (new AccountStore($fresh))->updateProfile(
+          intval($onlyOne['id']), 'admin', 0, (string) $onlyOne['email']),
+      'the one administrator is suspended, through the module that owns that column');
+checkSame(1, $freshInst->accountCount(),
+          'the database still holds an account');
+checkSame(0, $freshInst->openAdminCount(),
+          'and holds no administrator who can sign in — the pair of facts a count of rows '
+          . 'cannot tell apart, and the reason the finished screen asks for both');
+check($onlyOne !== null && (new AccountStore($fresh))->updateProfile(
+          intval($onlyOne['id']), 'admin', 1, (string) $onlyOne['email'])
+      && $freshInst->openAdminCount() === 1,
+      'and the suspension is lifted, because everything below is about this same install');
 
 $brandRows = (new BrandStore($fresh))->all();
 checkSame(1, count($brandRows),
@@ -9254,4 +9326,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2533 : 2508);
+reportChecks(testIsMysql() ? 2553 : 2528);
