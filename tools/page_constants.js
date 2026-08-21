@@ -75,15 +75,15 @@ function chromeRoleVars() {
     return out;
 }
 
-/** `LayoutRules::CORNER_RADIUS_MAX`, read from the module, never repeated here. */
-function cornerRadiusMax() {
+/** A numeric `LayoutRules` constant, read from the module, never repeated here. */
+function layoutRule(name) {
     const src = fs.readFileSync(path.join(REPO, 'lib', 'layout_rules.php'), 'utf8');
-    const m = src.match(/const\s+CORNER_RADIUS_MAX\s*=\s*(\d+)\s*;/);
+    const m = src.match(new RegExp('const\\s+' + name + '\\s*=\\s*([0-9.]+)\\s*;'));
     if (!m) {
-        throw new Error('page_constants: no CORNER_RADIUS_MAX in lib/layout_rules.php — the '
+        throw new Error('page_constants: no ' + name + ' in lib/layout_rules.php — the '
                         + 'constant moved and this reader did not');
     }
-    return parseInt(m[1], 10);
+    return parseFloat(m[1]);
 }
 
 /**
@@ -133,7 +133,15 @@ const PAGE_DEFAULTS = {
     // The largest corner radius the publish path will accept (§4by). Read out of the
     // module that owns it rather than written here, for the reason the role names are:
     // a number copied into this file agrees with the app until somebody changes one.
-    CORNER_RADIUS_MAX:  cornerRadiusMax,
+    CORNER_RADIUS_MAX:  () => layoutRule('CORNER_RADIUS_MAX'),
+
+    // A marquee's gap between repeats (§4bz), from the same module. Three, because the
+    // clamp needs all three and a suite that pins one has to be able to pin the others —
+    // a floor read as the literal 0 and a default read as the literal 0 are the same
+    // number, and only one of them is right.
+    MARQUEE_GAP_MIN:     () => layoutRule('MARQUEE_GAP_MIN'),
+    MARQUEE_GAP_MAX:     () => layoutRule('MARQUEE_GAP_MAX'),
+    MARQUEE_GAP_DEFAULT: () => layoutRule('MARQUEE_GAP_DEFAULT'),
 
     // The person's own workspace (v2 step 5). No themes exist until an admin makes one,
     // so nobody is wearing one and the store default is what the page was rendered in.

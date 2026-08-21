@@ -247,11 +247,19 @@ $canvasH = $display->canvasHeight();
         display: flex;
         align-items: center;
     }
-    .marquee-text {
+    /* One element carries the transform and every copy of the message rides on it, so
+       the whole strip moves as one thing and the copies keep their spacing exactly
+       (Â§4bz). `flex: 0 0 auto` because it is a flex item and a flex item shrinks by
+       default â a strip squashed to the block's width is a marquee that does not
+       scroll. */
+    .marquee-strip {
+        flex: 0 0 auto;
         white-space: nowrap;
         will-change: transform;
+    }
+    .marquee-text {
+        white-space: nowrap;
         display: inline-block;
-        padding-left: 100%;
         font-family: Arial, sans-serif;
     }
 </style>
@@ -274,6 +282,15 @@ $canvasH = $display->canvasHeight();
     // `auth.php` or `config.php` (it runs unattended on a television), so the constant is
     // required explicitly at the top of the file rather than arriving with the app.
     var CORNER_RADIUS_MAX = <?= intval(LayoutRules::CORNER_RADIUS_MAX) ?>;
+
+    // A marquee's gap between repeats, from the same module for the same reason.
+    var MARQUEE_GAP_MIN     = <?= floatval(LayoutRules::MARQUEE_GAP_MIN) ?>;
+    var MARQUEE_GAP_MAX     = <?= floatval(LayoutRules::MARQUEE_GAP_MAX) ?>;
+    var MARQUEE_GAP_DEFAULT = <?= floatval(LayoutRules::MARQUEE_GAP_DEFAULT) ?>;
+
+    // Not a layout rule and not interpolated: a bound on this page's own DOM. See
+    // `marqueeCopies` for why 256 is above anything a real message can ask for.
+    var MARQUEE_MAX_COPIES = 256;
 
     /**
      * A block's corner radius, and the same three lines `builder.php` uses (§4by).
@@ -885,6 +902,49 @@ $canvasH = $display->canvasHeight();
     }
 
     // ── Marquee ─────────────────────────────────────────────────
+    /**
+     * The blank between one pass of the message and the next, in seconds (§4bz).
+     *
+     * A marquee's settings are unvalidated JSON — `manual_content` is not checked for the
+     * non-text types (invariant 6) — so this end asks rather than trusts, the same way
+     * `speed` is floored and `text` is type-checked two functions down. A string is
+     * accepted because a number typed into a form arrives as one and an older Builder tab
+     * may have stored it that way; anything else is the field not being there, and the
+     * field not being there is every marquee published before this existed.
+     *
+     * Clamped rather than refused, and that is the difference from a colour (#21): a
+     * refusal has to be *said* to somebody, and there is nobody in front of a television.
+     */
+    function marqueeGapSeconds(raw) {
+        if (typeof raw !== 'number' && typeof raw !== 'string') { return MARQUEE_GAP_DEFAULT; }
+        var n = parseFloat(raw);
+        if (!isFinite(n)) { return MARQUEE_GAP_DEFAULT; }
+        if (n < MARQUEE_GAP_MIN) { return MARQUEE_GAP_MIN; }
+        if (n > MARQUEE_GAP_MAX) { return MARQUEE_GAP_MAX; }
+        return n;
+    }
+
+    /**
+     * How many copies of the message the strip carries.
+     *
+     * The strip is snapped back by exactly one unit — one message plus one gap — and the
+     * snap is invisible only if the copies to the right of the first one already reach the
+     * far edge of the block at the moment it happens. So: enough units to cover the block,
+     * plus the one that is leaving, plus the one arriving.
+     *
+     * Bounded, because the count is a ratio and a ratio has no ceiling of its own. It
+     * cannot bite on a real sign: the narrowest thing that is still a message is a single
+     * character at the smallest font the inspector offers, which is about ten pixels wide,
+     * so a 1920px board asks for about 194. The bound is above that, and the cost of
+     * reaching it is a seam every few seconds rather than anything worse.
+     */
+    function marqueeCopies(unit, blockW) {
+        if (!(unit > 0)) { return 1; }
+        var n = Math.ceil((blockW > 0 ? blockW : 0) / unit) + 2;
+        if (n > MARQUEE_MAX_COPIES) { return MARQUEE_MAX_COPIES; }
+        return n;
+    }
+
     function renderMarquee(block, content) {
         var data = {};
         try { data = JSON.parse(content || '{}'); } catch(e) {}
@@ -920,35 +980,77 @@ $canvasH = $display->canvasHeight();
 
         block.style.background = bg;
 
+        var gap = marqueeGapSeconds(data.gap);
+
         var wrap = document.createElement('div');
         wrap.className = 'marquee-wrap';
 
-        var span = document.createElement('span');
-        span.className        = 'marquee-text';
-        span.textContent      = text;
-        span.style.color      = color;
-        span.style.fontSize   = size + 'px';
-        span.style.fontWeight = weight;
-        span.style.paddingLeft = '100%';
+        var strip = document.createElement('div');
+        strip.className = 'marquee-strip';
 
-        wrap.appendChild(span);
+        function copyOfMessage() {
+            var span = document.createElement('span');
+            span.className        = 'marquee-text';
+            span.textContent      = text;
+            span.style.color      = color;
+            span.style.fontSize   = size + 'px';
+            span.style.fontWeight = weight;
+            return span;
+        }
+
+        var first = copyOfMessage();
+        strip.appendChild(first);
+        wrap.appendChild(strip);
         block.appendChild(wrap);
 
         var cancelled = false;
         var pos       = 0;
+        var unit      = 0;      // one message plus one gap, in pixels; 0 until measured
         var lastTime  = null;
 
         function step(ts) {
             if (cancelled) return;  // stopped by stopAnimations()
-            if (!document.body.contains(span)) return;  // DOM removed on layout reload
+            if (!document.body.contains(strip)) return;  // DOM removed on layout reload
+
+            if (unit === 0) {
+                // The first frame is the earliest moment this block has been laid out, and
+                // a span that has not been laid out has no width — which is what every
+                // number below is made of. The old code read the width inside the loop for
+                // the same reason and got away with reading it every frame.
+                var copyW  = first.offsetWidth;
+                var blockW = wrap.offsetWidth;
+                var gapPx  = gap * speed;
+                unit = copyW + gapPx;
+                // Nothing measurable to scroll: leave the message standing where it is
+                // rather than spin `requestAnimationFrame` for ever waiting for a width
+                // that is not coming. A still message is readable; a wedged frame loop on
+                // a television is not, and it is the one shape nothing here would report.
+                if (!(unit > 0)) { return; }
+                var copies = marqueeCopies(unit, blockW);
+                first.style.marginRight = gapPx + 'px';
+                for (var i = 1; i < copies; i++) {
+                    var extra = copyOfMessage();
+                    extra.style.marginRight = gapPx + 'px';
+                    strip.appendChild(extra);
+                }
+                // The message still enters from the far edge on the first pass, as it always
+                // has — a sign that has just reloaded its layout should not open halfway
+                // through a sentence.
+                pos = blockW;
+            }
+
             if (lastTime === null) lastTime = ts;
             var dt = (ts - lastTime) / 1000; // seconds
             lastTime = ts;
             pos -= speed * dt;
-            // Reset when text has fully scrolled off the left edge
-            var textW = span.offsetWidth;
-            if (pos < -textW) pos = 0;
-            span.style.transform = 'translateX(' + pos + 'px)';
+            // One unit back is the same picture, because every copy is the same message the
+            // same distance apart — so this is a snap nobody can see, and it is what makes
+            // the loop independent of how wide the block is. `while` rather than `if`: a
+            // television that was asleep, or a tab the browser throttled, hands back a `dt`
+            // of many seconds, and one subtraction of `unit` would leave the strip parked
+            // off to the left with a blank sign until it crawled back.
+            while (pos < -unit) { pos += unit; }
+            strip.style.transform = 'translateX(' + pos + 'px)';
             requestAnimationFrame(step);
         }
 

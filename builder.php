@@ -1576,6 +1576,17 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
                style="width:100%;margin-top:4px;" oninput="updateMarqueeSpeed(this.value)"
                onchange="commitUndoStep()">
         <div id="marquee-speed-label" style="font-size:11px;color:var(--panel-text);opacity:.78;margin-top:2px;">80 px/sec</div>
+        <label style="margin-top:6px;">Restart Gap</label>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+            <input type="number" id="marquee-gap"
+                   value="<?= floatval(LayoutRules::MARQUEE_GAP_DEFAULT) ?>"
+                   min="<?= floatval(LayoutRules::MARQUEE_GAP_MIN) ?>"
+                   max="<?= floatval(LayoutRules::MARQUEE_GAP_MAX) ?>" step="0.5"
+                   style="width:70px;" oninput="updateMarqueeGap(this.value)"
+                   onchange="commitUndoStep()">
+            <span style="font-size:11px;color:var(--panel-text);opacity:.78;">seconds</span>
+        </div>
+        <div id="marquee-gap-label" style="font-size:11px;color:var(--panel-text);opacity:.78;margin-top:2px;"></div>
         <label style="margin-top:6px;">Text Style</label>
         <div class="sw-row" id="sw-marquee" style="display:none;"></div>
         <div style="display:flex;gap:6px;align-items:center;margin-top:4px;">
@@ -1796,6 +1807,11 @@ var CANVAS_H      = <?= intval($canvasH) ?>;
 // The same ceiling the publish path refuses past, from the module that owns it, so the
 // number input's `max` and the clamp in the script are one value rather than two.
 var CORNER_RADIUS_MAX = <?= intval(LayoutRules::CORNER_RADIUS_MAX) ?>;
+// And a marquee's gap between repeats, from the same module for the same reason — the
+// number input above and the clamp below have to be the one value.
+var MARQUEE_GAP_MIN     = <?= floatval(LayoutRules::MARQUEE_GAP_MIN) ?>;
+var MARQUEE_GAP_MAX     = <?= floatval(LayoutRules::MARQUEE_GAP_MAX) ?>;
+var MARQUEE_GAP_DEFAULT = <?= floatval(LayoutRules::MARQUEE_GAP_DEFAULT) ?>;
 
 // Whether somebody else holds this Display's edit lock (ADR-0007). Decided by the
 // server before this page was built, and constant for its life: every control that
@@ -3051,6 +3067,7 @@ function showInspector(block) {
         document.getElementById('marquee-text').value          = md.text   || '';
         document.getElementById('marquee-speed').value         = md.speed  || 80;
         document.getElementById('marquee-speed-label').textContent = (md.speed || 80) + ' px/sec';
+        showMarqueeGap(marqueeGapSeconds(md.gap));
         document.getElementById('marquee-color').value         = md.color  || '#ffffff';
         document.getElementById('marquee-size').value          = md.size   || 28;
         document.getElementById('marquee-weight').value        = md.weight || 'bold';
@@ -6348,6 +6365,58 @@ function updateMarqueeSpeed(val) {
     var md = {}; try { md = JSON.parse(activeBlock.dataset.marqueeData || '{}'); } catch(e) {}
     md.speed = parseInt(val);
     activeBlock.dataset.marqueeData = JSON.stringify(md);
+}
+
+/**
+ * The blank between one pass of a marquee's message and the next, in seconds (§4bz).
+ *
+ * The same three clamps `viewer.php` applies, in the page that writes the value rather
+ * than the one that reads it, so that what the rail shows and what the television does are
+ * the same number rather than two numbers that happen to agree. Both take their bounds
+ * from `LayoutRules`, which is the only copy.
+ */
+function marqueeGapSeconds(raw) {
+    if (typeof raw !== 'number' && typeof raw !== 'string') { return MARQUEE_GAP_DEFAULT; }
+    var n = parseFloat(raw);
+    if (!isFinite(n)) { return MARQUEE_GAP_DEFAULT; }
+    if (n < MARQUEE_GAP_MIN) { return MARQUEE_GAP_MIN; }
+    if (n > MARQUEE_GAP_MAX) { return MARQUEE_GAP_MAX; }
+    return n;
+}
+
+/**
+ * The sentence under the box, which is where the clamp becomes visible.
+ *
+ * A number input with `max` on it is a suggestion — a person can type 900 into one and
+ * every browser will let them. The value that was *stored* is written out here for the same
+ * reason a refused colour names the place it would have shown (#21): a setting quietly
+ * replaced by a different one is a setting somebody will come back to twice.
+ */
+function marqueeGapNote(seconds) {
+    return seconds === 0 ? 'No gap — the message repeats nose to tail.'
+                         : seconds + 's of blank before the message comes round again.';
+}
+
+/** The box and its sentence, on opening a marquee in the rail. */
+function showMarqueeGap(seconds) {
+    document.getElementById('marquee-gap').value = seconds;
+    document.getElementById('marquee-gap-label').textContent = marqueeGapNote(seconds);
+}
+
+/**
+ * A number typed into the box.
+ *
+ * The sentence is rewritten and the box is *not* — `showMarqueeGap` sets both and this sets
+ * one, deliberately. Writing the clamped value back into the field somebody is typing in
+ * moves their caret to the end of it, and clearing the field to start again would refill it
+ * with the default before the first digit arrived.
+ */
+function updateMarqueeGap(val) {
+    if (!activeBlock || activeBlock.dataset.type !== 'marquee') return;
+    var md = {}; try { md = JSON.parse(activeBlock.dataset.marqueeData || '{}'); } catch(e) {}
+    md.gap = marqueeGapSeconds(val);
+    activeBlock.dataset.marqueeData = JSON.stringify(md);
+    document.getElementById('marquee-gap-label').textContent = marqueeGapNote(md.gap);
 }
 
 function updateMarqueeStyle() {

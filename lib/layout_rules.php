@@ -77,6 +77,31 @@ class LayoutRules
     const CORNER_RADIUS_MIN = 0;
     const CORNER_RADIUS_MAX = 2000;
 
+    /**
+     * How long a marquee waits before its message comes round again, in seconds (§4bz).
+     *
+     * The gap between one pass and the next, measured where a customer is standing: the
+     * message goes by, then this many seconds of nothing, then it goes by again. It is
+     * **not** how long the message takes to cross the sign — that is the message's own
+     * width and the scroll speed, and it used to be the whole interval, because the next
+     * pass did not begin until the tail had cleared the far edge. On a 1920px board that is
+     * twenty-four seconds at the default speed for a message four seconds long.
+     *
+     * Not in `LayoutRules::check()` and it cannot be: a marquee's settings live inside the
+     * JSON in `manual_content`, which is unvalidated for the non-text types (invariant 6),
+     * exactly as `speed`, `size` and `color` are. The numbers are here so that the two
+     * pages that clamp them clamp them to the same thing, and both do it themselves.
+     *
+     * Zero is nose-to-tail, which is legible only because the copies keep their own word
+     * spacing; sixty is a full minute of dark bar, which is a marquee somebody wants to be
+     * quiet rather than a fault. `DEFAULT` is what a marquee published before this existed
+     * gets, and it is deliberately not "behave as you did yesterday" — yesterday's interval
+     * was a consequence of the block's width, which is the thing being fixed.
+     */
+    const MARQUEE_GAP_MIN     = 0;
+    const MARQUEE_GAP_MAX     = 60;
+    const MARQUEE_GAP_DEFAULT = 2;
+
     /** z_index is stored as written but floored at 1 by the insert; sort_order is re-numbered. */
     const Z_INDEX_MIN  = 1;
     const Z_INDEX_MAX  = 100000;

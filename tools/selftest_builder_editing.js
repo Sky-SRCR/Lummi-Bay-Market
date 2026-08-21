@@ -1103,6 +1103,65 @@ checkSame('#2e86de', md.bg, 'unticking gives back the chosen colour, not the fac
 checkSame('#2e86de', marquee.style.background, 'and the preview with it');
 checkSame(false, document.getElementById('marquee-bg').disabled, 'the picker is usable again');
 
+// ---- Restart gap (§4bz) ----------------------------------------------------------
+// What the rail writes, and what it says it wrote. The value the sign reads is the one in
+// `marqueeData`; the sentence under the box is where a clamp becomes visible, because a
+// number input's `max` is a suggestion that every browser lets a person type past.
+activeBlock = marquee;
+showInspector(marquee);
+checkSame(MARQUEE_GAP_DEFAULT, byId('marquee-gap').value,
+          'a marquee published before this setting existed opens on the default gap');
+check(/comes round again/.test(byId('marquee-gap-label').textContent),
+      'and the box says what the number means');
+
+byId('marquee-gap').value = '4.5';
+updateMarqueeGap('4.5');
+checkSame(4.5, JSON.parse(marquee.dataset.marqueeData).gap, 'typing a gap stores it');
+check(/4\.5s of blank/.test(byId('marquee-gap-label').textContent), 'and the sentence says it back');
+checkSame('FRESH TODAY', JSON.parse(marquee.dataset.marqueeData).text,
+          'and the message is still there, because the blob is read before it is written');
+
+updateMarqueeGap('0');
+checkSame(0, JSON.parse(marquee.dataset.marqueeData).gap,
+          'zero is a gap somebody chose, and is stored rather than falling back');
+check(/nose to tail/.test(byId('marquee-gap-label').textContent),
+      'and is described as what it is rather than as 0s of blank');
+
+updateMarqueeGap(String(MARQUEE_GAP_MAX + 900));
+checkSame(MARQUEE_GAP_MAX, JSON.parse(marquee.dataset.marqueeData).gap,
+          'a gap past the ceiling is clamped here rather than sent to the sign');
+check(byId('marquee-gap-label').textContent.indexOf(String(MARQUEE_GAP_MAX)) > -1,
+      'and the sentence names the number that was kept, not the one that was typed');
+updateMarqueeGap('-3');
+checkSame(MARQUEE_GAP_MIN, JSON.parse(marquee.dataset.marqueeData).gap, 'and a negative one is floored');
+
+// The box is not rewritten while somebody is typing in it — `showMarqueeGap` sets the field
+// and the sentence, this sets the sentence. Clearing the field to start again would
+// otherwise refill it with the default before the first digit arrived.
+byId('marquee-gap').value = '';
+updateMarqueeGap('');
+checkSame('', byId('marquee-gap').value, 'clearing the box to retype does not refill it');
+checkSame(MARQUEE_GAP_DEFAULT, JSON.parse(marquee.dataset.marqueeData).gap,
+          'though what is stored is a real gap rather than nothing');
+
+// Reopening: the field comes back from the stored value, which is the half the carousel
+// interval and the marquee colour both got wrong at some point.
+updateMarqueeGap('7');
+byId('marquee-gap').value = '99';
+showInspector(marquee);
+checkSame(7, byId('marquee-gap').value, 'reopening a marquee shows the gap it was saved with');
+const outbound = JSON.parse(serializeBlock(marquee, 0).manual_content);
+checkSame(7, outbound.gap, 'and the gap goes out to the sign with the rest of the marquee');
+checkSame('FRESH TODAY', outbound.text, 'beside the message');
+checkSame('#2e86de', outbound.bg, 'and the bar it is written on');
+
+// A gap nobody may set, because somebody else is editing. Every other marquee control in
+// the rail is absent from a read-only page rather than guarded here, and the gap is drawn
+// in the same block — so this asks the question the other suite answers, and asks it of the
+// markup rather than of the function.
+check(fs.readFileSync(BUILDER, 'utf8').indexOf('id="marquee-gap"') > -1,
+      'the gap control is in the marquee section of the rail, with the rest of them');
+
 // A marquee stored before this change has no bgColor. It must still open.
 const older = el('div', 'editable-block root-block');
 older.dataset.type = 'marquee';
@@ -1271,7 +1330,7 @@ checkSame('inherit', pane.style.borderRadius, 'while content inside the box foll
 // ============================================================
 // The expected total, for the same reason the other two suites carry one:
 // without it, deleting half this file still reports a clean run.
-const expected = 201;
+const expected = 218;
 if (checks !== expected) {
     fails.push('the suite ran every check it is supposed to — expected ' + expected + ', ran ' + checks);
 }

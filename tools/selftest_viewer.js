@@ -30,7 +30,13 @@
 
 const fs   = require('fs');
 const path = require('path');
-const { buildPageJs } = require('./page_constants');
+const { buildPageJs, PAGE_DEFAULTS } = require('./page_constants');
+
+/** A PAGE_DEFAULTS entry, resolved — some of them read a file when they are asked. */
+function pageDefault(name) {
+    const v = PAGE_DEFAULTS[name];
+    return (typeof v === 'function') ? v() : v;
+}
 
 const VIEWER = path.join(__dirname, '..', 'viewer.php');
 const POLICY = path.join(__dirname, '..', 'lib', 'error_policy.php');
@@ -98,8 +104,22 @@ let pendingTimeouts = [];
 global.setInterval  = () => 0;
 global.setTimeout   = (fn) => { pendingTimeouts.push(fn); return pendingTimeouts.length; };
 global.clearTimeout = (id) => { if (id) { pendingTimeouts[id - 1] = null; } };
-global.requestAnimationFrame = () => 0;
+// requestAnimationFrame is captured rather than dropped. The marquee does all of its
+// arithmetic inside the frame callback — it has to, because a span that has not been laid
+// out has no width — so a stub that returns 0 and forgets can only ever see the DOM as it
+// was before the first frame, which is one span and no transform (§4bz).
+let pendingFrames = [];
+global.requestAnimationFrame = (fn) => { pendingFrames.push(fn); return pendingFrames.length; };
 global.clearInterval = () => {};
+
+/** Run every frame that is due, at `ts` milliseconds. What they schedule waits for the
+ *  next call, so a caller advances one frame at a time and chooses the clock. */
+function frame(ts) {
+    const due = pendingFrames;
+    pendingFrames = [];
+    due.forEach(function (fn) { if (fn) { fn(ts); } });
+    return due.length;
+}
 
 /** Fire the watchdog armed by the poll in flight, as a stalled request would. */
 function fireWatchdogs() {
@@ -575,10 +595,162 @@ check(php.indexOf("'" + SCREEN_SENTENCE + "'") > -1,
     checkSame(before, canvas.children.length, 'and changes nothing');
     fireWatchdogs();
 
+    // ---- The marquee's loop is a clock, not the width of the sign (§4bz) --------
+
+    section('A marquee comes round on a clock, not on the width of the sign (§4bz)');
+
+    // What it used to be: the next pass began when the tail of the message had cleared the
+    // far edge, so the interval was `(blockWidth + messageWidth) / speed`. On a 1920px board
+    // at the default speed that is twenty-four seconds for a message four seconds long, and
+    // there was no setting anywhere that could shorten it — the sign's own width was the
+    // wait. What it is now: one message plus one gap, and the gap is a number.
+
+    checkSame(pageDefault('MARQUEE_GAP_DEFAULT'), marqueeGapSeconds(undefined),
+              'a marquee published before this setting existed gets the default gap');
+    checkSame(pageDefault('MARQUEE_GAP_DEFAULT'), marqueeGapSeconds(null),
+              'so does one whose gap is null');
+    checkSame(pageDefault('MARQUEE_GAP_DEFAULT'), marqueeGapSeconds({}),
+              'and one whose gap is an object, which is the shape unvalidated JSON comes in');
+    checkSame(pageDefault('MARQUEE_GAP_DEFAULT'), marqueeGapSeconds('now and then'),
+              'and one whose gap is a sentence');
+    checkSame(pageDefault('MARQUEE_GAP_DEFAULT'), marqueeGapSeconds(NaN),
+              'and one whose gap will not compare with anything');
+    checkSame(pageDefault('MARQUEE_GAP_DEFAULT'), marqueeGapSeconds(Infinity),
+              'and one whose gap has no end');
+    checkSame(3.5, marqueeGapSeconds(3.5), 'a number is the number');
+    checkSame(3.5, marqueeGapSeconds('3.5'),
+              'and so is a number that arrived from a form as a string');
+    // The one that separates a clamp from a default: zero is a *choice* — copies nose to
+    // tail — and `|| DEFAULT` would have quietly turned it into two seconds.
+    checkSame(0, marqueeGapSeconds(0), 'zero is a gap somebody chose, not a gap nobody set');
+    checkSame(pageDefault('MARQUEE_GAP_MIN'), marqueeGapSeconds(-5),
+              'a negative gap is floored rather than reversed');
+    checkSame(pageDefault('MARQUEE_GAP_MAX'), marqueeGapSeconds(900),
+              'and a quarter of an hour is capped');
+    check(pageDefault('MARQUEE_GAP_DEFAULT') > pageDefault('MARQUEE_GAP_MIN'),
+          'the default is a real gap, so nothing already published repeats nose to tail');
+
+    checkSame(1, marqueeCopies(0, 1920),
+              'a message with no measurable width asks for one copy and no arithmetic');
+    checkSame(1, marqueeCopies(-5, 1920),   'and so does a negative one');
+    checkSame(12, marqueeCopies(200, 1920), 'a 200px unit across a 1920px block wants twelve');
+    checkSame(3,  marqueeCopies(2000, 1920),
+              'a unit wider than the block wants three — the one showing, the one leaving, '
+              + 'the one arriving');
+    checkSame(2,  marqueeCopies(200, 0),
+              'a block with no width still wants two, because one cannot cover its own snap');
+    checkSame(256, marqueeCopies(1, 1920),
+              'and a one-pixel unit is bounded rather than asking for two thousand spans');
+
+    /** A marquee rendered and laid out: block width and message width, as a browser would. */
+    function marqueeOn(data, blockW, copyW) {
+        pendingFrames = [];
+        const block = stubEl('div');
+        renderMarquee(block, JSON.stringify(data));
+        const wrap  = block.children[0];
+        const strip = wrap.children[0];
+        wrap.offsetWidth = blockW;
+        strip.children[0].offsetWidth = copyW;
+        return { block, wrap, strip };
+    }
+    /** The strip's translateX, in pixels. */
+    function atX(strip) {
+        const m = /translateX\((-?[0-9.]+)px\)/.exec(strip.style.transform || '');
+        return m ? parseFloat(m[1]) : null;
+    }
+
+    const wide = marqueeOn({ text: 'Fresh sockeye landed this morning', speed: 100, gap: 2 },
+                           1920, 400);
+    checkSame('marquee-strip', wide.strip.className,
+              'the transform is carried by one strip, so every copy keeps its spacing');
+    checkSame(1, wide.strip.children.length, 'which holds one copy before the first frame');
+    checkSame(null, atX(wide.strip), 'and has not moved, because nothing has been measured');
+
+    frame(0);
+    // unit = 400 + 2*100 = 600. ceil(1920/600) + 2 = 6.
+    checkSame(6, wide.strip.children.length, 'the first frame measures the message and fills the strip');
+    checkSame('200px', wide.strip.children[0].style.marginRight,
+              'two seconds at a hundred pixels a second is two hundred pixels of blank');
+    checkSame('200px', wide.strip.children[5].style.marginRight, 'on every copy, not just the first');
+    checkSame('Fresh sockeye landed this morning', wide.strip.children[3].textContent,
+              'and every copy says the same thing');
+    checkSame(1920, atX(wide.strip),
+              'the message still enters from the far edge, so a sign that has just reloaded '
+              + 'does not open halfway through a sentence');
+
+    frame(1000);
+    checkSame(1820, atX(wide.strip), 'a second later it has moved one second of travel');
+    frame(4000);
+    checkSame(1520, atX(wide.strip), 'and keeps moving at the speed it was given');
+
+    // The whole point, stated as arithmetic: the same message at the same speed loops in the
+    // same time on a narrow block and a wide one. Before this, the wide one waited five times
+    // as long, and nothing on any form could change that.
+    function loopLength(blockW) {
+        const m = marqueeOn({ text: 'Fresh sockeye landed this morning', speed: 100, gap: 2 },
+                            blockW, 400);
+        frame(0);
+        let t = 0, seen = atX(m.strip), jumped = null;
+        while (t < 100000 && jumped === null) {
+            t += 100;
+            frame(t);
+            const now = atX(m.strip);
+            if (now > seen) { jumped = t; }      // the snap back — one loop has gone by
+            seen = now;
+        }
+        return jumped;
+    }
+    const narrowLoop = loopLength(400);
+    const wideLoop   = loopLength(1920);
+    check(narrowLoop !== null && wideLoop !== null, 'the strip snaps back rather than running away');
+    checkSame(narrowLoop === null ? null : narrowLoop - 4000, wideLoop === null ? null : wideLoop - 19200,
+              'and the loop after the first pass is the same length on a 400px block and a '
+              + '1920px one — the gap decides it, not the sign');
+
+    // A gap somebody set to nothing, and the difference from a gap nobody set.
+    const tight = marqueeOn({ text: 'Fresh sockeye', speed: 80, gap: 0 }, 800, 300);
+    frame(0);
+    checkSame('0px', tight.strip.children[0].style.marginRight,
+              'a gap of zero puts no blank between the copies');
+    checkSame(5, tight.strip.children.length, 'and the strip is filled from the message alone');
+
+    // A block that never gets laid out. The old loop read the width every frame and simply
+    // reset to zero; this one has to decide once, and deciding "keep asking" would be a
+    // frame loop on a television that nothing here would ever report.
+    const unmeasurable = marqueeOn({ text: 'Fresh sockeye', speed: 80, gap: 0 }, 0, 0);
+    frame(0);
+    checkSame(0, pendingFrames.length,
+              'a message with no width at all stops rather than spinning frames for ever');
+    checkSame(1, unmeasurable.strip.children.length, 'leaving the one copy standing and readable');
+
+    // A television that was asleep, or a tab the browser throttled: one `dt` of a whole
+    // minute, which is six units of travel at once. A single subtraction of `unit` would
+    // have parked the strip six screens off to the left and left the sign blank until it
+    // crawled back — so the wrap is a `while`, and a minute is what makes the two spellings
+    // tell different stories. Thirty seconds does not: it is one unit, and `if` handles it.
+    const woken = marqueeOn({ text: 'Fresh sockeye landed this morning', speed: 100, gap: 2 },
+                            1920, 400);
+    frame(0);
+    frame(1000);
+    frame(61000);
+    const x = atX(woken.strip);
+    check(x !== null && x > -600 && x <= 0,
+          'a sign that was asleep for a minute comes back inside one loop, not six screens '
+          + 'to the left');
+
+    // And the marquee is still cancellable: `stopAnimations` runs on every re-render and a
+    // frame that arrives after it must not schedule another.
+    const stopped = marqueeOn({ text: 'Fresh sockeye', speed: 80, gap: 2 }, 800, 300);
+    frame(0);
+    stopAnimations();
+    pendingFrames = [];
+    frame(1000);
+    checkSame(0, pendingFrames.length, 'a cancelled marquee schedules no further frames');
+
     // Anchored, for the reason `selftest_layout.php` anchors its own: without a
     // number here, deleting half this file still reports a clean run. Four of the
     // eight node suites carried one and four did not (§4bh).
-    const expected = 179;
+    const expected = 215;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected '
                    + expected + ', ran ' + checks);

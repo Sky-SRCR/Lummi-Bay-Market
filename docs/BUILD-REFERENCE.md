@@ -825,6 +825,22 @@ through the app again:
     them printed another install's database on a form (§4bp) and the other asked for its
     password (§4br).
 
+42. **Neither `builder.php` nor `viewer.php` gives the boxes they both draw a `border` or a
+    `padding`, and `.section-block`'s edge is an `outline`** (§4bx). The Builder's whole job
+    is to show what the sign will show, so the canvas, a section, a block and a text pane
+    have to *lay out* identically in both — and there are exactly two properties that quietly
+    stop that being true. A border takes up layout, and a bordered `position: absolute` box is
+    the containing block for its children at its **padding** box: two pixels on
+    `.section-block` drew every block inside a section two pixels right and two down of where
+    the television draws it, and made *Center in parent* land two pixels off, because the code
+    measures `offsetWidth`, which is the border box. Padding does the same to the inside: four
+    pixels on `.text-inner` made the Builder wrap the same string in a box eight pixels
+    narrower than the sign's. The rule reads the **subject** of each selector rather than
+    searching for a name, so `.section-block .rh-nw` may have any border it likes — nothing is
+    positioned inside a resize handle. It was seen to fail five ways, one of which must *not*
+    fail: `.section-block.targeted` declares an outline too, and accepting that let the
+    ordinary edge be deleted with the rule still printing ok.
+
 ---
 
 ## 3. Which Display does a request with no tag mean?
@@ -8769,6 +8785,95 @@ unrecognised attribute to `setAttribute`, so a `disabled` written in markup did 
 failed the property. And its `style` object had no `borderRadius`, so "left alone" and
 "cleared" both read as `undefined`. Both are now what a browser answers. A stub that is
 wrong in the same direction as the code is a suite that agrees with a defect.
+
+---
+
+### 4bz. A marquee that comes round on a clock
+
+The ask, verbatim: *"the marquee should restart on an adjustable continuous loop instead of
+it waiting for the complete text to cross the screen — it should wait x seconds before
+starting again, not waiting for text to completely scroll off screen before starting over."*
+
+**What it was.** One span, `padding-left: 100%`, translated left, and reset to zero the
+moment the tail cleared the far edge. So the interval between one pass and the next was
+`(blockWidth + messageWidth) / speed` — and the first term is the sign's own width. On a
+1920px board at the default 80px/sec, a message four seconds long came round every
+twenty-eight. Nothing on any form could shorten that: the wait was a property of the
+furniture.
+
+**What it is.** `MARQUEE_GAP_MIN`/`MAX`/`DEFAULT` in `LayoutRules`, a **Restart Gap** box in
+the rail, and one number in the marquee's JSON: the blank between one pass and the next,
+measured where a customer is standing. The interval is now `(messageWidth + gap × speed) /
+speed`, which is `messageWidth / speed + gap` — the message's own length plus the number
+somebody typed, with the block's width nowhere in it. The suite asserts exactly that, by
+running the same message on a 400px block and a 1920px one and comparing the loop lengths.
+
+**Copies on a strip, not one span reset.** The message is repeated across a single
+`.marquee-strip` — every copy identical, every gap identical — and the strip is snapped back
+by exactly one unit when it has travelled one unit. The snap is invisible *because* the
+copies are identical, which is what removes the geometry from the timing: there is no longer
+a moment when the sign is waiting for anything to finish. One element carries the transform,
+so the copies cannot drift apart.
+
+Three numbers fall out of that and each is a check:
+
+- **How many copies.** Enough units to cover the block, plus the one leaving and the one
+  arriving. Bounded at 256, because the count is a *ratio* and a ratio has no ceiling of its
+  own — a one-pixel unit would otherwise ask for two thousand spans. It cannot bite on a real
+  sign: the narrowest thing that is still a message is one character at the smallest font the
+  inspector offers, about ten pixels, so a 1920px board asks for about 194.
+- **When to measure.** On the first frame and once, not every frame. A span that has not been
+  laid out has no width, and the width is what every number above is made of. The old code
+  read it inside the loop and got away with reading it 60 times a second.
+- **What to do when there is no width at all.** Stop, leaving the message standing and
+  readable. "Keep asking" is a `requestAnimationFrame` loop on a television, which is the one
+  failure here that nothing would ever report.
+
+**`while`, not `if`, on the wrap.** A television that was asleep, or a tab the browser
+throttled, hands back a `dt` of a minute — six units of travel at once. One subtraction of
+`unit` parks the strip six screens to the left and leaves the sign blank until it crawls
+back. Thirty seconds does *not* separate the two spellings, which is why the check uses a
+minute: a mutant that survives the test you wrote is the test being about something else.
+
+**The default is two seconds, and that is a decision rather than a fallback.** Every marquee
+published before this existed carries no gap at all, and `0` — nose to tail — is not what
+those signs meant. It is also not "behave as you did yesterday": yesterday's interval was a
+consequence of the block's width, which is the thing being fixed. So `marqueeGapSeconds`
+distinguishes *absent* from *zero*, and `|| DEFAULT` would not have: zero is a gap somebody
+chose. That one line is the check the whole seam exists for.
+
+**No column, no `check()` rule.** A marquee's settings live in the JSON in `manual_content`,
+which is unvalidated for the non-text types (invariant 6) — exactly as `speed`, `size` and
+`color` already are. So the gap is **clamped at both ends rather than refused**, and the
+difference from a colour (#21) is that a refusal has to be *said* to somebody: there is
+nobody in front of a television. The Builder clamps because it writes, the Viewer clamps
+because it renders whatever the database holds, and both take the bounds from `LayoutRules`
+so that a Builder saying five seconds cannot sit over a television doing sixty. The check for
+that started as `strpos($src, 'LayoutRules::MARQUEE_GAP_MAX')` and **could not see the
+mutation it exists for**: the Builder names the ceiling twice, once on the number input and
+once in the script, so hardcoding the one the clamp reads left the other one satisfying the
+grep. It matches the `var … = <?= floatval(LayoutRules::…) ?>` line now, and the box's own
+`min`/`max` are asked for separately — four mutations, four failures.
+
+**Where the clamp becomes visible.** A number input's `max` is a suggestion — every browser
+lets a person type 900 into one. The sentence under the box says what was *stored*, which is
+#21's rule in its ordinary form. Two spellings of it, deliberately: `showMarqueeGap` sets the
+field and the sentence, `updateMarqueeGap` sets only the sentence. Writing the clamped value
+back into a field somebody is typing in moves their caret to the end of it, and clearing the
+field to start again would refill it with the default before the first digit arrived.
+
+**The suite had to learn to run a frame.** `selftest_viewer.js` stubbed
+`requestAnimationFrame` as `() => 0`, so every marquee check it had ever run looked at the DOM
+*before the first frame* — one span and no transform. It captures callbacks now and a `frame(ts)`
+driver advances them one at a time with a clock the test chooses, which is what makes the
+arithmetic above assertable at all. Nine mutations were seen to fail: the wrap deleted,
+`while` weakened to `if`, the entrance moved to zero, the unmeasurable bail removed, the copy
+bound removed, `|| DEFAULT` in place of the type check, the margin left off the extra copies,
+the rail not populated on open, and the box refilled while somebody is typing.
+
+**Owed to a person.** Nothing here has been *watched*. Whether the seam is invisible at
+1920×1080 on the shop's television, at the speeds the shop actually uses, is a browser-pass
+step and it is listed as one.
 
 ---
 ## 5. Verification

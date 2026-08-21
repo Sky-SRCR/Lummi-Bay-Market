@@ -6658,6 +6658,68 @@ checkSame(18, intval($rCopyBy['section']['corner_radius']),
           'and the copy is rounded too — copyLayout() is the third writer of that column');
 checkSame(40, intval($rCopyBy['image']['corner_radius']), 'for the block as well as the section');
 
+// ---- A marquee's restart gap (§4bz) ---------------------------------------------
+// No column and no `check()` rule: a marquee's settings are a JSON blob inside
+// `manual_content`, unvalidated for the non-text types (invariant 6), and the gap goes in
+// beside `speed`, `size` and `color`. So what is asserted here is the two things that are
+// not the JSON — that the bounds the two pages clamp to are one set of numbers, and that a
+// blob carrying one really does reach a television through an ordinary publish.
+check(LayoutRules::MARQUEE_GAP_MIN === 0,
+      'a marquee may be asked to repeat with no gap at all');
+check(LayoutRules::MARQUEE_GAP_MAX > LayoutRules::MARQUEE_GAP_MIN, 'and with a long one');
+check(LayoutRules::MARQUEE_GAP_DEFAULT > LayoutRules::MARQUEE_GAP_MIN,
+      'while the default is a real gap — a marquee published before this setting existed '
+      . 'carries no gap at all, and nose-to-tail is not what those signs meant');
+check(LayoutRules::MARQUEE_GAP_DEFAULT < LayoutRules::MARQUEE_GAP_MAX,
+      'and is not the ceiling either, or the box would only ever go one way');
+
+// Both pages clamp, and both take the numbers from here. Two files could agree today and
+// drift on the day somebody widens one of them — which on a sign is a Builder saying five
+// seconds over a television doing sixty.
+// The two page names are built rather than written: `'viewer' . '.php'` is a file being
+// read, but `viewer.php'` is the shape the ADR-0003 link rule looks for, and that rule is
+// right to be unable to tell the difference.
+//
+// The *line*, not the name anywhere in the file. `strpos` was the first spelling of this and
+// it could not see the mutation it exists for: the Builder names the ceiling twice — once on
+// the number input and once in the script — so hardcoding the one the clamp reads left the
+// other one satisfying the check.
+foreach (['builder' => 'the Builder, which writes the value',
+          'viewer'  => 'the Viewer, which is the end that has to agree with it'] as $mqPage => $mqWho) {
+    $mqSrc = file_get_contents(__DIR__ . '/../' . $mqPage . '.php');
+    foreach (['MARQUEE_GAP_MIN', 'MARQUEE_GAP_MAX', 'MARQUEE_GAP_DEFAULT'] as $mqName) {
+        check(preg_match('/var\s+' . $mqName . '\s*=\s*<\?=\s*floatval\(LayoutRules::'
+                         . $mqName . '\)\s*\?>;/', $mqSrc) === 1,
+              $mqName . '\'s clamp reads the module that owns it, in ' . $mqWho);
+    }
+}
+
+// And the box itself, which is the other half a person can see: a `min` or a `max` written
+// out by hand is a rail that stops at a number the sign does not.
+$mqRail = file_get_contents(__DIR__ . '/../' . 'builder' . '.php');
+check(strpos($mqRail, 'min="<?= floatval(LayoutRules::MARQUEE_GAP_MIN) ?>"') !== false,
+      'and the Restart Gap box takes its floor from there too');
+check(strpos($mqRail, 'max="<?= floatval(LayoutRules::MARQUEE_GAP_MAX) ?>"') !== false,
+      'and its ceiling');
+
+$mqSign = makeTestDisplay($hPdo, 'crawler', 'Crawl Bar');
+$mqBlob = json_encode(['text' => 'Fresh sockeye landed this morning', 'speed' => 100,
+                       'gap' => 3.5, 'bg' => '#c0392b']);
+check($hLayouts->publish($mqSign, new PublishRequest([
+        ['type' => 'marquee', 'x_pos' => 0, 'y_pos' => 1020, 'width' => 1920, 'height' => 60,
+         'manual_content' => $mqBlob],
+      ], Background::unchanged(), BrandChoice::unchanged(), 1, true, $mqSign->layoutStamp()))->isOk(),
+      'a marquee carrying a restart gap publishes');
+$mqSign   = $hStore->forId($mqSign->id());
+$mqPublic = $hLayouts->publicSnapshot($mqSign)['elements'];
+checkSame(1, count($mqPublic), 'and reaches the Screen as one block');
+$mqRead = json_decode($mqPublic[0]['manual_content'], true);
+checkSame(3.5, $mqRead['gap'],
+          'with the gap intact — a fraction of a second is a gap somebody typed, and TEXT '
+          . 'keeps it because nothing on this path rounds a marquee\'s settings');
+checkSame(100, $mqRead['speed'], 'beside the speed it always carried');
+checkSame('Fresh sockeye landed this morning', $mqRead['text'], 'and the message');
+
 // The Display's own facts survive an empty layout: a Screen showing nothing must
 // show a blank sign of the right size and colour, not an error.
 $hBlank = makeTestDisplay($hPdo, 'allhidden', 'Everything Hidden');
@@ -9438,4 +9500,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2591 : 2566);
+reportChecks(testIsMysql() ? 2608 : 2583);
