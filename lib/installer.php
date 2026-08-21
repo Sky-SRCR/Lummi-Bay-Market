@@ -648,6 +648,36 @@ class Installer
     }
 
     /**
+     * What this folder already has, when the only thing missing is the tables.
+     *
+     * A credentials file this install owns, a database that answered, and no tables in it
+     * is not the state the database form is for — every value that form asks for is
+     * already on disk and already known to work. Printing the form anyway asks a person to
+     * retype four things a page in front of them could have said, and a typo in the second
+     * of them repoints the folder at a database nobody meant: `installerDoDatabase()`
+     * rewrites the credentials file from whatever was typed. This is §4br's lesson one
+     * boundary further in — the page had the facts and did not say them — and it is the
+     * state a person is in whenever the credentials were written by hand, which
+     * `INSTALL.md` has recommended all along.
+     *
+     * Pure, and it takes both values rather than reading `DB_NAME`, for the reason
+     * `sharingNote()` does: the sentence is only worth printing when it names the database
+     * somebody is about to accept, and a suite has to be able to ask it about a file this
+     * machine does not have.
+     */
+    public static function tablesNote($credentialsFile, $databaseName)
+    {
+        $file     = basename((string) $credentialsFile);
+        $database = ((string) $databaseName === '')
+            ? 'the database it names' : (string) $databaseName;
+
+        return 'This folder already has its credentials: ' . $file . ', above the webroot, '
+             . 'naming ' . $database . '. That database answered, and there are no tables in '
+             . 'it yet — so the only thing left to do here is build them, and nothing needs '
+             . 'typing again.';
+    }
+
+    /**
      * The contents of that file — the real values, or the blanks to fill in.
      *
      * One writer of this shape, used twice: the installer writes it with values, and

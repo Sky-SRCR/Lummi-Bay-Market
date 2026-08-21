@@ -374,6 +374,9 @@ function installerMain()
     // Captured before any form below moves the stage on: the gate on repointing has to be
     // asked about the state the *request arrived in*, not the state it is trying to reach.
     $askedWhose = ($stage === 'whose');
+    // And the same capture for the state above, for the same reason: the one-button form
+    // may only build tables on a connection this request resolved for itself.
+    $askedSchema = ($stage === 'schema' && $pdo !== null);
 
     // ---- Acting on a form -----------------------------------------------------
     // No CSRF token on either branch here, and the reason is not that it was forgotten.
@@ -425,6 +428,17 @@ function installerMain()
             $token           = installerToken($credentialsFile);
             $ownership       = Installer::OWN;
             $database        = trim((string) ($_POST['name'] ?? ''));
+        }
+    } elseif ($posted && ($_POST['step'] ?? '') === 'tables' && $askedSchema) {
+        // "Build them" — no values typed, and no credentials file written: the one on disk
+        // is already this install's own and already works. A token here where `adopt` has
+        // none, because this runs DDL rather than writing down what is already true, and
+        // because in this state there *is* a token: `installerToken()` reads the
+        // credentials file, which is the very thing this state is defined by having.
+        if ($token === '' || !hash_equals($token, (string) ($_POST['token'] ?? ''))) {
+            $errors[] = 'That form did not come from this page. Reload and try again.';
+        } else {
+            $stage = installerBuildTables($pdo, $appDir, $errors, $notes);
         }
     } elseif ($posted && ($_POST['step'] ?? '') === 'admin') {
         if ($token === '' || !hash_equals($token, (string) ($_POST['token'] ?? ''))) {
@@ -500,12 +514,20 @@ function installerMain()
     // Every other state hands it to the page, which prints it on whichever screen it is.
     if ($stage === 'whose') { array_unshift($notes, $whose); }
 
+    // Whether the tables can be built from what is already on disk. Asked of this
+    // request's own findings — a credentials file, an open connection, no tables — and not
+    // of anything a form said, so a failed build falls back to the form rather than
+    // offering the button that just failed.
+    $tables = ($stage === 'schema' && $pdo !== null && $credentialsFile !== '' && !$posted)
+        ? Installer::tablesNote($credentialsFile, $database)
+        : '';
+
     // `whose` passes '' for the same reason `borrowed` does: its sentence is the screen.
     installerPage($appDir, $stage, $errors, $notes, $token, $pdo,
                   ($ownership === Installer::BORROWED || $stage === 'whose')
                       ? ''
                       : Installer::sharingNote($ownership, $appDir, $credentialsFile, $database),
-                  $redraw, $database);
+                  $redraw, $database, $tables);
 }
 
 // ============================================================
@@ -682,6 +704,20 @@ function installerDoDatabase($appDir, array &$errors, array &$notes)
         return 'database';
     }
 
+    return installerBuildTables($pdo, $appDir, $errors, $notes);
+}
+
+/**
+ * The tables, the first display, and what to do next — over a connection already open.
+ *
+ * Split out of `installerDoDatabase()` because there are two ways to arrive here and only
+ * one of them is typing a database in. The other is a folder whose credentials file was
+ * already written and already works, which is the route `INSTALL.md` recommends and the
+ * route that used to be shown the four-field form anyway (`Installer::tablesNote()`).
+ * Neither of them writes a credentials file: this function is everything after that.
+ */
+function installerBuildTables(PDO $pdo, $appDir, array &$errors, array &$notes)
+{
     $script = @file_get_contents($appDir . '/schema.sql');
     if ($script === false) {
         $errors[] = 'schema.sql is not beside the app, so the tables cannot be created.';
@@ -757,7 +793,7 @@ function installerBarePage($which)
 
 /** The one screen, in whichever of its four states this install is in. */
 function installerPage($appDir, $stage, array $errors, array $notes, $token, ?PDO $pdo = null,
-                      $sharing = '', array $redraw = [], $database = '')
+                      $sharing = '', array $redraw = [], $database = '', $tables = '')
 {
     installerHead('Install');
 
@@ -804,6 +840,8 @@ function installerPage($appDir, $stage, array $errors, array $notes, $token, ?PD
 
     if ($stage === 'whose') {
         installerWhoseForm($database);
+    } elseif ($stage === 'schema' && (string) $tables !== '') {
+        installerTablesForm($tables, $token);
     } elseif ($stage === 'database' || $stage === 'schema') {
         installerDatabaseForm();
     } elseif ($stage === 'admin') {
@@ -929,6 +967,33 @@ function installerWhoseForm($database)
        . Markup::text($named) . ' is left exactly as it is: nothing below writes to it, and '
        . 'the install it belongs to keeps using it.</p>';
     installerDatabaseForm($named);
+}
+
+/**
+ * The tables, for a folder whose credentials are already on disk and already work.
+ *
+ * The button asks for nothing, because there is nothing to ask: the sentence above it
+ * names the file and the database, and both came from this request rather than from
+ * anything remembered. The four-field form stays on the page, under a heading that says
+ * what filling it in would do — a person who arrived here because the file names the
+ * *wrong* database needs it, and hiding it would leave them editing PHP above the webroot
+ * to get back to a form they had just been shown.
+ */
+function installerTablesForm($note, $token)
+{
+    echo '<h2>The tables</h2>'
+       . '<p class="note">' . Markup::text($note) . '</p>'
+       . '<h3>Build them</h3>'
+       . '<p>This creates the tables in that database, sets up the first Screen, and then '
+       . 'asks for the administrator account. Nothing above the webroot is written and '
+       . 'nothing already in that database is removed.</p>'
+       . '<form method="post"><input type="hidden" name="step" value="tables">'
+       . '<input type="hidden" name="token" value="' . Markup::text($token) . '">'
+       . '<button type="submit">Create the tables</button></form>'
+       . '<h3>Or use a different database</h3>'
+       . '<p>Only if the file named above has the wrong database in it. Filling this in '
+       . 'rewrites that file, and this folder uses whatever is typed here from then on.</p>';
+    installerDatabaseForm();
 }
 
 function installerAdminForm($token, array $was = [])
@@ -1127,6 +1192,8 @@ function installerFoot()
     echo '</div></body></html>';
 }
 
-// The suite requires this file to test the four functions above without running an
-// install. Nothing else in the repo defines the constant and a web request cannot.
+// The suite requires this file to test the pure functions above without running an
+// install, and `tools/rehearse_install.php` requires it to run `installerBuildTables()`
+// against a real MySQL. Nothing else in the repo defines the constant and a web request
+// cannot.
 if (!defined('INSTALLER_INSPECT')) { installerMain(); }

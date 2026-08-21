@@ -363,19 +363,96 @@ is_it(!Installer::mustAskWhose(Installer::OWN, $accounts->total()),
 @rmdir(dirname($sharedApp));
 @rmdir(dirname(dirname($sharedApp)));
 
+step('The tables, from credentials that are already on disk');
+
+// The other way in, and the one `INSTALL.md` has recommended all along: the credentials
+// file was written by hand or by a previous attempt, it works, and the database behind it
+// is empty. Everything above drives `Installer` directly; this drives the page's own
+// `installerBuildTables()`, which is what that state now reaches — because until §4bs it
+// reached the four-field form instead and was told nothing, and filling that form in
+// rewrites the credentials file from whatever was typed.
+define('INSTALLER_INSPECT', true);
+require_once $root . '/install.php';
+
+$server->exec('DROP DATABASE IF EXISTS `' . $db . '`');
+$server->exec('CREATE DATABASE `' . $db . '`');
+$onDisk = Installer::connectDatabase($host, $db, $user, $pass, $freshWhy);
+is_it($onDisk !== null,
+      'the database is emptied again' . ($onDisk === null ? ' — ' . $freshWhy : ''));
+
+$handApp  = sys_get_temp_dir() . '/lbm-rehearse-hand-' . getmypid() . '/public_html/newsign';
+@mkdir($handApp, 0755, true);
+// A folder shaped like a real install rather than the repo: `schema.sql` inside it, and a
+// `private/` two levels up. `installerBuildTables()` is handed *this* as its `$appDir`, so
+// a line added to it that wrote the credentials file would write the file the check below
+// reads. Handed the repo root instead, that check asserted a property of a function with no
+// code for it — which is invariant 30's "a check that cannot fail" (§4bs).
+@copy($root . '/schema.sql', $handApp . '/schema.sql');
+$handFile = Installer::credentialsTarget($handApp);
+@mkdir(dirname($handFile), 0700, true);
+Installer::writeFile($handFile, Installer::credentialsSource(
+    $handApp, ['host' => $opts['host'], 'name' => $db, 'user' => $user, 'pass' => $pass]
+), $handWhy);
+is_it(InstallPaths::credentialsFile($handApp) === $handFile
+      && Installer::credentialsOwnership($handApp, $handFile, InstallPaths::installName($handApp))
+         === Installer::OWN,
+      'a folder with a credentials file of its own is not asked whose database it is'
+      . ($handWhy !== '' ? ' — ' . $handWhy : ''));
+
+// The one thing this harness has to do that a server does not: clear the per-request
+// latch. Convergence refuses a second time on one request by design, and this process
+// converged twice at the step above — so without this, `installerBuildTables()` reports
+// "The first display is set up" over a `displays` table with nothing in it, and the
+// difference is the harness rather than the page. Which is worth having found: the check
+// below is what noticed, and it is the same check that would notice the page skipping the
+// seed for a reason that *was* the page's.
+SchemaLatch::forget();
+
+$before   = (string) file_get_contents($handFile);
+$handNotes = [];
+$handErrs  = [];
+$reached   = installerBuildTables($onDisk, $handApp, $handErrs, $handNotes);
+is_it($reached === 'admin',
+      'and pressing the one button on that screen builds the tables and lands on the '
+      . 'administrator form' . ($handErrs ? ' — ' . implode(' / ', $handErrs) : ''));
+is_it(in_array('The tables are created.', $handNotes, true)
+      && in_array('The first display is set up.', $handNotes, true),
+      'reporting both halves — the tables, and the Display that `schema.sql` does not seed '
+      . 'and convergence does');
+is_it((string) file_get_contents($handFile) === $before,
+      'and the credentials file is byte-for-byte what it was: this route writes nothing '
+      . 'above the webroot, which is the whole reason it does not ask for the four values '
+      . 'that are already in that file');
+// Through the seam, not `SELECT COUNT(*) FROM displays` — which is invariant 35 and which
+// `check_invariants.php` caught here, in a tool, exactly as it is meant to.
+$built = -1;
+try {
+    $built = count((new DisplayStore($onDisk))->all());
+} catch (Throwable $e) {
+    $built = -1;
+}
+is_it($built === 1, 'with one Display in the database, the way the typed route leaves it');
+
+@unlink($handFile);
+@rmdir(dirname($handFile));
+@unlink($handApp . '/schema.sql');
+@rmdir($handApp);
+@rmdir(dirname($handApp));
+@rmdir(dirname(dirname($handApp)));
+
 // ---- And that every one of them ran --------------------------------------------
 // The anchor `rehearse_phase1.php` did not have until §4bk, for the reason that write-up
 // is about: this printed "clean" whether it ran every check or stopped after four.
 //
 // **A sum of declared terms, not a number**, and it is written this way because the flat
 // number was wrong the day it landed and stayed wrong through a second edit (§4bq). There
-// are 33 `is_it` call sites (this sentence deliberately writes the name without its
+// are 39 `is_it` call sites (this sentence deliberately writes the name without its
 // bracket, so a naive count of the file does not include the comment about the count);
 // one of them is the nine-table loop, which is a multiplier a
 // reader cannot see from a total; and this check counts itself. `33` was written where 35
 // was true, and **nothing local can run this file** — it needs a MySQL server — so the only
 // place that disagreement could show up was the CI leg it was added to guard.
-$expected = 37     // call sites that run once
+$expected = 43     // call sites that run once
           + 9      // the nine tables schema.sql builds, one call site
           + 1;     // this check, counting itself
 $checked++;

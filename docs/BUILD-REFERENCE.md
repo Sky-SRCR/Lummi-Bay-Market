@@ -8199,6 +8199,66 @@ password it cannot obtain. And the state that started all this — an unstamped 
 is still adopted silently whenever the database behind it is *empty*, because there is
 nothing there to be wrong about yet.
 
+### 4bs. The one screen a hand-written credentials file always reached was the form asking for it again
+
+Reported from the field, one line: *a clean folder, no install in it, a working database and
+the credentials ready.* Which is the route `INSTALL.md` has recommended since it was
+written — put the file above the webroot yourself, upload `install.php`, open it. Driven
+here, that folder unpacked the app, read the file, connected, found no tables, and printed
+**the blank four-field database form**: host, database name, user, password. It said nothing
+about the file it had just read or the database it had just opened.
+
+Two things wrong with that, and the second is the one that matters.
+
+It asks a person to retype four values a page in front of them already has — and every one
+of them is a value it *knows works*, because it connected with them a few lines earlier.
+And `installerDoDatabase()` rewrites the credentials file from whatever is typed. So the
+recommended route ended at a form where a typo in the second field points the folder at a
+database nobody meant, silently, with the working file overwritten. The route with the
+fewest moving parts had the only screen that could lose the thing it was given.
+
+This is §4br's lesson one boundary in. There the page held a fact and printed a warning
+instead of asking a question; here it held four and printed a form. The state was never
+wrong — `accountCount()` returning `-1` is exactly "the tables are not there", and `schema`
+is the right stage — the stage just had no screen of its own and borrowed the one above it.
+
+**What it does now.** `Installer::tablesNote()` — pure, taking the file and the database
+name as parameters for the reason `sharingNote()` does — says which file, which database,
+that it answered, and that there are no tables in it. Under it, one button: **Create the
+tables**. `installerBuildTables()` is the second half of `installerDoDatabase()` split out
+at the line where credentials stop being written, so both routes run the same statements and
+only one of them writes a file. The four-field form stays on the page under *Or use a
+different database*, saying what filling it in would do, because a person whose file names
+the **wrong** database needs it and hiding it would send them to edit PHP above the webroot
+to get back a form they had just been shown.
+
+The button carries the form token where `adopt` deliberately carries none: this one runs
+DDL, and in this state there *is* a token, because `installerToken()` reads the credentials
+file and this state is defined by having one. Refused over HTTP with a wrong token: nothing
+created, the tables still absent.
+
+**Walked, and the note is the reason it was believed.** Clean folder, credentials on disk
+naming an empty database: the screen named `db_credentials_newsign.php` and the database,
+the button built nine tables and seeded the Display, the administrator form came up — and
+both credentials files were **byte-identical and untouched** afterwards, which is the
+property the old route could not have.
+
+**And one check that could not fail.** The rehearsal's new step asserts exactly that
+byte-for-byte property, and it was first written passing the repo root as `$appDir`. Mutating
+`installerBuildTables()` to write the credentials file killed it as a *fatal* rather than an
+assertion — the path did not resolve from the repo at all — which is the harness noticing
+something moved rather than a check knowing what it was for. The step builds a folder shaped
+like a real install now, `schema.sql` inside it and `private/` two levels up, and the same
+mutation fails the check on its own terms.
+
+The step also found something about the harness rather than the page: convergence refuses
+twice on one request, and the rehearsal had already converged, so `installerBuildTables()`
+reported *The first display is set up* over an empty `displays` table. `SchemaLatch::forget()`
+stands in for the fresh request a server would have given it. 7 checks there, 6 in the suite.
+
+**What this does not fix.** The preflight above still says this folder is *writable, so the
+app can be unpacked here* on a screen where it demonstrably already has been.
+
 ---
 ## 5. Verification
 

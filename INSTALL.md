@@ -144,11 +144,19 @@ stops the install; a ⚠ will work and has a consequence worth reading.
 
 ### 4. Fill in the database form
 
-On a host with no other install on it, this is the first thing you see. If a credentials
-file from another install is already above the webroot and the database it names has an
-administrator in it, you get one screen before this one — *Which database does this folder
-use?* — because the installer will not decide that for you. **Installing a second copy**,
-further down, is what that screen is about.
+On a host with no other install on it, this is the first thing you see. Two things can put
+a different screen in front of it, and neither is an error:
+
+- **You already wrote the credentials file yourself** (or a previous attempt did), and the
+  database it names is empty. Then there is nothing here to ask for: the installer names the
+  file it read and the database it opened, and offers one button — *Create the tables*. It
+  writes nothing above the webroot on that route, so the file you placed stays exactly as
+  you wrote it. The form below is still on that screen, under *Or use a different database*,
+  for the case where the file names the wrong one.
+- **A credentials file from another install is above the webroot and the database it names
+  has an administrator in it.** Then you get *Which database does this folder use?*, because
+  the installer will not decide that for you. **Installing a second copy**, further down, is
+  what that screen is about.
 
 The four values from step 1. What happens when you press the button:
 
@@ -363,9 +371,10 @@ Two things to know before you do it:
 - **A database that has never been installed into is empty**, and the app cannot build
   itself from nothing — `schema.sql` creates nine tables and only four of them are ones
   the app converges on its own. So after writing the credentials file, upload
-  `install.php` into that folder again and open it. It will find the new file, see a
-  database with no tables in it, and carry on from there. Signing in first gets you an
-  error about a missing table, not an install.
+  `install.php` into that folder again and open it. It finds the new file, opens the
+  database, sees no tables in it, and says so by name — then builds them from one button,
+  with nothing to type and your credentials file left byte for byte as you wrote it.
+  Signing in first gets you an error about a missing table, not an install.
 - **The old database is untouched.** Nothing is moved, copied or deleted. If the layout
   you want is in the *old* database, this is not the tool for that — export it in
   phpMyAdmin and import it into the new one before you point anything at it.

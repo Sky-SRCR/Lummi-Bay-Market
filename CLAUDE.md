@@ -187,7 +187,15 @@ edited in place and every change reaches the sign by hand.
   folder a *different* database is a takeover if anybody passing can do it, and the password
   of the database in use is the one fact the page can check and cannot leak — a blank one is
   a refusal, not a pass (§4br). The write side of that rule — `credentialsTarget()` — had
-  been right since the day it landed, which is what made the missing read side invisible.
+  been right since the day it landed, which is what made the missing read side invisible. And
+  §4bs is the same shape one boundary in and the plainest of the three: a folder whose
+  credentials file was already written and already works, over an empty database, was shown
+  the **four-field database form** — a page holding the file's name, the database's name and
+  a live connection, asking a person to retype all four, where a typo repoints the folder
+  because `installerDoDatabase()` rewrites that file from whatever is typed. That state has
+  a screen of its own now (`tablesNote()`, one button, `installerBuildTables()` split out at
+  the line where credentials stop being written), and the recommended manual route no longer
+  ends at the only form that could lose the file it was given.
 - **A file arrives from a browser through one of four doors, and none writes the name it was
   given** (invariant 40, §4bq). `crud.php`, `api.php`, `admin_panel.php` and `install.php`;
   `check_invariants.php` fails on a fifth. `uploads/` is the only folder in the webroot with

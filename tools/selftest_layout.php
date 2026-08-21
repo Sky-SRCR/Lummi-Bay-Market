@@ -8738,6 +8738,25 @@ check(Installer::repointRefusal('anything', '') !== '',
 checkMentions(Installer::repointRefusal('anything', ''), 'by hand',
               'so it names the one route that has never needed this page\'s permission');
 
+// `tablesNote()` — the state where the only thing missing is the tables, which used to be
+// shown the four-field form and told nothing (§4bs). The file is named by its basename on
+// purpose: the whole path is above the webroot and a person reading this screen is looking
+// for the file in a file manager, not typing the path anywhere.
+$laneTwo = '/home/acct/private/db_credentials_lane-two.php';
+checkMentions(Installer::tablesNote($laneTwo, 'silverad_lummi_b'),
+              'db_credentials_lane-two.php',
+              'the tables note names the credentials file it read');
+check(strpos(Installer::tablesNote($laneTwo, 'silverad_lummi_b'), '/home/acct/private') === false,
+      'the tables note does not print the folder above the webroot');
+checkMentions(Installer::tablesNote($laneTwo, 'silverad_lummi_b'), 'silverad_lummi_b',
+              'the tables note names the database it reached');
+checkMentions(Installer::tablesNote($laneTwo, 'silverad_lummi_b'), 'no tables',
+              'the tables note says what is missing');
+checkMentions(Installer::tablesNote($laneTwo, ''), 'the database it names',
+              'a note with no database name still reads as a sentence');
+check(strpos(Installer::tablesNote($laneTwo, ''), 'naming  ') === false,
+      'and does not leave a hole where the database name would have been');
+
 // The stamp itself, in the file the installer writes.
 $stampedFile = Installer::credentialsSource($signs, ['host' => 'localhost',
                    'name' => 'shop_signs', 'user' => 'shop_u', 'pass' => 'p']);
@@ -9261,4 +9280,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2539 : 2514);
+reportChecks(testIsMysql() ? 2545 : 2520);
