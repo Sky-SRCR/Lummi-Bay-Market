@@ -54,9 +54,12 @@ SET FOREIGN_KEY_CHECKS = 0;
 --
 -- The other noun (v2 roadmap decision 1): a Brand is what a customer sees on a TV,
 -- a Workspace Theme is what an employee's screen is painted in. Nothing here ever
--- reaches a Screen. Thirteen roles, each NOT NULL with today's colour as its
+-- reaches a Screen. Sixteen roles, each NOT NULL with today's colour as its
 -- default, so a theme is never half a set of colours — and no column for anything
--- drawn on the canvas, which belongs to the Brand (decision 11).
+-- drawn on the canvas, which belongs to the Brand (decision 11). Thirteen of them
+-- are surfaces; the last three are the colour of the text drawn on those surfaces,
+-- which were literals in three stylesheets until a theme lightened a panel and left
+-- its own labels unreadable.
 --
 -- Created before `users`, because `users` points at it. There is deliberately no
 -- seeded row: the store default is `branding_config.php` plus these defaults,
@@ -79,6 +82,9 @@ CREATE TABLE IF NOT EXISTS workspace_themes (
     status_busy   VARCHAR(7)  NOT NULL DEFAULT '#4b3869',
     status_note   VARCHAR(7)  NOT NULL DEFAULT '#7a4a12',
     selection     VARCHAR(7)  NOT NULL DEFAULT '#e74c3c',
+    panel_text     VARCHAR(7) NOT NULL DEFAULT '#dfe6ec',
+    work_area_text VARCHAR(7) NOT NULL DEFAULT '#ffffff',
+    fill_text      VARCHAR(7) NOT NULL DEFAULT '#ffffff',
     PRIMARY KEY (id),
     UNIQUE KEY name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

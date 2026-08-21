@@ -460,6 +460,12 @@ a page that may be holding unpublished work and no other premise here covers tha
 > theme that could not hold it would repaint the live nav the moment anybody chose one —
 > decision 9's "no sign moves" has an application-side twin.
 >
+> **Sixteen, as of §4bv.** Thirteen was still one group short. Every one of the thirteen
+> paints a *surface* except `nav_text`, so a theme could lighten the panel and had no way
+> to say what colour the labels on it were — they were `#8fa6bb` in three stylesheets, and
+> the store owner's screenshot of a light theme showed its own side navigation grey on
+> grey. One text role per surface: `panel_text`, `work_area_text`, `fill_text`.
+>
 > **No seeded theme.** The plan had today's `branding_config.php` values "become a seeded
 > theme named Store default". A seeded row is a *copy* of that file, and the first Site
 > Branding edit makes the copy disagree with it while still being called the default —

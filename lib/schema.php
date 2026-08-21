@@ -731,13 +731,15 @@ function signageSchemaPlan(SchemaFacts $facts)
     // outline — and why there is no column for anything drawn on the canvas
     // (decision 11, and a check refuses one).
     //
-    // Thirteen colour columns, one per role, each `NOT NULL` with today's value as
+    // Sixteen colour columns, one per role, each `NOT NULL` with today's value as
     // its default. So a row is complete by construction: a theme is never half a set
     // of colours, and a column added to this table later starts every existing theme
     // at the value the app was already using. `SiteChrome::ROLES` is the same list,
     // and `selftest_layout` asserts that this statement and that constant name the
-    // same thirteen — two lists is how they come to disagree, and only one of them
-    // can be read by the database.
+    // same sixteen — two lists is how they come to disagree, and only one of them
+    // can be read by the database. Thirteen of the sixteen are surfaces and the last
+    // three are the text on them (§4bv); the `ALTER`s under the `CREATE` are how a
+    // database that predates them catches up.
     //
     // **There is no seed, and that is a change from the plan.** It said today's
     // `branding_config.php` values "become a seeded theme named Store default". A
@@ -766,9 +768,30 @@ function signageSchemaPlan(SchemaFacts $facts)
         status_busy   VARCHAR(7)  NOT NULL DEFAULT '#4b3869',
         status_note   VARCHAR(7)  NOT NULL DEFAULT '#7a4a12',
         selection     VARCHAR(7)  NOT NULL DEFAULT '#e74c3c',
+        panel_text     VARCHAR(7) NOT NULL DEFAULT '#dfe6ec',
+        work_area_text VARCHAR(7) NOT NULL DEFAULT '#ffffff',
+        fill_text      VARCHAR(7) NOT NULL DEFAULT '#ffffff',
         PRIMARY KEY (id),
         UNIQUE KEY name (name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // The three text roles, for a database that already has this table (§4bv). This is
+    // the case the comment above promised and had never had to serve: a column added
+    // later starts every existing theme at the value the app was already painting, so a
+    // theme somebody made last week keeps the exact screen they made — the `DEFAULT` is
+    // the literal it replaces, not a fresh idea about what looks good.
+    //
+    // Three gated statements rather than one ungated `ALTER … ADD COLUMN a, b, c`: the
+    // gate is what stops convergence re-running an `ALTER` on every signed-in page load,
+    // and an `ALTER` locks the table. Separate because `needsColumn()` answers about one
+    // column, and a combined statement gated on the first would skip the other two on a
+    // database that had somehow got one of them.
+    $sql($facts->needsColumn('workspace_themes', 'panel_text'), 'workspace_themes.panel_text',
+         "ALTER TABLE workspace_themes ADD COLUMN panel_text VARCHAR(7) NOT NULL DEFAULT '#dfe6ec'");
+    $sql($facts->needsColumn('workspace_themes', 'work_area_text'), 'workspace_themes.work_area_text',
+         "ALTER TABLE workspace_themes ADD COLUMN work_area_text VARCHAR(7) NOT NULL DEFAULT '#ffffff'");
+    $sql($facts->needsColumn('workspace_themes', 'fill_text'), 'workspace_themes.fill_text',
+         "ALTER TABLE workspace_themes ADD COLUMN fill_text VARCHAR(7) NOT NULL DEFAULT '#ffffff'");
 
     // Which theme an account chose. Nullable, and null is not a missing answer — it
     // is the answer "use the store default", which is what every account has until

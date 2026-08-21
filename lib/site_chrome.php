@@ -95,13 +95,22 @@ class SiteChrome
         // The one thing on this list that is drawn over the canvas rather than beside
         // it. See ROLES for why that is allowed and what is not.
         'selection'    => '#e74c3c',
+        // Text: one role per surface a theme can repaint, which is the whole reason they
+        // exist. Every one of these was a literal until §4bv — `#8fa6bb` on the palette,
+        // `#fff` on the work area, `#fff` on every button and banner — so a theme that
+        // lightened `panel` left its own side navigation grey on grey and there was
+        // nothing on the form to fix it with. The values here are the literals they
+        // replace, so a theme nobody has edited looks exactly as it did.
+        'panel_text'     => '#dfe6ec',
+        'work_area_text' => '#ffffff',
+        'fill_text'      => '#ffffff',
     ];
 
     /**
      * Every role, the words a person picks it by, and which group of the theme form it
      * belongs to.
      *
-     * Thirteen — the plan said twelve, with six chrome roles, and six is one short:
+     * Sixteen. Thirteen of them were the plan's, which said twelve, and twelve is one short:
      * the **navigation border** is one of the four colours a shop can already set from
      * Site Branding, and a theme that could not hold it would repaint the live nav the
      * moment anybody chose one. Decision 9's "no sign moves" has an application-side
@@ -114,6 +123,22 @@ class SiteChrome
      * Screen, so they are chrome that happens to sit there. That distinction cannot
      * be seen by looking at a colour, only at where it is used, which is what
      * `tools/check_invariants.php` looks at.
+     *
+     * **The last three are text, and they are the group the first thirteen implied and
+     * did not have** (§4bv). A theme repaints four kinds of surface — the nav, the
+     * panels, the work area, and the coloured fills the buttons and banners are — and
+     * only the nav had a colour for what is written on it. So a theme that lightened
+     * `panel` left the palette's own labels at the literal `#8fa6bb` they had always
+     * been: unreadable, and nothing on the form to fix it with. One role per surface
+     * rather than one per label — the dimmer tier of panel text is `panel_text` at
+     * reduced opacity, which follows a light theme and a dark one, where a second
+     * stored grey would have followed neither.
+     *
+     * `fill_text` is one role over six fills — the accent and the five status colours —
+     * because six would be a form nobody fills in, and because what those six have in
+     * common is exactly this: a saturated block with a few words on it. The cost is
+     * that the advisory banner's slightly warm `#ffe9cf` becomes the same colour as the
+     * rest, which is a loss worth one role.
      */
     const ROLES = [
         'nav_bg'       => ['Navigation background', 'chrome'],
@@ -129,12 +154,15 @@ class SiteChrome
         'status_busy'  => ['Somebody else is here', 'status'],
         'status_note'  => ['Advisory note',         'status'],
         'selection'    => ['Selection outline and handles', 'overlay'],
+        'panel_text'     => ['Text on panels',            'text'],
+        'work_area_text' => ['Text on the work area',     'text'],
+        'fill_text'      => ['Text on buttons and banners', 'text'],
     ];
 
     /**
      * The constant each colour is stored in, and the label the Branding form uses.
      *
-     * Four of the thirteen, and deliberately still four: these are the ones
+     * Four of the sixteen, and deliberately still four: these are the ones
      * `branding_config.php` has always held, which makes them the ones the **store
      * default** can differ from the documented defaults in. The other nine are a
      * theme's to change and nobody else's — adding them to the Branding form would
@@ -263,15 +291,18 @@ class SiteChrome
     public static function statusBusy() { return self::role('status_busy'); }
     public static function statusNote() { return self::role('status_note'); }
     public static function selection()  { return self::role('selection'); }
+    public static function panelText()    { return self::role('panel_text'); }
+    public static function workAreaText() { return self::role('work_area_text'); }
+    public static function fillText()     { return self::role('fill_text'); }
 
     /**
      * The colour for one role, resolved.
      *
      * Named accessors above are the interface — `text()` keeps its name although its
      * role is now `nav_text`, because every page and every check says `SiteChrome::text()`
-     * and the point of this step is that no call site changes. This is how the thirteen
+     * and the point of this step is that no call site changes. This is how the sixteen
      * agree, and it is public because the theme form and the check both need to walk
-     * `ROLES` and ask about each one without a thirteen-way switch.
+     * `ROLES` and ask about each one without a sixteen-way switch.
      */
     public static function role($key)
     {
@@ -344,7 +375,7 @@ class SiteChrome
      *
      * Needed as a value rather than as a state because the page that offers that choice
      * is already wearing a theme when it renders it — so the alternative was taking the
-     * theme off, reading thirteen colours and putting it back, in a static, half way
+     * theme off, reading sixteen colours and putting it back, in a static, half way
      * down a page. A method that answers without moving anything is the same answer with
      * nothing left behind if it throws.
      */
@@ -380,16 +411,16 @@ class SiteChrome
      * interpolated `SiteChrome::navBg()` into every rule that needed it, and the nine
      * roles that were literals were interpolated nowhere — so a theme would have meant
      * a hundred-odd new echoes across three files, each one a place to forget that a
-     * colour in a `<style>` block is validated and never escaped. Thirteen validated
+     * colour in a `<style>` block is validated and never escaped. Sixteen validated
      * echoes in one block, and `var(--nav-bg)` everywhere else, is the same rule
-     * enforced in thirteen places instead of a hundred. It is also what makes the
+     * enforced in sixteen places instead of a hundred. It is also what makes the
      * canvas check possible: decision 11 is a statement about *where a role may be
      * used*, and a `var(--…)` in a stylesheet is something a check can find.
      *
      * Every value has been through `Color::read()` inside `pick()`, so this string
      * cannot carry a `}` that ends the block — which is the property escaping could
      * never have given it. Emitted as one echo, which is why
-     * `tools/check_invariants.php` lists this method beside the thirteen accessors.
+     * `tools/check_invariants.php` lists this method beside the sixteen accessors.
      */
     public static function styleVariables()
     {

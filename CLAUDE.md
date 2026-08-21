@@ -26,7 +26,12 @@ edited in place and every change reaches the sign by hand.
   against `assets`, nothing outside `lib/brand_styles.php` against `block_styles`,
   and nothing outside `lib/brands.php` against `brands` (invariant 35), and nothing outside
   `lib/workspace_themes.php` against `workspace_themes` (invariant 36 — whose other
-  half is that no chrome role is ever drawn on the canvas).
+  half is that no chrome role is ever drawn on the canvas). Sixteen roles as of §4bv,
+  and the shape is one text colour per surface: thirteen of them paint a surface and
+  the last three say what is written on it, because a theme that could lighten `panel`
+  and not the labels on it made its own side navigation grey on grey. A block's font
+  colour is **not** one of them and never can be — that is `block_styles.font_color`,
+  what the television shows, the Brand's.
 - **Deep modules**: small interface, substantial implementation. A new query
   means a new method on the module, not a `$pdo` handed to a caller.
 - **A value read from the machine gets a seam beside it that takes the value.** Five files

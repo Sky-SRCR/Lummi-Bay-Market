@@ -250,7 +250,7 @@ function newSqliteTestDb($withAccounts = true)
         workspace_theme_id INTEGER DEFAULT NULL
     )");
 
-    // The thirteen chrome roles, one column each, NOT NULL with today's colour as the
+    // The sixteen chrome roles, one column each, NOT NULL with today's colour as the
     // default — the same shape as the live table, because `SiteChrome::pick()` falls
     // back per role and a fixture with nullable columns could not tell a theme that
     // stores a bad colour from one that stores nothing.
@@ -269,7 +269,10 @@ function newSqliteTestDb($withAccounts = true)
         status_bad TEXT NOT NULL DEFAULT '#7b3f3f',
         status_busy TEXT NOT NULL DEFAULT '#4b3869',
         status_note TEXT NOT NULL DEFAULT '#7a4a12',
-        selection TEXT NOT NULL DEFAULT '#e74c3c'
+        selection TEXT NOT NULL DEFAULT '#e74c3c',
+        panel_text TEXT NOT NULL DEFAULT '#dfe6ec',
+        work_area_text TEXT NOT NULL DEFAULT '#ffffff',
+        fill_text TEXT NOT NULL DEFAULT '#ffffff'
     )");
 
     $pdo->exec("CREATE TABLE displays (
@@ -646,9 +649,18 @@ function convergedSchemaShape()
                 // "use the store default" rather than a value waiting to be backfilled.
                 'workspace_theme_id' => $col('int(11)', true),
             ],
-            // One column is enough to say the table is there, as for `brands`: it is
-            // created whole by one statement, so no ALTER of it has a gate to answer.
-            'workspace_themes'    => ['id' => $col('int(11)')],
+            // Not just `id` any more, and the reason is the shape of the change that
+            // added the text roles: the table is created whole by one statement, but a
+            // database that already had it needs an ALTER per new column — so those
+            // columns have gates, and gates need a converged shape that names them or
+            // the "a converged database is issued no DDL" check passes by never asking
+            // (§4bv).
+            'workspace_themes'    => [
+                'id'             => $col('int(11)'),
+                'panel_text'     => $col('varchar(7)'),
+                'work_area_text' => $col('varchar(7)'),
+                'fill_text'      => $col('varchar(7)'),
+            ],
         ],
         'indexes' => [
             'canvas_elements' => ['PRIMARY' => true, 'display_id' => true],

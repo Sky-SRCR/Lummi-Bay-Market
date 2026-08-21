@@ -89,10 +89,11 @@ if (!$resolution->isFound()) {
 }
 * { box-sizing:border-box; margin:0; padding:0;
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; }
-body { background:var(--work-area); color:#fff; min-height:100vh; padding:40px 20px; }
+body { background:var(--work-area); color:var(--work-area-text); min-height:100vh; padding:40px 20px; }
 .wrap { max-width:640px; margin:0 auto; }
 h1 { font-size:19px; margin-bottom:6px; }
-.sub { font-size:13px; color:#bdc3c7; margin-bottom:22px; line-height:1.6; }
+.sub { font-size:13px; color:var(--work-area-text); opacity:.78; margin-bottom:22px;
+       line-height:1.6; }
 /* The seventh of the seven banners, and the one that used to be its own slightly
    different red (#5d3a3a against the off-banner's #7b3f3f). Two banners meaning the
    same thing were two colours for no reason anybody wrote down; they are one role now,
@@ -384,7 +385,7 @@ $gearNeedsChip = Color::hardToRead('#bdc3c7', SiteChrome::navBg());
 * { box-sizing: border-box; margin: 0; padding: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
 
-body { background: var(--work-area); display: flex; flex-direction: column; height: 100vh; overflow: hidden; color: #fff; }
+body { background: var(--work-area); display: flex; flex-direction: column; height: 100vh; overflow: hidden; color: var(--work-area-text); }
 
 /* ── Nav ── */
 #top-nav {
@@ -392,10 +393,10 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
     gap: 14px; height: 46px; flex-shrink: 0; border-bottom: 1px solid var(--nav-border);
 }
 #top-nav .brand { font-weight: bold; font-size: 14px; color: var(--nav-text); }
-#top-nav .user-badge { margin-left: 20px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #bdc3c7; white-space: nowrap; flex-shrink: 0; }
+#top-nav .user-badge { margin-left: 20px; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nav-text); opacity: .72; white-space: nowrap; flex-shrink: 0; }
 #top-nav .nav-spacer { flex: 1; }
-#top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px; padding: 5px 9px; border-radius: 3px; }
-#top-nav a:hover { background: var(--work-area); color: #fff; }
+#top-nav a { color: var(--nav-text); opacity: .72; text-decoration: none; font-size: 12px; padding: 5px 9px; border-radius: 3px; }
+#top-nav a:hover { background: var(--work-area); color: var(--work-area-text); opacity: 1; }
 #top-nav .nav-sep { border-left: 1px solid var(--nav-border); height: 20px; margin: 0 2px; }
 /* The account-and-settings menu. Everything that is a *destination* rather than a
    thing you do to this sign lives behind it — Asset Library, Admin Panel, Help —
@@ -403,20 +404,20 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
    about the display in front of you. Sign Out stays outside it: it was the one
    link nobody should have to open a menu to find. */
 #gear-wrap { position: relative; display: flex; align-items: center; }
-.nav-icon { background: none; border: none; color: #bdc3c7; font-size: 16px; line-height: 1;
+.nav-icon { background: none; border: none; color: var(--nav-text); opacity: .72; font-size: 16px; line-height: 1;
             padding: 4px 7px; border-radius: 3px; cursor: pointer; }
-.nav-icon:hover { background: var(--work-area); color: #fff; }
+.nav-icon:hover { background: var(--work-area); color: var(--work-area-text); opacity: 1; }
 #gear-menu {
     position: absolute; right: 0; top: 30px; min-width: 196px; background: var(--panel);
     border: 1px solid var(--panel-border); border-radius: 6px; padding: 6px; display: none;
     flex-direction: column; z-index: 400; box-shadow: 0 6px 22px rgba(0,0,0,.45);
 }
 #gear-menu.open { display: flex; }
-#gear-menu .gf { font-size: 11px; color: #8fa6bb; padding: 5px 8px; line-height: 1.4; }
+#gear-menu .gf { font-size: 11px; color: var(--panel-text); opacity: .72; padding: 5px 8px; line-height: 1.4; }
 #gear-menu .gd { border-top: 1px solid var(--work-area); margin: 4px 0; }
-#gear-menu a { display: block; color: #dfe6ec; font-size: 12px; padding: 6px 8px;
+#gear-menu a { display: block; color: var(--panel-text); font-size: 12px; padding: 6px 8px;
                border-radius: 3px; text-decoration: none; }
-#gear-menu a:hover { background: var(--work-area); color: #fff; }
+#gear-menu a:hover { background: var(--work-area); color: var(--work-area-text); }
 
 /* ── The Workspace Theme picker (decision 14) ──
    **Every colour in this block is a literal, and that is the rule rather than an
@@ -450,7 +451,12 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
                        padding: 4px 6px; margin-top: 4px; }
 
 /* The gear's own chip, drawn only when the nav colour would have hidden the glyph. */
-.nav-icon.gear-safe { background: #2b3a48; color: #e8eef3; }
+/* `opacity: 1`, and it is the point of the chip rather than a detail: `.nav-icon` is the
+   nav's own text turned down, and this class exists for the one case where that text is
+   hard to read against the nav at all. A chip drawn at .72 would be the fix arriving
+   dimmed. Both colours stay literal for the same reason — the chip is a surface of its
+   own, chosen to be legible whatever the nav is. */
+.nav-icon.gear-safe { background: #2b3a48; color: #e8eef3; opacity: 1; }
 .nav-icon.gear-safe:hover { background: #3a4c5c; color: #fff; }
 
 .btn.publish-btn { background: var(--accent); }
@@ -467,11 +473,11 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 /* Which sign am I editing? Never left to be inferred from the canvas shape. */
 #top-nav .display-badge { margin-left: 18px; display: flex; align-items: center; gap: 7px;
                           font-size: 12px; white-space: nowrap; }
-#top-nav .display-badge .d-title { font-weight: 600; color: #fff; }
+#top-nav .display-badge .d-title { font-weight: 600; color: var(--nav-text); }
 #top-nav .display-badge .d-tag { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 11px;
                                  background: var(--work-area); border: 1px solid #4a6480; border-radius: 3px;
-                                 padding: 1px 6px; color: #aed6f1; }
-#top-nav .display-badge .d-dims { color: #8fa6bb; font-size: 11px; }
+                                 padding: 1px 6px; color: var(--work-area-text); }
+#top-nav .display-badge .d-dims { color: var(--nav-text); opacity: .72; font-size: 11px; }
 #top-nav .display-badge .d-off { background: #c0392b; color: #fff; font-size: 10px; font-weight: bold;
                                  padding: 1px 6px; border-radius: 8px; text-transform: uppercase; }
 /* What the sign is currently showing, and who put it there. The toast that says a
@@ -479,12 +485,12 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
    account or the time — so this is the line that answers "is what I'm looking at
    live, and did somebody else change it?" It is information rather than a control,
    so a read-only Builder gets it too. */
-#top-nav .display-badge .d-pub { color: #8fa6bb; font-size: 11px; border-left: 1px solid #4a6480;
+#top-nav .display-badge .d-pub { color: var(--nav-text); opacity: .72; font-size: 11px; border-left: 1px solid #4a6480;
                                  padding-left: 8px; }
 
 /* Editing a retired Display is allowed on purpose — but never by accident. */
 #display-off-banner {
-    display: none; background: var(--status-bad); color: #fff; font-size: 13px; padding: 8px 14px;
+    display: none; background: var(--status-bad); color: var(--fill-text); font-size: 13px; padding: 8px 14px;
     flex-shrink: 0; border-bottom: 1px solid #9b5252;
 }
 
@@ -492,7 +498,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
    page is read-only — and the bar has to be the first thing read, because every
    control that would have changed something is simply not on the page. */
 #lock-banner {
-    background: var(--status-busy); color: #fff; font-size: 13px; padding: 9px 14px; flex-shrink: 0;
+    background: var(--status-busy); color: var(--fill-text); font-size: 13px; padding: 9px 14px; flex-shrink: 0;
     border-bottom: 1px solid #6b5291; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
 }
 #lock-banner .who { font-weight: 700; }
@@ -502,7 +508,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
    taken away. Each is an offer or a fact, never a modal — interrupting an editor is
    the thing the idle window exists to avoid. */
 #lock-idle-bar, #lock-lapsed-bar, #lock-lost-bar, #lock-access-bar {
-    display: none; font-size: 13px; padding: 8px 14px; flex-shrink: 0;
+    display: none; color: var(--fill-text); font-size: 13px; padding: 8px 14px; flex-shrink: 0;
     align-items: center; gap: 10px; flex-wrap: wrap;
 }
 #lock-idle-bar   { background: var(--status-warn); border-bottom: 1px solid #9e8109; }
@@ -542,9 +548,10 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 }
 #palette .pal-top { display: flex; flex-direction: column; gap: 6px;
                     border-bottom: 1px solid var(--panel-border); padding-bottom: 10px; margin-bottom: 2px; }
-#palette .pal-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: #7f8c8d; }
+#palette .pal-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .8px;
+                    color: var(--panel-text); opacity: .72; }
 #palette .pal-h   { font-size: 10px; text-transform: uppercase; letter-spacing: .8px;
-                    color: #7f8c8d; margin: 11px 0 4px; }
+                    color: var(--panel-text); opacity: .72; margin: 11px 0 4px; }
 #palette .pal-b {
     display: flex; align-items: center; gap: 8px; width: 100%; margin-bottom: 3px;
     background: #22303c; border: 1px solid #33475a; color: #fff; border-radius: 4px;
@@ -595,26 +602,27 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 #brand-menu.open { display: flex; }
 #brand-menu .brand-item {
     display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
-    background: none; border: none; color: #dfe6ec; font-size: 12px; padding: 5px 7px;
+    background: none; border: none; color: var(--panel-text); font-size: 12px; padding: 5px 7px;
     border-radius: 3px; cursor: pointer;
 }
-#brand-menu .brand-item:hover { background: var(--work-area); color: #fff; }
-#brand-menu .brand-item.on { background: var(--work-area); color: #fff; }
+#brand-menu .brand-item:hover { background: var(--work-area); color: var(--work-area-text); }
+#brand-menu .brand-item.on { background: var(--work-area); color: var(--work-area-text); }
 #brand-menu .brand-item .tick { width: 10px; flex-shrink: 0; color: #2ecc71; font-size: 10px; }
 /* Said in the palette rather than in a toast, because it is a standing state of this
    sign and not something that just happened. */
 #palette .brand-warn {
-    font-size: 11px; line-height: 1.45; color: #ffe9cf; background: var(--status-note);
+    font-size: 11px; line-height: 1.45; color: var(--fill-text); background: var(--status-note);
     border: 1px solid #a2670f; border-radius: 4px; padding: 6px 7px; margin-top: 2px;
 }
-#palette .pal-note { font-size: 11px; line-height: 1.5; color: #8fa6bb; margin-top: 10px; }
+#palette .pal-note { font-size: 11px; line-height: 1.5; color: var(--panel-text); opacity: .72;
+                     margin-top: 10px; }
 #palette .pal-spacer { flex: 1; min-height: 10px; }
 /* Aimed at basic accounts, who add blocks into a section rather than onto the
    canvas. It used to be a full-width orange bar above the canvas; here it sits at
    the foot of the column whose buttons it is about. */
 #palette .pal-hint {
     display: none; background: var(--status-note); border: 1px solid #a2670f; border-radius: 4px;
-    padding: 7px 8px; font-size: 11px; line-height: 1.45; color: #ffe9cf;
+    padding: 7px 8px; font-size: 11px; line-height: 1.45; color: var(--fill-text);
 }
 
 /* ── Centre column: the canvas, and a footer of facts about it ── */
@@ -627,12 +635,12 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 #canvas-footer {
     flex-shrink: 0; background: var(--panel); border-top: 1px solid var(--panel-border);
     display: flex; align-items: center; gap: 6px; padding: 5px 12px;
-    font-size: 11px; color: #8fa6bb; flex-wrap: wrap;
+    font-size: 11px; color: var(--panel-text); flex-wrap: wrap;
 }
 #canvas-footer .foot-spacer { flex: 1; }
 #canvas-footer .btn { padding: 3px 9px; font-size: 11px; }
 
-.btn { background: var(--accent); border: none; color: #fff; padding: 6px 12px;
+.btn { background: var(--accent); border: none; color: var(--fill-text); padding: 6px 12px;
        border-radius: 4px; cursor: pointer; font-weight: 600; font-size: 12px; white-space: nowrap; }
 .btn:hover { filter: brightness(1.15); }
 .btn.green  { background: var(--status-good); }
@@ -646,7 +654,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 /* The align buttons. `#align-bar` retired with the horizontal stack — the same
    buttons are an *Arrange* group inside the rail now, beside the block they act
    on, which is where somebody looks for them. */
-.align-btn { background: var(--work-area); border: 1px solid #4a6278; color: #fff;
+.align-btn { background: var(--work-area); border: 1px solid #4a6278; color: var(--work-area-text);
              width: 32px; height: 28px; border-radius: 3px; cursor: pointer;
              font-size: 13px; display: inline-flex; align-items: center; justify-content: center; }
 .align-btn:hover { background: #3d5166; }
@@ -775,8 +783,8 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 /* What the rail says with nothing selected. Not a placeholder: for an admin it
    carries the canvas background, which is a property of the canvas rather than a
    block, and had no other home once the control bar went. */
-#insp-resting { font-size: 12px; line-height: 1.55; color: #8fa6bb; }
-#insp-resting .rest-lead { color: #bdc3c7; font-weight: 600; margin-bottom: 4px; }
+#insp-resting { font-size: 12px; line-height: 1.55; color: var(--panel-text); opacity: .72; }
+#insp-resting .rest-lead { color: var(--panel-text); font-weight: 600; margin-bottom: 4px; }
 /* The block controls as one set, so the rail swaps between two states rather than
    toggling twenty. Shown by showInspector() as `flex` — these two only take effect
    once it is, which is why they are here and `display` is not. The gap has to be
@@ -788,10 +796,10 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 #inspector h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
                 color: #f39c12; border-bottom: 1px solid var(--panel-border); padding-bottom: 6px; }
 #inspector label { font-size: 11px; text-transform: uppercase; letter-spacing: .7px;
-                   color: #bdc3c7; display: block; margin-bottom: 3px; }
+                   color: var(--panel-text); opacity: .72; display: block; margin-bottom: 3px; }
 #inspector input, #inspector select {
     width: 100%; padding: 6px 8px; border-radius: 4px; border: 1px solid var(--panel-border);
-    background: var(--work-area); color: #fff; font-size: 13px;
+    background: var(--work-area); color: var(--work-area-text); font-size: 13px;
 }
 #inspector input[type="color"]  { height: 32px; padding: 2px; cursor: pointer; }
 #inspector input[type="file"]   { font-size: 12px; color: #aaa; }
@@ -804,7 +812,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
    colours have not. */
 .sw-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin: 4px 0 2px; }
 .sw-row .sw-cap { font-size: 10px; text-transform: uppercase; letter-spacing: .6px;
-                  color: #7f8c8d; margin-right: 2px; }
+                  color: var(--panel-text); opacity: .72; margin-right: 2px; }
 .sw-row .sw {
     width: 17px; height: 17px; padding: 0; border: 1px solid #4a6278; border-radius: 3px;
     cursor: pointer; flex-shrink: 0;
@@ -856,7 +864,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
     border:1px solid var(--panel-border);
 }
 #carousel-modal h2  { font-size:16px; margin-bottom:4px; }
-#carousel-modal > p { font-size:12px; color:#bdc3c7; margin-bottom:14px; }
+#carousel-modal > p { font-size:12px; color:var(--panel-text); opacity:.72; margin-bottom:14px; }
 .slide-row {
     background:#0d1b24; border:1px solid #2c3e50; border-radius:5px;
     padding:12px; margin-bottom:10px;
@@ -866,7 +874,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
     font-size:13px; font-weight:600; color:#f39c12; margin-bottom:8px;
 }
 .slide-fields { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.slide-field label { font-size:11px; color:#bdc3c7; display:block; margin-bottom:3px; }
+.slide-field label { font-size:11px; color:var(--panel-text); opacity:.72; display:block; margin-bottom:3px; }
 .slide-field input[type="text"],
 .slide-field textarea {
     width:100%; padding:6px 8px; background:var(--work-area); border:1px solid var(--panel-border);
@@ -876,7 +884,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 .slide-img-preview {
     min-height:44px; background:var(--work-area); border:1px solid var(--panel-border);
     border-radius:3px; display:flex; align-items:center; justify-content:center;
-    padding:4px; margin-bottom:4px; font-size:11px; color:#7f8c8d;
+    padding:4px; margin-bottom:4px; font-size:11px; color:var(--work-area-text); opacity:.62;
 }
 .slide-img-preview img { max-width:100%; max-height:60px; object-fit:contain; }
 
@@ -903,7 +911,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
     border:1px solid var(--panel-border);
 }
 #table-modal h2  { font-size:16px; margin-bottom:4px; }
-#table-modal > p { font-size:12px; color:#bdc3c7; margin-bottom:14px; }
+#table-modal > p { font-size:12px; color:var(--panel-text); opacity:.72; margin-bottom:14px; }
 .table-editor-wrap { overflow-x:auto; margin-top:4px; }
 .table-editor { border-collapse:collapse; width:100%; }
 .table-editor th, .table-editor td {
@@ -915,14 +923,14 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
     color:#fff; border-radius:3px; font-size:13px; box-sizing:border-box;
 }
 .col-style-sel {
-    width:100%; padding:4px 6px; background:var(--work-area); color:#fff;
+    width:100%; padding:4px 6px; background:var(--work-area); color:var(--work-area-text);
     border:1px solid var(--panel-border); border-radius:3px; font-size:12px; margin-bottom:4px;
 }
 .col-align-row { display:flex; gap:3px; margin-bottom:4px; }
 .col-width-row { display:flex; align-items:center; gap:3px; margin-bottom:4px; }
 .col-width-inp { width:52px; background:#0d1b24; border:1px solid #2c3e50; color:#ecf0f1; border-radius:3px; padding:2px 4px; font-size:11px; }
 .col-width-lbl { font-size:10px; color:#95a5a6; }
-.col-align-sel { flex:1; padding:2px 4px; background:var(--work-area); color:#fff; border:1px solid var(--panel-border); border-radius:3px; font-size:10px; }
+.col-align-sel { flex:1; padding:2px 4px; background:var(--work-area); color:var(--work-area-text); border:1px solid var(--panel-border); border-radius:3px; font-size:10px; }
 .del-col-btn { width:100%; font-size:10px; padding:2px 4px; }
 .del-row-td  { width:32px; text-align:center; background:#0d1b24; }
 
@@ -940,7 +948,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
 /* ── Toast ── */
 #toast {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-    background: var(--status-good); color: #fff; padding: 10px 22px; border-radius: 4px;
+    background: var(--status-good); color: var(--fill-text); padding: 10px 22px; border-radius: 4px;
     font-weight: bold; font-size: 13px; display: none; z-index: 9999;
     box-shadow: 0 4px 12px rgba(0,0,0,.3);
 }
@@ -953,7 +961,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
    the upload ended — one way or the other. */
 #upload-status {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-    background: var(--work-area); color: #fff; padding: 10px 18px; border-radius: 4px;
+    background: var(--work-area); color: var(--work-area-text); padding: 10px 18px; border-radius: 4px;
     font-size: 13px; display: none; z-index: 10000; min-width: 260px;
     box-shadow: 0 4px 12px rgba(0,0,0,.4);
 }
@@ -1372,7 +1380,8 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
     <div id="insp-section" class="insp-section" style="display:none;">
         <label>Section Background Image</label>
         <input type="file" id="section-bg-file" accept="image/*" onchange="uploadSectionBg(this)">
-        <div id="section-bg-preview" style="margin-top:4px; font-size:11px; color:#bdc3c7;"></div>
+        <div id="section-bg-preview" style="margin-top:4px; font-size:11px; color:var(--panel-text);
+             opacity:.78;"></div>
         <label style="margin-top:8px;">Background Fit</label>
         <select id="section-bg-fit" onchange="changeSectionBgFit(this.value)"
                 style="width:100%;padding:6px 8px;border-radius:4px;border:1px solid #34495e;background:#2c3e50;color:#fff;font-size:13px;margin-top:2px;">
@@ -1443,7 +1452,8 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
     <!-- Brand lock info (typed text blocks) -->
     <div id="insp-brand-lock" class="insp-section" style="display:none;">
         <span class="brand-lock">&#128274; Brand Style Applied</span>
-        <div id="insp-brand-name" style="font-size:11px; color:#bdc3c7; margin-top:4px;"></div>
+        <div id="insp-brand-name" style="font-size:11px; color:var(--panel-text); opacity:.78;
+             margin-top:4px;"></div>
     </div>
 
     <!-- Image upload + fit -->
@@ -1465,7 +1475,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
     <div id="insp-video" class="insp-section" style="display:none;">
         <label>Upload Video</label>
         <input type="file" id="vid-file" accept="video/mp4,video/webm,video/ogg" onchange="uploadBlockVideo(this)">
-        <div style="font-size:11px; color:#bdc3c7; margin-top:4px;">MP4, WebM, OGV — max 50 MB</div>
+        <div style="font-size:11px; color:var(--panel-text); opacity:.78; margin-top:4px;">MP4, WebM, OGV — max 50 MB</div>
     </div>
 
     <!-- Carousel editor -->
@@ -1483,13 +1493,13 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
                 <button class="btn" style="font-size:12px;padding:5px 10px;" onclick="openCarouselModal()">Edit Slides</button>
             </div>
         </div>
-        <div id="carousel-slide-count" style="font-size:11px;color:#bdc3c7;margin-top:4px;"></div>
+        <div id="carousel-slide-count" style="font-size:11px;color:var(--panel-text);opacity:.78;margin-top:4px;"></div>
     </div>
 
     <!-- Table editor -->
     <div id="insp-table" class="insp-section" style="display:none;">
         <label>Table</label>
-        <div id="table-info" style="font-size:11px;color:#bdc3c7;margin-top:2px;"></div>
+        <div id="table-info" style="font-size:11px;color:var(--panel-text);opacity:.78;margin-top:2px;"></div>
         <button class="btn" style="font-size:12px;padding:5px 10px;margin-top:6px;width:100%;"
                 onclick="openTableModal()">Edit Table</button>
     </div>
@@ -1504,7 +1514,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
         <input type="range" id="marquee-speed" min="10" max="300" value="80"
                style="width:100%;margin-top:4px;" oninput="updateMarqueeSpeed(this.value)"
                onchange="commitUndoStep()">
-        <div id="marquee-speed-label" style="font-size:11px;color:#bdc3c7;margin-top:2px;">80 px/sec</div>
+        <div id="marquee-speed-label" style="font-size:11px;color:var(--panel-text);opacity:.78;margin-top:2px;">80 px/sec</div>
         <label style="margin-top:6px;">Text Style</label>
         <div class="sw-row" id="sw-marquee" style="display:none;"></div>
         <div style="display:flex;gap:6px;align-items:center;margin-top:4px;">
@@ -1524,7 +1534,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
             <input type="color" id="marquee-bg" value="#c0392b"
                    style="width:60px;height:30px;" oninput="updateMarqueeStyle()"
                    onchange="commitUndoStep()">
-            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:#bdc3c7;cursor:pointer;">
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--panel-text);cursor:pointer;">
                 <input type="checkbox" id="marquee-bg-transparent" onchange="updateMarqueeStyle(); commitUndoStep()">
                 Transparent
             </label>
@@ -1565,7 +1575,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
             <button class="align-btn" title="Center vertically"    onclick="alignBlocks('center-v')">&#8597;</button>
             <button class="align-btn" title="Align bottom edges"   onclick="alignBlocks('bottom')">&#9660;</button>
         </div>
-        <div id="sel-count" style="font-size:11px; color:#8fa6bb; margin-top:6px;"></div>
+        <div id="sel-count" style="font-size:11px; color:var(--panel-text); opacity:.72; margin-top:6px;"></div>
     </div>
 
     <!-- Layer / Z-index -->
@@ -1577,7 +1587,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
             <button class="btn gray" style="flex:1;padding:4px 2px;font-size:11px;" onclick="bringForward()" title="Bring Forward">&#8593; Fwd</button>
             <button class="btn gray" style="flex:1;padding:4px 2px;font-size:11px;" onclick="bringToFront()" title="Bring to Front">&#8607; Front</button>
         </div>
-        <div style="font-size:11px;color:#bdc3c7;margin-top:4px;">Layer: <span id="insp-zindex-val">1</span></div>
+        <div style="font-size:11px;color:var(--panel-text);opacity:.78;margin-top:4px;">Layer: <span id="insp-zindex-val">1</span></div>
     </div>
 
     <!-- Visibility (admin only — see showInspector) -->
@@ -1586,7 +1596,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
             <input type="checkbox" id="hidden-toggle" onchange="toggleHidden(this.checked)">
             Hide from the screens (keeps it in the layout)
         </label>
-        <div style="font-size:11px;color:#7f8c8d;margin-top:4px;">
+        <div style="font-size:11px;color:var(--panel-text);opacity:.72;margin-top:4px;">
             Hiding a section hides everything inside it. Takes effect when you publish.
         </div>
     </div>
@@ -1597,7 +1607,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
             <input type="checkbox" id="lock-toggle" onchange="toggleLock(this.checked)">
             Lock this block (no moving, resizing or deleting)
         </label>
-        <div style="font-size:11px;color:#7f8c8d;margin-top:4px;">
+        <div style="font-size:11px;color:var(--panel-text);opacity:.72;margin-top:4px;">
             A locked section also refuses new blocks, and cannot be deleted while
             anything locked is inside it.
         </div>
@@ -1641,7 +1651,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
             <button class="btn" style="font-size:12px;padding:5px 10px;" onclick="addTableRow()">+ Add Row</button>
             <button class="btn" style="font-size:12px;padding:5px 10px;" onclick="addTableCol()">+ Add Column</button>
-            <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#bdc3c7;margin-left:10px;">
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--panel-text);margin-left:10px;">
                 Row padding
                 <input type="number" id="table-row-padding" min="0" max="120" value="0"
                        style="width:52px;background:#0d1b24;border:1px solid #2c3e50;color:#ecf0f1;border-radius:3px;padding:2px 4px;font-size:12px;">
@@ -1659,7 +1669,7 @@ body { background: var(--work-area); display: flex; flex-direction: column; heig
         </div>
         <input type="file" id="table-csv-file" accept=".csv,.tsv,.txt,text/csv" style="display:none;"
                onchange="csvFileChosen(this)">
-        <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:#bdc3c7;margin:-6px 0 10px;">
+        <label style="display:flex;align-items:center;gap:5px;font-size:11px;color:var(--panel-text);margin:-6px 0 10px;">
             <input type="checkbox" id="table-csv-has-header" checked onchange="csvHeaderRowToggled()">
             First row names the columns
         </label>
@@ -5369,7 +5379,7 @@ function addSlideRow(data) {
         '</div>' +
         '<div class="slide-fields">' +
             '<div class="slide-field" style="grid-column:1/-1;">' +
-                '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#bdc3c7;">' +
+                '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--panel-text);">' +
                     '<input type="checkbox" class="slide-img-only" onchange="toggleSlideImgOnly(this)"' + (imageOnly ? ' checked' : '') + '>' +
                     'Image Only — fills entire slide, no text' +
                 '</label>' +

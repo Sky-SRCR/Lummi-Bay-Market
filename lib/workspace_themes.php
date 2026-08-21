@@ -27,7 +27,7 @@
 
 require_once __DIR__ . '/color.php';
 require_once __DIR__ . '/picker_name.php';
-// For `ROLES`, which is the list of thirteen this file's columns are named after, and
+// For `ROLES`, which is the list of sixteen this file's columns are named after, and
 // for the labels a refusal quotes. The dependency runs one way on purpose:
 // `site_chrome.php` names `WorkspaceTheme` in a type hint but requires nothing back,
 // exactly as `DisplayStore::applyBrand()` names a `BrandChoice`.

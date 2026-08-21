@@ -12,7 +12,7 @@
 // nothing to do with the sign, on a page that is one careless reload away from losing an
 // hour of work. What that premise makes visible:
 //
-//   The repaint costs nothing      Choosing a theme sets thirteen custom properties and
+//   The repaint costs nothing      Choosing a theme sets sixteen custom properties and
 //                                  touches nothing else. The original design of this
 //                                  control was a form that posted and let the page come
 //                                  back painted — which works perfectly and throws away
@@ -291,13 +291,18 @@ function settled() { return new Promise(function (r) { process.nextTick(r); }); 
 // `SiteChrome::varName()` is the one place that turns a role into `--nav-bg` and a
 // script doing its own conversion would be the second opinion.
 
-const THIRTEEN = ['--nav-bg', '--nav-border', '--nav-text', '--accent', '--work-area',
-                  '--panel', '--panel-border', '--status-good', '--status-warn',
-                  '--status-bad', '--status-busy', '--status-note', '--selection'];
+const ROLE_VARS = ['--nav-bg', '--nav-border', '--nav-text', '--accent', '--work-area',
+                   '--panel', '--panel-border', '--status-good', '--status-warn',
+                   '--status-bad', '--status-busy', '--status-note', '--selection',
+                   // The text on each surface (§4bv). Named here rather than counted,
+                   // because what this suite is for is that the *right* property gets the
+                   // right colour — a count would pass on thirteen right and three
+                   // shuffled.
+                   '--panel-text', '--work-area-text', '--fill-text'];
 
 function varsFrom(base, over) {
     const out = {};
-    THIRTEEN.forEach(function (name, i) { out[name] = base + (i < 10 ? '0' : '') + i; });
+    ROLE_VARS.forEach(function (name, i) { out[name] = base + (i < 10 ? '0' : '') + i; });
     Object.keys(over || {}).forEach(function (k) { out[k] = over[k]; });
     return out;
 }
@@ -331,7 +336,7 @@ let js = buildPageJs(BUILDER, {
 // zero, so a whole section would pass by never doing anything.
 check(/var THEMES = \[\{/.test(js),      'the page carries the themes this account may choose');
 check(/var THEME_ID = 3;/.test(js),      'and which one it is wearing');
-check(/var THEME_STORE = \{/.test(js),   'and the thirteen colours the store default puts back');
+check(/var THEME_STORE = \{/.test(js),   'and the sixteen colours the store default puts back');
 
 eval(js);   // eslint-disable-line no-eval — the point is to run the page's own code
 
@@ -428,8 +433,8 @@ section('Choosing another theme repaints the chrome and nothing else');
 
 chooseTheme(DAY.id);
 
-checkSame(13, Object.keys(rootProps).length, 'thirteen custom properties are set, one per role');
-THIRTEEN.forEach(function (name) {
+checkSame(16, Object.keys(rootProps).length, 'sixteen custom properties are set, one per role');
+ROLE_VARS.forEach(function (name) {
     checkSame(DAY.vars[name], rootProps[name], name + ' is the chosen theme\'s colour');
 });
 checkSame(DAY.id, THEME_ID, 'the page knows which theme it is on');
@@ -499,7 +504,7 @@ checkSame(DAY.id, THEME_ID, 'and leaves the page where it was');
     await settled(); await settled(); await settled();
 
     checkSame(DAY.id, THEME_ID, 'the page is back on the theme it was actually wearing');
-    THIRTEEN.forEach(function (name) {
+    ROLE_VARS.forEach(function (name) {
         checkSame(DAY.vars[name], rootProps[name], name + ' is painted from that theme again');
     });
     checkSame(1, tickedIds().length, 'one item is ticked');
@@ -531,15 +536,15 @@ checkSame(DAY.id, THEME_ID, 'and leaves the page where it was');
 
     chooseTheme(0);
     checkSame(0, THEME_ID, 'the account is back on the store default');
-    THIRTEEN.forEach(function (name) {
+    ROLE_VARS.forEach(function (name) {
         checkSame(STORE[name], rootProps[name], name + ' is the store\'s own colour');
     });
     checkSame(0, tickedIds()[0], 'and the tick is on the store default');
     checkSame(String(0), sent[3].fields.theme_id, 'sent as 0, which is what the endpoint reads as "the default"');
     // Every property is still *set*, rather than removed. Removing them would fall back
     // to the `:root` block, and that block was rendered wearing the theme being escaped.
-    checkSame(13, Object.keys(rootProps).length,
-              'the thirteen are set to the store\'s values, not removed and left to the stylesheet');
+    checkSame(16, Object.keys(rootProps).length,
+              'the sixteen are set to the store\'s values, not removed and left to the stylesheet');
     sent[3].settle.resolve({ json: function () { return Promise.resolve({ status: 'success', theme_id: 0 }); } });
     await settled(); await settled();
     checkSame(0, THEME_ID, 'and it stays there once the save lands');
@@ -598,7 +603,7 @@ checkSame(DAY.id, THEME_ID, 'and leaves the page where it was');
     // Anchored, for the reason `selftest_layout.php` anchors its own: without a
     // number here, deleting half this file still reports a clean run. Four of the
     // eight node suites carried one and four did not (§4bh).
-    const expected = 110;
+    const expected = 119;
     if (checks !== expected) {
         fails.push('the suite ran every check it is supposed to — expected '
                    + expected + ', ran ' + checks);

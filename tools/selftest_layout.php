@@ -3835,7 +3835,7 @@ checkSame(['seed_first_brand', 'seed_block_styles', 'seed_legacy_display'], plan
 // The fallback has to be the old behaviour exactly, or a host whose catalogue
 // cannot be read would quietly stop converging.
 $blind = signageSchemaPlan(SchemaFacts::unknown());
-checkSame(35, count(planStatements($blind)),
+checkSame(38, count(planStatements($blind)),
           'a database whose catalogue cannot be read is issued every statement, as before');
 checkSame(7, count(planSteps($blind)), 'and every step');
 checkSame(false, SchemaFacts::unknown()->known(), 'and it says so rather than answering false');
@@ -3929,7 +3929,7 @@ checkSame(false, schemaFactsFrom($kGone)->needsPrimaryKey('block_styles', ['bran
 // that has them all.
 $empty = readSchemaFacts(fakeCatalogue(['columns' => [], 'indexes' => [], 'constraints' => []]));
 checkSame(false, $empty->known(), 'a catalogue with nothing to say about this app is unknown, not empty');
-checkSame(35, count(planStatements(signageSchemaPlan($empty))),
+checkSame(38, count(planStatements(signageSchemaPlan($empty))),
           'so it falls back to trying everything rather than creating what already exists');
 
 // Two things about a catalogue this app does not control, both of which decide
@@ -5114,7 +5114,7 @@ foreach ($blindPlan as $entry) {
     if ($entry['need'] === null) { $guessed[] = $entry['why']; }
     if ($entry['need'] === true) { $certain[] = $entry['why']; }
 }
-checkSame(39, count($guessed), 'with no catalogue, every statement in the plan is a guess');
+checkSame(42, count($guessed), 'with no catalogue, every statement in the plan is a guess');
 checkSame(['seed_first_brand', 'seed_block_styles', 'seed_legacy_display'], $certain,
           'and the only certainties are the three steps that ask the rows, not the catalogue');
 $statementNeeds = [];
@@ -7833,7 +7833,7 @@ checkSame(SiteChrome::DEFAULTS['status_bad'], SiteChrome::statusBad(),
 checkSame(SiteChrome::DEFAULTS['selection'], SiteChrome::selection(),
           'and the selection outline');
 
-// The thirteen and the table agree. Two lists, one of them readable only by MySQL, so
+// The sixteen and the table agree. Two lists, one of them readable only by MySQL, so
 // the check is that the plan's own statement names a column for every role — a role
 // added to ROLES with no column would resolve to its default on every screen for ever
 // and nothing else here would notice.
@@ -7844,7 +7844,7 @@ foreach (signageSchemaPlan(SchemaFacts::unknown()) as $tEntry) {
     }
 }
 check($tCreate !== '', 'the plan carries a statement creating workspace_themes');
-checkSame(13, count(SiteChrome::ROLES), 'there are thirteen chrome roles');
+checkSame(16, count(SiteChrome::ROLES), 'there are sixteen chrome roles');
 checkSame(count(SiteChrome::ROLES), count(SiteChrome::DEFAULTS),
           'and every one of them has a documented default');
 foreach (SiteChrome::ROLES as $tRole => $tMeta) {
@@ -7855,14 +7855,49 @@ foreach (SiteChrome::ROLES as $tRole => $tMeta) {
               'and the column starts where the documented default is');
     check($tMeta[0] !== '', 'and the role has words a person can pick it by');
 }
-checkSame(13, preg_match_all('/VARCHAR\(7\)/', $tCreate),
-          'and the table has no fourteenth colour column that no role names');
+checkSame(16, preg_match_all('/VARCHAR\(7\)/', $tCreate),
+          'and the table has no seventeenth colour column that no role names');
 
-// The four that Site Branding still owns, and the nine that are a theme's alone.
+// The three text roles arrived after the table did, so a database that already has this
+// table needs an ALTER as well as a wider CREATE — and the CREATE alone is what the loop
+// above reads. A role in ROLES, in the CREATE, and in no ALTER is the case that resolves
+// to its default on every existing install for ever and looks completely fine on a new
+// one (§4bv).
+$tAlters = '';
+foreach (signageSchemaPlan(SchemaFacts::unknown()) as $tEntry) {
+    if (isset($tEntry['sql']) && strpos($tEntry['sql'], 'ALTER TABLE workspace_themes') !== false) {
+        $tAlters .= $tEntry['sql'] . "\n";
+    }
+}
+foreach (['panel_text', 'work_area_text', 'fill_text'] as $tLate) {
+    check(strpos($tAlters, 'ADD COLUMN ' . $tLate . ' ') !== false,
+          'a database that predates ' . $tLate . ' is sent an ALTER for it');
+    check(strpos($tAlters, "DEFAULT '" . SiteChrome::DEFAULTS[$tLate] . "'") !== false,
+          'starting every theme somebody already made at the literal it replaces, so '
+          . 'their screen does not move: ' . $tLate);
+}
+checkSame(3, preg_match_all('/ALTER TABLE workspace_themes ADD COLUMN/', $tAlters),
+          'and no other column is added to that table behind the roles\' back');
+
+// Every surface a theme can repaint has a colour for the text on it. This is the rule the
+// first thirteen implied and did not keep: `panel` was themable and the labels on it were
+// `#8fa6bb` in three stylesheets, so a light theme made its own side navigation
+// unreadable and the form had nothing on it to fix that with.
+$tTextRoles = [];
+foreach (SiteChrome::ROLES as $tRole => $tMeta) {
+    if ($tMeta[1] === 'text') { $tTextRoles[] = $tRole; }
+}
+checkSame(['panel_text', 'work_area_text', 'fill_text'], $tTextRoles,
+          'the form has a group for text, and these are in it');
+check(isset(SiteChrome::ROLES['nav_text']) && SiteChrome::ROLES['nav_text'][1] === 'chrome',
+      'nav_text stays in the chrome group rather than moving into it — every page names '
+      . 'SiteChrome::text() and the group is what the form draws, not what a page asks for');
+
+// The four that Site Branding still owns, and the twelve that are a theme's alone.
 $tConfigBacked = array_keys(SiteChrome::FIELDS);
 checkSame(4, count($tConfigBacked), 'four roles are backed by branding_config.php');
 foreach ($tConfigBacked as $tKey) {
-    check(isset(SiteChrome::ROLES[$tKey]), $tKey . ' is one of the thirteen roles');
+    check(isset(SiteChrome::ROLES[$tKey]), $tKey . ' is one of the sixteen roles');
 }
 check(!isset(SiteChrome::FIELDS['selection']),
       'and the canvas selection outline is not something the Branding form can set');
@@ -7977,7 +8012,7 @@ checkSame('#8b0000|#101820|#8b0000', inFreshProcess('
 // Resolved, not raw: `style.setProperty()` discards a value it cannot read in silence,
 // which is §4ax's defect one boundary further out.
 $tClient = $tStore->forId($tOne->id())->toClientArray();
-checkSame(13, count($tClient['colors']), 'the client payload carries every role');
+checkSame(16, count($tClient['colors']), 'the client payload carries every role');
 checkSame('#101820', $tClient['colors']['nav_bg'], 'resolved to a colour a browser will take');
 $tPdo->prepare("UPDATE workspace_themes SET status_note = 'puce' WHERE id = ?")->execute([$tOne->id()]);
 checkSame(SiteChrome::DEFAULTS['status_note'],
@@ -7999,12 +8034,12 @@ foreach (array_keys(SiteChrome::ROLES) as $tRole) {
 // `<style>` unescaped: a stylesheet has no delimiter for escaping to neutralise, so the
 // property that matters is that nothing here can be anything but a colour.
 $tVarLines = array_filter(array_map('trim', explode("\n", $tVars)), 'strlen');
-checkSame(13, count($tVarLines), 'the :root block is thirteen declarations and nothing else');
+checkSame(16, count($tVarLines), 'the :root block is sixteen declarations and nothing else');
 $tShapely = 0;
 foreach ($tVarLines as $tLine) {
     if (preg_match('/^--[a-z-]+: #[0-9a-f]{6};$/', $tLine) === 1) { $tShapely++; }
 }
-checkSame(13, $tShapely, 'and every one of them is a role name and a six-digit colour');
+checkSame(16, $tShapely, 'and every one of them is a role name and a six-digit colour');
 
 // ---- Which theme an account is wearing ---------------------------------------------
 // ---- A row older than the code ----------------------------------------------------
@@ -8023,8 +8058,8 @@ SiteChrome::wear($tPartial);
 checkSame('#123456', SiteChrome::navBg(), 'wearing it, the role it knows is its own');
 checkSame(SiteChrome::DEFAULTS['status_note'], SiteChrome::statusNote(),
           'and the one it does not know falls through to the layer underneath');
-checkSame(13, count($tPartial->toClientArray()['colors']),
-          'and the browser is still handed thirteen roles, not the two the row had');
+checkSame(16, count($tPartial->toClientArray()['colors']),
+          'and the browser is still handed sixteen roles, not the two the row had');
 SiteChrome::wear(null);
 
 // ---- Ids that would name a different row ------------------------------------------
@@ -8235,7 +8270,7 @@ $tStore->deleteRow($tAuditTheme);
 // the last check — it must answer the *store's* colours while a theme is being worn,
 // because that is the only state it is ever called in.
 $tStoreColors = SiteChrome::storeColors();
-checkSame(13, count($tStoreColors), 'the store default is thirteen colours like any theme');
+checkSame(16, count($tStoreColors), 'the store default is sixteen colours like any theme');
 checkSame(SiteChrome::configColor('nav_bg'), $tStoreColors['nav_bg'],
           'the four Site Branding owns come from the config');
 checkSame(SiteChrome::DEFAULTS['status_busy'], $tStoreColors['status_busy'],
@@ -9326,4 +9361,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2553 : 2528);
+reportChecks(testIsMysql() ? 2574 : 2549);

@@ -61,7 +61,7 @@ require_once __DIR__ . '/../lib/brand_styles.php';
 // Named explicitly although layout_store.php already reaches it: this file reads as a
 // checklist of what it touches, and `brands` is one of the tables it now writes through.
 require_once __DIR__ . '/../lib/brands.php';
-// For `SiteChrome::ROLES` — the thirteen chrome roles the `workspace_themes` columns are
+// For `SiteChrome::ROLES` — the sixteen chrome roles the `workspace_themes` columns are
 // checked against below, rather than against a list written out again here.
 require_once __DIR__ . '/../lib/workspace_themes.php';
 

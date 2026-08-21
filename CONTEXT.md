@@ -177,9 +177,12 @@ it is used.
 _Avoid_: default theme, base theme, no theme, factory colours
 
 **Chrome role**:
-One of the thirteen things a Workspace Theme names a colour for. A role is a
+One of the sixteen things a Workspace Theme names a colour for. A role is a
 place in the application — the navigation background, the work area, the panel
-border, the outline around a selected block — never a mood or a shade. Two of
-them are worth keeping apart in speech: the **work area** is the dark space a
+border, the outline around a selected block — never a mood or a shade. Thirteen
+of them are surfaces and three are the **text** drawn on those surfaces, one per
+surface: a theme that can repaint a panel has to be able to say what colour the
+labels on it are, or it can make its own side navigation unreadable. Two of them
+are worth keeping apart in speech: the **work area** is the dark space a
 canvas sits on, and the **canvas** is the sign itself and belongs to the Brand.
 _Avoid_: theme slot, variable, token, colour name

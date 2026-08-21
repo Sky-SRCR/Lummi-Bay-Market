@@ -918,7 +918,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
     <meta charset="UTF-8">
     <title>Admin Panel — <?= Markup::text(SITE_NAME) ?></title>
     <style>
-        /* ── The Workspace Theme's thirteen roles (v2 step 5) ──
+        /* ── The Workspace Theme's sixteen roles (v2 step 5, §4bv) ──
            One validated echo; `var(--…)` below. **This page wears fewer of them than the
            Builder does, and that is deliberate.** It is a light document — white cards on
            #f0f2f5 — and only its nav bar and its buttons are chrome in the sense the roles
@@ -940,8 +940,9 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
            colours will see this bar change to match the rest of the app. */
         nav { background: var(--nav-bg); padding: 0 20px; display: flex; align-items: center; gap: 20px; height: 52px; }
         nav .brand { color: var(--nav-text); font-weight: bold; font-size: 15px; margin-right: auto; }
-        nav a { color: #bdc3c7; text-decoration: none; font-size: 13px; padding: 6px 10px; border-radius: 4px; }
-        nav a:hover, nav a.active { background: var(--work-area); color: #fff; }
+        nav a { color: var(--nav-text); opacity: .72; text-decoration: none; font-size: 13px;
+               padding: 6px 10px; border-radius: 4px; }
+        nav a:hover, nav a.active { background: var(--work-area); color: var(--work-area-text); opacity: 1; }
         nav .role-badge { background: #e74c3c; color: #fff; font-size: 11px; font-weight: bold;
                           padding: 2px 8px; border-radius: 10px; }
 
@@ -971,9 +972,9 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         }
         input[type="color"] { padding: 2px; height: 34px; cursor: pointer; border: 1px solid #ccc; border-radius: 4px; }
         .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
-        .btn-blue   { background: var(--accent); color: #fff; }
+        .btn-blue   { background: var(--accent); color: var(--fill-text); }
         .btn-blue:hover   { background: #2980b9; }
-        .btn-green  { background: var(--status-good); color: #fff; }
+        .btn-green  { background: var(--status-good); color: var(--fill-text); }
         .btn-green:hover  { background: #219a52; }
         .btn-red    { background: #e74c3c; color: #fff; }
         .btn-red:hover    { background: #c0392b; }
@@ -2215,6 +2216,7 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
             // list the table, the resolution and the check all read. A hand-written
             // grouping here would be the fourth copy of "what the roles are".
             $tGroups = ['chrome'  => ['Application chrome', 'The nav bar, the work area and the panels.'],
+                        'text'    => ['Text on each of them', 'One colour per surface, because a surface you can repaint needs one. The quieter labels — a palette heading, a caption, a hint — are the same colour turned down, so they follow a light theme as well as a dark one.'],
                         'status'  => ['Status colours', 'The banners: saved, warning, problem, somebody else is here, advisory note.'],
                         'overlay' => ['On the canvas', 'The selection outline and the resize handles — the only thing a theme paints over a canvas. Everything else drawn there belongs to the display\'s Brand.']];
             foreach ($tGroups as $tGroup => $tAbout):
@@ -2255,20 +2257,32 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
                     <span id="tpv-name" style="font-weight:bold; font-size:13px;"><?= Markup::text($curSite) ?></span>
                     <span id="tpv-btn" style="color:#fff; padding:3px 10px; border-radius:3px; font-size:11px;">Publish</span>
                 </div>
-                <div id="tpv-body" style="padding:12px; display:flex; gap:10px; align-items:stretch;">
-                    <div id="tpv-panel" style="width:96px; border-radius:4px; padding:8px; font-size:11px;
-                                               color:#dfe6ec;">Palette</div>
-                    <div id="tpv-canvas" style="flex:1; background:#fff; border-radius:3px; min-height:54px;
-                                                position:relative;">
-                        <span id="tpv-sel" style="position:absolute; left:10px; top:10px; width:70px; height:30px;
-                                                  background:#eee;"></span>
+                <div id="tpv-body" style="padding:12px; display:flex; gap:10px; align-items:stretch;
+                                          font-size:11px;">
+                    <div id="tpv-panel" style="width:96px; border-radius:4px; padding:8px; font-size:11px;">
+                        <div id="tpv-panel-h" style="opacity:.72; text-transform:uppercase;
+                                                     letter-spacing:.8px; font-size:10px;">Palette</div>
+                        <div id="tpv-panel-t">Text block</div>
+                    </div>
+                    <div id="tpv-work" style="flex:1; display:flex; flex-direction:column; gap:6px;">
+                        <span id="tpv-work-t">Work area</span>
+                        <div id="tpv-canvas" style="flex:1; background:#fff; border-radius:3px; min-height:40px;
+                                                    position:relative;">
+                            <span id="tpv-sel" style="position:absolute; left:10px; top:8px; width:70px; height:24px;
+                                                      background:#eee;"></span>
+                        </div>
                     </div>
                 </div>
                 <div id="tpv-bar" style="padding:6px 12px; font-size:11px; color:#fff;">A banner looks like this</div>
             </div>
             <p style="font-size:11px; color:#7f8c8d; margin-top:6px; max-width:520px;">
                 The white rectangle is a display's canvas. Its colours are the Brand's, never a
-                theme's — only the selection outline around a block is drawn from here.
+                theme's — only the selection outline around a block is drawn from here. That
+                includes the <strong>font colour of a block</strong>: it is what the television
+                shows, so it is set per block type in
+                <strong>Display Branding &rarr; Brand Standards</strong>, not here. A theme
+                that could repaint it would make this Builder a preview of a sign no Screen
+                renders.
             </p>
             <div id="theme-contrast" style="display:none; font-size:12px; margin-top:8px; padding:7px 10px;
                                             border-radius:4px; background:#fff8e1; border:1px solid #e6c86a;
@@ -2917,23 +2931,68 @@ $fontFamilies = ['Arial','Georgia','Verdana','Tahoma','Trebuchet MS','Times New 
         set('tpv-nav', 'borderBottom', '2px solid ' + c.nav_border);
         set('tpv-name', 'color', c.nav_text);
         set('tpv-btn', 'background', c.accent);
+        set('tpv-btn', 'color', c.fill_text);
         set('tpv-body', 'background', c.work_area);
         set('tpv-panel', 'background', c.panel);
         set('tpv-panel', 'border', '1px solid ' + c.panel_border);
+        set('tpv-panel', 'color', c.panel_text);
+        set('tpv-work-t', 'color', c.work_area_text);
         set('tpv-bar', 'background', c.status_busy);
+        set('tpv-bar', 'color', c.fill_text);
         set('tpv-sel', 'outline', '2px solid ' + c.selection);
 
-        var box   = document.getElementById('theme-contrast');
-        var ratio = themeContrast(c.nav_text, c.nav_bg);
+        var box = document.getElementById('theme-contrast');
         if (!box) { return; }
-        if (ratio !== null && ratio < THEME_READABLE_RATIO) {
-            box.textContent = 'Nav text on Nav background is hard to read (' +
-                              ratio.toFixed(1) + ':1, where ' + THEME_READABLE_RATIO +
-                              ':1 is the readable minimum). You can save it anyway.';
+        var said = themeUnreadablePairs(c);
+        if (said.length) {
+            // Three sentences and a count, never nine. Nine pairs are checked, so a theme
+            // that is dark all over can fail most of them at once — and a box that long
+            // is a box nobody finishes reading, which is the same as not warning.
+            var shown = said.slice(0, 3).join(' ');
+            if (said.length > 3) {
+                shown += ' And ' + (said.length - 3) + ' more like it.';
+            }
+            box.textContent = shown + ' You can save it anyway.';
             box.style.display = 'block';
         } else {
             box.style.display = 'none';
         }
+    }
+
+    /**
+     * Every text-on-surface pair this form is showing that is hard to read, as sentences.
+     *
+     * One pair until §4bv, because there was one text colour: nav text on nav background.
+     * The other three surfaces were painted from the form and written on in a literal, so
+     * the warning could not have been wrong about them — it had nothing to compare. Now
+     * every surface has a text role, so the check is the same shape four times, and the
+     * list is what makes it four rather than a copied paragraph per pair.
+     *
+     * The three status colours the strip does not draw are checked anyway. A theme form
+     * that warned only about the banner it happens to preview would be quietest about the
+     * banner somebody sees least and reads hardest — the one that says a save failed.
+     */
+    function themeUnreadablePairs(c) {
+        var pairs = [
+            ['Nav text',        'nav_text',        'Nav background',  'nav_bg'],
+            ['Text on panels',  'panel_text',      'Panel',           'panel'],
+            ['Text on the work area', 'work_area_text', 'Work area',  'work_area'],
+            ['Button text',     'fill_text',       'Accent',          'accent'],
+            ['Banner text',     'fill_text',       'Saved / done',    'status_good'],
+            ['Banner text',     'fill_text',       'Warning',         'status_warn'],
+            ['Banner text',     'fill_text',       'Problem',         'status_bad'],
+            ['Banner text',     'fill_text',       'Somebody else is here', 'status_busy'],
+            ['Banner text',     'fill_text',       'Advisory note',   'status_note']
+        ];
+        var said = [];
+        for (var i = 0; i < pairs.length; i++) {
+            var ratio = themeContrast(c[pairs[i][1]], c[pairs[i][3]]);
+            if (ratio === null || ratio >= THEME_READABLE_RATIO) { continue; }
+            said.push(pairs[i][0] + ' on ' + pairs[i][2] + ' is hard to read (' +
+                      ratio.toFixed(1) + ':1, where ' + THEME_READABLE_RATIO +
+                      ':1 is the readable minimum).');
+        }
+        return said;
     }
 
     /**

@@ -703,7 +703,7 @@ if (!$badInScript) {
 //                 returns only digits, or only characters no parser is looking for —
 //                 no quote, no angle bracket, no backslash — whatever it is handed.
 //   a colour      SiteChrome::navBg() and its three siblings, SiteChrome::styleVariables()
-//                 which prints all thirteen roles at once, and Color::read() itself —
+//                 which prints all sixteen roles at once, and Color::read() itself —
 //                 each answers `#rrggbb` (or nothing) because Color::read() decided
 //                 (§4ai). The one case in this app where escaping would have been the
 //                 wrong tool: they land in a <style> block or a style attribute, neither
@@ -751,7 +751,7 @@ $SAFE_STATIC = ['Markup::text', 'Markup::jsInAttr', 'HttpReply::jsValue',
                 // `pick()` underneath it it answers `#rrggbb` for every input — a value
                 // `Color::read()` refuses becomes the colour the store default paints.
                 // Reached directly by the theme list and the theme form, which draw a
-                // swatch per role and cannot go through a thirteen-way switch of named
+                // swatch per role and cannot go through a sixteen-way switch of named
                 // accessors. `pick()` itself is not listed: nothing echoes it, and an
                 // allowance nothing uses is a line that would be believed later.
                 'SiteChrome::themeColor',

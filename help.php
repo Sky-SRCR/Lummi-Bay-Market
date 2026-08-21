@@ -42,7 +42,7 @@ SiteChrome::wear((new WorkspaceThemeStore($pdo))->forAccount($me['id']));
    #34495e. Nobody wrote down why, and a theme cannot paint "almost the work area", so
    the surfaces are the roles now. That and the Display picker's notice are the only two
    places step 5 deliberately changes how an unthemed install looks. */
-body { background: var(--work-area); color: #d0d8e0; min-height: 100vh; }
+body { background: var(--work-area); color: var(--work-area-text); min-height: 100vh; }
 
 /* ── Nav ── */
 #top-nav {
@@ -53,10 +53,10 @@ body { background: var(--work-area); color: #d0d8e0; min-height: 100vh; }
 }
 #top-nav .brand { font-weight: bold; font-size: 14px;
                   color: var(--nav-text); margin-right: auto; }
-#top-nav a { color: #bdc3c7; text-decoration: none; font-size: 12px;
+#top-nav a { color: var(--nav-text); opacity: .72; text-decoration: none; font-size: 12px;
              padding: 5px 9px; border-radius: 3px; }
-#top-nav a:hover { background: var(--work-area); color: #fff; }
-#top-nav a.active { background: var(--accent); color: #fff; }
+#top-nav a:hover { background: var(--work-area); color: var(--work-area-text); opacity: 1; }
+#top-nav a.active { background: var(--accent); color: var(--fill-text); opacity: 1; }
 .role-tag { background: <?= $isAdmin ? '#e74c3c' : '#3498db' ?>; color: #fff;
             font-size: 10px; font-weight: bold; padding: 1px 6px; border-radius: 8px;
             text-transform: uppercase; margin-left: 4px; }
@@ -71,33 +71,35 @@ body { background: var(--work-area); color: #d0d8e0; min-height: 100vh; }
     position: sticky; top: 46px; height: calc(100vh - 46px); overflow-y: auto;
 }
 #sidebar h2 { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px;
-              color: #7f8c8d; padding: 12px 20px 6px; margin-top: 8px; }
+              color: var(--panel-text); opacity: .72; padding: 12px 20px 6px; margin-top: 8px; }
 #sidebar h2:first-child { margin-top: 0; }
-#sidebar a { display: block; padding: 6px 20px; font-size: 13px; color: #bdc3c7;
-             text-decoration: none; border-left: 3px solid transparent;
+#sidebar a { display: block; padding: 6px 20px; font-size: 13px; color: var(--panel-text);
+             opacity: .82; text-decoration: none; border-left: 3px solid transparent;
              transition: all .15s; }
-#sidebar a:hover { background: #22303f; color: #fff; border-left-color: var(--accent); }
-#sidebar a.section-link { font-weight: 600; color: #d0d8e0; }
+#sidebar a:hover { background: #22303f; opacity: 1; border-left-color: var(--accent); }
+#sidebar a.section-link { font-weight: 600; opacity: 1; }
 #sidebar a.sub-link { padding-left: 32px; font-size: 12px; }
 
 /* ── Content ── */
 #content { flex: 1; padding: 40px 48px; max-width: 860px; }
 
-h1.page-title { font-size: 26px; color: #fff; margin-bottom: 6px; }
-.page-sub { color: #7f8c8d; font-size: 14px; margin-bottom: 36px; }
+h1.page-title { font-size: 26px; color: var(--work-area-text); margin-bottom: 6px; }
+.page-sub { color: var(--work-area-text); opacity: .62; font-size: 14px; margin-bottom: 36px; }
 
 /* Sections */
 .help-section { margin-bottom: 52px; }
 .help-section h2 {
-    font-size: 18px; color: #fff; border-bottom: 2px solid var(--panel-border);
+    font-size: 18px; color: var(--work-area-text); border-bottom: 2px solid var(--panel-border);
     padding-bottom: 10px; margin-bottom: 20px;
 }
 .help-section h3 { font-size: 14px; color: var(--accent);
                    margin: 24px 0 8px; text-transform: uppercase; letter-spacing: .8px; }
-.help-section p { font-size: 14px; line-height: 1.7; color: #c0cad4; margin-bottom: 10px; }
+.help-section p { font-size: 14px; line-height: 1.7; color: var(--work-area-text); opacity: .82;
+                  margin-bottom: 10px; }
 .help-section ul, .help-section ol { padding-left: 20px; margin-bottom: 10px; }
-.help-section li { font-size: 14px; line-height: 1.7; color: #c0cad4; margin-bottom: 4px; }
-.help-section li strong { color: #d0d8e0; }
+.help-section li { font-size: 14px; line-height: 1.7; color: var(--work-area-text); opacity: .82;
+                   margin-bottom: 4px; }
+.help-section li strong { opacity: 1; }
 
 /* Tip / note boxes */
 .tip, .note, .admin-only {
@@ -120,11 +122,11 @@ kbd {
 .steps li { counter-increment: step; display: flex; gap: 12px; margin-bottom: 10px; }
 .steps li::before {
     content: counter(step); min-width: 24px; height: 24px; border-radius: 50%;
-    background: var(--accent); color: #fff; font-size: 12px;
+    background: var(--accent); color: var(--fill-text); font-size: 12px;
     font-weight: bold; display: flex; align-items: center; justify-content: center;
     flex-shrink: 0; margin-top: 2px;
 }
-.steps li span { font-size: 14px; color: #c0cad4; line-height: 1.6; }
+.steps li span { font-size: 14px; color: var(--work-area-text); opacity: .82; line-height: 1.6; }
 
 /* Feature grid */
 .feat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0; }
@@ -138,12 +140,13 @@ kbd {
 
 /* Fit table */
 table.fit-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 10px 0; }
-table.fit-table th { text-align: left; color: #7f8c8d; font-size: 11px;
+table.fit-table th { text-align: left; color: var(--work-area-text); opacity: .62; font-size: 11px;
                      text-transform: uppercase; padding: 6px 10px;
                      border-bottom: 1px solid #2c3e50; }
-table.fit-table td { padding: 8px 10px; border-bottom: 1px solid #1e2b38; color: #c0cad4; }
+table.fit-table td { padding: 8px 10px; border-bottom: 1px solid #1e2b38;
+                     color: var(--work-area-text); opacity: .82; }
 table.fit-table tr:last-child td { border-bottom: none; }
-table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: nowrap; }
+table.fit-table td:first-child { opacity: 1; font-weight: 600; white-space: nowrap; }
 
 /* Back to top */
 .back-top { font-size: 12px; color: var(--accent); text-decoration: none; float: right; }
@@ -170,7 +173,7 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     <?php /* No "View Display" link here: every display has its own address, and this
              page is not about one of them. The Builder links to the display it is
              editing, and Admin Panel → Displays lists every address. */ ?>
-    <span style="font-size:12px; color:#bdc3c7;">
+    <span style="font-size:12px; color:var(--nav-text); opacity:.72;">
         <?= Markup::text($me['username']) ?>
         <span class="role-tag"><?= $isAdmin ? 'ADMIN' : 'USER' ?></span>
     </span>
@@ -1050,10 +1053,11 @@ table.fit-table td:first-child { color: #fff; font-weight: 600; white-space: now
     </ul>
 </div>
 
-<p style="font-size:12px; color:#4a5f72; margin-top:40px; padding-top:20px; border-top:1px solid #2c3e50;">
+<p style="font-size:12px; color:var(--work-area-text); opacity:.52; margin-top:40px;
+          padding-top:20px; border-top:1px solid #2c3e50;">
     <?= Markup::text(SITE_NAME) ?> Display System &mdash; Help Guide &mdash;
-    Signed in as <strong style="color:#7f8c8d;"><?= Markup::text($me['username']) ?></strong>
-    &mdash; <a href="logout.php" style="color:#4a5f72;">Sign Out</a>
+    Signed in as <strong><?= Markup::text($me['username']) ?></strong>
+    &mdash; <a href="logout.php" style="color:var(--work-area-text);">Sign Out</a>
 </p>
 
 </main>

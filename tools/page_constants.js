@@ -47,13 +47,13 @@ const path = require('path');
 const REPO = path.join(__dirname, '..');
 
 /**
- * The thirteen chrome roles, read from the module that owns them.
+ * The sixteen chrome roles, read from the module that owns them.
  *
- * `THEME_STORE` is a map of custom property to colour, and writing the thirteen names
+ * `THEME_STORE` is a map of custom property to colour, and writing the sixteen names
  * out here would be a second copy of `SiteChrome::ROLES` that agrees with it until
  * somebody adds a role. The page builds the names the same way (`varName()`:
  * underscores become hyphens, prefixed `--`), so this reads the list rather than
- * repeating it. A fourteenth role appears here the day it appears there.
+ * repeating it. A seventeenth role appears here the day it appears there.
  */
 function chromeRoleVars() {
     const src = fs.readFileSync(path.join(REPO, 'lib', 'site_chrome.php'), 'utf8');
@@ -63,12 +63,12 @@ function chromeRoleVars() {
     let m;
     const body = block.slice(0, block.indexOf('];'));
     while ((m = re.exec(body))) { names.push('--' + m[1].replace(/_/g, '-')); }
-    if (names.length !== 13) {
-        throw new Error('page_constants: expected thirteen chrome roles in site_chrome.php, read '
+    if (names.length !== 16) {
+        throw new Error('page_constants: expected sixteen chrome roles in site_chrome.php, read '
                         + names.length + ' — the list moved and this reader did not');
     }
     const out = {};
-    // One colour, not thirteen distinguishable ones: a suite that cares which role got
+    // One colour, not sixteen distinguishable ones: a suite that cares which role got
     // which value says so itself (`selftest_builder_theme.js` does). This is only what
     // the constant *is* on a page nobody has themed.
     names.forEach(function (n) { out[n] = '#1a252f'; });
@@ -184,7 +184,7 @@ function buildPageJs(phpPath, overrides) {
 
     Object.keys(wanted).forEach(function (name) {
         let value = wanted[name];
-        // A default may be a function so that reading a file — the thirteen role names —
+        // A default may be a function so that reading a file — the sixteen role names —
         // happens when a page is built rather than when this module is required.
         if (typeof value === 'function') { value = value(); }
         // Always a real value rendered to a literal, never a string of JavaScript. A

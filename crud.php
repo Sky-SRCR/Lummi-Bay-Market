@@ -373,7 +373,7 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
     <meta charset="UTF-8">
     <title>Asset Library — <?= Markup::text(SITE_NAME) ?></title>
     <style>
-        /* The Workspace Theme's thirteen roles (v2 step 5), one validated echo. This page's
+        /* The Workspace Theme's sixteen roles (v2 step 5, §4bv), one validated echo. This page's
            nav was a literal #1a252f, so like the Admin Panel's it was one of the two places
            in the app that ignored Site Branding entirely — a shop that set its own
            navigation colour got it everywhere but here. Reaching the roles fixes that as a
@@ -385,8 +385,9 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         nav { background:var(--nav-bg); padding:0 20px; display:flex; align-items:center; gap:18px; height:50px; margin-bottom:24px; }
         nav .brand { color:var(--nav-text); font-weight:bold; font-size:15px; margin-right:auto; }
-        nav a { color:#bdc3c7; text-decoration:none; font-size:13px; padding:6px 10px; border-radius:4px; }
-        nav a:hover, nav a.active { background:var(--work-area); color:#fff; }
+        nav a { color:var(--nav-text); opacity:.72; text-decoration:none; font-size:13px;
+               padding:6px 10px; border-radius:4px; }
+        nav a:hover, nav a.active { background:var(--work-area); color:var(--work-area-text); opacity:1; }
         .role-tag { background: <?= isAdmin() ? '#e74c3c' : '#3498db' ?>; color:#fff; font-size:10px;
                     font-weight:bold; padding:1px 6px; border-radius:8px; margin-left:4px; }
 
@@ -439,7 +440,7 @@ $editAsset = (isAdmin() && isset($_GET['edit_id'])) ? $library->forId($_GET['edi
         }
         .btn-green  { background: #2ecc71; color: #fff; }
         .btn-green:hover  { background: #27ae60; }
-        .btn-blue   { background: var(--accent); color: #fff; }
+        .btn-blue   { background: var(--accent); color: var(--fill-text); }
         .btn-blue:hover   { background: #2980b9; }
         .btn-red    { background: #e74c3c; color: #fff; }
         .btn-red:hover    { background: #c0392b; }

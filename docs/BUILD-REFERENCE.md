@@ -6795,7 +6795,7 @@ a picker at 1080p, or a venue's name truncate in a 178-pixel column.
 
 The last step of the v2 plan, and the second of `CONTEXT.md`'s two nouns: a **Brand** is
 what a customer sees on a TV, a **Workspace Theme** is what an employee's screen is
-painted in. `workspace_themes` holds thirteen colour columns and `users.workspace_theme_id`
+painted in. `workspace_themes` holds sixteen colour columns (thirteen until §4bv) and `users.workspace_theme_id`
 says which one an account chose; the Builder's gear picks, the Admin Panel's Site Branding
 tab makes them, and nothing anywhere reaches a Screen.
 
@@ -6827,9 +6827,9 @@ message. `configColor()` is the door those three take.
 **Why the roles are CSS custom properties.** Not a style preference. The picker lives in
 the Builder's gear, on a page that can be holding an hour of unpublished layout, and the
 obvious implementation — post the choice, let the page come back painted — throws that
-work away. A setting about a menu bar must not be able to do that. So the thirteen are
+work away. A setting about a menu bar must not be able to do that. So the roles are
 declared once per page in a `:root` block and used as `var(--…)` everywhere, and switching
-theme is thirteen `setProperty()` calls with the canvas, the undo history and the edit
+theme is sixteen `setProperty()` calls with the canvas, the undo history and the edit
 lock untouched. Three other things fell out of it: one validated echo per page instead of
 the hundred-odd the alternative needed, a live preview in the admin form that costs
 nothing, and — the one that matters for invariant 36 — decision 11 became *checkable*,
@@ -6893,7 +6893,7 @@ chrome in the sense the roles name; `--work-area` is the dark space behind a can
 mapping the panel's paper onto it would turn the Admin Panel black. So the roles reach
 every signed-in page and how much of a page they paint depends on how much of it is
 chrome. The hairline borders and glows beside a themed surface stay literal too: a shadow
-cannot be derived from a custom property without `color-mix()`, and thirteen roles is a
+cannot be derived from a custom property without `color-mix()`, and sixteen roles is a
 theme that paints surfaces, not a full restyle.
 
 **The eighth harness.** `tools/selftest_builder_theme.js`, 110 checks, under a premise no
@@ -6974,7 +6974,7 @@ the layering — `toClientArray()`, so a theme the picker switches to paints wha
 paints, and the panel's swatch row, so the square in the list is the colour the page will
 take. The theme form's inputs come from it too, which means a new theme now starts from the
 shop's colours instead of the shipped ones: the first thing an admin changes is one square
-of their own shop rather than thirteen back to it. Nothing became a silent substitute —
+of their own shop rather than sixteen back to it. Nothing became a silent substitute —
 `WorkspaceTheme::unreadable()` still names every value that could not be used, the table
 still prints that list, and its sentence now says *store* default because that is what is
 drawn.
@@ -7093,7 +7093,7 @@ where it pillarboxes — both, because a `min` written as `max` gets one of them
 
 **`tools/page_constants.js` is where the silence became a declaration.** One value per
 constant, chosen as what the page really carries, with the empty ones empty *in type*
-(`BRANDS` is `[]`, not `0`, because the page iterates it). The thirteen chrome-role names
+(`BRANDS` is `[]`, not `0`, because the page iterates it). The sixteen chrome-role names
 are read out of `lib/site_chrome.php` rather than copied, so a fourteenth role appears
 there the day it appears here. And it refuses two things that used to pass unnoticed: a
 constant the page interpolates that nothing names — add one to `builder.php` and every
@@ -8464,6 +8464,96 @@ down in the docblock instead of left as three quiet survivors (invariant 30).
 would mean this page reading a username out of a database it did not install and printing it
 to whoever loaded the file, which is the shape §4bt just spent three attempts removing. The
 count is the most this screen should know.
+
+### 4bv. A theme could repaint a panel and not the labels on it
+
+Reported with a screenshot of the theme form's own preview: the word *Palette* sitting on a
+pale grey box, grey on grey, barely there. *The block font text colour should be editable as
+well when creating themes. Same with side navigation font colours.*
+
+Two questions in one sentence, and they have different answers.
+
+**The block's font colour is already editable, and not here.** `block_styles.font_color`,
+per block type, per Brand, in **Display Branding → Brand Standards**, labelled *Colour*.
+That is what the television shows, so it belongs to the Brand — and a theme that could
+repaint it would make the Builder a preview of a sign no Screen renders, which is the whole
+of decision 11 and the reason it is a *check* rather than a convention
+(`tools/check_invariants.php`, "no canvas colour resolves through a theme"). The gap was not
+the setting; it was that the paragraph under the preview said only that the canvas belongs
+to the Brand, and left somebody looking at a block to work out that its *text* is part of
+the canvas. It names the font colour and the tab now.
+
+**The side navigation's font colour was not editable anywhere**, and that is the real
+finding. Thirteen roles, and twelve of them paint a *surface*: nav, work area, panel, panel
+border, accent, five status colours, the selection outline. Exactly one — `nav_text` — is the
+colour of something *written* on a surface. So the app could be told to lighten `panel` and
+had no way to be told what colour the labels on it were, because they were not settings at
+all:
+
+```
+#palette .pal-cap   { color: #7f8c8d; }   /* the caption in the screenshot */
+#palette .pal-note  { color: #8fa6bb; }
+#insp-resting       { color: #8fa6bb; }
+#canvas-footer      { color: #8fa6bb; }
+#gear-menu a        { color: #dfe6ec; }
+help.php #sidebar a { color: #bdc3c7; }   /* the other side navigation */
+```
+
+Thirty-odd literals across `builder.php`, `help.php`, `admin_panel.php` and `crud.php`, every
+one of them a grey chosen against the dark defaults. A theme form that offers a light panel
+and no way to write on it is a form that can only be used wrongly.
+
+**Three roles, one per surface, sixteen in all.** `panel_text`, `work_area_text`,
+`fill_text` — and the grouping is the decision worth defending. One role per *surface*,
+not one per label: the palette's captions were dimmer than its buttons on purpose, and that
+tier is now the same role at reduced opacity, which follows a light theme and a dark one
+where a second stored grey would have followed neither. `fill_text` is one role over six
+fills — the accent and the five status colours — because six pickers is a form nobody fills
+in, and because what those six have in common is precisely this: a saturated block with a
+few words on it. The cost is stated rather than hidden: the advisory banner's slightly warm
+`#ffe9cf` becomes the same colour as every other banner's text.
+
+Each default is **the literal it replaces**, so a theme somebody made last week paints the
+same screen it painted last week.
+
+**The upgrade path is the part with a trap in it.** `workspace_themes` is created whole by
+one statement, so the three columns went into the `CREATE` — and a database that already has
+that table never runs a `CREATE` again. Without an `ALTER` beside it, the three roles would
+resolve to their defaults for ever on every existing install and look perfectly correct on
+every new one. Three gated `ALTER`s, one per column, because `needsColumn()` answers about
+one column and a combined statement gated on the first would skip the other two on a database
+that had somehow got one of them. Walked against a database built from the *previous* commit's
+`schema.sql`: fifteen columns to eighteen, the existing theme's colours byte-identical
+afterwards, and the second convergence asking for nothing — an ungated `ALTER` here would
+lock the themes table on every signed-in page load.
+
+That gate needed the fixture's *converged* shape to name the new columns too, which is the
+second half of the same trap: `'workspace_themes' => ['id' => …]` had been enough while
+nothing about that table had a gate, and left alone it would have made the suite's "a
+converged database is issued no DDL" check pass by never asking.
+
+**The contrast warning went from one pair to nine, and found something.** It compared
+`nav_text` against `nav_bg` and could not have been wrong about anything else, because
+nothing else had two ends. Now every text role is checked against every surface it lands on
+— nine pairs, including the three status colours the preview strip does not draw, because a
+form that warned only about the banner it happens to show would be quietest about the banner
+somebody reads hardest. Capped at three sentences and a count: nine at once is a box nobody
+finishes.
+
+What it found is that **the store's own defaults fail two of the nine** at 4.5:1 — white on
+the default accent `#3498db` is 3.2:1, and on the default green `#27ae60` is 2.9:1. So a
+brand-new theme form opens with a warning on it. That is true, it has always been true, and
+the defaults were left alone: changing them would repaint every install's buttons and
+banners, which is the one thing step 5 promised not to do. Worth a decision from the owner
+rather than a quiet edit here.
+
+**What this does not fix, and it is visible in the screenshots.** The palette's buttons, the
+Brand control, the CSV drop zone and Help's feature cards have *literal* backgrounds —
+`#22303c`, `#1f2a35`, `#16212b`, `#1a2a38` — a shade lifted off the old dark panel. A theme
+repaints the rail behind them and they stay dark chips on a light rail. Their text was left
+literal too, because a chip whose surface is fixed and whose text follows the theme is the
+one combination that can be unreadable. Fixing it properly means a role for a raised
+surface, which is a fourth text pair and a wider change than this one.
 
 ---
 ## 5. Verification
