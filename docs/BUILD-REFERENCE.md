@@ -8256,6 +8256,24 @@ twice on one request, and the rehearsal had already converged, so `installerBuil
 reported *The first display is set up* over an empty `displays` table. `SchemaLatch::forget()`
 stands in for the fresh request a server would have given it. 7 checks there, 6 in the suite.
 
+**Five survivors, one reason, written down rather than checked.** `mutate.php` over
+`lib/installer.php` leaves `=== ''` → `== ''` alive at five sites across four of this
+module's sentence methods — one each in `sharingNote()`, `repointRefusal()` and
+`tablesNote()`, and two in `whoseQuestion()` (the folder name and the database name). They are
+**equivalent mutants**, not a hole: the left
+operand is a string by construction on the same line, either an explicit `(string)` cast or
+an `InstallPaths` method whose contract is a string, and `==` between two strings is a string
+comparison — PHP only compares numerically when *both* sides are numeric, and `''` is not.
+Checked over ten values that trip loose comparison elsewhere (`'0'`, `'0e0'`, `'-0'`, `"\0"`):
+`===` and `==` agree on every one. A check written for these would be a check that cannot
+fail, which is the thing invariant 30 exists to stop.
+
+The other mutant in the new method is killed, and the grade is worth naming: removing
+`$file = basename(...)` is graded *diagnostic*, because an undefined variable emits a warning
+the harness sees before it looks at the checks. The line's real cover is the mutation done by
+hand — `basename()` dropped but the variable kept — which fails **the assertion** that the
+sentence does not print the folder above the webroot.
+
 **What this does not fix.** The preflight above still says this folder is *writable, so the
 app can be unpacked here* on a screen where it demonstrably already has been.
 
