@@ -233,6 +233,20 @@ $probe = function ($appDir) use ($target) {
     exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code) . ' 2>&1', $out);
     return trim(implode('', $out));
 };
+// The same probe, with the file as a parameter — the block at the end of this rehearsal
+// asks about a *different* file, and a closure that had captured one would have answered
+// about the wrong install while looking like it worked.
+$probe2 = function ($appDir, $file) {
+    $code = 'require ' . var_export($file, true) . ';'
+          . 'require ' . var_export(dirname(__DIR__) . '/lib/installer.php', true) . ';'
+          . 'echo Installer::credentialsOwnership(' . var_export($appDir, true) . ', '
+          . var_export($file, true) . ', defined(Installer::STAMP) '
+          . '? constant(Installer::STAMP) : null);';
+    $out = [];
+    exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code) . ' 2>&1', $out);
+    return trim(implode('', $out));
+};
+
 is_it($probe($fakeApp) === Installer::OWN,
       'a fresh process reads that file and agrees it belongs to the install that wrote it');
 is_it($probe(dirname($fakeApp) . '/signs-test') === Installer::BORROWED,
@@ -305,6 +319,50 @@ is_it(strpos($twice->message(), 'Sign in') !== false,
       'and the refusal says what to do instead');
 is_it($accounts->total() === 1, 'and nothing was created by the attempt');
 
+// ---- The state that reached the store, on a database that really has an admin ----
+// §4br. The unit checks hand `mustAskWhose()` a number; this asks it about a database
+// whose administrator was created two steps above, through an *unstamped* shared file of
+// the shape every credentials file written before the stamp existed has — including the
+// live one. Both halves have to be real for this to mean anything: an unstamped file on
+// disk read by a process that did not write it, and an account count from MySQL.
+step('A shared file over a database that already has an administrator');
+
+$sharedApp = sys_get_temp_dir() . '/lbm-rehearse-shared-' . getmypid() . '/public_html/first';
+@mkdir($sharedApp, 0755, true);
+$candidates = InstallPaths::credentialsCandidates($sharedApp);
+$sharedFile = $candidates[count($candidates) - 1];
+@mkdir(dirname($sharedFile), 0700, true);
+
+// A pre-stamp file, made the way one really is: the installer's own output with the stamp
+// line taken back out. Written from the source rather than typed here, so a change to the
+// file's shape cannot leave this fixture describing a file no installer ever wrote.
+$stamped   = Installer::credentialsSource($sharedApp, ['host' => $opts['host'], 'name' => $db,
+                                                       'user' => $user, 'pass' => $pass]);
+$unstamped = preg_replace('/^define\(\'' . Installer::STAMP . '\'.*$/m', '', $stamped);
+is_it($unstamped !== $stamped && strpos($unstamped, "\ndefine('" . Installer::STAMP) === false,
+      'a pre-stamp credentials file is built by removing the line no such file has');
+is_it(Installer::writeFile($sharedFile, $unstamped, $sharedWhy),
+      'and written where two installs on one account both walk up to it'
+      . ($sharedWhy !== '' ? ' — ' . $sharedWhy : ''));
+
+$secondFolder = dirname($sharedApp) . '/second';
+is_it($probe2($secondFolder, $sharedFile) === Installer::UNKNOWN,
+      'a second folder reads it in a fresh process and cannot tell whose it is — which is '
+      . 'the answer, not a failure to get one');
+is_it(Installer::mustAskWhose(Installer::UNKNOWN, $accounts->total()),
+      'and over this database — which has the administrator created above — that is asked '
+      . 'about rather than adopted, because adopting it is what reported a second copy of '
+      . 'the app "Installed" against the first one\'s signs');
+is_it(!Installer::mustAskWhose(Installer::OWN, $accounts->total()),
+      'while the same database behind a file that names this folder is just an install '
+      . 'being opened again');
+
+@unlink($sharedFile);
+@rmdir(dirname($sharedFile));
+@rmdir($sharedApp);
+@rmdir(dirname($sharedApp));
+@rmdir(dirname(dirname($sharedApp)));
+
 // ---- And that every one of them ran --------------------------------------------
 // The anchor `rehearse_phase1.php` did not have until §4bk, for the reason that write-up
 // is about: this printed "clean" whether it ran every check or stopped after four.
@@ -317,7 +375,7 @@ is_it($accounts->total() === 1, 'and nothing was created by the attempt');
 // reader cannot see from a total; and this check counts itself. `33` was written where 35
 // was true, and **nothing local can run this file** — it needs a MySQL server — so the only
 // place that disagreement could show up was the CI leg it was added to guard.
-$expected = 32     // call sites that run once
+$expected = 37     // call sites that run once
           + 9      // the nine tables schema.sql builds, one call site
           + 1;     // this check, counting itself
 $checked++;

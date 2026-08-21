@@ -144,6 +144,12 @@ stops the install; a ⚠ will work and has a consequence worth reading.
 
 ### 4. Fill in the database form
 
+On a host with no other install on it, this is the first thing you see. If a credentials
+file from another install is already above the webroot and the database it names has an
+administrator in it, you get one screen before this one — *Which database does this folder
+use?* — because the installer will not decide that for you. **Installing a second copy**,
+further down, is what that screen is about.
+
 The four values from step 1. What happens when you press the button:
 
 - it connects, and if the database does not exist it offers to create one — succeeding on
@@ -306,19 +312,24 @@ it wants to write to. Give that folder write permission, or set `LBM_LOG_DIR` in
 credentials file to a folder outside the webroot that it can write to.
 
 **It said "Installed" straight away — no database form, no account form, nothing to fill
-in.** This is the one branch that looks like a broken installer and is a working guard.
-There was already a credentials file two folders above this folder, from another install on
-the same account, and the database it names already holds an administrator — so there was no
-first administrator to create, and `install.php` disabled itself and deleted itself, which is
-what it does on any database that already has an account in it. What you were then looking at
-was **the other install's app**, on the other install's database. Nothing was overwritten.
-This build names the database it reached on that screen; older ones did not, which is why it
-read as nothing having happened.
+in.** An installer from an **older build**. There was already a credentials file two folders
+above this folder, from another install on the same account; the database it names already
+held an administrator, so there was no first administrator to create, and `install.php`
+disabled and deleted itself — which is what it does on any database that already has an
+account in it. What you were then looking at was **the other install's app**, on the other
+install's database. Nothing was overwritten, and nothing was installed either.
 
-To get the install you meant: create the credentials file for *this* folder first (see
-**Pointing an install at a different database**), then upload `install.php` again — it
-deleted itself, so it has to come back — and open it. It will find the new file, see a
-database with no tables in it, and start at the database step.
+**This build asks instead.** In that situation it stops on a screen headed *Which database
+does this folder use?* and will not go on until you answer. If you are meeting the silent
+version, the installer you uploaded predates this — rebuild the package, or follow the
+paragraph below.
+
+To get the install you meant from where you are now: create the credentials file for *this*
+folder (see **Pointing an install at a different database**), then upload `install.php`
+again — it deleted itself, so it has to come back — and open it. It will find the new file,
+see a database with no tables in it, and start at the database step. Uploading `install.php`
+from this build **without** writing that file works too: it will ask, and the database form
+is one of the two answers.
 
 ---
 
@@ -335,7 +346,14 @@ The app looks for its credentials in two places, in this order:
 
 `<folder>` is the folder the app is installed in — `db_credentials_signs-test.php` for an
 install in `public_html/signs-test/`. So to move one install onto its own database, create
-the name-specific file with that database's host, name, user and password. It is looked
+the name-specific file with that database's host, name, user and password.
+
+**Or let the installer write it.** Upload `install.php` into that folder and open it: where
+the folder has no file of its own and the shared one reaches a database that already has an
+administrator, the installer asks which database the folder uses and offers the database
+form as one of the two answers — and writes the file for you, stamped. It asks for the
+current database's password first; the rest of this section is the route that needs no
+password because you are editing the file directly. It is looked
 for first, the shared file stops applying to that folder, and every other install on the
 account is unaffected. Copy `private/db_credentials.php` out of the package for the shape,
 or copy the file that is already there and change the four values.
@@ -368,7 +386,10 @@ define('DB_INSTALL_FOLDER', 'signs');   // the folder this app is installed in
 
 Nothing in the app reads it. What it buys is that the next install in a second folder is
 **refused** that file — no connection made through it, and a database form instead — rather
-than joining this one's signs in silence.
+than being asked about it. Without the line the installer still will not adopt the file
+silently: where it reaches a database that already has an administrator, it stops and asks
+which database the folder uses (see *Installing a second copy*). The line is the difference
+between a question and no question, not between safe and unsafe.
 
 ---
 
@@ -388,10 +409,25 @@ that point on.
 
 The one case it cannot decide is a credentials file written **before** this build, or by
 hand — the shared one on an install that predates the stamp. Nothing on disk says whether
-that file belongs to this folder or the one next to it, so the installer says exactly that,
-names the database it reached and names the file to create, and otherwise behaves as it
-always did. Read that sentence rather than clicking past it; it is on the screen that makes
-your account, and on the screen that says the install is finished.
+that file belongs to this folder or the one next to it. Where the database it names already
+has an administrator in it, **the installer stops and asks**, on a screen with two answers:
+
+- **It is this one.** One button. Nothing the app reaches changes; the four values are
+  written into `db_credentials_<folder>.php` so this folder's answer is recorded, and this
+  screen never appears again — for this install or any later one on the account.
+- **No — this folder needs its own.** The ordinary database form, plus one extra field: the
+  password of the database this folder is reaching *now*. It is asked because pointing a
+  folder somewhere else is a change to an install that already has an administrator in it,
+  and that password is the one thing the page can check about whoever is asking. It is in
+  the credentials file above the webroot, and in your control panel. Get it wrong and
+  nothing is written — no credentials file, no tables.
+
+Answer it either way and the ambiguity is gone: both answers write a file naming this
+folder, and both stamp it.
+
+Where the shared file names a database that is **empty**, there is nothing to be wrong
+about yet and no question is asked — the install proceeds into it, which is what would have
+happened with no credentials file at all.
 
 Either way, check it before signing in a second time, not after: **Admin Panel → Settings
 → This Server** names the install folder and the database it reached. If the database is

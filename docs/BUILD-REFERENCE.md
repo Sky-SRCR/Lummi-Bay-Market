@@ -8103,6 +8103,102 @@ person reading ten steps to see whether they are followable. That is a much shor
 §4bo left, and it is short because the gate that had been red for four days was worth
 chasing to the bottom rather than patching at the anchor.
 
+### 4br. The installer adopted a database because a sentence was cheaper than a question
+
+§4bp gave the installer the read side of the isolation rule: a credentials file now says
+which folder it was written for, and one naming a *different* folder is refused rather than
+adopted. It also made a decision about the third answer, `unknown` — a file with no stamp,
+which is **every credentials file written before that commit, including the live one** — and
+that decision was wrong. This is the correction, and what makes it worth a section is that
+the wrong half was the half that had been reasoned about.
+
+The reasoning went: refusing to adopt an unstamped file would break the first install's own
+reload, and would put a database form on a running sign. So `unknown` keeps the old
+behaviour, and gets a sentence — `sharingNote()`, printed on every screen, naming the folder,
+the file, the database reached and the file to create.
+
+**What happened on the store's own account.** A second folder was installed, on a host whose
+shared `db_credentials.php` predates the stamp. The installer read that file, connected to the
+first install's database, found an administrator in it, reported *Installed*, and deleted
+itself. The sentence was printed. It was also the only thing that had happened, and by the
+time anybody read it there was no installer left to act on it — the reader was the admin
+panel's server card, days later, on an app already serving somebody else's signs.
+
+Twice, in fact: the second attempt was made after the package was rebuilt, and it did the
+same thing, because nothing about it had changed.
+
+**The assumption that was wrong.** Not "which reading is more likely" as a matter of taste —
+the app answers it. *An install that is finished has no `install.php`.* The finished screen
+deletes it and reads the filesystem back to prove it (§4bo). So for that page to be running
+at all, somebody has put it in that folder **deliberately**, and the thing they are trying to
+do is install *that folder*. Adopting is the answer to a question nobody asked, and "the
+first install reloading" — the case the old behaviour was built around — is a case that
+cannot arise without somebody re-uploading the installer on purpose.
+
+**So it asks.** `Installer::mustAskWhose($ownership, $accountCount)` is true for exactly one
+state: an unstamped file over a database that **already holds an administrator**. Then the
+page stops on a fourth stage, `whose`, with two answers side by side:
+
+* **"It is this one"** — one button, `step=adopt`. Writes `db_credentials_<folder>.php` with
+  the four values it just read, stamped. Nothing the running app reaches changes; what
+  changes is that the question is settled, here and for every later install on the account.
+* **"No — this folder needs its own"** — the ordinary database form, privileges prose and
+  all, plus one field.
+
+That field is the part worth defending. Answering "no" writes a file that takes precedence
+for the folder from the next request on, so on a live install that form is a way to point a
+working app — and every account in it — at a database somebody else controls. The old
+behaviour closed that door by never opening it: it adopted, found an administrator, and
+deleted the installer on the first request from **anybody at all**. What replaces that guard
+is proof of holding the database already in use: `Installer::repointRefusal($given, $current)`,
+checked against `DB_PASS` from the file above the webroot, which the page can verify and
+cannot leak. Somebody who created the database has it; somebody who found `install.php` on a
+server does not. `hash_equals`, and a blank stored password is a **refusal rather than a
+pass** — there is nothing to prove, so proving it means nothing, and the way through is then
+the same file written by hand, which has never needed this page's permission.
+
+Only when the database has an administrator in it. An empty database reached through a shared
+file is not ambiguous in any way that matters — installing into it is what "no credentials
+file at all" would do anyway — and a question whose two answers lead to the same place is
+furniture.
+
+**Three things this found in its own checks.**
+
+* `mustAskWhose()` takes the count rather than a `PDO`, and `-1` is the value that matters:
+  `AccountStore::total()` answers `-1` for "the tables are not there", which is the schema
+  step and **not** "no administrator". A check for each of `1`, `0` and `-1`, and the `!= 0`
+  mutant is killed by the third.
+* A check that passed for the wrong reason, caught by mutating the line it was about. It read
+  `checkMentions($question, 'signs', 'the question names the folder being installed')`, with
+  `$signs` as the fixture folder — and the question's own prose says *"about to serve the
+  first one's signs"*. Deleting the folder name from the sentence left it green. The fixture
+  is now a folder called `second-copy`, a name that sentence would never say by itself, and
+  the assertion is on `The folder second-copy`. Invariant 30 caught this at the only moment
+  it is catchable: the mutant survived, so the check was wrong.
+* The question was first pushed into `$notes` during resolution, which meant it was still
+  printed on the screen the *answer* leads to — the tables were created, and above them sat
+  a paragraph asking which database this folder uses. Found by walking it, not by a check;
+  it is held in a variable now and printed only on the screen that asks it.
+
+**Walked over HTTP, both answers.** A first install into `first/`; its stamp removed from the
+shared file to make the pre-stamp shape the live host has; then `second/` opened. It asked.
+The wrong current password was refused with **nothing written** — no name-specific file, no
+tables in the new database. The right one wrote `db_credentials_second.php` stamped `second`,
+created nine tables in the new database, reached the administrator form, and left `lbm_first`
+with its one administrator untouched. The other answer wrote the same file naming `lbm_first`,
+reported *Installed*, deleted the installer — and a freshly re-uploaded `install.php` in that
+folder no longer asks, which is the whole point of writing it down.
+
+The rehearsal carries the field case now, on MySQL: an unstamped file built by removing the
+line from the installer's own output, read by a separate process, over a database whose
+administrator was created two steps above. 5 checks there, 19 in the suite.
+
+**What this does not fix.** A stray `install.php` on a live install is still a page somebody
+can reach; what it can now do is offer to write down what is already true, or ask for a
+password it cannot obtain. And the state that started all this — an unstamped shared file —
+is still adopted silently whenever the database behind it is *empty*, because there is
+nothing there to be wrong about yet.
+
 ---
 ## 5. Verification
 

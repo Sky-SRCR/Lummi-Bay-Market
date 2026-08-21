@@ -175,10 +175,19 @@ edited in place and every change reaches the sign by hand.
   a second install used to connect through the shared file, find the first install's
   administrator, print *Installed* and delete itself, with every line working as written.
   An unstamped file (every one written before this, including the live one) cannot be told
-  apart from this install's own, so it is still used, and `sharingNote()` prints what it
-  reached on the two screens where being wrong costs something. The write side of that
-  rule — `credentialsTarget()` — had been right since the day it landed, which is what made
-  the missing read side invisible.
+  apart from this install's own — and **§4bp answered that with a sentence, which was the
+  wrong half to get wrong.** `sharingNote()` printed what it reached and the install went
+  ahead: on the store's own account a second folder adopted the first one's database, was
+  told it was finished, and deleted the installer, so the first reader of that sentence was
+  the server card, days later. The assumption the app itself refutes is that this is the
+  first install reloading — **an install that is finished has no `install.php`**, so for the
+  page to run at all somebody put it there deliberately. `mustAskWhose()` now stops on the
+  one ambiguous state (unstamped file, database that already holds an administrator) and
+  asks; `repointRefusal()` is what replaces the self-delete as the guard, because giving the
+  folder a *different* database is a takeover if anybody passing can do it, and the password
+  of the database in use is the one fact the page can check and cannot leak — a blank one is
+  a refusal, not a pass (§4br). The write side of that rule — `credentialsTarget()` — had
+  been right since the day it landed, which is what made the missing read side invisible.
 - **A file arrives from a browser through one of four doors, and none writes the name it was
   given** (invariant 40, §4bq). `crud.php`, `api.php`, `admin_panel.php` and `install.php`;
   `check_invariants.php` fails on a fifth. `uploads/` is the only folder in the webroot with

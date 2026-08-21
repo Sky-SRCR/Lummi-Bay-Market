@@ -546,6 +546,108 @@ class Installer
     }
 
     /**
+     * Does this install have to ask whose database it is looking at, before using it?
+     *
+     * The state this exists for was observed on the store's own account, twice, and the
+     * behaviour it replaces was a deliberate decision that turned out to be wrong about
+     * which reading is the likely one (§4bp).
+     *
+     * An unstamped shared credentials file has two possible meanings and `sharingNote()`
+     * was the whole answer to both: adopt the database, print a sentence, and let the
+     * person work out which meaning applied. On a database that **already holds an
+     * administrator** the two meanings are not close together:
+     *
+     *   * this install reloading — nothing to do, and the sentence was noise; or
+     *   * a *second* copy of the app in a second folder, which has just been told it is
+     *     finished, has deleted its own installer, and is now serving the first install's
+     *     signs from the first install's database.
+     *
+     * The assumption that made adopting reasonable was that the first reading is the
+     * common one. It is not: **an install that is finished has no `install.php`** — the
+     * finished screen deletes it and reads the filesystem back to prove it. So for this
+     * page to be running at all, somebody has put it in this folder deliberately, and
+     * what they are trying to do is install *this folder*. Adopting is the answer to the
+     * question nobody asked.
+     *
+     * It is only asked when the database has an administrator in it, and that is the whole
+     * of the condition. An empty database reached through a shared file is not ambiguous
+     * in any way that matters — installing into it is what `none` would do anyway — and a
+     * question with no consequence attached to either answer is furniture.
+     *
+     * Pure, and it takes the count rather than a `PDO`, because the interesting values are
+     * the ones no test database is in: `-1` is "the tables are not there", which is not
+     * "no administrator" and must not read as one.
+     */
+    public static function mustAskWhose($ownership, $accountCount)
+    {
+        return $ownership === self::UNKNOWN && (int) $accountCount > 0;
+    }
+
+    /**
+     * The question itself — what was found, and why this page cannot answer it.
+     *
+     * Separate from `sharingNote()` even though both describe one situation, because they
+     * are printed at different moments and only one of them is a question. The note is a
+     * warning beside a screen that is going ahead anyway; this is the screen that has
+     * stopped. A warning that has become the whole content of a page should read like one.
+     */
+    public static function whoseQuestion($appDir, $credentialsFile, $databaseName)
+    {
+        $folder   = InstallPaths::installName($appDir);
+        $where    = ($folder === '') ? 'This folder' : 'The folder ' . $folder;
+        $database = ((string) $databaseName === '')
+            ? 'a database' : 'the database ' . (string) $databaseName;
+
+        return $where . ' has no credentials file of its own, so it read '
+             . basename((string) $credentialsFile) . ' — which does not say which install '
+             . 'it was written for — and found ' . $database . ' that already has an '
+             . 'administrator in it. That is either this install being opened again, or a '
+             . 'second copy of the app about to serve the first one\'s signs, and nothing '
+             . 'on this server can tell those apart. So it is being asked rather than '
+             . 'guessed.';
+    }
+
+    /**
+     * May this page point the folder at a *different* database? '' if it may.
+     *
+     * The gate exists because of what the question above costs. Answering "no, this folder
+     * needs its own" writes `db_credentials_<folder>.php`, which takes precedence for this
+     * folder from the next request on — so on a live install, that form is a way to repoint
+     * a working app at a database somebody else controls, and every account in it. The old
+     * behaviour closed that door by never opening it: it adopted the database, found an
+     * administrator, and deleted this file on the first request from anybody at all.
+     *
+     * What is asked for instead is proof of holding the database the app is *already*
+     * using. The installer can check it — the credentials file was read into `DB_PASS` —
+     * and cannot leak it: that file is above the webroot and nothing here prints it.
+     * Somebody who created the database has it; somebody who found `install.php` on a
+     * server does not.
+     *
+     * `hash_equals` rather than `===` for the ordinary reason, and a blank stored password
+     * is a **refusal rather than a pass**: there is nothing to prove, so proving it means
+     * nothing, and a gate that cannot distinguish anybody is not one. The way through is
+     * then the same file written by hand, which is the one route that has never needed
+     * this page's permission.
+     */
+    public static function repointRefusal($given, $current)
+    {
+        if ((string) $current === '') {
+            return 'The database this folder is already using has no password recorded, so '
+                 . 'there is nothing this page can ask you to prove — and it will not '
+                 . 'repoint a working app on nobody\'s word. Write the credentials file '
+                 . 'named above by hand instead.';
+        }
+        if (!hash_equals((string) $current, (string) $given)) {
+            return 'That is not the password of the database this folder is using now. It '
+                 . 'is asked for because pointing this folder somewhere else is a change to '
+                 . 'a database that already has an administrator in it, and the password is '
+                 . 'the one thing this page can check. It is in the credentials file above '
+                 . 'the webroot, and in your control panel.';
+        }
+        return '';
+    }
+
+    /**
      * The contents of that file — the real values, or the blanks to fill in.
      *
      * One writer of this shape, used twice: the installer writes it with values, and

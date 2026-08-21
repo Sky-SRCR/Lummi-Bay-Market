@@ -8678,6 +8678,66 @@ checkMentions(Installer::sharingNote(Installer::UNKNOWN, '/home/acct/public_html
               'the folder that cannot have its own file gets the fix it actually needs, '
               . 'which is a different one');
 
+// ---- The question that replaces adopting it (§4br) --------------------------------
+// The state these describe is the one that reached the store: an unstamped shared file,
+// a database with an administrator already in it, and an installer that called that
+// `finished` and deleted itself before anybody could say otherwise.
+check(Installer::mustAskWhose(Installer::UNKNOWN, 1),
+      'an unstamped file over a database that already has an administrator is asked about '
+      . 'rather than adopted');
+check(!Installer::mustAskWhose(Installer::UNKNOWN, 0),
+      'the same file over an empty database is not — installing into it is what "no '
+      . 'credentials file at all" would do anyway, and a question with the same answer '
+      . 'either way is furniture');
+check(!Installer::mustAskWhose(Installer::UNKNOWN, -1),
+      'and -1 is "the tables are not there", which must not read as "no administrator": '
+      . 'that is the schema step, not an ambiguity about whose database this is');
+check(!Installer::mustAskWhose(Installer::OWN, 12),
+      'a file this folder owns is never ambiguous, however many accounts are in it');
+check(!Installer::mustAskWhose(Installer::BORROWED, 12),
+      'and a borrowed one is already refused a connection, so it never gets this far');
+check(!Installer::mustAskWhose(Installer::NONE, 12),
+      'no file at all is the ordinary first install');
+
+// A folder name that appears nowhere in the sentence's own prose. The obvious fixture
+// here is `$signs`, and it is the wrong one: this sentence says "the first one's signs",
+// so a check for "signs" passes on the prose and survives deleting the folder name
+// altogether — which is exactly what it did, until this line named the folder something
+// the sentence would never say by itself (invariant 30).
+$second   = '/home/acct/public_html/second-copy';
+$question = Installer::whoseQuestion($second, $ours, 'shop_signs');
+checkMentions($question, 'The folder second-copy',
+              'the question names the folder being installed');
+checkMentions($question, 'shop_signs', 'and the database it reached');
+checkMentions($question, basename($ours), 'and the file it read to get there');
+checkMentions($question, 'already has an administrator',
+              'and why that is a question rather than a finished install');
+checkMentions(Installer::whoseQuestion($signs, $ours, ''), 'a database',
+              'a file naming no database still asks a whole sentence');
+checkMentions(Installer::whoseQuestion('/home/acct/public_html/we b', $ours, 'shop_signs'),
+              'This folder',
+              'and a folder whose name cannot be used says "this folder" rather than '
+              . 'printing a name it is about to refuse');
+
+checkSame('', Installer::repointRefusal('hunter2', 'hunter2'),
+          'the password of the database in use is what this page can check, and holding it '
+          . 'is what lets somebody point the folder somewhere else');
+check(Installer::repointRefusal('hunter3', 'hunter2') !== '',
+          'a wrong one is refused — this is the gate that stops a stray install.php on a '
+          . 'live app being a way to repoint it at somebody else\'s database');
+check(Installer::repointRefusal('', 'hunter2') !== '',
+          'and so is an empty answer, which is what a forged request carries');
+checkMentions(Installer::repointRefusal('hunter3', 'hunter2'), 'credentials file',
+              'and the refusal says where to find it rather than only that it was wrong');
+check(Installer::repointRefusal('', '') !== '',
+          'a database with no password recorded is a refusal, not a pass: there is nothing '
+          . 'to prove, so proving it means nothing');
+check(Installer::repointRefusal('anything', '') !== '',
+          'and no answer gets through that door either — a gate that cannot tell anybody '
+          . 'apart is not one');
+checkMentions(Installer::repointRefusal('anything', ''), 'by hand',
+              'so it names the one route that has never needed this page\'s permission');
+
 // The stamp itself, in the file the installer writes.
 $stampedFile = Installer::credentialsSource($signs, ['host' => 'localhost',
                    'name' => 'shop_signs', 'user' => 'shop_u', 'pass' => 'p']);
@@ -9201,4 +9261,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2520 : 2495);
+reportChecks(testIsMysql() ? 2539 : 2514);
