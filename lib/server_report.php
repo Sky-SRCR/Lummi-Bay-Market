@@ -130,7 +130,18 @@ class ServerReport
         //
         // The name is not a credential. The host, the user and the password are not
         // reported, and a database name is already in `HANDOFF.md`.
-        $out['This install'] = [InstallPaths::installName(dirname(__DIR__)), ''];
+        //
+        // The note is the half that was missing, and §4bp is what it cost: the row named
+        // the folder and the row below it named the database, and neither said *why* the
+        // database was that one. A person who has just found a second install on the first
+        // one's signs needs the next sentence, not another fact — and the next sentence is
+        // always the same one, so it belongs here rather than in somebody's memory.
+        $appDir       = dirname(__DIR__);
+        $installName  = InstallPaths::installName($appDir);
+        $candidates   = InstallPaths::credentialsCandidates($appDir);
+        $out['This install'] = [$installName,
+            self::installNote($installName, InstallPaths::credentialsFile($appDir),
+                              $candidates[0])];
 
         $dbName = defined('DB_NAME') ? (string)DB_NAME : '';
         $out['Database'] = [$dbName !== '' ? $dbName : 'unknown',
@@ -466,6 +477,51 @@ class ServerReport
              . 'innodb_large_prefix — off by default before 5.7.7. A schema statement this '
              . 'server refuses is logged and emailed, never thrown, so it will not announce '
              . 'itself. Tell the developer before the next deploy.';
+    }
+
+    /**
+     * Why this install is on the database it is on — the sentence, or '' when there is
+     * nothing to say.
+     *
+     * Pure, and takes all three facts, for the reason every note here does: the
+     * interesting answers are all about a machine this one is not. There is exactly one
+     * arrangement on any given server, so a rule that read `__DIR__` and the filesystem
+     * could only ever be asserted in the single configuration the tests happen to run in
+     * (invariant 37).
+     *
+     * Three answers rather than two. A folder with a file of its own is the settled case
+     * and says nothing. A folder reading the shared file is the case this card exists for
+     * (`lib/install_paths.php`): it may be the install that wrote that file, or it may be a
+     * copy that has silently joined another install's database, and **nothing on disk can
+     * tell them apart** — so the note describes the arrangement rather than accusing it,
+     * and names the file that would settle it. A folder whose name `InstallPaths` refused
+     * cannot have a file of its own at all, which is a different problem with a different
+     * fix.
+     *
+     * @param string $installName what `InstallPaths::installName()` made of the folder
+     * @param string $found       the credentials file that was actually read, or ''
+     * @param string $ownFile     the name-specific path this folder would use
+     */
+    public static function installNote($installName, $found, $ownFile)
+    {
+        $found = (string) $found;
+        if ($installName === '') {
+            return 'This folder\'s name cannot be used to give it a credentials file of its '
+                 . 'own, so it can only read the shared one. If a second copy of this app is '
+                 . 'on this account, both are on one database. Rename the folder using '
+                 . 'letters, digits, dots, dashes and underscores only.';
+        }
+        if ($found === '') {
+            return 'No credentials file was found for this install, so the database below is '
+                 . 'whatever the fallback in db_connect.php names.';
+        }
+        if ($found === (string) $ownFile) {
+            return '';
+        }
+        return 'This install has no credentials file of its own and is reading the shared '
+             . basename($found) . ', so any other copy of this app on this account reaches '
+             . 'the same database. To give this one a database of its own, create '
+             . $ownFile . ' — it is looked for first, and nothing in this folder changes.';
     }
 
     /**

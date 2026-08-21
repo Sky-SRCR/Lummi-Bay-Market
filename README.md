@@ -69,7 +69,10 @@ unpacks the app, writes the database credentials above the webroot, creates the 
 converges, makes the first administrator and the venue's Brand, and deletes itself
 (invariant 39, `docs/BUILD-REFERENCE.md` §4bo). The one thing it cannot do on shared
 hosting is create the *database* — cPanel owns that — so it offers, and says what to click
-when it is refused.
+when it is refused. A **second** install on the same account gets asked for a database of
+its own rather than adopting the first one's: credentials files carry the install folder
+they were written for, and one naming a different folder is refused before anything
+connects (§4bp).
 
 The build refuses to write a package holding a path no rule classifies, because a `lib/`
 module left out is a blank sign in the shop and a `.md` put in is the live database name

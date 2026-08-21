@@ -169,7 +169,16 @@ edited in place and every change reaches the sign by hand.
   database on cPanel, which owns that; it offers, and says plainly what to click when
   refused. **CI installs from nothing on every MySQL leg** (`tools/rehearse_install.php`);
   the browser half — an FTP client in the wrong mode, a real certificate, ten steps somebody
-  has to follow — is an owed walk.
+  has to follow — is an owed walk. And **whose database it is, is not assumed either**
+  (§4bp): the credentials file is read for its own `DB_INSTALL_FOLDER` stamp *before*
+  anything connects, and one naming a different folder is refused rather than adopted —
+  a second install used to connect through the shared file, find the first install's
+  administrator, print *Installed* and delete itself, with every line working as written.
+  An unstamped file (every one written before this, including the live one) cannot be told
+  apart from this install's own, so it is still used, and `sharingNote()` prints what it
+  reached on the two screens where being wrong costs something. The write side of that
+  rule — `credentialsTarget()` — had been right since the day it landed, which is what made
+  the missing read side invisible.
 - **Nothing that has been published can be taken back.** Publishing overwrites; a
   deleted Display, a swept asset row and a saved brand standard are gone. Prefer
   refusing a write to merging one. The **one** exception is the Builder's Undo

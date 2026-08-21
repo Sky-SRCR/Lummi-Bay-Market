@@ -216,6 +216,29 @@ exec(escapeshellarg(PHP_BINARY) . ' -l ' . escapeshellarg($target) . ' 2>&1',
 is_it($lintStatus === 0,
       'and PHP can parse it, with this password in it — a parse error here is a file '
       . 'outside the webroot that nobody thinks to look at');
+
+// And then the question the file was stamped to answer, asked in a *separate process* off
+// the file that is really on disk. The unit checks in `selftest_layout.php` hand
+// `credentialsOwnership()` its three facts; this is the only place the middle one comes
+// from a file an installer wrote, read by an interpreter that was not there when it was
+// written — which is the half that would break if the stamp were spelled two different
+// ways, or written as a comment, or lost to the quoting.
+$probe = function ($appDir) use ($target) {
+    $code = 'require ' . var_export($target, true) . ';'
+          . 'require ' . var_export(dirname(__DIR__) . '/lib/installer.php', true) . ';'
+          . 'echo Installer::credentialsOwnership(' . var_export($appDir, true) . ', '
+          . var_export($target, true) . ', defined(Installer::STAMP) '
+          . '? constant(Installer::STAMP) : null);';
+    $out = [];
+    exec(escapeshellarg(PHP_BINARY) . ' -r ' . escapeshellarg($code) . ' 2>&1', $out);
+    return trim(implode('', $out));
+};
+is_it($probe($fakeApp) === Installer::OWN,
+      'a fresh process reads that file and agrees it belongs to the install that wrote it');
+is_it($probe(dirname($fakeApp) . '/signs-test') === Installer::BORROWED,
+      'and that it does not belong to the folder beside it — which is the install that used '
+      . 'to connect to this database and report itself finished');
+
 @unlink($target);
 @rmdir(dirname($target));
 @rmdir($fakeApp);
@@ -253,7 +276,7 @@ is_it($accounts->total() === 1, 'and nothing was created by the attempt');
 // ---- And that every one of them ran --------------------------------------------
 // The anchor `rehearse_phase1.php` did not have until §4bk, for the reason that write-up
 // is about: this printed "clean" whether it ran every check or stopped after four.
-$expected = 33;
+$expected = 35;
 $checked++;
 if ($checked === $expected) {
     ok("this rehearsal ran every check it is supposed to ($checked)");

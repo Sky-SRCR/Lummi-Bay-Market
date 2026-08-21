@@ -314,9 +314,33 @@ function installerMain()
     // not, the tables either exist or do not, and the account either exists or does not.
     // A wizard that remembers where it thinks it is disagrees with the server the moment
     // somebody reloads, presses back, or opens it in a second tab.
-    $pdo = null;
+    //
+    // One question comes before all three, and it did not used to be asked at all:
+    // **whose credentials file is this?** A second install in a second folder resolves the
+    // *shared* file, connects to the first install's database, finds an administrator in
+    // it, and reports a finished install — every line working as written (§4bp). So the
+    // file is read for its stamp first, and a file that names a different folder is not
+    // adopted: no connection is made through it, and this install is asked for a database
+    // of its own. A file with no stamp cannot be told apart from this install's own, so it
+    // is still adopted — with a sentence, on every screen below, naming what it reached.
+    $pdo       = null;
+    $ownership = Installer::NONE;
+    $database  = '';
     if ($credentialsFile !== '') {
         require_once $credentialsFile;
+        $database  = defined('DB_NAME') ? (string) DB_NAME : '';
+        $ownership = Installer::credentialsOwnership(
+            $appDir,
+            $credentialsFile,
+            defined(Installer::STAMP) ? (string) constant(Installer::STAMP) : null
+        );
+    }
+
+    if ($ownership === Installer::BORROWED) {
+        $notes[] = Installer::sharingNote($ownership, $appDir, $credentialsFile, $database);
+        $notes[] = 'Nothing was read from that database, and nothing here will write to '
+                 . 'it. Give this install its own below.';
+    } elseif ($credentialsFile !== '') {
         $pdo = Installer::connectDatabase(DB_HOST, DB_NAME, DB_USER, DB_PASS, $why);
         if ($pdo === null) {
             $errors[] = 'The credentials file is there, but the database refused the '
@@ -334,8 +358,13 @@ function installerMain()
     if ($posted && ($_POST['step'] ?? '') === 'database') {
         $stage = installerDoDatabase($appDir, $errors, $notes);
         if ($stage === 'admin' || $stage === 'schema') {
+            // The file it just wrote is this install's own by construction — that is what
+            // `credentialsTarget()` decides — so the sharing note stops applying from here
+            // on rather than being repeated over a state that has been fixed.
             $credentialsFile = InstallPaths::credentialsFile($appDir);
             $token           = installerToken($credentialsFile);
+            $ownership       = Installer::OWN;
+            $database        = trim((string) ($_POST['name'] ?? ''));
         }
     } elseif ($posted && ($_POST['step'] ?? '') === 'admin') {
         if ($token === '' || !hash_equals($token, (string) ($_POST['token'] ?? ''))) {
@@ -358,7 +387,8 @@ function installerMain()
         }
     }
 
-    installerPage($appDir, $stage, $errors, $notes, $token, $pdo);
+    installerPage($appDir, $stage, $errors, $notes, $token, $pdo,
+                  Installer::sharingNote($ownership, $appDir, $credentialsFile, $database));
 }
 
 /**
@@ -515,7 +545,8 @@ function installerBarePage($which)
 }
 
 /** The one screen, in whichever of its four states this install is in. */
-function installerPage($appDir, $stage, array $errors, array $notes, $token, ?PDO $pdo = null)
+function installerPage($appDir, $stage, array $errors, array $notes, $token, ?PDO $pdo = null,
+                      $sharing = '')
 {
     installerHead('Install');
 
@@ -527,6 +558,33 @@ function installerPage($appDir, $stage, array $errors, array $notes, $token, ?PD
     }
     foreach ($errors as $error) {
         echo '<p class="stop">' . Markup::text($error) . '</p>';
+    }
+
+    // Whose database this is, said on the two screens where being wrong about it costs
+    // something — the one that is about to make an administrator in it, and the one that
+    // is about to declare the install finished and delete this file. It is a `stop` rather
+    // than a `note` deliberately: the states it describes are the ones where the page
+    // *works* and the person is looking at the wrong install (§4bp). The database screen is
+    // the one exception, and the reason it is excluded rather than repeated: a `borrowed`
+    // file is the reason that form is on screen at all, so the sentence has already been
+    // printed as a note above it.
+    if ((string) $sharing !== '' && $stage !== 'database') {
+        echo '<p class="stop">' . Markup::text($sharing) . '</p>';
+    }
+
+    // And the way out, on the one screen where this file is about to stop existing. The
+    // deletion is not softened for this case on purpose: "the database already has an
+    // administrator, so this page disables itself" is the guard that keeps a public
+    // first-administrator form from being a public first-administrator form, and it does
+    // not get to depend on a judgement about whose install it is. Re-uploading one file is
+    // the cost, and it is named here rather than left to be worked out.
+    if ($stage === 'finished' && (string) $sharing !== '') {
+        echo '<p class="stop">This file deletes itself below, because the database it '
+           . 'reached now holds an administrator — a guard that does not depend on which '
+           . 'install that database belongs to. If the line above is describing a '
+           . 'mistake rather than a deliberate arrangement, write that credentials file, '
+           . 'upload install.php again, and this page will pick up on the database that '
+           . 'file names.</p>';
     }
 
     if ($stage === 'database' || $stage === 'schema') {

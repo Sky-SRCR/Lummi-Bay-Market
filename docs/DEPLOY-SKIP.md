@@ -201,9 +201,14 @@ Groups A–D above still apply, with two differences:
 - **`branding_config.php`** — group A protects the *server's* copy because the app
   generates it. A brand-new folder has no copy to protect, so upload the repo's one
   here; the app rewrites it the first time you save on the Branding page.
-- **`setup.php`** — group B, and it matters *more* here. If the copied database has its
-  users table, the page self-disables and deletes itself. Point a fresh install at an
-  empty database and it is a public "make yourself an admin" form. Do not upload it.
+- **`install.php`** — group B, and it matters *more* here. (It was `setup.php` until
+  §4bo; that file no longer exists and this is what any instruction naming it means.) If
+  the database it reaches has its users table, the page self-disables and deletes itself.
+  Point a fresh install at an empty database and it is a public "make yourself an admin"
+  form. Do not upload it. And note *which* database it reaches: a folder with no
+  credentials file of its own reaches the live one, which is this whole section — the
+  installer now says so on the screen rather than reporting a finished install (§4bp),
+  but not uploading it is still the rule.
 
 Everything else is unchanged, including the three `.htaccess` files. A fresh folder has
 none, so `lib/` and `tools/` are browsable until they arrive — upload each with its
@@ -218,6 +223,11 @@ folder, not afterwards.
 If **Database** says `silverad_lummi_market_drive_thru`, the per-install credentials
 file is missing or misnamed, and this folder is talking to the live sign. Stop, and do
 not publish. Nothing else in the app will tell you.
+
+Since §4bp the **This install** row answers it directly rather than leaving the two rows
+to be compared: a folder with no credentials file of its own says so, in words, and names
+the file to create. A note there on `lbm-test/` and no note on `lbm/` is the state this
+section describes; a note on both means the rehearsal copy has never been separated.
 
 Run that check **before** signing in a second time, not after — the sign-in that shows
 you the card is also the one that converges schema on whatever database it found.

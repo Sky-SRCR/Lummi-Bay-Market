@@ -779,6 +779,15 @@ through the app again:
     webroot, which is a machine nobody here has. What none of that reaches is the act
     itself: `tools/rehearse_install.php` builds a database from nothing on CI's real MySQL,
     on every leg, and the browser half is an owed walk.
+    One clause of "nothing is assumed" was added the expensive way and is the part worth
+    stating separately: **whose database this is, is not assumed either** (§4bp). The
+    installer reads the credentials file's own stamp before it connects, and a file that
+    names a different install folder is not adopted — a second install used to connect
+    through the shared file, find an administrator in the first install's database, print
+    *Installed* and delete itself, with every line working as written. A file that carries
+    no stamp cannot be told apart from this install's own, so it is still adopted, and the
+    sentence naming what it reached is printed on the two screens where being wrong about
+    it costs something.
 
 
 ---
@@ -7741,11 +7750,12 @@ the repo, on its first run, over a line that was obviously harmless and was stil
 second reader of that table.
 
 **What now runs, and what still does not.** `tools/rehearse_install.php` builds a database
-from nothing on CI's real MySQL — 33 checks, on every leg: the server, an empty database,
+from nothing on CI's real MySQL — 35 checks, on every leg: the server, an empty database,
 nine tables from `schema.sql`, convergence seeding one Display with a Brand, convergence
 again seeding no second one, the credentials file written where the app would look for it
-and parseable with an awkward password in it, the administrator, the venue named rather
-than duplicated, and a second first-administrator refused. That is the database half, on
+and parseable with an awkward password in it, read back by a separate process that agrees
+whose install it belongs to (§4bp), the administrator, the venue named rather than
+duplicated, and a second first-administrator refused. That is the database half, on
 the engine a shop runs, on every push.
 
 The rest was walked here by hand, once, and it is worth being exact about what that was:
@@ -7761,6 +7771,118 @@ makes it the best-informed guess in the repo and still a guess. It stays an owed
 window: between the upload and the first request, `install.php` is a page that will unpack
 an app and take a database it is given. It is minutes long, it is the same window
 `setup.php` always had, and it is not zero.
+
+---
+### 4bp. The installer knew where to write a credentials file and not how to read one
+
+The owner installed a second copy and reported that it *"connected automatically to the
+test db"*. It had. Everything in that sentence was working as designed, which is what took
+a while to see.
+
+**The two halves of one rule, and only one of them existed.** `InstallPaths` has answered
+the read side correctly since the day it landed: a folder-specific
+`private/db_credentials_<folder>.php` first, the shared `private/db_credentials.php`
+otherwise, so two installs at the same depth can be kept apart without a tracked file
+differing between them. `Installer::credentialsTarget()` is the write side and is equally
+right: finding a shared file already there means another copy is using it, so this install
+writes the file named after its own folder instead.
+
+Neither of those is the installer's *state detection*, and that is where the whole of this
+lived:
+
+```php
+$credentialsFile = InstallPaths::credentialsFile($appDir);
+if ($credentialsFile !== '') {
+    require_once $credentialsFile;
+    $pdo = Installer::connectDatabase(DB_HOST, DB_NAME, DB_USER, DB_PASS, $why);
+    …
+    if ($count > 0) { $stage = 'finished'; }
+```
+
+A second install resolves the *shared* file, connects to the first install's database,
+finds an administrator already in it, prints **Installed**, and deletes itself. Every line
+does what it says. The page never reaches the form whose whole purpose is this case, so
+`credentialsTarget()` — the correct half — is never called. `INSTALL.md` said *"the
+installer handles this by itself"*, which was true of the form and not of the road to it:
+documentation asserting a property the code has in a branch nothing can enter.
+
+And then the app behaves. The schema converges on the live tables, the Displays are all
+there, a publish succeeds — the failure mode `install_paths.php`'s own docblock opens with,
+arriving through the one door that was supposed to prevent it.
+
+**Why the fix could not be "ask every time".** The tempting version is: never adopt a
+shared credentials file, always show the database form. It breaks two things at once.
+Re-loading the installer half way through a *first* install resolves the shared file it
+just wrote, so the admin form would be replaced by the database form on every reload — the
+"state is observed, never remembered" design is what makes that reload work at all. Worse,
+`install.php` is a public URL with no account behind it, and the state where a database
+already holds an administrator is exactly where it must go inert. Turning that into a form
+puts a repoint-this-install button on a running sign.
+
+**So the file says whose it is.** The installer stamps the install folder into the
+credentials file it writes — `define('DB_INSTALL_FOLDER', 'signs');` — and
+`Installer::credentialsOwnership()` reads it back into four answers, because they need four
+different sentences:
+
+| | |
+|---|---|
+| `NONE` | No file. A first install, on its way to writing one. |
+| `OWN` | The file named after *this* folder, or the shared file whose stamp names this folder. Trust it. |
+| `BORROWED` | The shared file's stamp names a **different** folder. Decided, not guessed: do not connect through it, ask for a database. |
+| `UNKNOWN` | The shared file carries no stamp. Either this install's or somebody else's, and nothing on disk can tell. |
+
+`UNKNOWN` is not a gap in the design, it is most of the installed world: every credentials
+file written before this change is in that state, including the live one, and a hand-written
+file always will be. So its answer is **the old behaviour plus a sentence** —
+`Installer::sharingNote()` names the folder, the file that was read, the database it
+reached, and the full path of the file that would settle it. Refusing to adopt an `UNKNOWN`
+file would be the "ask every time" mistake; adopting it silently was the defect. Saying so
+is the only remaining option, and it is the right one.
+
+**Where the sentence goes matters more than the sentence.** On the two screens where being
+wrong about this costs something: the one about to create an administrator in that database,
+and the one about to declare the install finished and delete this file. Not the database
+screen — a `BORROWED` file is the reason that form is on screen at all, so repeating it
+beside the form would be the same fact twice. Five of the seven defects §4ay's browser pass
+found were things a page did not *say* rather than wrong answers, and this is that shape
+exactly: a working page, a correct answer, and a person looking at the wrong install.
+
+**The stamp is left commented out in the blank form**, and that is the careful half. A
+placeholder somebody leaves alone reads as *"this file belongs to another folder"*, which
+would make a working install look `BORROWED` — a database form offered over a live sign.
+Wrong is worse than absent here, so absent is the default and `UNKNOWN` is what a
+half-filled file gets.
+
+**On `BORROWED` being allowed to show a form at all**, given the public URL: the form
+cannot act without working database credentials. `installerDoDatabase()` connects before it
+writes anything, so a visitor who does not already hold a MySQL user and password cannot
+repoint an install with it — and one who does needs no form. The `finished` screen still
+deletes this file in the `UNKNOWN` case, deliberately: *"the database already has an
+administrator, so this page disables itself"* is the guard that keeps a first-administrator
+form from being a public first-administrator form, and it does not get to depend on a
+judgement about whose install it is. The cost is re-uploading one file, and the screen says
+so rather than leaving it to be worked out.
+
+**And the same fact on the card somebody opens afterwards.** Settings → This Server named
+the install folder and, on the row below, the database — and nothing said *why* the database
+was that one. `ServerReport::installNote()` is the missing half: an install reading the
+shared file is told so, told that any other copy on the account reaches the same database,
+and given the path that would separate them. Pure and taking all three facts, for the
+reason every note on that card does — the interesting arrangements are all on machines this
+one is not.
+
+**What checks it.** Twenty-seven in `selftest_layout.php`, all of them filesystem-free
+because every arrangement is one this machine is not in: the four ownership answers
+including a stamp that disagrees with a filename it cannot outrank, a trimmed stamp because
+that file is edited by hand, a folder name `InstallPaths` refused, the sentences for each
+state, and that the blank form's stamp is *really* commented out. Two more in
+`tools/rehearse_install.php`, which are the only ones where the middle fact comes from a
+file an installer actually wrote: a separate process reads it off disk and agrees it belongs
+to the install that wrote it, and does not belong to the folder beside it.
+
+What none of that reaches is two folders on one cPanel account, which is where this was
+found and where it stays owed. It joins §4bo's walk rather than adding a row to
+`docs/browser-pass.md`: it is the same ten steps, done twice.
 
 ---
 ## 5. Verification

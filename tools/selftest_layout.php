@@ -8554,6 +8554,103 @@ checkSame($fakeAccount . '/private/db_credentials_signs-test.php',
 @rmdir($fakeAccount . '/public_html');
 @rmdir($fakeAccount);
 
+// ---- Whose credentials file is this? (§4bp) ------------------------------------
+// `credentialsTarget()` above is the write side of the second-install rule and has always
+// been right. This is the read side, which did not exist: a second install resolved the
+// *shared* file, connected to the first install's database, found an administrator in it
+// and reported a finished install. Nothing was broken — every line did what it says — and
+// `INSTALL.md` promised the opposite, because the form the promise was about was never
+// reached.
+//
+// Pure and filesystem-free, which is the point: every arrangement below is one this
+// machine is not in.
+$signs = '/home/acct/public_html/signs';
+$mine  = '/home/acct/private/db_credentials_signs.php';
+$ours  = '/home/acct/private/db_credentials.php';
+
+checkSame(Installer::NONE, Installer::credentialsOwnership($signs, ''),
+          'no credentials file at all is a first install, not a borrowed one');
+checkSame(Installer::OWN, Installer::credentialsOwnership($signs, $mine),
+          'a file named after this folder is this install\'s, stamp or no stamp');
+checkSame(Installer::OWN, Installer::credentialsOwnership($signs, $mine, 'somewhere-else'),
+          'and the filename outranks a stamp that disagrees with it — the app reads that '
+          . 'file first, so what it says about itself cannot change which one is being used');
+checkSame(Installer::UNKNOWN, Installer::credentialsOwnership($signs, $ours),
+          'the shared file with no stamp is undecidable: it is either this install\'s own or '
+          . 'another copy\'s, and nothing on disk can tell');
+checkSame(Installer::OWN, Installer::credentialsOwnership($signs, $ours, 'signs'),
+          'a stamp naming this folder settles it');
+checkSame(Installer::OWN, Installer::credentialsOwnership($signs, $ours, "  signs\n"),
+          'and it is trimmed, because that file is edited by hand');
+checkSame(Installer::BORROWED, Installer::credentialsOwnership($signs, $ours, 'signs-test'),
+          'a stamp naming a different folder is the whole defect, decided rather than '
+          . 'guessed at');
+checkSame(Installer::UNKNOWN,
+          Installer::credentialsOwnership('/home/acct/public_html/we b', $ours, 'signs'),
+          'a folder whose name InstallPaths refused can have no file of its own, so it can '
+          . 'never be told apart from the install that wrote the shared one');
+checkSame(Installer::UNKNOWN,
+          Installer::credentialsOwnership($signs, '/somewhere/else/entirely.php', 'signs'),
+          'and a path that is neither candidate is not read as either');
+
+checkSame('', Installer::sharingNote(Installer::OWN, $signs, $mine, 'shop_signs'),
+          'an install on its own credentials file has nothing to be told');
+checkSame('', Installer::sharingNote(Installer::NONE, $signs, '', ''),
+          'and neither has one that has not got a database yet');
+$borrowed = Installer::sharingNote(Installer::BORROWED, $signs, $ours, 'shop_signs');
+checkMentions($borrowed, 'shop_signs',
+              'the sentence names the database that was reached, which is the fact that '
+              . 'makes it worth reading');
+checkMentions($borrowed, 'signs', 'and the folder this install is in');
+checkMentions($borrowed, $mine,
+              'and the file to create, in full — the fix is one file above the webroot and '
+              . 'nothing in the app folder');
+checkMentions($borrowed, 'folder called something else',
+              'and says the stamp decided it, rather than leaving a person to wonder how '
+              . 'much of this is a guess');
+checkMentions(Installer::sharingNote(Installer::UNKNOWN, $signs, $ours, 'shop_signs'),
+              'does not say which install',
+              'an unstamped file says so instead — this is every credentials file written '
+              . 'before the stamp existed, including the live one');
+checkMentions(Installer::sharingNote(Installer::BORROWED, $signs, $ours, ''),
+              'the database it names',
+              'and a file that named no database still produces a sentence rather than a '
+              . 'gap where the name should be');
+checkMentions(Installer::sharingNote(Installer::UNKNOWN, '/home/acct/public_html/we b',
+                                     $ours, 'shop_signs'),
+              'Rename',
+              'the folder that cannot have its own file gets the fix it actually needs, '
+              . 'which is a different one');
+
+// The stamp itself, in the file the installer writes.
+$stampedFile = Installer::credentialsSource($signs, ['host' => 'localhost',
+                   'name' => 'shop_signs', 'user' => 'shop_u', 'pass' => 'p']);
+checkMentions($stampedFile, "define('DB_INSTALL_FOLDER', 'signs');",
+              'a file the installer fills in says which folder it was written for');
+check(strpos($blank, "// define('DB_INSTALL_FOLDER'") !== false,
+      'the blank form leaves that line commented out');
+check(strpos($blank, "\ndefine('DB_INSTALL_FOLDER'") === false,
+      'and really commented out — a placeholder left alone would make a working install '
+      . 'look borrowed, which is a database form offered over a live sign');
+check(strpos($filled, "\ndefine('DB_INSTALL_FOLDER'") === false,
+      'and a folder whose name cannot be used is left unstamped rather than stamped with '
+      . 'something that is not a folder name');
+
+// And the same fact on the card an admin would open to check it.
+checkSame('', ServerReport::installNote('signs', $mine, $mine),
+          'the server card says nothing about an install reading its own file');
+$shared = ServerReport::installNote('signs', $ours, $mine);
+checkMentions($shared, 'db_credentials.php',
+              'and names the shared file when that is what was read');
+checkMentions($shared, $mine,
+              'with the path that would settle it — the card is where somebody looks after '
+              . 'the installer has deleted itself');
+checkMentions(ServerReport::installNote('signs', '', $mine), 'fallback',
+              'no file at all is the fallback in db_connect.php, named as such');
+checkMentions(ServerReport::installNote('', $ours, $ours), 'Rename',
+              'and a folder name InstallPaths refused is a different problem with a '
+              . 'different fix');
+
 // ---- Writing a file, and reading it back ---------------------------------------
 $writeTarget = sys_get_temp_dir() . '/lbm-write-' . getmypid() . '/nested/file.php';
 checkSame(true, Installer::writeFile($writeTarget, "<?php\n// written\n", $writeWhy),
@@ -8831,4 +8928,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2422 : 2397);
+reportChecks(testIsMysql() ? 2449 : 2424);

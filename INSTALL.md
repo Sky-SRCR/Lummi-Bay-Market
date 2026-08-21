@@ -272,22 +272,74 @@ domain this server does not own.
 it wants to write to. Give that folder write permission, or set `LBM_LOG_DIR` in the
 credentials file to a folder outside the webroot that it can write to.
 
+**It said "Installed" and never asked me for a database.** There was already a credentials
+file two folders above this one, from another install on the same account, and the database
+it names already has an administrator in it — so this folder is now sharing that install's
+signs. The installer says which database it reached on that screen. The fix is one file:
+see **Pointing an install at a different database** below.
+
+---
+
+## Pointing an install at a different database
+
+**One file, above the webroot, and nothing in the app folder changes.**
+
+The app looks for its credentials in two places, in this order:
+
+```
+/home/YOUR_ACCOUNT/private/db_credentials_<folder>.php   ← if it exists
+/home/YOUR_ACCOUNT/private/db_credentials.php            ← otherwise
+```
+
+`<folder>` is the folder the app is installed in — `db_credentials_signs-test.php` for an
+install in `public_html/signs-test/`. So to move one install onto its own database, create
+the name-specific file with that database's host, name, user and password. It is looked
+for first, the shared file stops applying to that folder, and every other install on the
+account is unaffected. Copy `private/db_credentials.php` out of the package for the shape,
+or copy the file that is already there and change the four values.
+
+Two things to know before you do it:
+
+- **A database that has never been installed into is empty**, and the app cannot build
+  itself from nothing — `schema.sql` creates nine tables and only four of them are ones
+  the app converges on its own. So after writing the credentials file, upload
+  `install.php` into that folder again and open it. It will find the new file, see a
+  database with no tables in it, and carry on from there. Signing in first gets you an
+  error about a missing table, not an install.
+- **The old database is untouched.** Nothing is moved, copied or deleted. If the layout
+  you want is in the *old* database, this is not the tool for that — export it in
+  phpMyAdmin and import it into the new one before you point anything at it.
+
+Then check it, before you publish anything: **Admin Panel → Settings → This Server** names
+the install folder, the database it reached, and — new since this build — which of the two
+credentials files it read. Nothing else in the app will tell you.
+
 ---
 
 ## Installing a second copy, for rehearsing
 
-Two installs on one account walk up to the same `private/` folder, so an unmodified second
-copy connects to the **first one's database** — and then behaves perfectly. Signing in
-converges schema on the live tables; pressing Publish overwrites a real sign. Nothing
-warns you, because from the app's point of view nothing is wrong.
+Two installs on one account walk up to the same `private/` folder, so a second copy with
+no credentials file of its own connects to the **first one's database** — and then behaves
+perfectly. Signing in converges schema on the live tables; pressing Publish overwrites a
+real sign. From the app's point of view nothing is wrong.
 
-The installer handles this by itself: it finds the shared credentials file already there
-and writes one named after its own folder instead — `db_credentials_signs-test.php` for an
-install in `signs-test/`. The name-specific file is looked for first.
+The installer will not walk into that on its own. It reads the credentials file it found
+before it connects to anything, and every file it has written since this build says which
+install folder it was written for. A file that names a different folder is **not** used:
+no connection is made through it, and you are asked for a database for this install
+instead. The file it then writes is named after this folder, so the two stay apart from
+that point on.
 
-Check it before signing in a second time, not after: **Admin Panel → Settings → This
-Server** names the install folder and the database it reached. If the database is the
-first one's, stop and do not publish. Nothing else in the app will tell you.
+The one case it cannot decide is a credentials file written **before** this build, or by
+hand — the shared one on an install that predates the stamp. Nothing on disk says whether
+that file belongs to this folder or the one next to it, so the installer says exactly that,
+names the database it reached and names the file to create, and otherwise behaves as it
+always did. Read that sentence rather than clicking past it; it is on the screen that makes
+your account, and on the screen that says the install is finished.
+
+Either way, check it before signing in a second time, not after: **Admin Panel → Settings
+→ This Server** names the install folder and the database it reached. If the database is
+the first one's, stop and do not publish.
 
 ---
 

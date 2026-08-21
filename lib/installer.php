@@ -122,6 +122,22 @@ class Installer
     const PRIVILEGES = ['SELECT', 'INSERT', 'UPDATE', 'DELETE',
                         'CREATE', 'ALTER', 'INDEX', 'REFERENCES'];
 
+    /**
+     * The constant a credentials file carries to say which install folder it was written
+     * for. Read by `credentialsOwnership()` and by nothing else in the app — `db_connect.php`
+     * does not know it exists, and a file without it still works exactly as it always did.
+     */
+    const STAMP = 'DB_INSTALL_FOLDER';
+
+    /** This install has a credentials file of its own, or is about to write one. */
+    const OWN = 'own';
+    /** The file found belongs to a *different* install folder, and says so. */
+    const BORROWED = 'borrowed';
+    /** A file was found and does not say whose it is. Could be either. */
+    const UNKNOWN = 'unknown';
+    /** No credentials file exists yet. */
+    const NONE = 'none';
+
     private $pdo;
 
     public function __construct(PDO $pdo)
@@ -372,6 +388,112 @@ class Installer
     }
 
     /**
+     * Whose database is the file this install just read?
+     *
+     * `credentialsTarget()` is the write side of the second-install rule and it has been
+     * right since the day it landed. This is the **read** side, which was missing, and the
+     * gap between them is the whole of §4bp: a second install resolves the *shared*
+     * credentials file, connects to the first install's database, finds an administrator
+     * already in it, prints "Installed" and deletes itself. Every line of that is working
+     * as written. The person now has a second folder signed in to the first one's signs,
+     * and the only place that says so is a card in the admin panel they have no reason to
+     * open. `INSTALL.md` even promised the opposite — *"the installer handles this by
+     * itself"* — which was true of the form and not of the road to it.
+     *
+     * Four answers, because they need four different sentences:
+     *
+     *   * `NONE` — nothing to read. A first install, on its way to writing one.
+     *   * `OWN` — the file is the one named after *this* folder, or it is the shared file
+     *     and its stamp names this folder. Trust it; this is the install it describes.
+     *   * `BORROWED` — the shared file's stamp names a **different** folder. Decided, not
+     *     guessed: do not adopt it, do not connect through it, ask for a database.
+     *   * `UNKNOWN` — the shared file carries no stamp, so it is either this install's or
+     *     somebody else's and nothing on disk can tell. Every credentials file written
+     *     before this change is in this state, including the live one, so the answer has
+     *     to be the old behaviour *plus a sentence*. Adopting it silently is the defect;
+     *     refusing it would put a database form on a working install.
+     *
+     * The stamp is a parameter rather than a `defined()` call for invariant 37's reason:
+     * the interesting cases are all files this machine does not have, so a rule that could
+     * only be asked about the one file sitting here could only ever give the one answer it
+     * happens to give.
+     *
+     * On why `BORROWED` may show a form at all, given that install.php is a public URL:
+     * the form cannot act without working database credentials. `installerDoDatabase()`
+     * connects before it writes anything, so a visitor who does not already hold a MySQL
+     * user and password cannot repoint an install with it — and one who does needs no
+     * form.
+     *
+     * @param string      $appDir          the folder the app is installed in
+     * @param string      $credentialsFile the path `InstallPaths::credentialsFile()` gave
+     * @param string|null $stampedFolder   the file's own STAMP value, or null if it has none
+     */
+    public static function credentialsOwnership($appDir, $credentialsFile, $stampedFolder = null)
+    {
+        $credentialsFile = (string) $credentialsFile;
+        if ($credentialsFile === '') { return self::NONE; }
+
+        $candidates = InstallPaths::credentialsCandidates($appDir);
+        if (count($candidates) > 1 && $credentialsFile === $candidates[0]) { return self::OWN; }
+
+        // A path that is neither candidate cannot have come from
+        // `InstallPaths::credentialsFile()`, so nothing is known about it — and answering
+        // from the stamp would be answering about a file this install does not read.
+        if ($credentialsFile !== $candidates[count($candidates) - 1]) { return self::UNKNOWN; }
+
+        // The shared file, then. A folder whose name `InstallPaths` refused cannot have a
+        // file of its own, so it can never be told apart from the install that wrote the
+        // shared one.
+        $folder = InstallPaths::installName($appDir);
+        $stamp  = ($stampedFolder === null) ? '' : trim((string) $stampedFolder);
+        if ($folder === '' || $stamp === '') { return self::UNKNOWN; }
+
+        return ($stamp === $folder) ? self::OWN : self::BORROWED;
+    }
+
+    /**
+     * What to say about a credentials file that is not demonstrably this install's.
+     *
+     * '' for the two states with nothing to report, so a caller prints it or does not
+     * without asking a second question. Pure, and it takes the database name rather than
+     * reading `DB_NAME`, because the sentence is only worth anything when it names the
+     * database somebody did not expect.
+     *
+     * The path is spelled by `InstallPaths` rather than here. This module already refuses
+     * to know what that file is called (`credentialsSource()` asks the same way) — the one
+     * place the two could disagree is a directory outside the webroot that nothing in this
+     * repo can see.
+     */
+    public static function sharingNote($ownership, $appDir, $credentialsFile, $databaseName)
+    {
+        if ($ownership === self::OWN || $ownership === self::NONE) { return ''; }
+
+        $candidates = InstallPaths::credentialsCandidates($appDir);
+        $mine       = $candidates[0];
+        $folder     = InstallPaths::installName($appDir);
+        $database   = ((string) $databaseName === '') ? 'the database it names' : (string) $databaseName;
+
+        if ($folder === '') {
+            return 'This install reads ' . basename((string) $credentialsFile) . ' and reached '
+                 . $database . '. Its folder name cannot be used to give it a credentials '
+                 . 'file of its own, so if another copy of this app is on this account, both '
+                 . 'are using that one database. Rename the folder to letters, digits, dots, '
+                 . 'dashes and underscores only.';
+        }
+
+        $shared = ($ownership === self::BORROWED)
+            ? 'That file was written for an install in a folder called something else.'
+            : 'That file does not say which install it belongs to, so it may be another '
+              . 'copy of this app\'s.';
+
+        return 'This install is in ' . $folder . ' and has no credentials file of its own. '
+             . 'It read ' . basename((string) $credentialsFile) . ' and reached ' . $database
+             . '. ' . $shared . ' If this install was meant to have its own database, create '
+             . $mine . ' with that database\'s details — it is looked for first, and nothing '
+             . 'in the app folder changes.';
+    }
+
+    /**
      * The contents of that file — the real values, or the blanks to fill in.
      *
      * One writer of this shape, used twice: the installer writes it with values, and
@@ -401,6 +523,20 @@ class Installer
             return var_export($value, true);
         };
 
+        // Which install wrote this. The installer stamps its own folder so that a *later*
+        // install in a second folder can tell that this file is not its own and ask for a
+        // database instead of adopting this one (`credentialsOwnership()`, §4bp).
+        //
+        // The blank form leaves the line **commented out**, and that is the careful half.
+        // A stamp naming a folder that does not exist reads as "this file belongs to
+        // somebody else" — so a placeholder somebody left alone would make their own
+        // working install look borrowed, which is a database form offered over a live sign.
+        // Absent, the answer is `UNKNOWN`: the old behaviour, and a sentence.
+        $folder = InstallPaths::installName($appDir);
+        $stamp  = ($filled && $folder !== '')
+            ? "define('" . self::STAMP . "', " . var_export($folder, true) . ");\n"
+            : "// define('" . self::STAMP . "', 'the-folder-this-app-is-in');\n";
+
         $head = $filled
             ? "// Written by the installer. Keep it — the app reads it on every request.\n"
             : "// Fill in all four. Leaving a placeholder is not a half-working install:\n"
@@ -424,6 +560,12 @@ class Installer
              . "define('DB_NAME', " . $get('name', 'your_database_name') . ");\n"
              . "define('DB_USER', " . $get('user', 'your_database_user') . ");\n"
              . "define('DB_PASS', " . $get('pass', 'your_database_password') . ");\n"
+             . "\n"
+             . "// Which install folder these credentials were written for. Nothing in the\n"
+             . "// app reads this; the installer does, to tell a second copy of the app that\n"
+             . "// this file is not its own. Wrong is worse than absent, so it is left\n"
+             . "// commented out unless the installer filled it in itself.\n"
+             . $stamp
              . "\n"
              . "// -- A second copy of the app -------------------------------------------\n"
              . "//\n"
