@@ -7875,11 +7875,12 @@ and given the path that would separate them. Pure and taking all three facts, fo
 reason every note on that card does — the interesting arrangements are all on machines this
 one is not.
 
-**What checks it.** Twenty-seven in `selftest_layout.php`, all of them filesystem-free
+**What checks it.** Thirty in `selftest_layout.php`, all of them filesystem-free
 because every arrangement is one this machine is not in: the four ownership answers
 including a stamp that disagrees with a filename it cannot outrank, a trimmed stamp because
 that file is edited by hand, a folder name `InstallPaths` refused, the sentences for each
-state, and that the blank form's stamp is *really* commented out. Two more in
+state, the one-line remedy in the `unknown` sentence and its absence from the `borrowed` one,
+and that the blank form's stamp is *really* commented out. Two more in
 `tools/rehearse_install.php`, which are the only ones where the middle fact comes from a
 file an installer actually wrote: a separate process reads it off disk and agrees it belongs
 to the install that wrote it, and does not belong to the folder beside it.
@@ -7887,6 +7888,37 @@ to the install that wrote it, and does not belong to the folder beside it.
 What none of that reaches is two folders on one cPanel account, which is where this was
 found and where it stays owed. It joins §4bo's walk rather than adding a row to
 `docs/browser-pass.md`: it is the same ten steps, done twice.
+
+**And the sweep, because §4bo shipped without one.** `php tools/mutate.php lib/installer.php`
+— 179 mutants, 42 surviving, and the answer that mattered is that **none of the survivors are
+in `credentialsOwnership()` or `sharingNote()`**: every mutant in the new decision died,
+which is the difference between twenty-seven checks and twenty-seven `ok` lines. The survivors
+are all in what §4bo landed, and two were worth closing on the spot rather than writing down:
+
+- **`@mkdir($dir, 0700, true)` survived as `0701`.** Nothing had ever read that mode back,
+  and it is the mode on the folder a database password lives in — world-traversable instead
+  of owner-only, from a one-digit change, in the one file the app cannot start without. The
+  check asserts the literal `0700` rather than comparing, because 0700 is what 0700 masks to
+  under any umask a host sets.
+- **`strlen($password) < PASSWORD_MIN` survived as `<=`.** Every check above it hands that
+  branch a length nowhere near the edge, so the boundary was unasserted. A password of
+  exactly the minimum now has to come back complaining about the *confirmation*, which is
+  the next thing in the order.
+
+The rest are written down rather than closed, and they fall into three shapes worth naming so
+the next sweep is not re-read from scratch. **Error sentences on the second failure path** —
+`writeFile()`'s "was refused" and "does not hold what was just written" strings, and the
+`false` returns beside them: the failing-write check uses a path whose *directory* cannot be
+made, so it takes the first branch and the later ones are exercised by nothing. **Validation
+comparators in `createFirstAdmin()`** — `===` to `==`, `||` to `&&` across the empty-field
+test: the checks assert which sentence comes back for inputs that are clearly wrong rather
+than for one wrong field at a time, so a looser operator gives the same answer. **The
+venue-naming path's counts** — `count($rows) === 1`, `$existing < 0`, `> 0` with their zeroes
+moved: `accountCount()`'s three answers are asserted, the Brand row count behind them is not.
+And one that is a docblock being right rather than a gap, in §4am's sense:
+`clearstatcache(true, $path)` survives because the path being read back was written in the
+same request and PHP's stat cache does not hold an entry it never made — the line is there
+for the caller who writes over a file that was stat'ed earlier, which no test does.
 
 ---
 ## 5. Verification

@@ -9,6 +9,14 @@ folder, open it in a browser, and it unpacks the app, writes the database creden
 above the webroot, creates the tables, makes your account and your first venue, and then
 deletes itself.
 
+**What it does not ask you for: your colours, your logo, your prices, or anything about a
+screen.** The installer's whole job is a working app with one account and one venue in it.
+Everything a customer will actually see is set afterwards, signed in — Admin Panel → Site
+Branding for the name and the mail-from address, Display Branding for a venue's colours and
+logo, Displays for what each sign is called, and the Builder for what is on it. Step 6 and
+the checks after it say which to do first, and why the mail-from address is the one that
+costs weeks if it is skipped.
+
 One thing it cannot do for you, and it is worth knowing before you start: **on shared
 hosting it cannot create the database.** cPanel owns that — the names carry your account
 prefix, the account-to-database mapping lives in cPanel's own records rather than in
@@ -272,11 +280,20 @@ domain this server does not own.
 it wants to write to. Give that folder write permission, or set `LBM_LOG_DIR` in the
 credentials file to a folder outside the webroot that it can write to.
 
-**It said "Installed" and never asked me for a database.** There was already a credentials
-file two folders above this one, from another install on the same account, and the database
-it names already has an administrator in it — so this folder is now sharing that install's
-signs. The installer says which database it reached on that screen. The fix is one file:
-see **Pointing an install at a different database** below.
+**It said "Installed" straight away — no database form, no account form, nothing to fill
+in.** This is the one branch that looks like a broken installer and is a working guard.
+There was already a credentials file two folders above this folder, from another install on
+the same account, and the database it names already holds an administrator — so there was no
+first administrator to create, and `install.php` disabled itself and deleted itself, which is
+what it does on any database that already has an account in it. What you were then looking at
+was **the other install's app**, on the other install's database. Nothing was overwritten.
+This build names the database it reached on that screen; older ones did not, which is why it
+read as nothing having happened.
+
+To get the install you meant: create the credentials file for *this* folder first (see
+**Pointing an install at a different database**), then upload `install.php` again — it
+deleted itself, so it has to come back — and open it. It will find the new file, see a
+database with no tables in it, and start at the database step.
 
 ---
 
@@ -313,6 +330,20 @@ Two things to know before you do it:
 Then check it, before you publish anything: **Admin Panel → Settings → This Server** names
 the install folder, the database it reached, and — new since this build — which of the two
 credentials files it read. Nothing else in the app will tell you.
+
+**And one line worth adding to the credentials file you keep.** A file the installer wrote
+records the folder it was written for; a file written by hand, or by an installer older than
+this build, does not — so the installer cannot tell whether it belongs to this folder or the
+one next to it, and a *later* install in a second folder will adopt it rather than asking for
+a database of its own. Add the line to the file that is already there:
+
+```php
+define('DB_INSTALL_FOLDER', 'signs');   // the folder this app is installed in
+```
+
+Nothing in the app reads it. What it buys is that the next install in a second folder is
+**refused** that file — no connection made through it, and a database form instead — rather
+than joining this one's signs in silence.
 
 ---
 

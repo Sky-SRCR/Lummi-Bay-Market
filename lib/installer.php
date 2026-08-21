@@ -481,16 +481,30 @@ class Installer
                  . 'dashes and underscores only.';
         }
 
+        // The `unknown` arm carries a second remedy, and it is the one that matters on a
+        // host that predates the stamp: a person who can see that this *is* the right
+        // database can say so in one line, in a file they already have, and every later
+        // install in a second folder is then decided rather than adopted. Without it the
+        // only door out of `unknown` is the installer rewriting that file, which is the one
+        // thing nobody should do to a working install.
         $shared = ($ownership === self::BORROWED)
             ? 'That file was written for an install in a folder called something else.'
             : 'That file does not say which install it belongs to, so it may be another '
               . 'copy of this app\'s.';
 
+        // Spelled out rather than described as "the commented line in that file": the files
+        // this describes are the ones written *before* the stamp existed, so there is no
+        // comment in them to point at.
+        $andIfItIsMine = ($ownership === self::BORROWED) ? '' :
+            ' If that database is this install\'s, add the line   define(\''
+            . self::STAMP . '\', \'' . $folder . '\');   to that file, and this page will '
+            . 'know next time instead of printing this.';
+
         return 'This install is in ' . $folder . ' and has no credentials file of its own. '
              . 'It read ' . basename((string) $credentialsFile) . ' and reached ' . $database
              . '. ' . $shared . ' If this install was meant to have its own database, create '
              . $mine . ' with that database\'s details — it is looked for first, and nothing '
-             . 'in the app folder changes.';
+             . 'in the app folder changes.' . $andIfItIsMine;
     }
 
     /**

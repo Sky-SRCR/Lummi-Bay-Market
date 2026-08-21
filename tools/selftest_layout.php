@@ -8608,10 +8608,17 @@ checkMentions($borrowed, $mine,
 checkMentions($borrowed, 'folder called something else',
               'and says the stamp decided it, rather than leaving a person to wonder how '
               . 'much of this is a guess');
-checkMentions(Installer::sharingNote(Installer::UNKNOWN, $signs, $ours, 'shop_signs'),
-              'does not say which install',
+$unstamped = Installer::sharingNote(Installer::UNKNOWN, $signs, $ours, 'shop_signs');
+checkMentions($unstamped, 'does not say which install',
               'an unstamped file says so instead — this is every credentials file written '
               . 'before the stamp existed, including the live one');
+checkMentions($unstamped, "define('DB_INSTALL_FOLDER', 'signs');",
+              'and it carries the second remedy, spelled out: one line in a file they '
+              . 'already have, after which a later install in another folder is decided '
+              . 'rather than adopted');
+check(strpos($borrowed, 'DB_INSTALL_FOLDER') === false,
+      'the borrowed sentence does not offer it — that file belongs to another install and '
+      . 'stamping it for this one would be a lie about somebody else\'s database');
 checkMentions(Installer::sharingNote(Installer::BORROWED, $signs, $ours, ''),
               'the database it names',
               'and a file that named no database still produces a sentence rather than a '
@@ -8660,6 +8667,13 @@ checkSame("<?php\n// written\n", file_get_contents($writeTarget),
 checkSame(false, Installer::writeFile('/proc/lbm-cannot-exist/x', 'x', $writeWhy),
           'a write it cannot do is reported as a failure rather than as a success');
 check($writeWhy !== '', 'with a sentence naming the path, because that is the actionable part');
+// The mode on the folder it creates, which is the folder a database password lives in. It
+// survived a sweep as `0701` — world-traversable — because nothing had ever read it back
+// (invariant 30, §4bp). Not a umask artefact: 0700 is what 0700 masks to under any umask a
+// host sets, which is why the assertion is the literal mode rather than a comparison.
+checkSame('0700', substr(sprintf('%o', fileperms(dirname($writeTarget))), -4),
+          'and the folder it had to create is readable only by the account that owns it — '
+          . 'this is where the database password goes');
 @unlink($writeTarget);
 @rmdir(dirname($writeTarget));
 @rmdir(dirname(dirname($writeTarget)));
@@ -8681,6 +8695,16 @@ checkMentions($installer->createFirstAdmin('me', 'a@b.com', 'short', 'short', 'V
 checkMentions($installer->createFirstAdmin('me', 'a@b.com', 'longenough', 'different', 'Venue')
                         ->message(), 'not the same',
               'then the confirmation');
+// The boundary, not just a clearly-short password: `strlen($password) < PASSWORD_MIN`
+// survived a sweep as `<=`, because every check above hands it a length nothing near the
+// edge. A password of exactly the minimum has to be *accepted* as long enough, so this asks
+// for the next complaint in the order rather than the length one (invariant 30, §4bp).
+checkMentions($installer->createFirstAdmin('me', 'a@b.com',
+                  str_repeat('x', Installer::PASSWORD_MIN),
+                  str_repeat('x', Installer::PASSWORD_MIN) . 'y', 'Venue')->message(),
+              'not the same',
+              'and a password of exactly the minimum is long enough — the complaint that '
+              . 'comes back is the confirmation, not the length');
 $onSeeded = $installer->createFirstAdmin('me', 'a@b.com', 'longenough', 'longenough', 'Venue');
 checkSame(false, $onSeeded->isOk(),
           'and a database that already holds accounts has no first administrator to create');
@@ -8928,4 +8952,4 @@ checkSame(false, $cStore->setPassword(9999, 'no-such-account'),
 // read plus this branch's zone-through-the-door form, and that is one check more than
 // either side had alone: main's `editingSentence()` assertion had no counterpart here.
 // Run, not summed — 2338, and the engine-only section is untouched again, so 25 still.
-reportChecks(testIsMysql() ? 2449 : 2424);
+reportChecks(testIsMysql() ? 2453 : 2428);
